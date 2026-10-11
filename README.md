@@ -27,12 +27,6 @@ kalos/
     __init__.py        torch-free facade re-exporting splits/drivers/conformal/gates/anonymizer
   data/
     anonymizer.py      strip identity, hash grouping keys
-  store/
-    models.py          Experiment record + Status lifecycle (DRAFT -> READY -> PROCESSING -> DONE|FAILED)
-    sqlite_store.py    SQLite experiment store (~/.kalos/experiments.db)
-  runner/
-    singleton.py       Voyager Singleton: pull READY experiments -> run BO -> push result
-    adapter.py         BackendAdapter seam (local store today, http portal later)
   features/
     protein.py         ESM-2 embeddings (transformers, MPS) + KmerEmbedder stand-in
   scale/
@@ -54,9 +48,9 @@ kalos/
     synonyms.py        deterministic header -> canonical column mapping
     llm.py             optional LLM-assisted mapping (needs ANTHROPIC_API_KEY; offline fallback always works)
   providers/
-    registry.py        external-provider credential slots (Anthropic / BioNeMo / Benchling), all keyless-by-default
+    registry.py        external-provider credential slots (Anthropic / BioNeMo), all keyless-by-default
   portal/
-    app.py             FastAPI app: live-engine views + /api/experiments + the "run your own data" upload path
+    app.py             FastAPI app: live-engine views + the "run your own data" upload path
     validate.py        ingestion preflight + per-column provenance (what was kept/dropped and why)
 examples/            demos + run_on_media_data.py
 experiments/         off-path research prototypes; NOT part of the shipped package or its guarantees (e.g. missingness_indicator/)
@@ -67,17 +61,11 @@ A lot of the honest-evaluation and data machinery was carried over from a prior
 lean engine (`voyager-brain-rebuild`): the leakage-controlled splits, the
 bootstrap-Spearman drivers, the data anonymization, and the push-feed ingestion.
 
-## Experiment store and the Voyager loop
-
-Run data flows through the Experiment store. A run sheet is uploaded as an
-Experiment (`POST /api/experiments`), flagged `READY`, and the Singleton runner
-pulls it, runs the BO engine, and writes the result back
-(`DRAFT -> READY -> PROCESSING -> DONE|FAILED`). The store is SQLite at
-`~/.kalos/experiments.db`. See `docs/M2_INTEGRATION.md` for the full contract.
+## Anonymized uploads
 
 Client/strain identity can be stripped and grouping keys hashed on upload via the
-anonymizer (`kalos/data/anonymizer.py`), so a run stays groupable for
-leakage-safe CV without carrying who it belongs to.
+anonymizer (`kalos/data/anonymizer.py`, `anonymize=true` on `POST /api/run`), so a
+run stays groupable for leakage-safe CV without carrying who it belongs to.
 
 ## The campaign loop (`/api/campaign*`)
 
@@ -149,6 +137,19 @@ batch). Because the sheet comes from an external client, the upload path is guar
 - **Opt-in anonymization.** Pass the form field `anonymize=true` to pseudonymize identifier-type
   columns in the response. Feature and target names are kept as-is (the owner UI legitimately shows
   drivers like "Methanol").
+
+## The Scale-Up Readout (`POST /api/scale/readout`)
+
+Upload a multi-scale run sheet and a target scale; get back one printable page that either issues a
+predicted level at the target scale with an approximate-coverage interval, or refuses and says why.
+Before it predicts, kalos backtests itself on your own scale ladder (fit on the smaller scales,
+predict the next one up) and only issues a number when that backtest beats two naive baselines and
+the requested step up is within 2x of a step it has already won (warning up to 5x, refusal beyond).
+Nothing is stored server-side; the page prints the SHA-256 of the upload, the engine version, every
+threshold, and the full normalize plan. It predicts a level, not a ranking of recipes at scale.
+Development decision support only; not a GMP or regulatory record. Contract, gate checks and the
+decision table: `docs/SCALE_READOUT.md`. The evidence behind the scale model: `docs/SCALE_EVIDENCE.md`.
+A synthetic 9-scale demo sheet ships in `examples/synthetic_scaleup/`.
 
 ## Install / run
 
