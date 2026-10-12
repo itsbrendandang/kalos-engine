@@ -166,7 +166,7 @@ It races BO / feasibility-gated BO / random on both the reproducible objective (
 
 - The synthetic surfaces measure whether the optimization machinery beats space-filling in a controlled setting; they do not claim a specific number of experiments saved on real data.
 - The real-data pool benchmark uses client data that is NOT committed; `kalos/bench/pool.py` takes a DataFrame, so the code stays reproducible and data-free. Point it at a run sheet to reproduce the numbers above.
-- The real-data numbers in the update section are reproducible from the private `bioqore-data` store (referenced via the `BIOQORE_DATA` env var); no client data is committed to this repo.
+- The real-data numbers in the update section are reproducible from the private media data set, pointed to by the `KALOS_MEDIA_DATA` env var (see `examples/benchmark_media_pool.py`); no client data is committed to this repo.
 - Noise (synthetic) is expressed as a fraction of each surface's output scale, so it is comparable across surfaces with different units.
 
 ## The other kind of waste: a round that repeats itself
