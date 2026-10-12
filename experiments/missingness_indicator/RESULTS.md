@@ -66,7 +66,7 @@ In the domain-matching case, it is a strict net negative.
 ## The caveat that matters
 
 This is entirely synthetic.
-Whether kalos's real media DoE recipes live in the `absent` regime or the `informative` regime is genuinely unknown from this prototype - `BIOQORE_DATA` was not accessed, is not accessible to this exercise, and this script makes no attempt to check it.
+Whether kalos's real media DoE recipes live in the `absent` regime or the `informative` regime is genuinely unknown from this prototype - the private media data set (`KALOS_MEDIA_DATA`) was not accessed, is not accessible to this exercise, and this script makes no attempt to check it.
 This result characterizes the idea in isolation; it does not characterize kalos's actual data.
 
 **This does not justify turning on a missingness indicator in production.**
