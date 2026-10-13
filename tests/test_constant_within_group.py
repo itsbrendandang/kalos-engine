@@ -1,8 +1,8 @@
 """Tests for `check_constant_within_group` (a feature that is really group identity).
 
 `check_constant_columns` catches a column that never varies anywhere. This
-check catches the sneakier variant from the owner's real Cytena clone-funnel
-data (voyager-brain-rebuild/docs/ml-review.md, finding P0.2): a column that
+check catches the sneakier variant from a real clone-funnel
+data (earlier engine docs/ml-review.md, finding P0.2): a column that
 varies across the whole sheet but has exactly one value inside every group,
 so within any single group it carries zero information and a model fit on it
 is really just learning "which group," not the thing the column claims to

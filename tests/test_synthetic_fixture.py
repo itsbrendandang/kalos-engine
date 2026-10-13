@@ -3,8 +3,8 @@
 `kalos/bench` otherwise has only abstract math surfaces (`objectives.py`); its
 pool benchmark (`kalos.bench.pool.pool_from_frame`) needs a real run sheet,
 and the real ones all require client data that cannot be committed. This
-fixture - ported from the owner's earlier engine (voyager-brain-rebuild,
-samples/synthetic_bioprocess.csv + make_synthetic.py) - is the non-proprietary
+fixture - ported from an earlier engine repo
+(samples/synthetic_bioprocess.csv + make_synthetic.py) - is the non-proprietary
 stand-in: fully synthetic, seeded, safe to commit.
 
 These tests check the fixture itself, not the engine: the CSV has the shape
