@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Kalos: a domain-neutral Bayesian-optimization platform for sequential experiment design, built on BoTorch. Ships a bioprocess domain (NVIDIA BioNeMo / ESM-2 protein features) and supports mixed continuous/categorical design spaces."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Proprietary" }
+license = { text = "Apache-2.0" }
 dependencies = [
   "numpy>=2.2.6",
   "pandas>=2.0",
