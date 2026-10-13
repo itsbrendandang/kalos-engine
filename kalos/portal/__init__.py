@@ -1,1 +1,1 @@
-"""Kalos Engine portal — a FastAPI viewer over the live BoTorch engine. See app.py."""
+"""Kalos Engine portal - the JSON API over the live BoTorch engine. See app.py."""
