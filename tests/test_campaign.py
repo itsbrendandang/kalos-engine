@@ -70,7 +70,9 @@ def client(store, tmp_path, monkeypatch):
 def test_get_campaign_before_any_seed_has_campaign_false(client):
     resp = client.get("/api/campaign")
     assert resp.status_code == 200
-    assert resp.json() == {"has_campaign": False}
+    body = resp.json()
+    assert body["has_campaign"] is False
+    assert set(body) == {"has_campaign", "stage", "next_action"}
 
 
 def test_seed_then_get_campaign_has_campaign_true(store, client):
@@ -517,3 +519,64 @@ def test_reanalyze_republishes_a_matching_stamp(store, client):
 
     assert client.post("/api/campaign/reanalyze").status_code == 200
     assert client.get("/api/campaign").json()["analysis_in_sync"] is True
+
+
+# --- stage / next_action contract ------------------------------------------- #
+
+_RECIPES = [
+    {"recipe": {"Methanol": 2.0, "pH": 6.0}, "pred": 5.1, "std": 0.4, "mode": "explore", "reason": "a"},
+    {"recipe": {"Methanol": 3.0, "pH": 6.5}, "pred": 6.2, "std": 0.2, "mode": "exploit", "reason": "b"},
+]
+
+
+def test_get_campaign_without_campaign_carries_setup_stage(client):
+    body = client.get("/api/campaign").json()
+    assert body["has_campaign"] is False
+    assert body["stage"]["current"] == "setup"
+    assert body["stage"]["round"] is None
+    assert body["next_action"]["action"] == "Upload a run sheet"
+
+
+def test_stage_advances_through_start_result_reanalyze(client):
+    assert _upload(client, _tiny_df(n=10)).status_code == 200
+    assert client.get("/api/campaign").json()["stage"]["current"] == "plan"
+
+    started = client.post("/api/campaign/start", json={"recipes": _RECIPES}).json()["started"]
+    body = client.get("/api/campaign").json()
+    assert body["stage"]["current"] == "run"
+    assert body["next_action"]["stage"] == "record"
+
+    for run in started:
+        client.post("/api/campaign/result", json={"id": run["id"], "value": 6.0})
+    body = client.get("/api/campaign").json()
+    assert body["stage"]["current"] == "learn"
+    assert body["stage"]["round"] == 1
+
+    resp = client.post("/api/campaign/reanalyze")
+    assert resp.status_code == 200, resp.text
+    for body in (resp.json()["campaign"], client.get("/api/campaign").json()):
+        assert body["stage"]["current"] == "plan"
+        assert body["stage"]["round"] == 2
+        assert body["round"] == 1  # top-level round stays 0-based
+
+
+def test_existing_fields_unchanged(store, client):
+    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"])
+    body = client.get("/api/campaign").json()
+    assert set(body) - {"stage", "next_action"} == {
+        "has_campaign", "target", "features", "n_base", "best", "round",
+        "history", "pending", "n_awaiting", "n_measured", "analysis_in_sync",
+    }
+
+
+def test_start_stamps_run_round(store, client):
+    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"])
+    client.post("/api/campaign/start", json={"recipes": _RECIPES[:1]})
+    assert client.get("/api/campaign").json()["pending"][0]["round"] == 0
+
+    # a run persisted before `round` was stamped reads null
+    state = store.get()
+    assert state is not None
+    del state["pending"][0]["round"]
+    store._write_locked("default", state)
+    assert client.get("/api/campaign").json()["pending"][0]["round"] is None

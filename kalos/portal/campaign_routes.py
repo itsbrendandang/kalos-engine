@@ -24,6 +24,7 @@ from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
 
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
 from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_store
+from kalos.portal.campaign_stage import derive_stage
 
 log = logging.getLogger("kalos.portal")
 
@@ -45,6 +46,18 @@ class _ResultBody(BaseModel):
     value: float
 
 
+def _with_stage(summary: dict[str, Any], latest: dict[str, Any]) -> dict[str, Any]:
+    """`summary` plus the derived `stage` and `next_action` (campaign_stage.py)."""
+    return {
+        **summary,
+        **derive_stage(
+            summary,
+            analysis_exists=bool(latest),
+            n_proposed=len(latest.get("proposals") or []) if latest else None,
+        ),
+    }
+
+
 @router.get("/api/campaign")
 def get_campaign(
     store: CampaignStore = Depends(get_campaign_store),
@@ -63,9 +76,12 @@ def get_campaign(
     from kalos.portal.app import _load_latest
 
     latest = _load_latest(principal.tenant) or {}
-    return store.summary(
-        tenant=principal.tenant,
-        analysis_generation=latest.get("campaign_generation"),
+    return _with_stage(
+        store.summary(
+            tenant=principal.tenant,
+            analysis_generation=latest.get("campaign_generation"),
+        ),
+        latest,
     )
 
 
@@ -221,5 +237,5 @@ async def reanalyze_campaign(
     # PopulatedResult type expects).
     saved = _load_latest(tenant) or result
     return JSONResponse(
-        {"analysis": {"has_data": True, **saved}, "campaign": store.summary(tenant=tenant)}
+        {"analysis": {"has_data": True, **saved}, "campaign": _with_stage(store.summary(tenant=tenant), saved)}
     )

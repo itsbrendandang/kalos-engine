@@ -2,6 +2,15 @@
 
 Newest first.
 
+## Unreleased
+
+### Added - the campaign says where it is and what to do next
+
+`GET /api/campaign` (and the `campaign` object from `POST /api/campaign/reanalyze`) now carries `stage` and `next_action`, derived server-side so every client shows the same round state.
+`stage` has the 1-based round, the current stage (setup, plan, run, record, learn), the started count and five ordered steps with a state and a detail line.
+Each pending run also reports the round it was started in (`pending[].round`, null for older runs).
+All existing fields are unchanged.
+
 ## 2026-10-12 (Apache-2.0 and a public README)
 
 ### Added - the license
