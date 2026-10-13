@@ -30,7 +30,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from fastapi import Depends, FastAPI, File, Form, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
@@ -80,7 +80,7 @@ log = logging.getLogger("kalos.portal")
 # interacting with that build's OpenBLAS threading, measured 2026-09-10 on
 # the first real compose deployment. The 4-thread default is kept for bare
 # metal (where it was tuned and behaves); containers, which already isolate
-# CPU, should set 0 - deploy/docker-compose.yaml now does.
+# CPU, should set 0 - deploy/compose.yaml now does.
 _TORCH_THREADS = int(
     os.environ.get("KALOS_TORCH_THREADS", "").strip() or str(min(4, os.cpu_count() or 1))
 )
@@ -267,7 +267,7 @@ def providers(principal: Principal = Depends(require_scope(READ))) -> dict:
 
 @app.get("/healthz")
 def healthz() -> dict:
-    """Liveness probe for a deploy healthcheck (deploy/Dockerfile.engine).
+    """Liveness probe for a deploy healthcheck (deploy/engine/Containerfile).
 
     Unauthenticated BY DESIGN, and safe to leave that way: no
     `Depends(require_scope(...))`.
@@ -309,8 +309,15 @@ def readyz(store: CampaignStore = Depends(get_campaign_store)) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+# The demo routes take their work size from the URL, so it is capped: each round
+# is a GP fit + acquisition, and an unbounded `rounds`/`q` let one request queue
+# hours of CPU outside the single analysis slot.
 @app.get("/api/single")
-def run_single(rounds: int = 6, q: int = 2) -> dict:
+def run_single(
+    rounds: int = Query(6, ge=1, le=12),
+    q: int = Query(2, ge=1, le=4),
+    _principal: Principal = Depends(require_scope(READ)),
+) -> dict:
     from kalos.core.optimize import propose
     from kalos.core.surrogate import Surrogate
 
@@ -341,13 +348,15 @@ def run_single(rounds: int = 6, q: int = 2) -> dict:
 
 
 @app.get("/api/multi")
-def run_multi(rounds: int = 5, q: int = 2) -> dict:
+def run_multi(
+    rounds: int = Query(5, ge=1, le=12),  # >= 1, so last_batch is always bound
+    q: int = Query(2, ge=1, le=4),
+    _principal: Principal = Depends(require_scope(READ)),
+) -> dict:
     from kalos.core.multiobjective import MultiObjectiveSurrogate, propose_multiobjective
     from kalos.core.surrogate import DEVICE, DTYPE
 
     _ensure_torch_threads()
-    rounds = max(1, rounds)  # at least one round, so last_batch is always bound
-    q = max(1, q)
     rng = np.random.default_rng(0)
     X = rng.uniform(0, 1, (8, 3))
     Y = _objectives(X)
@@ -445,7 +454,9 @@ async def run_uploaded(
 ) -> JSONResponse:
     from kalos.core.surrogate import FitError  # deferred: only needed to match the except below
 
-    raw = await file.read()
+    # One byte past the cap is enough for `_parse_upload` to reject it; never
+    # load a multi-GB body into this single process just to measure it.
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
     filename = file.filename or "uploaded dataset"
     tenant = _principal.tenant
     try:

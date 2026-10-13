@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Proprietary" }
 dependencies = [
-  "numpy>=1.24",
+  "numpy>=2.2.6",
   "pandas>=2.0",
   "scikit-learn>=1.3",
   "scipy>=1.10",
@@ -25,12 +25,12 @@ ml = ["torch>=2.2", "botorch>=0.11", "gpytorch>=1.11"]
 protein = ["transformers>=4.40"]
 # The web portal (FastAPI viewer over the live engine). The portal drives the
 # live GP surrogate, so it needs `ml` too - install as `kalos[ml,portal]`.
-portal = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9", "openpyxl>=3.1"]
+portal = ["fastapi>=0.143.0", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9", "openpyxl>=3.1.5"]
 # The LLM tier of `kalos.normalize` (kalos/normalize/llm.py). Pydantic ships
 # as a transitive dependency of `anthropic` and is not listed separately.
 # The torch-free deterministic core (units/synonyms/plan/apply) and the
 # offline fallback in llm.py need none of this.
-normalize = ["anthropic>=0.40"]
+normalize = ["anthropic>=1.5.0"]
 # `httpx` is the transport `starlette.testclient.TestClient` (used across the
 # portal tests) needs. It is not pulled in transitively by fastapi/starlette, so
 # a fresh `pip install -e ".[...,dev]"` (what CI does) leaves it absent and every
@@ -43,8 +43,8 @@ normalize = ["anthropic>=0.40"]
 # without this the two mocked-live tests error out on a fresh CI checkout. Listing
 # it in `dev` keeps that path genuinely covered instead of silently skipped.
 dev = [
-  "pytest>=7", "ruff>=0.6", "mypy>=1.11", "pandas-stubs", "scipy-stubs",
-  "httpx>=0.27,<1", "anthropic>=0.40",
+  "pytest>=9.1.1", "ruff>=0.6", "mypy>=1.11", "pandas-stubs", "scipy-stubs",
+  "httpx>=0.27,<1", "anthropic>=1.5.0",
 ]
 
 [tool.setuptools.packages.find]

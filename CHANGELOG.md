@@ -17,12 +17,52 @@ stack the viewer was never reachable anyway - only kalos-web's port is
 published. The Scale-Up Readout template stays: it is what
 `POST /api/scale/readout` returns, not a UI.
 
-### Changed - kalos-web builds its own image
+## 2026-10-10 (one request can no longer stall the engine)
 
-`deploy/Dockerfile.web` moved into kalos-web as its own `Dockerfile` (with
-its non-root and HEALTHCHECK checks). Compose now builds `web` from it, so
-the stack no longer assumes this repo's checkout folder is named `kalos` -
-which a fresh `kalos-engine` clone would have broken.
+### Fixed - the demo routes did unbounded work for anyone
+
+`GET /api/single` and `/api/multi` took `rounds` and `q` straight from the URL
+with no limit and no token, outside the one-analysis slot - and kalos-web's
+proxy forwards them with the query string. `?rounds=100000&q=64` queued hours
+of GP fits; `rounds=0` crashed with a 500. Now `rounds` is 1-12 and `q` is 1-4
+(422 otherwise, defaults unchanged), and both need the `read` scope like every
+other data route (open mode still serves them on loopback).
+
+### Fixed - uploads were read whole before the size check
+
+`/api/run` and `/api/scale/readout` read the entire body into memory, then
+rejected anything over the cap (`KALOS_MAX_UPLOAD_MB`, 25 MB by default). A multi-GB upload could
+exhaust the single engine process for every tenant. They now read at most one
+byte past the cap, which is all the check needs.
+
+## 2026-09-24 (proper container files)
+
+The deploy pack is now organized the way container tooling expects, and it
+builds the same under Docker and Podman.
+
+### Changed - one directory per image
+
+`deploy/engine/Containerfile` and `deploy/backup/Containerfile` replace
+`Dockerfile.engine` and `backup/Dockerfile`; the web image's Containerfile
+moved into the kalos-web repo itself (it builds that repo), so the kalos
+checkout no longer has to be named `kalos`. `deploy/compose.yaml` replaces
+`docker-compose.yaml`. Image contents are unchanged. Update any local
+scripts: `docker compose -f deploy/compose.yaml ...`.
+
+### Fixed - the engine build no longer ships the whole checkout to the builder
+
+There was no ignore file, so every engine build sent `.venv`, `.git`,
+agent worktrees and `deploy/backups/` (real database backups) as build
+context. A repo-root `.containerignore` allowlist (`.dockerignore` links to
+it) now sends only `pyproject.toml`, `README.md` and `kalos/`: about 0.8 MB,
+verified under both Docker and Podman.
+
+### Docs
+
+`deploy/RUNBOOK.md` gains a "Container files" section and Podman
+instructions (build with `--format docker`, or Podman silently drops the
+`HEALTHCHECK` the stack depends on). The web Containerfile's header now
+describes the same-origin engine proxy kalos-web actually uses.
 
 ## 2026-09-23 (the Scale-Up Readout)
 
@@ -66,6 +106,31 @@ Docstring and `docs/SCALE_EVIDENCE.md` now say the same thing, with the command 
 `leave_one_scale_out_report` gains `include_oof` (per-row out-of-fold arrays) and `held_out_scales`
 (evaluate only the named folds, skipping the pooled LOGO pass). Both default off, and the default
 output is pinned byte-identical by a regression test. `deploy/backups/` is now gitignored.
+
+## 2026-09-16 (production test cycle finds a pandas 3.x regression)
+
+The first full production test cycle against the merged deploy pack - a cold
+`docker compose` rebuild, then a real upload/campaign-start/log-result/
+reanalyze loop through the one published front door - found a fourth
+container-only-in-spirit defect: real, but invisible to the 791+ tests that
+existed before it because none of them exercised a dataset with a declared
+group column through the campaign loop.
+
+### Fixed - reanalyze crashed on any dataset with a declared group column
+
+`kalos/portal/analysis.py`'s LOGO grouping built `groups` from
+`df.loc[keep_index, gcol].astype(str)`. A folded campaign run has no value
+for a declared group column (e.g. `medium_base`) - it is not a proposable
+numeric feature - so that column always carries a missing value after a
+fold. Every other `.astype(str)` cast in that file already guards with
+`.fillna("")` for exactly this reason; this one call site did not, and
+pandas 3.x's default string-backed dtype stopped silently stringifying NaN
+to "nan" the way older pandas did - the gap used to be masked, now it raises
+`TypeError: '<' not supported between instances of 'float' and 'str'` inside
+`np.unique`, which the reanalyze route's catch-all turned into a generic
+400. Fixed with the same `.fillna("")` convention already used nearby, plus
+a regression test that seeds a dataset with a declared group column and
+reanalyzes after logging a result.
 
 ## 2026-09-10 (the deploy pack meets reality)
 
