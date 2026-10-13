@@ -304,7 +304,11 @@ class CampaignStore:
         base_rows: list[dict[str, Any]] = state["base_rows"]
         best = _best_measured(base_rows, target)
 
-        pending = [{**run, "awaiting": run["result"] is None} for run in state["pending"]]
+        # `round` is absent on runs started before it was stamped: reads null.
+        pending = [
+            {**run, "round": run.get("round"), "awaiting": run["result"] is None}
+            for run in state["pending"]
+        ]
         n_awaiting = sum(1 for run in pending if run["awaiting"])
         return {
             "has_campaign": True,
@@ -355,6 +359,7 @@ class CampaignStore:
                     "mode": recipe.get("mode"),
                     "reason": recipe.get("reason"),
                     "result": None,
+                    "round": state["round"],
                     "created_at": now,
                     "measured_at": None,
                 }
