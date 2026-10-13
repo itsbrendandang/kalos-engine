@@ -43,6 +43,12 @@ def _clean_auth_env(monkeypatch):
 # --- /healthz ----------------------------------------------------------- #
 
 
+def test_engine_is_api_only_so_root_is_404(client):
+    """The built-in viewer is gone; the UI is kalos-web."""
+    assert client.get("/").status_code == 404
+
+
+
 def test_healthz_returns_exactly_the_documented_body(client):
     resp = client.get("/healthz")
     assert resp.status_code == 200

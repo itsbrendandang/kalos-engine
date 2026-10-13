@@ -2,6 +2,21 @@
 
 Newest first.
 
+## 2026-10-10 (kalos-engine: the engine is API-only)
+
+The repo is now `itsbrendandang/kalos-engine` (GitHub redirects the old
+URL; the Python package is still `kalos`), and all UI lives in `kalos-web`.
+
+### Removed - the built-in viewer
+
+`GET /` (`kalos/portal/index.html`), `GET /fonts/Satoshi-Variable.woff2`, the
+vendored font, and DESIGN.md (which only described that page). Nothing is
+lost: kalos-web's `/analyze` covers "run your own data" (`POST /api/run`) and
+`/simulate` covers both demos (`/api/single`, `/api/multi`). In the deployed
+stack the viewer was never reachable anyway - only kalos-web's port is
+published. The Scale-Up Readout template stays: it is what
+`POST /api/scale/readout` returns, not a UI.
+
 ## 2026-10-10 (one request can no longer stall the engine)
 
 ### Fixed - the demo routes did unbounded work for anyone
