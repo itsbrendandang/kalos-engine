@@ -43,7 +43,7 @@ Env knobs that exist because this deployment found the need for them:
 
 - Docker with Compose v2 (`docker compose version`, not the standalone
   `docker-compose` v1 binary).
-- This repo (`kalos`) and `kalos-web` checked out as SIBLING directories,
+- This repo (`kalos-engine`) and `kalos-web` checked out as SIBLING directories,
   e.g. both under `~/GitHub/`. `deploy/compose.yaml`'s `web.build`
   section resolves `kalos-web`'s path as `../../kalos-web` relative to this
   file - if your checkout layout differs, that one path is the thing to
@@ -309,7 +309,7 @@ into the JS files on disk inside the image.
 - `deploy/compose.yaml` parses and resolves correctly:
   `docker compose config` (Compose v2, installed in this environment)
   succeeds against a filled-in `.env`, with all three build contexts
-  resolving to the expected paths (`kalos` repo root for `engine`, the
+  resolving to the expected paths (this repo's root for `engine`, the
   sibling `kalos-web` checkout for `web`, `deploy/backup` for `backup`) and
   all `${VAR}` substitutions resolving as intended.
 - Every fact this pack's comments assert about the kalos source was

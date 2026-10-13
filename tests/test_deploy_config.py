@@ -247,9 +247,8 @@ def test_containerfiles_run_as_non_root_user():
 
 
 def test_containerfiles_declare_a_healthcheck():
-    for name in ("engine/Containerfile",):
-        text = (DEPLOY_DIR / name).read_text()
-        assert "HEALTHCHECK" in text, f"{name} has no HEALTHCHECK"
+    text = (DEPLOY_DIR / "engine/Containerfile").read_text()
+    assert "HEALTHCHECK" in text, "engine/Containerfile has no HEALTHCHECK"
 
 
 def test_backup_script_is_syntactically_valid_posix_sh():
