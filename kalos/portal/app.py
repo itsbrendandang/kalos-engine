@@ -49,7 +49,6 @@ from kalos.portal.config import (
 from kalos.portal.campaign import CampaignStore, get_campaign_store
 from kalos.portal.campaign_routes import router as _campaign_router
 from kalos.portal.scale_routes import router as _scale_router
-from kalos.portal.viz_surface import router as _viz_surface_router
 from kalos.portal.uploads import (
     MAX_COLUMNS,
     MAX_CSV_ROWS,
@@ -520,10 +519,6 @@ app.include_router(_campaign_router)
 # `kalos.portal.scale_routes`; mounted here, same pattern as the router
 # above.
 app.include_router(_scale_router)
-
-# --- Response Surface Visualization: /viz/surface - interactive heatmap of the
-# GP posterior over the top 2 driver features. Routes are imported above.
-app.include_router(_viz_surface_router)
 
 __all__ = [
     "app",

@@ -111,7 +111,10 @@ def test_readyz_degrades_to_503_with_a_reason_when_the_store_is_broken(client, m
     assert resp.status_code == 503
     body = resp.json()
     assert body["status"] == "unavailable"
-    assert "malformed" in body["reason"]
+    # The reason is a fixed generic message - never the raw exception text,
+    # which could leak file paths, config details, or stack traces.
+    assert body["reason"] == "store check failed"
+    assert "malformed" not in body["reason"]
 
 
 def test_readyz_performs_a_read_not_a_write(client):
