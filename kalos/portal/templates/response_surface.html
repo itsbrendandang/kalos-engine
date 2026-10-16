@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kalos — Response Surface</title>
+<script src="https://cdn.plot.ly/plotly-2.35.0.min.js" charset="utf-8"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    color: #1a1f2b;
+    background: #f8f9fb;
+  }
+
+  /* Header bar */
+  .header {
+    background: #1e293b;
+    color: #e2e8f0;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .header h1 {
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .header h1 span { color: #7dd3fc; }
+  .header-meta {
+    font-size: 10px;
+    color: #94a3b8;
+    display: flex;
+    gap: 16px;
+  }
+  .header-meta b { color: #cbd5e1; font-weight: 600; }
+
+  /* Toolbar */
+  .toolbar {
+    background: #ffffff;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 8px 24px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .toolbar label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #5a6472;
+  }
+  .toolbar select, .toolbar button {
+    font-family: inherit;
+    font-size: 11px;
+    padding: 4px 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background: #fff;
+    color: #1a1f2b;
+  }
+  .toolbar select:focus, .toolbar button:focus {
+    outline: none;
+    border-color: #7dd3fc;
+    box-shadow: 0 0 0 2px rgba(125,211,252,0.2);
+  }
+  .toolbar button {
+    background: #1e293b;
+    color: #e2e8f0;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .toolbar button:hover { background: #334155; }
+  .toolbar button:active { background: #0f172a; }
+  .toolbar .sep { width: 1px; height: 24px; background: #e2e8f0; }
+  .toolbar .legend {
+    font-size: 10px;
+    color: #5a6472;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+  .toolbar .legend span {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    vertical-align: middle;
+    margin-right: 2px;
+  }
+  .legend-incumbent { background: #f59e0b; border: 1px solid #d97706; }
+  .legend-propsal { background: #ef4444; transform: rotate(45deg); width: 8px; height: 8px; }
+  .legend-run { background: #6366f1; border-radius: 50%; }
+
+  /* Chart */
+  .chart-container {
+    padding: 16px 24px;
+    background: #fff;
+  }
+  #surface-chart {
+    width: 100%;
+    min-height: 520px;
+  }
+
+  /* Fixed recipe card */
+  .info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px 24px;
+    padding: 12px 24px 20px;
+  }
+  .info-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 8px 12px;
+  }
+  .info-card .card-title {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #5a6472;
+    margin-bottom: 4px;
+  }
+  .info-card .card-value {
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  /* Stats row */
+  .stats {
+    display: flex;
+    gap: 24px;
+    padding: 0 24px 12px;
+    flex-wrap: wrap;
+  }
+  .stat {
+    font-size: 10px;
+    color: #5a6472;
+  }
+  .stat b {
+    color: #1a1f2b;
+    font-weight: 700;
+  }
+
+  /* Intended use */
+  .intended-use {
+    padding: 10px 24px 16px;
+    font-size: 9px;
+    color: #5a6472;
+    font-style: italic;
+    border-top: 1px solid #e2e8f0;
+    margin-top: 8px;
+  }
+
+  /* Print */
+  @media print {
+    body { background: #fff; }
+    .header { background: #1e293b; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .toolbar { display: none; }
+    #surface-chart { min-height: 400px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <h1><span>Kalos</span> — Response Surface</h1>
+  <div class="header-meta">
+    <span>Target: <b id="meta-target">—</b></span>
+    <span>Round: <b id="meta-round">—</b></span>
+    <span>Runs: <b id="meta-runs">—</b></span>
+    <span>Incumbent: <b id="meta-incumbent">—</b></span>
+  </div>
+</div>
+
+<!-- Toolbar -->
+<div class="toolbar">
+  <label for="surface-select">Sweep pair</label>
+  <select id="surface-select"></select>
+
+  <div class="sep"></div>
+  <label for="uncertainty-toggle">Uncertainty</label>
+  <select id="uncertainty-toggle">
+    <option value="none">Off</option>
+    <option value="color">Color overlay</option>
+    <option value="contour">Contour lines</option>
+  </select>
+
+  <button id="btn-print" onclick="window.print()">Print</button>
+
+  <div class="legend">
+    <span class="legend-incumbent" title="Incumbent (current best)"></span> Best
+    <span class="legend-propsal" title="Proposed next batch"></span> Proposals
+    <span class="legend-run" title="Observed experimental runs"></span> Runs
+  </div>
+</div>
+
+<!-- Stats -->
+<div class="stats" id="stats-row"></div>
+
+<!-- Chart -->
+<div class="chart-container">
+  <div id="surface-chart"></div>
+</div>
+
+<!-- Info cards -->
+<div class="info-grid" id="info-grid"></div>
+
+<div class="intended-use">
+  Development decision support only. Not a GMP or regulatory record.
+  The surface is a Bayesian posterior approximation, not a measured reality.
+</div>
+
+<!-- ===== DATA (baked in by the portal) ===== -->
+${data_injection}
+
+<script>
+(function() {
+  "use strict";
+
+  var surfaceData = window.SURFACE_DATA;
+  var proposals = window.SURFACE_PROPOSALS || [];
+  var extraPairs = window.SURFACE_EXTRA_PAIRS || [];
+  var target = window.SURFACE_TARGET || "target";
+  var round = window.SURFACE_ROUND || 0;
+  var nRuns = window.SURFACE_N_RUNS || 0;
+  var incumbentVal = window.SURFACE_INCUMBENT_VALUE || 0;
+
+  // --- Metadata ---
+  document.getElementById("meta-target").textContent = target;
+  document.getElementById("meta-round").textContent = "Round " + round;
+  document.getElementById("meta-runs").textContent = nRuns;
+  document.getElementById("meta-incumbent").textContent = incumbentVal.toFixed(3);
+
+  // --- Stats row ---
+  var statsEl = document.getElementById("stats-row");
+  if (surfaceData) {
+    var xName = surfaceData.x_feature;
+    var yName = surfaceData.y_feature;
+    statsEl.innerHTML =
+      '<div class="stat">Sweep: <b>' + xName + '</b> × <b>' + yName + '</b></div>' +
+      '<div class="stat">Grid: <b>21×21</b> = 441 points</div>' +
+      '<div class="stat">GP posterior: <b>SingleTaskGP</b> (Matérn 5/2)</div>';
+  }
+
+  // --- Info cards ---
+  var infoGrid = document.getElementById("info-grid");
+  if (surfaceData && surfaceData.fixed_recipe) {
+    var fixedRecipe = surfaceData.fixed_recipe;
+    var cards = "";
+    for (var k in fixedRecipe) {
+      if (k !== surfaceData.x_feature && k !== surfaceData.y_feature) {
+        cards += '<div class="info-card"><div class="card-title">' + k + '</div>' +
+                 '<div class="card-value">' + fixedRecipe[k] + '</div></div>';
+      }
+    }
+    infoGrid.innerHTML = cards;
+  }
+
+  // --- Build sweep pair selector ---
+  var selectEl = document.getElementById("surface-select");
+  var allPairs = [
+    { x: xName || "", y: yName || "" }
+  ];
+  for (var i = 0; i < extraPairs.length; i++) {
+    allPairs.push({ x: extraPairs[i].x_feature, y: extraPairs[i].y_feature });
+  }
+
+  for (var j = 0; j < allPairs.length; j++) {
+    var opt = document.createElement("option");
+    opt.value = j;
+    opt.textContent = allPairs[j].x + " × " + allPairs[j].y;
+    if (j === 0) opt.selected = true;
+    selectEl.appendChild(opt);
+  }
+
+  // --- Uncertainty toggle ---
+  var uncToggle = document.getElementById("uncertainty-toggle");
+  uncToggle.value = "contour";  // default: show contours
+
+  // --- Render ---
+  var chartEl = document.getElementById("surface-chart");
+
+  function renderSurface(pairIndex, uncMode) {
+    var data = (pairIndex === 0) ? surfaceData : null;
+    if (!data) {
+      // Use a placeholder message for non-default pairs
+      Plotly.react(chartEl, [], {
+        title: { text: "No surface data for this pair yet", font: { size: 14, color: "#5a6472" } },
+        xaxis: { title: "—", gridcolor: "#e2e8f0" },
+        yaxis: { title: "—", gridcolor: "#e2e8f0" },
+        margin: { t: 40, l: 60, r: 20, b: 60 }
+      }, { responsive: true });
+      return;
+    }
+
+    var xVals = data.x_vals;
+    var yVals = data.y_vals;
+    var zMatrix = data.z;
+    var stdMatrix = data.std || [];
+    var runs = data.runs || [];
+    var xName = data.x_feature;
+    var yName = data.y_feature;
+
+    // --- Heatmap trace (posterior mean) ---
+    var heatmap = {
+      z: zMatrix,
+      x: xVals,
+      y: yVals,
+      type: "heatmap",
+      colorscale: [
+        [0, "#3b82f6"],
+        [0.25, "#60a5fa"],
+        [0.5, "#fbbf24"],
+        [0.75, "#f97316"],
+        [1, "#dc2626"]
+      ],
+      colorbar: {
+        title: { text: "Predicted " + target, font: { size: 10, color: "#5a6472" } },
+        tickfont: { size: 9, color: "#5a6472" },
+        thickness: 14,
+        len: 0.75
+      },
+      xgap: 1,
+      ygap: 1,
+      hovertemplate:
+        xName + ": %{x:.4f}<br>" +
+        yName + ": %{y:.4f}<br>" +
+        "Predicted: %{z:.4f}<br><extra></extra>"
+    };
+
+    // --- Uncertainty overlay ---
+    var traces = [heatmap];
+    if (uncMode === "color") {
+      // Second heatmap for std dev
+      var uncertainty = {
+        z: stdMatrix,
+        x: xVals,
+        y: yVals,
+        type: "heatmap",
+        colorscale: [
+          [0, "rgba(99,102,241,0)"],
+          [1, "rgba(99,102,241,0.35)"]
+        ],
+        showscale: false,
+        xgap: 1,
+        ygap: 1,
+        hovertemplate:
+          xName + ": %{x:.4f}<br>" +
+          yName + ": %{y:.4f}<br>" +
+          "Std: %{z:.4f}<br><extra>Uncertainty</extra>",
+        opacity: 0.6
+      };
+      traces.push(uncertainty);
+    } else if (uncMode === "contour") {
+      // Contour lines on top
+      var contour = {
+        z: stdMatrix,
+        x: xVals,
+        y: yVals,
+        type: "contour",
+        contours: { start: 0, end: Math.max.apply(null, stdMatrix.flat()), size: Math.max.apply(null, stdMatrix.flat()) / 5 },
+        line: { color: "#6366f1", width: 1 },
+        fills: { color: "rgba(99,102,241,0.15)" },
+        showscale: false,
+        xgap: 1,
+        ygap: 1,
+        hovertemplate:
+          xName + ": %{x:.4f}<br>" +
+          yName + ": %{y:.4f}<br>" +
+          "Std: %{z:.4f}<br><extra>Uncertainty</extra>"
+      };
+      traces.push(contour);
+    }
+
+    // --- Observed runs scatter ---
+    if (runs.length > 0) {
+      var runsX = [], runsY = [], runsZ = [], runsHover = [];
+      for (var i = 0; i < runs.length; i++) {
+        runsX.push(runs[i][0]);
+        runsY.push(runs[i][1]);
+        runsZ.push(runs[i][2]);
+        runsHover.push("Run: value = " + runs[i][2].toFixed(3));
+      }
+      traces.push({
+        x: runsX,
+        y: runsY,
+        mode: "markers",
+        type: "scatter",
+        marker: {
+          size: 7,
+          color: runsZ,
+          colorscale: [
+            [0, "#6366f1"],
+            [1, "#818cf8"]
+          ],
+          line: { color: "#fff", width: 1 }
+        },
+        name: "Observed runs",
+        hovertemplate: runsHover.join("<br>") + "<extra></extra>"
+      });
+    }
+
+    // --- Incumbent marker ---
+    var incumbentRow = null;
+    if (surfaceData.z && surfaceData.z.length > 0) {
+      var maxZ = -Infinity, maxI = 0, maxJ = 0;
+      for (var i = 0; i < surfaceData.z.length; i++) {
+        for (var j = 0; j < surfaceData.z[i].length; j++) {
+          if (surfaceData.z[i][j] > maxZ) {
+            maxZ = surfaceData.z[i][j];
+            maxI = i; maxJ = j;
+          }
+        }
+      }
+      incumbentRow = {
+        x: [xVals[maxJ]],
+        y: [yVals[maxI]],
+        mode: "markers",
+        type: "scatter",
+        marker: {
+          symbol: "star",
+          size: 14,
+          color: "#f59e0b",
+          line: { color: "#d97706", width: 2 },
+          opacity: 0.95
+        },
+        name: "Incumbent",
+        hovertext: ["Incumbent: " + maxZ.toFixed(3)],
+        hoverinfo: "text"
+      };
+    }
+    if (incumbentRow) traces.push(incumbentRow);
+
+    // --- Proposal markers ---
+    if (proposals.length > 0) {
+      var propX = [], propY = [], propZ = [], propHover = [];
+      for (var i = 0; i < proposals.length; i++) {
+        var p = proposals[i];
+        // Proposals might have feature values if annotated
+        if (p.vals) {
+          propX.push(p.vals[0]);
+          propY.push(p.vals[1]);
+          propZ.push(p.pred || 0);
+          propHover.push("Proposed: pred=" + (p.pred || "?") + " std=" + (p.std || "?") + " mode=" + (p.mode || "?"));
+        } else if (p.x != null && p.y != null) {
+          propX.push(p.x);
+          propY.push(p.y);
+          propZ.push(p.pred || 0);
+          propHover.push("Proposed: pred=" + (p.pred || "?") + " mode=" + (p.mode || "?"));
+        }
+      }
+      if (propX.length > 0) {
+        traces.push({
+          x: propX,
+          y: propY,
+          mode: "markers",
+          type: "scatter",
+          marker: {
+            symbol: "diamond",
+            size: 12,
+            color: "#ef4444",
+            line: { color: "#b91c1c", width: 1.5 },
+            opacity: 0.9
+          },
+          name: "Proposals",
+          hovertext: propHover,
+          hoverinfo: "text"
+        });
+      }
+    }
+
+    // --- Layout ---
+    var layout = {
+      xaxis: {
+        title: { text: xName, font: { size: 11, color: "#5a6472" } },
+        gridcolor: "#e2e8f0",
+        zeroline: false,
+        tickfont: { size: 9, color: "#5a6472" }
+      },
+      yaxis: {
+        title: { text: yName, font: { size: 11, color: "#5a6472" } },
+        gridcolor: "#e2e8f0",
+        zeroline: false,
+        tickfont: { size: 9, color: "#5a6472" },
+        scaleanchor: "x",  // square aspect ratio
+        scaleratio: 1
+      },
+      margin: { t: 10, r: 80, b: 60, l: 60 },
+      showlegend: true,
+      legend: {
+        x: 1.02, y: 1,
+        font: { size: 9, color: "#5a6472" },
+        bgcolor: "rgba(255,255,255,0.8)"
+      },
+      hoverlabel: {
+        bgcolor: "#1e293b",
+        font: { color: "#fff", size: 11, family: "-apple-system, sans-serif" }
+      },
+      paper_bgcolor: "#fff",
+      plot_bgcolor: "#fff"
+    };
+
+    Plotly.react(chartEl, traces, layout, { responsive: true, displayModeBar: false });
+  }
+
+  // --- Event handlers ---
+  selectEl.addEventListener("change", function() {
+    renderSurface(parseInt(this.value), uncToggle.value);
+  });
+
+  uncToggle.addEventListener("change", function() {
+    renderSurface(parseInt(selectEl.value), this.value);
+  });
+
+  // --- Initial render ---
+  renderSurface(0, "contour");
+
+})();
+</script>
+</body>
+</html>
