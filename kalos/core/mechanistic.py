@@ -9,6 +9,22 @@ no better, or WORSE, than a plain GP (a deliberately wrong ODE did worse in the
 simulated benchmark of examples/mechanistic_benchmark.py), because the GP must
 first undo the wrong mean. Judge a mechanistic model on held-out data before use.
 
+OPT-IN, OFF BY DEFAULT. Nothing in the portal or `propose` uses this module; a
+caller must construct a `HybridSurrogate` explicitly. The evidence for a
+mechanistic prior mean is thin (one n=23 study), so it is not a default. A
+simulated check (examples/mechanistic_benchmark.py; Monod fed-batch truth with
+Haldane inhibition, 10 seeds) found: a correct or mildly wrong ODE reached 95% of
+the best response in ~5 evaluations vs ~9 for the plain GP; a severely wrong ODE
+was no better (3 seeds faster, 3 slower, 4 tied); an adversarial ODE was
+slightly worse (1 faster, 3 slower, 6 tied). Judge your own ODE on held-out
+data before turning it on.
+
+Example (Monod fed-batch as the GP prior mean):
+
+    from kalos.bench.mechanistic_benchmark import LEVELS
+    hybrid = HybridSurrogate(LEVELS["mild"]).fit(X, y, bounds=bounds)
+    mean, std = hybrid.predict(X_new)
+
 Scope today: fit + predict (mean/std). Handing a hybrid straight to
 `kalos.core.optimize.propose` is NOT supported yet - `propose` needs a BoTorch
 model, and the residual GP alone ignores the mechanistic mean. Next step is to
