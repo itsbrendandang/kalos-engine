@@ -275,3 +275,103 @@ def _response_surface_gp(
         }
     except Exception:
         return {"reason": "Response surface computation failed"}
+
+
+def _response_surface_extra_pairs(
+    s,
+    X_fit: np.ndarray,
+    y_fit: np.ndarray,
+    cont_feats: list,
+    cat_dims: list | None,
+    bounds: np.ndarray,
+    drv: list,
+    incumbent: float,
+) -> list[dict] | None:
+    """Compute response surfaces for additional feature pairs (not just the top 2).
+
+    Returns a list of dict entries, one per extra pair, in the same shape as
+    the primary surface. Useful when there are many features and a scientist
+    wants to sweep pair (2,3) or (1,4) without re-running _analyze.
+
+    Only runs when the surrogate `s` is still alive (called from the portal
+    route that calls _analyze). Falls through to the primary surface's top-4
+    driver selection minus the pair already used.
+    """
+    if not cont_feats or not drv:
+        return None
+
+    # Build a map of feature name -> index in X_fit
+    feat_idx: dict[str, int] = {}
+    for i, name in enumerate(cont_feats):
+        feat_idx[str(name)] = i
+
+    # Already-used pair indices
+    used_indices: set[int] = set()
+    for d in drv[:4]:
+        name = d["name"]
+        if name in feat_idx:
+            used_indices.add(feat_idx[name])
+            if len(used_indices) >= 2:
+                break
+
+    if len(used_indices) < 2:
+        return None
+
+    remaining = [name for name in cont_feats if name in feat_idx and feat_idx[name] not in used_indices]
+
+    if len(remaining) < 2:
+        return None
+
+    results: list[dict] = []
+
+    # Take up to 3 additional pairs from remaining features
+    remaining_pairs = []
+    used_names: set[str] = set()
+    for name in remaining:
+        if name in used_names:
+            continue
+        remaining_pairs.append(name)
+        used_names.add(name)
+        if len(remaining_pairs) == 2:
+            # Shuffle the remaining pairs randomly but deterministically
+            rng = np.random.default_rng(42)
+            rng.shuffle(remaining_pairs)
+            break
+
+    for idx in range(0, len(remaining_pairs) - 1, 2):
+        x_name = remaining_pairs[idx]
+        y_name = remaining_pairs[idx + 1]
+        x_idx = feat_idx[x_name]
+        y_idx = feat_idx[y_name]
+
+        try:
+            x_vals = np.linspace(float(bounds[0, x_idx]), float(bounds[1, x_idx]), 11)
+            y_vals = np.linspace(float(bounds[0, y_idx]), float(bounds[1, y_idx]), 11)
+
+            incumbent_idx = int(np.argmax(y_fit))
+            incumbent_recipe = X_fit[incumbent_idx].copy()
+
+            z = np.zeros((11, 11))
+            std_grid = np.zeros((11, 11))
+
+            for i, yv in enumerate(y_vals):
+                for j, xv in enumerate(x_vals):
+                    point = incumbent_recipe.copy()
+                    point[x_idx] = xv
+                    point[y_idx] = yv
+                    mean, sd = s.posterior(point.reshape(1, -1))
+                    z[i, j] = float(mean[0])
+                    std_grid[i, j] = float(sd[0])
+
+            results.append({
+                "x_feature": x_name,
+                "y_feature": y_name,
+                "x_vals": [round(float(v), 4) for v in x_vals],
+                "y_vals": [round(float(v), 4) for v in y_vals],
+                "z": [[round(float(z[i, j]), 4) for j in range(11)] for i in range(11)],
+                "std": [[round(float(std_grid[i, j]), 4) for j in range(11)] for i in range(11)],
+            })
+        except Exception:
+            continue
+
+    return results if results else None
