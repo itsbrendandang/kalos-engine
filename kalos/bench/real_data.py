@@ -235,8 +235,8 @@ def compare(
     budget is shrunk (fewer rounds / smaller initial design) and the effective
     budget disclosed; if even a minimal budget does not fit it is `skipped`."""
     seeds = list(seeds) if seeds is not None else list(range(5))
-    if len(seeds) < 5:
-        raise ValueError("use at least 5 seeds so seed variance is meaningful")
+    if len(set(seeds)) < 5:
+        raise ValueError("use at least 5 distinct seeds so seed variance is meaningful")
     out: dict = {"arms": {}}
     for name, (X, y) in arms.items():
         n = len(y)
@@ -298,6 +298,7 @@ def write_report(summary: dict, out_dir: str | Path) -> tuple[Path, Path]:
 # real file (it was not downloaded here); override them via the arguments.
 INDPENSIM_BATCH_COL = "Batch ID"
 INDPENSIM_TARGET_COL = "Penicillin concentration(P:g/L)"
+INDPENSIM_TIME_COL = "Time (h)"
 INDPENSIM_RECIPE_COLS = (
     "Temperature(T:K)", "pH(pH:pH)", "Aeration rate(Fg:L/h)", "Agitator RPM(RPM:RPM)",
     "Sugar feed rate(Fs:L/h)",
@@ -315,7 +316,8 @@ def indpensim_path(explicit: str | Path | None = None) -> Path | None:
     media = os.environ.get("KALOS_MEDIA_DATA")
     if media:
         for p in sorted(Path(media).expanduser().resolve().glob("*IndPenSim*.csv")):
-            return p
+            if p.is_file():
+                return p
     return None
 
 
@@ -325,26 +327,47 @@ def load_indpensim_pool(
     batch_col: str = INDPENSIM_BATCH_COL,
     target_col: str = INDPENSIM_TARGET_COL,
     recipe_cols: tuple[str, ...] = INDPENSIM_RECIPE_COLS,
+    time_col: str | None = INDPENSIM_TIME_COL,
+    chunksize: int = 100_000,
 ) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """Aggregate per batch: recipe = per-batch mean of each recipe column,
-    target = final penicillin value of the batch. Returns (X, y, feature_names).
-    Streams only the needed columns, so memory stays bounded.
+    target = penicillin value at the batch's LATEST time. Returns (X, y, names).
+
+    Reads only the needed columns, `chunksize` rows at a time, keeping one small
+    accumulator per batch, so memory is bounded by the number of batches (not rows).
+    `time_col` orders rows within a batch; pass None to trust file order (rows are
+    then taken as already time-sorted). Column defaults are unverified; override them.
     """
     p = indpensim_path(path)
     if p is None or p.suffix.lower() != ".csv":
         raise FileNotFoundError(
             "IndPenSim CSV not found: pass a path or set KALOS_INDPENSIM_PATH / KALOS_MEDIA_DATA"
         )
-    cols = [batch_col, target_col, *recipe_cols]
+    cols = [batch_col, target_col, *recipe_cols, *([time_col] if time_col else [])]
     header = pd.read_csv(p, nrows=0).columns
     missing = [c for c in cols if c not in header]
     if missing:
         raise ValueError(f"IndPenSim file is missing columns {missing}; override the column names")
-    df = pd.read_csv(p, usecols=cols)
-    for c in (target_col, *recipe_cols):
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    g = df.dropna(subset=[target_col]).groupby(batch_col, sort=False)
-    y = g[target_col].last()
-    X = g[list(recipe_cols)].mean().loc[y.index]
-    keep = np.isfinite(X.to_numpy()).all(1) & np.isfinite(y.to_numpy())
-    return X.to_numpy(float)[keep], y.to_numpy(float)[keep], list(recipe_cols)
+    numeric = [target_col, *recipe_cols, *([time_col] if time_col else [])]
+    k = len(recipe_cols)
+    acc: dict = {}  # batch -> [sum(recipe), count(recipe), last_t, last_y]
+    row_no = 0
+    for chunk in pd.read_csv(p, usecols=cols, chunksize=chunksize):
+        for c in numeric:
+            chunk[c] = pd.to_numeric(chunk[c], errors="coerce")
+        chunk = chunk.dropna(subset=[target_col])
+        t = chunk[time_col].to_numpy(float) if time_col else row_no + np.arange(len(chunk), dtype=float)
+        row_no += len(chunk)
+        rec = chunk[list(recipe_cols)].to_numpy(float)
+        ok = np.isfinite(t)
+        for b, ti, yi, ri in zip(chunk[batch_col].to_numpy()[ok], t[ok], chunk[target_col].to_numpy(float)[ok], rec[ok]):
+            a = acc.setdefault(b, [np.zeros(k), np.zeros(k), -np.inf, np.nan])
+            fin = np.isfinite(ri)
+            a[0][fin] += ri[fin]
+            a[1][fin] += 1
+            if ti >= a[2]:
+                a[2], a[3] = ti, yi
+    X = np.array([a[0] / np.where(a[1] > 0, a[1], np.nan) for a in acc.values()], float).reshape(-1, k)
+    y = np.array([a[3] for a in acc.values()], float)
+    keep = np.isfinite(X).all(1) & np.isfinite(y)
+    return X[keep], y[keep], list(recipe_cols)
