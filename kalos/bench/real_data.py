@@ -270,8 +270,8 @@ def plotly_html(summary: dict, title: str = "Kalos BO convergence: hybrid/semi-s
                            "line": {"color": color, "dash": "dash"}})
     layout = {"title": title, "xaxis": {"title": "BO round (q per round)"},
               "yaxis": {"title": "best-so-far / pool best", "range": [0, 1.05]}}
-    # json.dumps output is safe inside <script> once "</" is neutralized.
-    payload = json.dumps({"data": traces, "layout": layout}).replace("</", "<\\/")
+    # Every '<' becomes \u003c (still valid JSON), so no string can open or close a tag.
+    payload = json.dumps({"data": traces, "layout": layout}).replace("<", "\\u003c")
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         f"<title>{html.escape(title)}</title>"

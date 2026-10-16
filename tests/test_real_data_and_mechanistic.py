@@ -68,7 +68,10 @@ def test_report_written_and_html_escaped(tmp_path):
     jp, hp = write_report(summary, tmp_path / "out")
     assert json.loads(jp.read_text())["arms"]["real_only"]["n_rows"] == 1
     assert "Plotly.newPlot" in hp.read_text()
-    assert "</script><script>" not in plotly_html(summary, title="</script><script>alert(1)")
+    html = plotly_html(summary, title="</script><script>alert(1)")
+    assert "</script><script>" not in html
+    body = html.split("<script>const f=", 1)[1].rsplit(";Plotly", 1)[0]
+    assert "<" not in body and json.loads(body)["data"]  # still valid JSON
 
 
 # ---- mechanistic bridge --------------------------------------------------
@@ -245,3 +248,14 @@ def test_hybrid_rejects_scalar_and_wrong_shape_output(bad):
     X = np.random.default_rng(0).uniform(size=(8, 2))
     with pytest.raises(ValueError, match="one value per row"):
         HybridSurrogate(bad).fit(X, X.sum(1), np.array([[0, 0], [1, 1]], float))
+
+
+def test_script_exits_cleanly_when_dataset_missing(tmp_path):
+    import subprocess
+    import sys
+
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "examples/real_data_validation.py"), "--data", str(tmp_path / "nope.csv")],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert r.returncode == 2 and "dataset not found" in r.stderr and "Traceback" not in r.stderr

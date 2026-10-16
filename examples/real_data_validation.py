@@ -33,6 +33,14 @@ def main() -> int:
 
     import pandas as pd
 
+    if not Path(a.data).is_file():
+        print(
+            f"dataset not found: {a.data}\n"
+            "dataset_0.csv is the 715-row Kaggle 'Fermentation optimization' set (Apache-2.0; only the first "
+            "~20 source runs are measured). Download it and pass --data PATH.",
+            file=sys.stderr,
+        )
+        return 2
     kw = dict(exclude_contaminated=not a.include_contaminated)
     all_rows = pd.read_csv(a.data)
     semi = load_real_frame(a.data, DATASET_0, **kw)
