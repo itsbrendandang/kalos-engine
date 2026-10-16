@@ -81,12 +81,35 @@ class ODEModel:
         return out
 
 
-class HybridSurrogate:
-    """prediction(X) = mechanistic(X) + GP_residual(X)."""
+class _CallableModel:
+    def __init__(self, fn: Callable) -> None:
+        self._fn = fn
 
-    def __init__(self, mechanistic: MechanisticModel) -> None:
-        if not isinstance(mechanistic, MechanisticModel):
-            raise TypeError("mechanistic must provide evaluate(X) -> ndarray")
+    def evaluate(self, X: np.ndarray) -> np.ndarray:
+        return np.asarray(self._fn(X), float)
+
+
+class _NoMechanism:
+    """Zero prior mean: the hybrid then behaves exactly like a plain GP."""
+
+    def evaluate(self, X: np.ndarray) -> np.ndarray:
+        return np.zeros(len(np.atleast_2d(X)))
+
+
+class HybridSurrogate:
+    """prediction(X) = mechanistic(X) + GP_residual(X).
+
+    `mechanistic` may be a `MechanisticModel`, a plain callable X -> y (used as
+    the GP prior mean), or None (falls back to the current plain-GP behavior).
+    """
+
+    def __init__(self, mechanistic: "MechanisticModel | Callable | None" = None) -> None:
+        if mechanistic is None:
+            mechanistic = _NoMechanism()
+        elif not isinstance(mechanistic, MechanisticModel):
+            if not callable(mechanistic):
+                raise TypeError("mechanistic must be a MechanisticModel, a callable X -> y, or None")
+            mechanistic = _CallableModel(mechanistic)
         self.mechanistic = mechanistic
         self.residual = None  # kalos.core.surrogate.Surrogate once fitted
 

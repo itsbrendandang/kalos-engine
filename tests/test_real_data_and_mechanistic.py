@@ -9,7 +9,8 @@ import pandas as pd
 import pytest
 
 from kalos.bench.real_data import (
-    DATASET_0, RealDataMapping, frame_to_pool, load_real_frame, plotly_html, run_pool_bo, write_report,
+    DATASET_0, RealDataMapping, compare, frame_to_pool, indpensim_path, load_indpensim_pool,
+    load_real_frame, plotly_html, run_pool_bo, write_report,
 )
 from kalos.core.mechanistic import HybridSurrogate, MechanisticModel, ODEModel, monod_example
 
@@ -55,7 +56,8 @@ def test_run_pool_bo_shapes_and_monotone():
     X = rng.uniform(size=(60, 3))
     y = -((X - 0.5) ** 2).sum(1) + 1.0
     res = run_pool_bo(X, y, rounds=3, q=2, n_init=5, seed=0)
-    assert len(res["bo"]) == len(res["random"]) == 4
+    assert len(res["bo"]) == len(res["random"]) == len(res["lhs"]) == 4
+    assert all(b >= a for a, b in zip(res["lhs"], res["lhs"][1:]))
     assert all(b >= a for a, b in zip(res["bo"], res["bo"][1:]))
     with pytest.raises(ValueError, match="too small"):
         run_pool_bo(X[:8], y[:8], rounds=3, q=2, n_init=5)
@@ -103,6 +105,16 @@ def test_hybrid_surrogate_fit_predict():
         HybridSurrogate(object())
 
 
+def test_hybrid_accepts_plain_callable_and_none():
+    rng = np.random.default_rng(2)
+    X = rng.uniform(size=(15, 2))
+    y = X.sum(1)
+    b = np.array([[0, 0], [1, 1]], float)
+    mu_c, _ = HybridSurrogate(lambda Z: np.atleast_2d(Z).sum(1)).fit(X, y, b).predict(X)
+    mu_n, _ = HybridSurrogate(None).fit(X, y, b).predict(X)
+    assert np.allclose(mu_c, y, atol=1e-2) and np.allclose(mu_n, y, atol=0.3)
+
+
 def test_campaign_sql_identifier_guard():
     from kalos.portal.campaign import _checked_identifier
 
@@ -110,3 +122,28 @@ def test_campaign_sql_identifier_guard():
     for bad in ("x; DROP TABLE campaigns", "a b", "1abc", "", 'a"b', "campaigns_backup_1\n"):
         with pytest.raises(ValueError):
             _checked_identifier(bad)
+
+
+def test_compare_requires_five_seeds():
+    X = np.random.default_rng(0).uniform(size=(40, 2))
+    with pytest.raises(ValueError, match="at least 5 seeds"):
+        compare((X, X.sum(1)), (X, X.sum(1)), seeds=[0, 1, 2])
+
+
+def test_indpensim_loader_aggregates_per_batch(tmp_path, monkeypatch):
+    rows = ["Batch ID,Penicillin concentration(P:g/L),a,b"]
+    for b in (1, 2, 3):
+        for t in range(4):
+            rows.append(f"{b},{b * 10 + t},{b + t},{2 * b}")
+    f = tmp_path / "100_Batches_IndPenSim_V3.csv"
+    f.write_text("\n".join(rows))
+    X, y, names = load_indpensim_pool(f, recipe_cols=("a", "b"))
+    assert X.shape == (3, 2) and y.tolist() == [13.0, 23.0, 33.0] and names == ["a", "b"]
+    monkeypatch.setenv("KALOS_MEDIA_DATA", str(tmp_path))
+    monkeypatch.delenv("KALOS_INDPENSIM_PATH", raising=False)
+    assert indpensim_path() == f.resolve()
+    with pytest.raises(ValueError, match="missing columns"):
+        load_indpensim_pool(f)  # default IndPenSim column names are absent
+    monkeypatch.delenv("KALOS_MEDIA_DATA")
+    with pytest.raises(FileNotFoundError):
+        load_indpensim_pool(None)
