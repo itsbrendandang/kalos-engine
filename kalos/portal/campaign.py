@@ -27,7 +27,6 @@ import json
 import logging
 import math
 import os
-import re
 import sqlite3
 import threading
 import time
@@ -83,19 +82,7 @@ def _backup_table_name(conn: sqlite3.Connection) -> str:
     n = 1
     while f"campaigns_backup_{n}" in existing:
         n += 1
-    return _checked_identifier(f"campaigns_backup_{n}")
-
-
-_SAFE_IDENTIFIER = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
-
-
-def _checked_identifier(name: str) -> str:
-    """SQL identifiers cannot be bound as parameters, so a name interpolated into
-    DDL/SELECT text must be proven safe first (defense in depth: today it is
-    always generated here, never read back from sqlite_master)."""
-    if not _SAFE_IDENTIFIER.fullmatch(name):
-        raise ValueError("unsafe SQL identifier")
-    return name
+    return f"campaigns_backup_{n}"
 
 
 def _ensure_campaigns_schema(conn: sqlite3.Connection) -> str | None:
@@ -135,7 +122,7 @@ def _ensure_campaigns_schema(conn: sqlite3.Connection) -> str | None:
     backup = _backup_table_name(conn)
     salvageable = _REQUIRED_COLUMNS <= old_columns
     with conn:
-        conn.execute(f"ALTER TABLE campaigns RENAME TO {_checked_identifier(backup)}")
+        conn.execute(f"ALTER TABLE campaigns RENAME TO {backup}")
         conn.execute(_SCHEMA)
         if salvageable:
             # One row per tenant: the newest by updated_at. GROUP BY with a bare
@@ -143,7 +130,7 @@ def _ensure_campaigns_schema(conn: sqlite3.Connection) -> str | None:
             # that produced the max), which is exactly the row wanted here.
             conn.execute(
                 "INSERT INTO campaigns (tenant, state, updated_at) "
-                f"SELECT tenant, state, MAX(updated_at) FROM {_checked_identifier(backup)} GROUP BY tenant"
+                f"SELECT tenant, state, MAX(updated_at) FROM {backup} GROUP BY tenant"
             )
     copied = conn.execute("SELECT COUNT(*) FROM campaigns").fetchone()[0]
     return (

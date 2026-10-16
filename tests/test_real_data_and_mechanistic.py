@@ -5,11 +5,10 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from kalos.bench.real_data import (
-    DATASET_0, RealDataMapping, compare, frame_to_pool, indpensim_path, load_indpensim_pool,
+    DATASET_0, RealDataMapping, compare, indpensim_path, load_indpensim_pool,
     load_real_frame, plotly_html, run_pool_bo, write_report,
 )
 from kalos.core.mechanistic import HybridSurrogate, MechanisticModel, ODEModel, monod_example
@@ -65,9 +64,9 @@ def test_run_pool_bo_shapes_and_monotone():
 
 def test_report_written_and_html_escaped(tmp_path):
     curve = {"n_rows": 1, "bo_mean": [0.1, 0.2], "bo_std": [0, 0], "random_mean": [0.1, 0.1]}
-    summary = {"real": curve, "synthetic": curve}
+    summary = {"arms": {"real_only": curve, "synthetic_fixture": curve}}
     jp, hp = write_report(summary, tmp_path / "out")
-    assert json.loads(jp.read_text())["real"]["n_rows"] == 1
+    assert json.loads(jp.read_text())["arms"]["real_only"]["n_rows"] == 1
     assert "Plotly.newPlot" in hp.read_text()
     assert "</script><script>" not in plotly_html(summary, title="</script><script>alert(1)")
 
@@ -115,19 +114,83 @@ def test_hybrid_accepts_plain_callable_and_none():
     assert np.allclose(mu_c, y, atol=1e-2) and np.allclose(mu_n, y, atol=0.3)
 
 
-def test_campaign_sql_identifier_guard():
-    from kalos.portal.campaign import _checked_identifier
-
-    assert _checked_identifier("campaigns_backup_3") == "campaigns_backup_3"
-    for bad in ("x; DROP TABLE campaigns", "a b", "1abc", "", 'a"b', "campaigns_backup_1\n"):
-        with pytest.raises(ValueError):
-            _checked_identifier(bad)
-
-
 def test_compare_requires_five_seeds():
     X = np.random.default_rng(0).uniform(size=(40, 2))
     with pytest.raises(ValueError, match="at least 5 seeds"):
-        compare((X, X.sum(1)), (X, X.sum(1)), seeds=[0, 1, 2])
+        compare({"a": (X, X.sum(1))}, seeds=[0, 1, 2])
+
+
+def test_compare_shrinks_small_pool_and_skips_tiny_one():
+    rng = np.random.default_rng(0)
+    X = rng.uniform(size=(12, 2))
+    out = compare({"small": (X, X.sum(1)), "tiny": (X[:4], X[:4].sum(1))}, rounds=10, q=2, n_init=6, seeds=list(range(5)))
+    small = out["arms"]["small"]
+    assert small["rounds"] < 10 and small["requested_rounds"] == 10 and small["n_init"] + small["rounds"] * 2 <= 12
+    assert "skipped" in out["arms"]["tiny"]
+
+
+def test_report_has_no_nan_curves_for_skipped_arm(tmp_path):
+    out = {"arms": {"x": {"skipped": "tiny", "n_rows": 3}}}
+    jp, hp = write_report(out, tmp_path)
+    assert "Plotly.newPlot" in hp.read_text()
+
+
+@needs_data
+def test_real_only_filters_to_measured_rows_and_excludes_min_do():
+    allr = load_real_frame(DATA, exclude_contaminated=False)
+    real = load_real_frame(DATA, exclude_contaminated=False, real_only=True)
+    assert 0 < len(real) < 25 < len(allr)
+    assert (real["data_type"] == "Real").all()
+    assert "min_do_pct" not in DATASET_0.features  # measured minimum, not a setpoint
+
+
+def test_real_only_requires_data_type_column(tmp_path):
+    f = tmp_path / "d.csv"
+    f.write_text("t,a\n1,2\n")
+    with pytest.raises(ValueError, match="data_type"):
+        load_real_frame(f, RealDataMapping(titer="t", timepoint="a", drivers=()), real_only=True)
+
+
+def test_non_finite_features_and_targets_are_dropped(tmp_path):
+    f = tmp_path / "d.csv"
+    f.write_text("t,a,b\n1,2,3\ninf,2,3\n1,inf,3\n1,-inf,3\n1,2,nan\n2,3,4\n")
+    df = load_real_frame(f, RealDataMapping(titer="t", timepoint="a", drivers=("b",)))
+    assert len(df) == 2 and np.isfinite(df[["t", "a", "b"]].to_numpy()).all()
+
+
+def test_bo_and_random_share_initial_design_and_are_repeatable():
+    rng = np.random.default_rng(3)
+    X = rng.uniform(size=(50, 3))
+    y = -((X - 0.4) ** 2).sum(1)
+    a = run_pool_bo(X, y, rounds=2, q=2, n_init=5, seed=7)
+    b = run_pool_bo(X, y, rounds=2, q=2, n_init=5, seed=7)
+    assert a == b  # same seed, identical outcome
+    assert a["bo"][0] == a["random"][0]  # same starting best => same initial design
+    assert run_pool_bo(X, y, rounds=2, q=2, n_init=5, seed=8) != a
+
+
+def test_gp_is_only_fit_on_already_measured_rows(monkeypatch):
+    from kalos.core.surrogate import Surrogate
+    from kalos.bench.real_data import _normalize
+
+    calls = []
+    real_fit = Surrogate.fit
+
+    def spy(self, X, y, *args, **kw):
+        calls.append((np.array(X), np.array(y)))
+        return real_fit(self, X, y, *args, **kw)
+
+    monkeypatch.setattr(Surrogate, "fit", spy)
+    rng = np.random.default_rng(5)
+    X = rng.uniform(size=(40, 2))
+    y = X.sum(1)
+    res = run_pool_bo(X, y, rounds=3, q=2, n_init=5, seed=1)
+    ev, Xn = res["evaluated"], _normalize(X)
+    assert len(calls) == 3
+    for r, (Xf, yf) in enumerate(calls):
+        seen = ev[: 5 + r * 2]  # rows revealed BEFORE round r
+        assert np.allclose(Xf, Xn[seen]) and np.allclose(yf, y[seen])
+        assert len(set(ev[5 + r * 2:])) == len(ev[5 + r * 2:])  # later picks never seen by the fit
 
 
 def test_indpensim_loader_aggregates_per_batch(tmp_path, monkeypatch):
@@ -147,3 +210,38 @@ def test_indpensim_loader_aggregates_per_batch(tmp_path, monkeypatch):
     monkeypatch.delenv("KALOS_MEDIA_DATA")
     with pytest.raises(FileNotFoundError):
         load_indpensim_pool(None)
+
+
+# ---- mechanistic hardening -----------------------------------------------
+
+def _ode(rhs=None, params=None, y0=None, readout=None):
+    return ODEModel(
+        rhs or (lambda t, s, p: [-s[0]]),
+        params or (lambda x: x),
+        y0 or (lambda x: [1.0]),
+        readout or (lambda t, y: y[0, -1]),
+        1.0,
+    )
+
+
+@pytest.mark.parametrize("which", ["rhs", "params", "y0", "readout"])
+@pytest.mark.parametrize("exc", [RuntimeError, TypeError, IndexError, KeyError])
+def test_ode_callbacks_that_raise_yield_nan(which, exc):
+    def boom(*a, **k):
+        raise exc("x")
+
+    kw = {"rhs": dict(rhs=boom), "params": dict(params=boom), "y0": dict(y0=boom), "readout": dict(readout=boom)}[which]
+    assert np.isnan(_ode(**kw).evaluate(np.array([[1.0], [2.0]]))).all()
+
+
+def test_ode_nan_readout_is_nan_and_good_rows_survive():
+    ok = _ode(y0=lambda x: [x[0]], readout=lambda t, y: np.nan if y[0, 0] > 1.5 else y[0, -1])
+    out = ok.evaluate(np.array([[1.0], [2.0]]))
+    assert np.isfinite(out[0]) and np.isnan(out[1])
+
+
+@pytest.mark.parametrize("bad", [lambda X: 1.0, lambda X: np.zeros(3), lambda X: np.zeros((len(X), 1))])
+def test_hybrid_rejects_scalar_and_wrong_shape_output(bad):
+    X = np.random.default_rng(0).uniform(size=(8, 2))
+    with pytest.raises(ValueError, match="one value per row"):
+        HybridSurrogate(bad).fit(X, X.sum(1), np.array([[0, 0], [1, 1]], float))

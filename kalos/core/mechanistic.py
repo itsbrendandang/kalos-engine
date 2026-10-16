@@ -76,8 +76,8 @@ class ODEModel:
                 if sol.success:
                     v = float(self.readout(sol.t, sol.y))
                     out[i] = v if np.isfinite(v) else np.nan
-            except (ValueError, FloatingPointError, ArithmeticError):
-                pass  # leave NaN: this row has no mechanistic prediction
+            except Exception:  # noqa: BLE001 - user callbacks (rhs, mapping, readout) can raise anything
+                pass  # leave NaN: this row has no mechanistic prediction (contract: never raises)
         return out
 
 
@@ -114,7 +114,14 @@ class HybridSurrogate:
         self.residual = None  # kalos.core.surrogate.Surrogate once fitted
 
     def _mech(self, X) -> np.ndarray:
-        m = np.asarray(self.mechanistic.evaluate(np.atleast_2d(np.asarray(X, float))), float).reshape(-1)
+        Xa = np.atleast_2d(np.asarray(X, float))
+        m = np.asarray(self.mechanistic.evaluate(Xa), float)
+        # No silent broadcasting: a scalar or wrong-length output would shift every
+        # row's prior mean by a wrong amount without any error.
+        if m.ndim != 1 or m.shape[0] != Xa.shape[0]:
+            raise ValueError(
+                f"mechanistic model must return one value per row: expected shape ({Xa.shape[0]},), got {m.shape}"
+            )
         return np.where(np.isfinite(m), m, 0.0)
 
     def fit(self, X, y, bounds, **kwargs) -> "HybridSurrogate":

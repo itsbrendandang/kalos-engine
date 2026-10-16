@@ -33,34 +33,38 @@ def main() -> int:
 
     import pandas as pd
 
-    raw_rows = len(pd.read_csv(a.data))
-    df = load_real_frame(a.data, DATASET_0, exclude_contaminated=not a.include_contaminated)
-    real = frame_to_pool(df, DATASET_0)
+    kw = dict(exclude_contaminated=not a.include_contaminated)
+    all_rows = pd.read_csv(a.data)
+    semi = load_real_frame(a.data, DATASET_0, **kw)
+    real = load_real_frame(a.data, DATASET_0, real_only=True, **kw)
     syn_df = pd.read_csv(ROOT / "examples/synthetic_bioprocess/synthetic_bioprocess.csv")
-    X, y, _ = pool_from_frame(syn_df, "titer_g_L")
+    Xs, ys, _ = pool_from_frame(syn_df, "titer_g_L")
 
-    summary = compare(real, (X, y), rounds=a.rounds, q=a.q, seeds=list(range(a.seeds)))
-    summary["real"]["rows_in_file"] = raw_rows
-    summary["real"]["label"] = (
-        "hybrid/semi-synthetic: only the first ~20 source runs are real, the rest are ML-synthesized"
-    )
-    summary["real"]["roles"] = {
-        "titer": DATASET_0.titer, "timepoint": DATASET_0.timepoint, "drivers": list(DATASET_0.drivers),
+    arms = {
+        # Only the rows flagged data_type == Real: the only measured data here.
+        "real_only": frame_to_pool(real, DATASET_0),
+        # Whole table incl. ML-synthesized rows: a semi-synthetic replay, not real data.
+        "semi_synthetic_dataset_0": frame_to_pool(semi, DATASET_0),
+        "synthetic_fixture": (Xs, ys),
     }
-    summary["real"]["excluded_contaminated"] = not a.include_contaminated
-    if a.indpensim:
-        from kalos.bench.real_data import convergence_summary, load_indpensim_pool
-
-        Xi, yi, _ = load_indpensim_pool(a.indpensim if a.indpensim != "env" else None)
-        summary["indpensim"] = convergence_summary(
-            Xi, yi, rounds=a.rounds, q=a.q, n_init=6, seeds=list(range(a.seeds))
-        )
+    summary = compare(arms, rounds=a.rounds, q=a.q, seeds=list(range(a.seeds)))
+    summary["dataset_0"] = {
+        "rows_in_file": int(len(all_rows)),
+        "rows_flagged_real": int((all_rows["data_type"] == "Real").sum()),
+        "rows_used_real_only": int(len(real)),
+        "rows_used_semi_synthetic": int(len(semi)),
+        "excluded_contaminated": not a.include_contaminated,
+        "roles": {"titer": DATASET_0.titer, "timepoint": DATASET_0.timepoint, "drivers": list(DATASET_0.drivers)},
+        "not_modelled": {"min_do_pct": "measured minimum, not a confirmed controllable setpoint"},
+        "label": "semi_synthetic_dataset_0 is hybrid/semi-synthetic: only the rows flagged Real are measured",
+    }
     jp, hp = write_report(summary, a.out)
-    for k in ("real", "synthetic"):
-        s = summary[k]
-        print(f"{k:9s} n={s['n_rows']:4d} final BO {s['final_bo']:.3f}+/-{s['final_bo_std']:.3f} "
-              f"random {s['final_random']:.3f} LHS {s['final_lhs']:.3f} "
-              f"(95% of best at round {s['round_to_95pct_best']})")
+    for name, st in summary["arms"].items():
+        if "skipped" in st:
+            print(f"{name:26s} SKIPPED: {st['skipped']}")
+            continue
+        print(f"{name:26s} n={st['n_rows']:4d} rounds={st['rounds']:2d} final BO {st['final_bo']:.3f}+/-{st['final_bo_std']:.3f} "
+              f"random {st['final_random']:.3f} LHS {st['final_lhs']:.3f}")
     print(f"wrote {jp}\nwrote {hp}")
     return 0
 
