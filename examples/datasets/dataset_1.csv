@@ -1,0 +1,58 @@
+# Public Chemical Manufacturing Datasets
+
+By Scott Duncan. Reach me on LinkedIn here: https://www.linkedin.com/in/s-r-duncan/
+
+Chemical manufacturing data is notoriously difficult to find because companies rarely make process data or engineering drawings public. This repository brings together useful, publicly accessible datasets for developing and testing AI, analytics, and engineering applications.
+
+Two sections: 
+1. **P&IDs**: actual piping & instrumentation diagrams from real permitted facilities. 
+2. **Time series**: process datasets for fault detection, anomaly detection, and soft sensor work.
+
+Inspired by [awesome-industrial-datasets](https://github.com/jonathanwvd/awesome-industrial-datasets).
+
+---
+
+## P&IDs
+
+Every one of these is a water treatment facility, which is not a coincidence. If you discharge treated water to a river or the ground you need a permit, and the permit application goes into a public docket along with the supporting engineering drawings.
+
+
+| Dataset | Facility | Page #'s containing P&IDs | Format | Size | Other info in document |
+|---|---|---|---|---|---|
+| [Haile Gold Mine CWTP](https://des.sc.gov/sites/des/files/media/document/BOW_HGM_ContactWWTreatmentUpgrade.pdf) | Gold mine contact water treatment in South Carolina | 47–60 | Digital PDF | 13 MB | Process flow diagram, permit application, design basis narrative, safety datasheets |
+| [Pahala WWTP](https://www.epa.gov/system/files/documents/2021-08/pahala-wwtp-design-build-drawings-2021-07-23.pdf) | Municipal wastewater treatment plant in Hawaii | 9–25 | Digital PDF | 7 MB | Legend, abbreviation and symbol sheets, process schematic, site and civil plans |
+| [Virden WWTF](https://www.gov.mb.ca/sd/eal/registries/5697virden/2019-04-26_5697_00_phase_2_p_and_i_drwngs.pdf) | Municipal wastewater treatment plant in Manitoba, Canada | 5–14 | Scanned images | 3 MB | Drawing set only |
+| [Salina WWTP BDR](https://www.salina-ks.gov/media/utilities/Document%20Library/Salina_WWTP_Improvement_Project_BDR_Report_Final_051121%20%281%29.pdf) | Municipal wastewater treatment plant in Kansas | 114, 117, 119, 121, 126, 127, 132, 134 | Digital PDF, mixed text layer | 33 MB | Full basis of design report, electrical diagrams, existing plant condition assessment, alternatives evaluation, cost estimates |
+| [Ruttan Mine WTP](https://gov.mb.ca/sd/eal/registries/294.30/20250618_letter.pdf) | Mine water treatment in Manitoba, Canada | 50–52, 62–63 | Digital PDF | 18 MB | Plant operating manual, electrical drawings, structural drawings, mechanical drawings, water quality monitoring data |
+
+> **On terms:** these documents are public records, which guarantees you can *access* them. It is not the same as a license to redistribute. The drawings themselves were prepared by engineering consultants who generally retain copyright, so treat these as free to download, read, and test against, and check before republishing the drawings themselves. The Pahala set is the cleanest of the group, being a US federal government work.
+
+
+
+
+---
+
+## Time-series
+
+A collection of both real and simulated time-series datasets for a variety of chemical processes.
+
+| Dataset | Source | Process | Size | Strengths | Link to Research Paper |
+|---|---|---|---|---|---|
+| [Tennessee Eastman Process](https://www.kaggle.com/datasets/afrniomelo/tep-csv) | Simulated data | Reactor, separator, stripper | 1.8 GB | The standard fault detection benchmark, so results are comparable to everyone else's | [Downs & Vogel](https://users.abo.fi/khaggblo/RS/Downs.pdf) |
+| [NOBOOM](https://www.kaggle.com/datasets/faebs94/noboom-anomaly-detection-in-chemical-processes) | Real data (lab, pilot, industrial) | Distillation, batch and continuous | 295 MB | Real labeled process data across three plant scales, including one BASF industrial process | [OpenReview](https://openreview.net/pdf?id=qiLboR0ocm) |
+| [Coal-Fired Industrial Boiler](https://www.kaggle.com/datasets/nikitamanaenkov/time-series-of-industrial-boiler-operations) | Real data | Coal-fired boiler, chemical plant | 11 MB | Real plant data at 5 second resolution, small enough to prototype against quickly | [ResearchGate](https://www.researchgate.net/publication/391460709_A_long-tailed_distribution_time-series_dataset_in_boiler_equipment) |
+| [IndPenSim](http://www.industrialpenicillinsimulation.com/) | Simulated data, validated against real plant | 100,000 L penicillin fermentation | 207 MB simulator, 480 MB for the [100-batch dataset](http://dx.doi.org/10.17632/pdnjz7zz5x.1) | Batch data with Raman spectroscopy, useful for soft sensors and bioprocess modeling | [ScienceDirect](https://www.sciencedirect.com/science/article/abs/pii/S0098135424004095) |
+
+The three Kaggle sets need a free Kaggle account to download, but no license agreement.
+
+---
+
+## Contributing
+
+Know a public dataset that belongs here? [Open a dataset suggestion](https://github.com/ScottDuncanAI/public-chemical-manufacturing-datasets/issues/new?template=new-dataset.yml) — the form asks for the link, what the data is, and what condition it is in. The bar is that it has to be publicly downloadable without a license agreement or an NDA.
+
+Found a dead link? These are mostly PDFs on government servers and they move. [Report it here](https://github.com/ScottDuncanAI/public-chemical-manufacturing-datasets/issues/new?template=broken-link.yml).
+
+## License
+
+The datasets linked here are owned by their respective sources and carry their own terms. This repo only collects the links and descriptions, which are released under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) — see [LICENSE](LICENSE).
