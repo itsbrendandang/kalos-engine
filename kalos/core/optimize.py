@@ -199,6 +199,7 @@ def propose(
     feasibility_classifier: FeasibilityClassifier | None = None,
     constraint_surrogate: Surrogate | None = None,
     constraint_floor: float | None = None,
+    linear_constraints: list[tuple[list[int], list[float], float]] | None = None,
 ) -> np.ndarray:
     """Return `q` proposed points (shape q x d) maximizing constrained-free qLogNEI.
 
@@ -260,6 +261,12 @@ def propose(
     of the pair raises `ValueError`, since a floor with no model (or a model
     with no floor) cannot be turned into a constraint.
 
+    `linear_constraints` are HARD linear inequalities on the design in raw units,
+    BoTorch's own convention: each `(indices, coefficients, rhs)` requires
+    `sum(coefficients[k] * x[indices[k]]) >= rhs` (flip the signs for a `<=`; e.g.
+    total supplement mass <= 12 g/L is `([i, j, k], [-1, -1, -1], -12)`). Box limits
+    are the `bounds` argument. Not supported together with categorical dims.
+
     Both compositions are independent and stack: gating and constraining can be
     combined by passing both.
     """
@@ -269,7 +276,13 @@ def propose(
             "constraint_surrogate and constraint_floor must be given together "
             "(a floor with no model, or a model with no floor, is not a constraint)"
         )
+    if linear_constraints and cat_dims:
+        raise ValueError("linear_constraints are not supported together with categorical dimensions")
     lower, upper = sanitize_bounds(bounds)
+    ineq = [
+        (torch.as_tensor(idx, dtype=torch.long), torch.as_tensor(coef, dtype=DTYPE), float(rhs))
+        for idx, coef, rhs in (linear_constraints or [])
+    ] or None
     b = torch.stack(
         [
             torch.as_tensor(lower, dtype=DTYPE, device=DEVICE),
@@ -328,6 +341,7 @@ def propose(
             q=q,
             num_restarts=num_restarts,
             raw_samples=raw_samples,
+            inequality_constraints=ineq,
         )
         return candidates
 
