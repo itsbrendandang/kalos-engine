@@ -1689,6 +1689,13 @@ def _analyze(
         # batch. Closes the interior-optimum blind spot in the rank drivers.
         "gp_shapes": gp_shapes,
         "proposal_features": show,
+        # Observed (search-box) range of every continuous input, so a client can flag a
+        # proposal that sits on the edge of what has been tried. Categorical inputs omitted.
+        "feature_ranges": {
+            dim.name: [round(float(dim.lower), 6), round(float(dim.upper), 6)]
+            for dim in design.dims
+            if not dim.is_categorical
+        },
         "proposals": _annotate(
             batch, p_mean, p_std, incumbent, cols=show_idx, design=design,
             p_feasible=p_feasible_arr, constraint=constraint_pred,
