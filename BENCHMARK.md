@@ -196,3 +196,15 @@ Roughly 40% of a mid-round batch was repeat work even there.
 
 Unlike the feasibility classifier above, this one is not a claim about finding better recipes.
 It is a claim about not paying twice for the same experiment, and it is the kind of waste that only appears once the loop is actually being run in rounds rather than benchmarked in one shot.
+
+## Surrogate guardrail: the GP stays the default
+
+Parsaee et al. (Bioinformatics 2026, doi 10.1093/bioinformatics/btag607; abstract-level
+reading only) report that GP-based Bayesian optimization beat more complex surrogates on
+noisy or multimodal landscapes. Treat that as a hypothesis, but keep its consequence as a
+rule: **`kalos.core.surrogate.Surrogate` (a GP) remains the default, and an alternative
+surrogate (random forest, neural net, BNN, ...) only ships as a default if it beats the
+GP, with the same initial design and at least 5 seeds, on the six datasets of
+`kalos/bench/amii.py`** (`examples/amii_benchmark.py`, data via `KALOS_AMII_DATA`).
+`tests/test_surrogate_guardrail.py` fails if the default model type changes, so the
+change has to be made on purpose, next to this note.
