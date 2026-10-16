@@ -101,3 +101,12 @@ def test_hybrid_surrogate_fit_predict():
     assert np.sqrt(np.mean((mu - y) ** 2)) < 0.5 * np.sqrt(np.mean((mech.evaluate(X) - y) ** 2))
     with pytest.raises(TypeError):
         HybridSurrogate(object())
+
+
+def test_campaign_sql_identifier_guard():
+    from kalos.portal.campaign import _checked_identifier
+
+    assert _checked_identifier("campaigns_backup_3") == "campaigns_backup_3"
+    for bad in ("x; DROP TABLE campaigns", "a b", "1abc", "", 'a"b', "campaigns_backup_1\n"):
+        with pytest.raises(ValueError):
+            _checked_identifier(bad)
