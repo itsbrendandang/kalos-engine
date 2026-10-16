@@ -49,6 +49,7 @@ from kalos.portal.config import (
 from kalos.portal.campaign import CampaignStore, get_campaign_store
 from kalos.portal.campaign_routes import router as _campaign_router
 from kalos.portal.scale_routes import router as _scale_router
+from kalos.portal.viz_surface import router as _viz_surface_router
 from kalos.portal.uploads import (
     MAX_COLUMNS,
     MAX_CSV_ROWS,
@@ -305,7 +306,8 @@ def readyz(store: CampaignStore = Depends(get_campaign_store)) -> JSONResponse:
     try:
         store.get()
     except Exception as exc:  # noqa: BLE001 - any store failure means "not ready", not a 500
-        return JSONResponse({"status": "unavailable", "reason": str(exc)}, status_code=503)
+        log.warning("readyz check failed: %s", exc)
+        return JSONResponse({"status": "unavailable", "reason": "store check failed"}, status_code=503)
     return JSONResponse({"status": "ok"})
 
 
@@ -518,6 +520,10 @@ app.include_router(_campaign_router)
 # `kalos.portal.scale_routes`; mounted here, same pattern as the router
 # above.
 app.include_router(_scale_router)
+
+# --- Response Surface Visualization: /viz/surface - interactive heatmap of the
+# GP posterior over the top 2 driver features. Routes are imported above.
+app.include_router(_viz_surface_router)
 
 __all__ = [
     "app",
