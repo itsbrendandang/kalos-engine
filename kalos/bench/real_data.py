@@ -143,7 +143,19 @@ def run_pool_bo(
         pos += q
         rand_curve.append(float(y[rand_eval].max()))
 
-    return {"bo": bo_curve, "random": rand_curve, "fit_failures": fit_failures}
+    # LHS baseline: a space-filling design in the normalized box, each point
+    # snapped to its nearest distinct recorded row (same budget as BO).
+    from scipy.stats import qmc
+
+    n_total = n_init + rounds * q
+    lhs_pts = qmc.LatinHypercube(d=X.shape[1], seed=seed + 20_000).random(n_total)
+    taken: list[int] = []
+    for p in lhs_pts:
+        avail = np.setdiff1d(np.arange(n), taken)
+        taken.append(int(avail[np.argmin(((Xn[avail] - p) ** 2).sum(1))]))
+    lhs_curve = [float(y[taken[: n_init + k * q]].max()) for k in range(rounds + 1)]
+
+    return {"bo": bo_curve, "random": rand_curve, "lhs": lhs_curve, "fit_failures": fit_failures}
 
 
 def _first_round_reaching(curve: np.ndarray, frac: float) -> int | None:
@@ -162,6 +174,7 @@ def convergence_summary(
     trials = [run_pool_bo(X, y, rounds=rounds, q=q, n_init=n_init, seed=s) for s in seeds]
     bo = np.array([t["bo"] for t in trials]) / y_max
     rd = np.array([t["random"] for t in trials]) / y_max
+    lh = np.array([t["lhs"] for t in trials]) / y_max
     bo_mean = bo.mean(0)
     return {
         "n_rows": int(len(y)),
@@ -174,8 +187,14 @@ def convergence_summary(
         "bo_mean": bo_mean.tolist(),
         "bo_std": bo.std(0).tolist(),
         "random_mean": rd.mean(0).tolist(),
+        "random_std": rd.std(0).tolist(),
+        "lhs_mean": lh.mean(0).tolist(),
+        "lhs_std": lh.std(0).tolist(),
         "final_bo": float(bo_mean[-1]),
+        "final_bo_std": float(bo[:, -1].std()),
         "final_random": float(rd.mean(0)[-1]),
+        "final_lhs": float(lh.mean(0)[-1]),
+        "final_per_seed": {"bo": bo[:, -1].tolist(), "random": rd[:, -1].tolist(), "lhs": lh[:, -1].tolist()},
         "bo_gain_over_random": float(bo_mean[-1] - rd.mean(0)[-1]),
         "round_to_95pct_best": _first_round_reaching(bo_mean, 0.95),
         "fit_failures": int(sum(t["fit_failures"] for t in trials)),
@@ -191,7 +210,9 @@ def compare(
     n_init: int = 6,
     seeds: list[int] | None = None,
 ) -> dict:
-    seeds = list(seeds) if seeds is not None else [0, 1, 2]
+    seeds = list(seeds) if seeds is not None else list(range(5))
+    if len(seeds) < 5:
+        raise ValueError("use at least 5 seeds so seed variance is meaningful")
     out = {
         "real": convergence_summary(*real, rounds=rounds, q=q, n_init=n_init, seeds=seeds),
         "synthetic": convergence_summary(*synthetic, rounds=rounds, q=q, n_init=n_init, seeds=seeds),
@@ -200,7 +221,7 @@ def compare(
     return out
 
 
-def plotly_html(summary: dict, title: str = "Kalos BO convergence: real vs synthetic") -> str:
+def plotly_html(summary: dict, title: str = "Kalos BO convergence: hybrid/semi-synthetic fermentation data vs synthetic fixture") -> str:
     """Self-contained Plotly chart (plotly.js from the CDN; no Python plotly dependency)."""
     traces = []
     for name, color in (("real", "#2a9d8f"), ("synthetic", "#e76f51")):
@@ -211,6 +232,9 @@ def plotly_html(summary: dict, title: str = "Kalos BO convergence: real vs synth
                        "error_y": {"type": "data", "array": s["bo_std"], "visible": True}})
         traces.append({"x": x, "y": s["random_mean"], "name": f"{name} random", "mode": "lines",
                        "line": {"color": color, "dash": "dot"}})
+        if "lhs_mean" in s:
+            traces.append({"x": x, "y": s["lhs_mean"], "name": f"{name} LHS", "mode": "lines",
+                           "line": {"color": color, "dash": "dash"}})
     layout = {"title": title, "xaxis": {"title": "BO round (q per round)"},
               "yaxis": {"title": "best-so-far / pool best", "range": [0, 1.05]}}
     # json.dumps output is safe inside <script> once "</" is neutralized.
@@ -232,3 +256,62 @@ def write_report(summary: dict, out_dir: str | Path) -> tuple[Path, Path]:
     jp.write_text(json.dumps(summary, indent=2))
     hp.write_text(plotly_html(summary))
     return jp, hp
+
+
+# --- IndPenSim (optional, never committed) -------------------------------- #
+# Mendeley DOI 10.17632/pdnjz7zz5x.2, CC BY 4.0: 100 simulated 100,000 L
+# penicillin batches. The file is very large, so it is read from disk only when
+# the caller points at it. Column defaults below are NOT verified against the
+# real file (it was not downloaded here); override them via the arguments.
+INDPENSIM_BATCH_COL = "Batch ID"
+INDPENSIM_TARGET_COL = "Penicillin concentration(P:g/L)"
+INDPENSIM_RECIPE_COLS = (
+    "Temperature(T:K)", "pH(pH:pH)", "Aeration rate(Fg:L/h)", "Agitator RPM(RPM:RPM)",
+    "Sugar feed rate(Fs:L/h)",
+)
+
+
+def indpensim_path(explicit: str | Path | None = None) -> Path | None:
+    """Explicit path, else $KALOS_INDPENSIM_PATH, else a CSV under $KALOS_MEDIA_DATA."""
+    import os
+
+    cand = explicit or os.environ.get("KALOS_INDPENSIM_PATH")
+    if cand:
+        p = Path(cand).expanduser().resolve()
+        return p if p.is_file() else None
+    media = os.environ.get("KALOS_MEDIA_DATA")
+    if media:
+        for p in sorted(Path(media).expanduser().resolve().glob("*IndPenSim*.csv")):
+            return p
+    return None
+
+
+def load_indpensim_pool(
+    path: str | Path | None = None,
+    *,
+    batch_col: str = INDPENSIM_BATCH_COL,
+    target_col: str = INDPENSIM_TARGET_COL,
+    recipe_cols: tuple[str, ...] = INDPENSIM_RECIPE_COLS,
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """Aggregate per batch: recipe = per-batch mean of each recipe column,
+    target = final penicillin value of the batch. Returns (X, y, feature_names).
+    Streams only the needed columns, so memory stays bounded.
+    """
+    p = indpensim_path(path)
+    if p is None or p.suffix.lower() != ".csv":
+        raise FileNotFoundError(
+            "IndPenSim CSV not found: pass a path or set KALOS_INDPENSIM_PATH / KALOS_MEDIA_DATA"
+        )
+    cols = [batch_col, target_col, *recipe_cols]
+    header = pd.read_csv(p, nrows=0).columns
+    missing = [c for c in cols if c not in header]
+    if missing:
+        raise ValueError(f"IndPenSim file is missing columns {missing}; override the column names")
+    df = pd.read_csv(p, usecols=cols)
+    for c in (target_col, *recipe_cols):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    g = df.dropna(subset=[target_col]).groupby(batch_col, sort=False)
+    y = g[target_col].last()
+    X = g[list(recipe_cols)].mean().loc[y.index]
+    keep = np.isfinite(X.to_numpy()).all(1) & np.isfinite(y.to_numpy())
+    return X.to_numpy(float)[keep], y.to_numpy(float)[keep], list(recipe_cols)

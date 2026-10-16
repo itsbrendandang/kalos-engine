@@ -25,8 +25,10 @@ def main() -> int:
     ap.add_argument("--out", default=str(ROOT / "reports/real_data"))
     ap.add_argument("--rounds", type=int, default=10)
     ap.add_argument("-q", type=int, default=2)
-    ap.add_argument("--seeds", type=int, default=3)
+    ap.add_argument("--seeds", type=int, default=5)
     ap.add_argument("--include-contaminated", action="store_true")
+    ap.add_argument("--indpensim", nargs="?", const="env", default=None,
+                    help="also benchmark IndPenSim (CSV path, or omit value to use KALOS_INDPENSIM_PATH/KALOS_MEDIA_DATA)")
     a = ap.parse_args()
 
     import pandas as pd
@@ -39,14 +41,25 @@ def main() -> int:
 
     summary = compare(real, (X, y), rounds=a.rounds, q=a.q, seeds=list(range(a.seeds)))
     summary["real"]["rows_in_file"] = raw_rows
+    summary["real"]["label"] = (
+        "hybrid/semi-synthetic: only the first ~20 source runs are real, the rest are ML-synthesized"
+    )
     summary["real"]["roles"] = {
         "titer": DATASET_0.titer, "timepoint": DATASET_0.timepoint, "drivers": list(DATASET_0.drivers),
     }
     summary["real"]["excluded_contaminated"] = not a.include_contaminated
+    if a.indpensim:
+        from kalos.bench.real_data import convergence_summary, load_indpensim_pool
+
+        Xi, yi, _ = load_indpensim_pool(a.indpensim if a.indpensim != "env" else None)
+        summary["indpensim"] = convergence_summary(
+            Xi, yi, rounds=a.rounds, q=a.q, n_init=6, seeds=list(range(a.seeds))
+        )
     jp, hp = write_report(summary, a.out)
     for k in ("real", "synthetic"):
         s = summary[k]
-        print(f"{k:9s} n={s['n_rows']:4d} final BO {s['final_bo']:.3f} vs random {s['final_random']:.3f} "
+        print(f"{k:9s} n={s['n_rows']:4d} final BO {s['final_bo']:.3f}+/-{s['final_bo_std']:.3f} "
+              f"random {s['final_random']:.3f} LHS {s['final_lhs']:.3f} "
               f"(95% of best at round {s['round_to_95pct_best']})")
     print(f"wrote {jp}\nwrote {hp}")
     return 0
