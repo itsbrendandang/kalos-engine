@@ -33,6 +33,9 @@ class RealDataMapping:
     drivers: tuple[str, ...]
     ids: tuple[str, ...] = ()
     contamination: str | None = None
+    # Column flagging measured vs synthesized rows, and the value that means measured.
+    data_type: str | None = None
+    real_value: str = "Real"
 
     @property
     def features(self) -> tuple[str, ...]:
@@ -47,22 +50,30 @@ class RealDataMapping:
 DATASET_0 = RealDataMapping(
     titer="max_yield_fpu_ml",
     timepoint="duration_days",
+    # min_do_pct is a MEASURED minimum over the run, not a setpoint, so it is not
+    # a proposable driver: BO could suggest values nobody can dial in. It stays
+    # in `ids` (ignored) until someone confirms it maps to a controllable setting.
     drivers=(
-        "temp_c", "ph", "min_do_pct", "inoculum_vol_ml", "rpm",
-        "lactose_feed_ml", "total_media_vol_ml",
+        "temp_c", "ph", "inoculum_vol_ml", "rpm", "lactose_feed_ml", "total_media_vol_ml",
     ),
-    ids=("run_id", "yield_tier", "data_type", "contamination"),
+    ids=("run_id", "yield_tier", "data_type", "contamination", "min_do_pct"),
     contamination="contamination",
+    data_type="data_type",
 )
 
 
 def load_real_frame(
-    path: str | Path, mapping: RealDataMapping = DATASET_0, *, exclude_contaminated: bool = True
+    path: str | Path,
+    mapping: RealDataMapping = DATASET_0,
+    *,
+    exclude_contaminated: bool = True,
+    real_only: bool = False,
 ) -> pd.DataFrame:
-    """Read the CSV and keep rows with finite values in every modelled column.
+    """Read the CSV and keep rows with FINITE values in every modelled column.
 
-    `exclude_contaminated` drops rows flagged `Y` in the contamination column
-    (those are not "clean" runs).
+    `exclude_contaminated` drops rows flagged `Y` in the contamination column.
+    `real_only` keeps only rows whose data_type column equals `real_value`; any
+    "real-data" claim must use it, because most of dataset_0 is synthesized.
     """
     p = Path(path).resolve()
     if p.suffix.lower() != ".csv" or not p.is_file():
@@ -72,12 +83,18 @@ def load_real_frame(
     missing = [c for c in needed if c not in df.columns]
     if missing:
         raise ValueError(f"dataset is missing required columns: {missing}")
+    if real_only:
+        if mapping.data_type is None or mapping.data_type not in df.columns:
+            raise ValueError("real_only needs a data_type column")
+        df = df[df[mapping.data_type].astype(str).str.strip().str.lower() == mapping.real_value.lower()]
     if exclude_contaminated and mapping.contamination in df.columns:
         df = df[df[mapping.contamination].astype(str).str.upper() != "Y"]
+    df = df.copy()
     for c in needed:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df.dropna(subset=needed)
-    return df.reset_index(drop=True)
+    # dropna alone keeps +/-inf, which poisons normalization and the GP fit.
+    finite = np.isfinite(df[needed].to_numpy(float)).all(axis=1)
+    return df[finite].reset_index(drop=True)
 
 
 def frame_to_pool(df: pd.DataFrame, mapping: RealDataMapping) -> tuple[np.ndarray, np.ndarray]:
@@ -116,10 +133,11 @@ def run_pool_bo(
     remaining = set(int(i) for i in order[n_init:])
     bo_curve = [float(y[evaluated].max())]
     fit_failures = 0
+    order_evaluated: list[int] = list(evaluated)  # exposed so tests can audit leakage
     for r in range(rounds):
         picks: list[int] = []
         try:
-            s = Surrogate().fit(Xn[evaluated], y[evaluated], bounds=bounds)
+            s = Surrogate().fit(Xn[evaluated], y[evaluated], bounds=bounds)  # only runs already "measured"
             props = propose(s, bounds, q=q, seed=seed * 1000 + r)
             for p in np.atleast_2d(props):
                 rem = np.array(sorted(remaining - set(picks)))
@@ -131,15 +149,18 @@ def run_pool_bo(
         for i in picks:
             remaining.discard(i)
             evaluated.append(i)
+        order_evaluated = list(evaluated)
         bo_curve.append(float(y[evaluated].max()))
 
+    # Random arm: SAME initial design as BO (so the arms differ only in how
+    # they spend the budget), then uniform picks from the rest.
     rand_rng = np.random.default_rng(seed + 10_000)
-    rorder = rand_rng.permutation(n)
-    rand_eval = list(rorder[:n_init])
+    rest = rand_rng.permutation(np.array(sorted(int(i) for i in order[n_init:])))
+    rand_eval = list(init)
     rand_curve = [float(y[rand_eval].max())]
-    pos = n_init
+    pos = 0
     for _ in range(rounds):
-        rand_eval += list(rorder[pos:pos + q])
+        rand_eval += [int(i) for i in rest[pos:pos + q]]
         pos += q
         rand_curve.append(float(y[rand_eval].max()))
 
@@ -155,7 +176,8 @@ def run_pool_bo(
         taken.append(int(avail[np.argmin(((Xn[avail] - p) ** 2).sum(1))]))
     lhs_curve = [float(y[taken[: n_init + k * q]].max()) for k in range(rounds + 1)]
 
-    return {"bo": bo_curve, "random": rand_curve, "lhs": lhs_curve, "fit_failures": fit_failures}
+    return {"bo": bo_curve, "random": rand_curve, "lhs": lhs_curve, "fit_failures": fit_failures,
+            "evaluated": order_evaluated}
 
 
 def _first_round_reaching(curve: np.ndarray, frac: float) -> int | None:
@@ -202,30 +224,41 @@ def convergence_summary(
 
 
 def compare(
-    real: tuple[np.ndarray, np.ndarray],
-    synthetic: tuple[np.ndarray, np.ndarray],
+    arms: dict[str, tuple[np.ndarray, np.ndarray]],
     *,
     rounds: int = 10,
     q: int = 2,
     n_init: int = 6,
     seeds: list[int] | None = None,
 ) -> dict:
+    """Run every named pool and report each. A pool too small for the requested
+    budget is shrunk (fewer rounds / smaller initial design) and the effective
+    budget disclosed; if even a minimal budget does not fit it is `skipped`."""
     seeds = list(seeds) if seeds is not None else list(range(5))
     if len(seeds) < 5:
         raise ValueError("use at least 5 seeds so seed variance is meaningful")
-    out = {
-        "real": convergence_summary(*real, rounds=rounds, q=q, n_init=n_init, seeds=seeds),
-        "synthetic": convergence_summary(*synthetic, rounds=rounds, q=q, n_init=n_init, seeds=seeds),
-    }
-    out["final_gap_real_minus_synthetic"] = out["real"]["final_bo"] - out["synthetic"]["final_bo"]
+    out: dict = {"arms": {}}
+    for name, (X, y) in arms.items():
+        n = len(y)
+        ni = n_init if n >= n_init + 3 * q else max(3, n // 3)
+        r = min(rounds, (n - ni) // q)
+        if r < 1 or n < 6:
+            out["arms"][name] = {"skipped": f"only {n} usable rows; need > n_init + q", "n_rows": int(n)}
+            continue
+        s = convergence_summary(X, y, rounds=r, q=q, n_init=ni, seeds=seeds)
+        s["requested_rounds"], s["requested_n_init"] = rounds, n_init
+        out["arms"][name] = s
     return out
 
 
 def plotly_html(summary: dict, title: str = "Kalos BO convergence: hybrid/semi-synthetic fermentation data vs synthetic fixture") -> str:
     """Self-contained Plotly chart (plotly.js from the CDN; no Python plotly dependency)."""
     traces = []
-    for name, color in (("real", "#2a9d8f"), ("synthetic", "#e76f51")):
-        s = summary[name]
+    palette = ["#2a9d8f", "#e76f51", "#264653", "#e9c46a"]
+    for k, (name, s) in enumerate(summary["arms"].items()):
+        if "skipped" in s:
+            continue
+        color = palette[k % len(palette)]
         x = list(range(len(s["bo_mean"])))
         traces.append({"x": x, "y": s["bo_mean"], "name": f"{name} BO", "mode": "lines+markers",
                        "line": {"color": color},
