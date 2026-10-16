@@ -142,7 +142,6 @@ def main():
         f'var SURFACE_INCUMBENT_VALUE = {incumbent:.4f}',
     ])
 
-    body = ""  # No extra body content
     html = template.replace("${data_injection}", script)
 
     # Write to a temp file and open in browser
