@@ -102,16 +102,42 @@ def test_readyz_is_ok_on_a_working_store(client):
     assert resp.json() == {"status": "ok"}
 
 
-def test_readyz_degrades_to_503_with_a_reason_when_the_store_is_broken(client, monkeypatch):
+def test_readyz_degrades_to_503_with_a_generic_reason_when_the_store_is_broken(
+    client, monkeypatch, caplog
+):
     def _boom(*args, **kwargs):
-        raise RuntimeError("database disk image is malformed")
+        raise RuntimeError("database disk image is malformed at /srv/secret/portal.db")
 
     monkeypatch.setattr(CampaignStore, "ping", _boom)
-    resp = client.get("/readyz")
+    with caplog.at_level("ERROR", logger="kalos.portal"):
+        resp = client.get("/readyz")
     assert resp.status_code == 503
     body = resp.json()
-    assert body["status"] == "unavailable"
-    assert "malformed" in body["reason"]
+    # Unauthenticated endpoint: a fixed reason, never the exception text.
+    assert body == {"status": "unavailable", "reason": "campaign store unavailable"}
+    assert "malformed" not in resp.text and "/srv/secret" not in resp.text
+    # ...but the operator still gets the detail, server-side.
+    assert "malformed" in caplog.text
+
+
+def test_readyz_does_not_read_tenant_data(client, monkeypatch):
+    """Readiness is tenant-agnostic: it pings the store, never fetches a
+    tenant's campaign row."""
+    def _no_tenant_reads(*args, **kwargs):
+        raise AssertionError("readyz must not read a tenant's campaign")
+
+    monkeypatch.setattr(CampaignStore, "get", _no_tenant_reads)
+    assert client.get("/readyz").json() == {"status": "ok"}
+
+
+def test_healthz_is_an_async_handler():
+    """A sync handler would run on the bounded threadpool and could queue
+    behind upload/reanalyze work; liveness must answer from the event loop."""
+    import inspect
+
+    from kalos.portal import app as portal
+
+    assert inspect.iscoroutinefunction(portal.healthz)
 
 
 def test_readyz_performs_a_read_not_a_write(client):

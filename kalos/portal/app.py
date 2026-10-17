@@ -292,7 +292,7 @@ def providers(principal: Principal = Depends(require_scope(READ))) -> dict:
 
 
 @app.get("/healthz")
-def healthz() -> dict:
+async def healthz() -> dict:
     """Liveness probe for a deploy healthcheck (deploy/engine/Containerfile).
 
     Unauthenticated BY DESIGN, and safe to leave that way: no
@@ -310,6 +310,11 @@ def healthz() -> dict:
     liveness probe that can block on a locked/slow SQLite file would make an
     orchestrator restart a perfectly healthy process because the DB, not the
     process, was briefly unavailable.
+
+    `async def` on purpose: a sync handler runs on the bounded worker
+    threadpool, so a liveness probe could queue behind threads busy with
+    upload/reanalyze work and time out on a healthy process. On the event loop
+    it answers as long as the loop is alive, which is what "live" means.
     """
     return {"status": "ok"}
 
@@ -320,18 +325,24 @@ def readyz(store: CampaignStore = Depends(get_campaign_store)) -> JSONResponse:
     purpose, to answer "can this instance actually serve requests that need
     the store", not just "is the process up".
 
-    Read-only: `store.get()` is a plain SELECT (the `default` tenant's
-    campaign row, or None if none seeded yet - either is a healthy answer),
-    never a write, so a readiness check can never itself be the thing that
-    corrupts or contends for the store it is checking. Degrades to a 503
-    with a `reason` on any failure (missing/corrupt/locked database file)
-    instead of raising, so an orchestrator's readiness probe always gets a
-    normal HTTP response rather than a stack trace.
+    Read-only and tenant-agnostic: `store.ping()` is a plain `SELECT 1 FROM
+    campaigns LIMIT 1`, never a write and never any tenant's data, so a
+    readiness check can neither corrupt nor contend for the store it checks.
+    Degrades to a 503 on any failure (missing/corrupt/locked database file)
+    instead of raising, so an orchestrator always gets a normal HTTP response.
+
+    The 503 body carries a FIXED generic reason. This endpoint is
+    unauthenticated, and exception text (sqlite messages, filesystem paths)
+    is server detail an anonymous caller must not see; the full exception is
+    logged server-side instead.
     """
     try:
         store.ping()
-    except Exception as exc:  # noqa: BLE001 - any store failure means "not ready", not a 500
-        return JSONResponse({"status": "unavailable", "reason": str(exc)}, status_code=503)
+    except Exception:  # noqa: BLE001 - any store failure means "not ready", not a 500
+        log.exception("readiness check failed: campaign store unavailable")
+        return JSONResponse(
+            {"status": "unavailable", "reason": "campaign store unavailable"}, status_code=503
+        )
     return JSONResponse({"status": "ok"})
 
 
