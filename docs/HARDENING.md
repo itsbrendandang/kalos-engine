@@ -29,9 +29,9 @@ Mutating endpoints (`/api/run`, `/api/campaign/*`) require the `write` scope; th
 **1b. Tenant-scoped persistence (done).**
 Every store read/write is keyed by the caller's `Principal.tenant`.
 The campaign is now a SQLite row per tenant in `<state_dir>/portal.db` (`campaigns(tenant, state, updated_at)`), replacing the single `~/.kalos/campaign.json`; the transactional generation token carries over inside the per-tenant `state` blob unchanged.
-`/api/latest` is now keyed by tenant too (an in-memory map plus a per-tenant best-effort JSON cache under `<state_dir>/latest/`), replacing the single global `_LATEST`.
+`/api/latest` is now keyed by tenant too (an in-memory map plus a per-tenant best-effort JSON cache under `<state_dir>/latest/`), replacing the single global `_LATEST`. (Superseded by schema v2: analyses are rows in `portal.db`, see docs/MIGRATIONS.md.)
 So two tenants can never see or overwrite each other's campaign or analysis.
-Follow-up: move the `latest` cache into the same SQLite store as a row, and add an `owner`/`created_by` column for finer-grained authorization.
+Follow-up: move the `latest` cache into the same SQLite store as a row, and add an `owner`/`created_by` column for finer-grained authorization. (Both done by schema v2, see docs/MIGRATIONS.md.)
 
 **1c. Transport + secrets (in progress).**
 CORS is now an explicit allowlist when `KALOS_CORS_ORIGINS` is set (the production posture) and the permissive localhost regex otherwise (`kalos/portal/config.py`); the effective security posture (auth + CORS) is logged once at startup, with a warning when the portal is not locked down.
@@ -91,7 +91,7 @@ The per-tenant `/api/latest` cache file is named `t-<hex of the tenant id's UTF-
 
 ### Probes
 
-`/healthz` is an `async` handler so it answers from the event loop and cannot queue behind worker threads busy with analysis. `/readyz` runs a tenant-agnostic `SELECT 1 FROM campaigns LIMIT 1`; on failure it answers 503 with the fixed reason `campaign store unavailable` and logs the exception server-side (no exception text in the unauthenticated response).
+`/healthz` is an `async` handler so it answers from the event loop and cannot queue behind worker threads busy with analysis. `/readyz` runs a tenant-agnostic read of the schema version (`SELECT MAX(version) FROM schema_migrations`, never a tenant table); on failure it answers 503 with the fixed reason `campaign store unavailable` and logs the exception server-side (no exception text in the unauthenticated response).
 
 Not covered here: per-tenant concurrency limits (design pending).
 
@@ -123,7 +123,7 @@ A review of progress against the readiness scorecard surfaced that campaign + la
 - **P1 - Tenant-scope + auth-gate the experiments store: DONE** (`feat/hardening-experiments-tenancy`). `kalos/store/sqlite_store.py` gains a `tenant` column (+ index + one-time backfill migration) and every query filters by it; `kalos/portal/experiments.py` routes require `read`/`write` and pass `Principal.tenant`; `LocalStoreAdapter` is tenant-bound so the runner only touches the caller's experiments. Remote-runner `/result` still operates on the `default` tenant (machine channel, off by default) - multi-tenant remote runners are a follow-up.
 - **P2 - Observability**: `/healthz` (liveness) + `/readyz` (`SELECT 1` against the DBs), a request-id + JSON logging middleware that never logs bodies/tokens, optional `/metrics`. Moves the Operational-maturity dimension off BLOCKING; low cost, high review value.
 - **P3 - Async job queue for `_analyze`**: a `jobs(id, tenant, kind, status, result_ref, ...)` table + submit/poll API so `/api/run` and `/reanalyze` enqueue and return a job id, taking the CPU-bound GP fit off the request path and making in-flight work restart-durable.
-- **P4 - Move `_LATEST` into SQLite**: a `latest(tenant, state, updated_at)` row in `portal.db`, retiring the per-tenant file cache; lets the reanalyze latest-write carry a generation stamp in one transaction, closing the documented sub-ms race. Prerequisite for P5 (one DB file = complete tenant state).
+- **P4 - Move `_LATEST` into SQLite: DONE by schema v2** (`feat/campaign-schema-v2`, docs/MIGRATIONS.md): an `analyses` row per campaign, written in the fold's transaction. Original plan: a `latest(tenant, state, updated_at)` row in `portal.db`, retiring the per-tenant file cache; lets the reanalyze latest-write carry a generation stamp in one transaction, closing the documented sub-ms race. Prerequisite for P5 (one DB file = complete tenant state).
 - **P5 - Backups + restore/DR**: scheduled SQLite online `.backup()` into `KALOS_BACKUP_DIR` + a documented restore runbook. Do P4 first so a snapshot captures all state.
 
 ## Status log
@@ -134,3 +134,4 @@ A review of progress against the readiness scorecard surfaced that campaign + la
 - P1 experiments store tenant-scope + auth-gate: **done** on `feat/hardening-experiments-tenancy` - closes the cross-tenant leak the review found; the tenancy guarantee now covers all three stores (campaign, latest, experiments).
 - P0 engine hardening: **done** on `security/p0-engine-hardening` - tenant-id validation + injective latest-cache names, required `tenant` keyword on the stores, `KALOS_ENV=production`, async `/healthz` and generic `/readyz` reason, body-size cap + bounded campaign bodies. Per-tenant concurrency is out of scope (design pending).
 - P2 observability, P3 async job queue, P4 latest->SQLite, P5 backups: planned, not started (see "Next backbone" above).
+- Schema v2 (multi-campaign storage): **in review** on `feat/campaign-schema-v2` - `portal.db` gains `schema_migrations`, multi-campaign `campaigns` (`cmp_` ids, `UNIQUE(id, tenant)`), `analyses` (replacing `_LATEST` and `latest/*.json`), `tenant_defaults` (the legacy routes act on the tenant default) and `audit_log`; WAL, `foreign_keys`, `busy_timeout`; every store write is `BEGIN IMMEDIATE` + generation compare-and-swap; explicit, backed-up, reversible migration (`python -m kalos.portal.migrate up|down|status`). Runbook: docs/MIGRATIONS.md.

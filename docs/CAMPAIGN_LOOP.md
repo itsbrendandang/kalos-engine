@@ -41,7 +41,7 @@ A **campaign** is one optimization target plus a growing table of (recipe -> mea
 - **base rows**: the dataset the analysis fits on. Seeded from the last `/api/run` upload, then grows as logged runs are folded in.
 - **pending runs**: recipes the scientist started from a proposed batch. Each is either *awaiting* a measured outcome (`result: null`) or *measured* (`result` filled), waiting to be folded into base on the next re-analyze.
 
-One campaign at a time (single local user). It lives in `~/.kalos/campaign.json`, guarded by a lock and written atomically, mirroring the `_LATEST` state pattern in `kalos/portal/app.py`.
+The legacy routes described here act on one campaign per tenant: the tenant's *default* campaign in `<KALOS_STATE_DIR>/portal.db` (schema v2, see docs/MIGRATIONS.md), created by the tenant's first upload. A tenant may own further campaigns in the same store; addressing them over HTTP is a later slice.
 
 Every pending run walks a strict one-way lifecycle - and an *awaiting* run can never skip a step and silently become a data point:
 
@@ -129,22 +129,22 @@ Because base rows only grow, `best` is non-decreasing across the trajectory.
 
 ## Analysis/campaign coherence
 
-The campaign and `/api/latest` are **separate** resources: separate locks, separate persistence (`portal.db` vs `latest/<tenant>.json`).
+The campaign and `/api/latest` used to be **separate** resources: separate locks, separate persistence (`portal.db` vs `latest/<tenant>.json`). Since schema v2 both live in `portal.db`, and the normal paths write them in one transaction (below), but the stamp still matters for the best-effort fallback.
 Nothing used to tie them together, so they could describe two different run sheets while both looked perfectly valid - `/results` reporting one `best` and `/decide` another, with no signal that the two disagreed.
 The upload path made this easy to hit: seeding is deliberately best-effort (a seeding failure must never fail the upload), so a swallowed seed left a fresh analysis published against a stale campaign.
 
 The fix is the ordered stamp the residual-window note below always wanted.
 `_save_latest` records the campaign `generation` the analysis was published alongside, and `GET /api/campaign` compares that stamp against the campaign's live generation:
 
-- `seed()` returns the generation it minted; the upload path seeds *first*, then publishes the analysis carrying that token.
-- `reanalyze` stamps the generation `commit_fold` minted, so closing the loop keeps the two tied.
+- `seed(..., analysis=)` publishes the analysis in the same transaction as the new campaign state, stamped with the generation it minted. Only if seeding fails does the upload path fall back to `_save_latest` with no stamp.
+- `reanalyze` passes the analysis to `commit_fold(..., analysis=)`, which writes it in the fold's transaction with the generation that fold minted.
 - `summary()` reports `analysis_in_sync: true` only when the stamp matches.
 
 A missing or stale stamp reads as `false`, never as fine.
 An analysis that cannot be *shown* to match is reported as out of sync, because the failure being guarded against is silent by nature - two valid-looking resources and two different `best` values.
 This means an analysis persisted before the stamp existed reads as out of sync until the next upload re-stamps it, which is the honest answer rather than a convenient one.
 
-The join lives in the `/api/campaign` route, not in `CampaignStore`, so the store keeps no knowledge of `_LATEST`.
+The join lives in the `/api/campaign` route: it reads the stamp off the stored analysis and hands it to `summary()`.
 
 ## Re-analyze = the loop closing
 
@@ -169,8 +169,7 @@ sequenceDiagram
     A-->>R: analysis result
     R->>S: commit_fold(G1)
     alt generation still G1 (no upload landed)
-        S-->>R: committed — round + 1, new generation
-        R->>R: re-check generation, then _save_latest
+        S-->>R: committed in ONE transaction — round + 1,<br/>new generation, analysis stamped with it
         R-->>UI: 200 {analysis, campaign}
     else generation changed (upload reseeded)
         S-->>R: CampaignError
@@ -182,8 +181,8 @@ What each step guarantees:
 
 1. **`plan_fold()`** reads the state, folds every measured pending run into a DataFrame *in memory*, and returns it with the campaign's current `generation` token. It writes nothing, so a later failure costs nothing. It rejects a re-analyze with no measured run to fold (that would only inflate the round).
 2. **`_analyze`** runs on the grown DataFrame, off the event loop in a worker thread. If it raises, the campaign is still exactly as it was - a retry is meaningful.
-3. **`commit_fold(generation)`** re-reads the state and writes the fold (measured runs → `base_rows`, `round += 1`, new history point) **only if the `generation` still matches**. Every write mints a fresh generation, so if a `seed()`/`set_result`/`start` landed during `_analyze`, the token differs and the commit is refused with a `409` - the analysis described a dataset that no longer exists, and nothing is written.
-4. **`_save_latest`** publishes the fresh analysis to `/api/latest`, then the route returns it (same shape `GET /api/latest` returns) plus the updated campaign.
+3. **`commit_fold(generation, analysis=result)`** opens a `BEGIN IMMEDIATE` transaction, re-reads the state and writes the fold (measured runs → `base_rows`, `round += 1`, new history point) **only if the `generation` still matches**, as a compare-and-swap in SQL (`UPDATE ... WHERE generation IS ?`). The analysis is written in the same transaction. Every write mints a fresh generation, so if a `seed()`/`set_result`/`start` landed during `_analyze`, the token differs and the commit is refused with a `409` - the analysis described a dataset that no longer exists, and nothing is written.
+4. The route reads the stored analysis back and returns it (same shape `GET /api/latest` returns) plus the updated campaign.
 
 The next `/api/latest` and the next `GET /api/campaign` both reflect the folded-in data, so `/decide` shows a batch that accounts for the results just logged.
 It is the same `_analyze` the upload path runs, on a dataset that grew by one round, plus the in-flight block described next.
@@ -205,15 +204,11 @@ With the pending block it repeats none.
 `awaiting_recipes` is read outside the plan/commit transaction on purpose.
 A run started in that gap is simply absent from the list, which costs the acquisition one in-flight point of information and nothing else - there is no state to corrupt, and no reason to widen the transaction for it.
 
-### A note on `/api/latest` and the residual window
+### A note on `/api/latest` and the (closed) residual window
 
-`campaign.json` is fully guarded by the `generation` token. `/api/latest` (`_LATEST`) is a *separate* resource with its own lock, and the upload path takes the two locks in the opposite order from the re-analyze path, so they cannot be spanned by a single lock without risking a deadlock.
-The route therefore re-checks the generation once more immediately before `_save_latest` and skips the write if a fresh upload reseeded in between (that upload already published its own newer analysis).
-This eliminates the entire multi-second race across `_analyze` and closes the upload-lands-after-commit case; a sub-millisecond window between the final re-check and `_save_latest` remains.
-
-`_LATEST` now carries a `campaign_generation` stamp (see "Analysis/campaign coherence" above), so a write landing in that residual window no longer goes undetected: the published analysis and the live campaign disagree, and `GET /api/campaign` reports `analysis_in_sync: false`.
-The stamp makes the divergence *visible*, which is what matters for a single-local-user localhost portal.
-It does not yet *prevent* the write - refusing an out-of-order `_save_latest` outright would need the stamp to be ordered rather than a random token, which remains a deliberate follow-up.
+Before schema v2, `/api/latest` was an in-memory map plus a file cache with its own lock, so the re-analyze route could only re-check the generation right before publishing, which left a sub-millisecond window.
+Since schema v2 the analysis is an `analyses` row in `portal.db`, written in the same `BEGIN IMMEDIATE` transaction as the fold (and as the seed on upload), so the fold and its analysis land together or not at all, and the window is gone.
+An upload that lands after the commit simply publishes a newer campaign and analysis together.
 
 ## Honesty constraints (do not regress)
 
