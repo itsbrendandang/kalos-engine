@@ -24,12 +24,43 @@ from starlette.concurrency import run_in_threadpool
 from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
 
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
-from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_store
+from kalos.portal.campaign import (
+    CampaignArchived,
+    CampaignError,
+    CampaignStore,
+    get_campaign_store,
+)
 from kalos.portal.uploads import MAX_COLUMNS, UploadRejected, rejection_counts
 
 log = logging.getLogger("kalos.portal")
 
 router = APIRouter()
+
+
+def audit(
+    store: CampaignStore, principal: Principal, action: str, status_code: int,
+    *, detail: str | None = None,
+) -> None:
+    """Best-effort audit entry for a legacy mutating route: who (subject + auth
+    method), which tenant and campaign (the tenant default), what, and the HTTP
+    outcome. Never the token, the body, or any uploaded data. A failure to
+    audit is logged and never fails the request it describes."""
+    try:
+        store.record_audit(
+            tenant=principal.tenant,
+            subject=principal.subject,
+            auth_method="anonymous" if principal.anonymous else "bearer",
+            action=action,
+            campaign_id=store.default_campaign_id(tenant=principal.tenant),
+            outcome="ok" if status_code < 400 else f"http_{status_code}",
+            detail=detail,
+        )
+    except Exception:  # noqa: BLE001 - auditing must not break the audited request
+        log.exception("failed to write an audit entry for %s", action)
+
+
+def _archived(exc: CampaignArchived) -> JSONResponse:
+    return JSONResponse({"error": str(exc)}, status_code=409)
 
 
 # --- request-body bounds (P0 hardening) ------------------------------------- #
@@ -101,7 +132,7 @@ def get_campaign(
     """
     from kalos.portal.app import _load_latest
 
-    latest = _load_latest(principal.tenant) or {}
+    latest = _load_latest(principal.tenant, store=store) or {}
     return store.summary(
         tenant=principal.tenant,
         analysis_generation=latest.get("campaign_generation"),
@@ -119,10 +150,15 @@ def start_campaign(
         started = store.start(
             [p.model_dump() for p in body.recipes], tenant=principal.tenant
         )
+    except CampaignArchived as exc:
+        audit(store, principal, "campaign.start", 409)
+        return _archived(exc)
     except CampaignError as exc:
         # Authored by CampaignStore, not a raw library error — safe to echo.
         log.warning("campaign start rejected: %s", exc)
+        audit(store, principal, "campaign.start", 400)
         return JSONResponse({"error": str(exc)}, status_code=400)
+    audit(store, principal, "campaign.start", 200, detail=f"runs={len(started)}")
     return JSONResponse({"started": started})
 
 
@@ -137,9 +173,14 @@ def log_campaign_result(
     silently become foldable into the base dataset."""
     try:
         run = store.set_result(body.id, body.value, tenant=principal.tenant)
+    except CampaignArchived as exc:
+        audit(store, principal, "campaign.result", 409)
+        return _archived(exc)
     except CampaignError as exc:
         log.warning("campaign result rejected: %s", exc)
+        audit(store, principal, "campaign.result", 400)
         return JSONResponse({"error": str(exc)}, status_code=400)
+    audit(store, principal, "campaign.result", 200)
     return JSONResponse(run)
 
 
@@ -149,41 +190,42 @@ async def reanalyze_campaign(
     principal: Principal = Depends(require_scope(WRITE)),
 ) -> JSONResponse:
     """Fold every measured pending run into the base dataset, re-run the
-    engine (`_analyze`) on the grown dataset, and persist it as the new
+    engine (`_analyze`) on the grown dataset, and publish it as the new
     `/api/latest` — the loop closing (docs/CAMPAIGN_LOOP.md, "Re-analyze =
     the loop closing").
 
-    Transactional: the fold is committed to `campaign.json` only after
-    `_analyze` succeeds, and only if the campaign's `generation` is unchanged
-    (`plan_fold` → `_analyze` → `commit_fold`). A failed analysis or a
-    concurrent upload that reseeds mid-analysis leaves `campaign.json`
-    untouched and returns a retry (409).
+    Transactional: `plan_fold` -> `_analyze` -> `commit_fold`. The fold is
+    committed only after `_analyze` succeeds, and only if the campaign's
+    `generation` is unchanged (a compare-and-swap in SQL). The new analysis is
+    written in that SAME transaction (schema v2: analyses live in portal.db),
+    so the fold and the analysis describing it land together or not at all. A
+    failed analysis or a concurrent upload that reseeds mid-analysis leaves
+    both untouched and returns a retry (409). This closes the sub-millisecond
+    window the separate `/api/latest` file cache used to leave open.
 
-    `/api/latest` is a SEPARATE resource (`_LATEST`, its own lock) with no
-    shared transaction, so its final write can only be guarded best-effort:
-    after committing, this re-checks the campaign generation right before
-    `_save_latest` and skips the write if a fresh upload reseeded in the
-    meantime (its own `_save_latest` already wrote the newer analysis). This
-    eliminates the multi-second race across `_analyze` and closes the
-    upload-lands-after-commit case; a sub-millisecond window between the
-    re-check and `_save_latest` remains (fully sealing it would need an
-    ordered generation stamp on `_LATEST` itself — see docs/CAMPAIGN_LOOP.md).
-
-    `_analyze`/`_save_latest` are imported from `kalos.portal.app` INSIDE
-    this function, not at module load: `app.py` imports and mounts this
-    router, so a module-level import here would be circular. `_analyze` is
-    CPU-bound (a GP fit + acquisition optimization), so it runs via
-    `run_in_threadpool`, matching how `/api/run` offloads it in `app.py`.
+    `_analyze` is imported from `kalos.portal.app` INSIDE this function, not at
+    module load: `app.py` imports and mounts this router, so a module-level
+    import here would be circular. `_analyze` is CPU-bound (a GP fit +
+    acquisition optimization), so it runs via `run_in_threadpool`, matching how
+    `/api/run` offloads it in `app.py`.
     """
+    response = await _reanalyze(store, principal)
+    audit(store, principal, "campaign.reanalyze", response.status_code)
+    return response
+
+
+async def _reanalyze(store: CampaignStore, principal: Principal) -> JSONResponse:
     from kalos.domains import BIOPROCESS_PROFILE
-    from kalos.portal.app import _analyze, _load_latest, _save_latest
+    from kalos.portal.app import _analyze
 
     tenant = principal.tenant
     # Transactional re-analyze (docs/CAMPAIGN_LOOP.md): plan the fold in memory,
     # run the (slow, thread-offloaded) analysis, and only THEN commit. All store
-    # and /api/latest access is scoped to this tenant.
+    # access is scoped to this tenant's default campaign.
     try:
         df, target, generation = store.plan_fold(tenant=tenant)
+    except CampaignArchived as exc:
+        return _archived(exc)
     except CampaignError as exc:
         log.warning("reanalyze rejected: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=400)
@@ -230,44 +272,20 @@ async def reanalyze_campaign(
         return JSONResponse({"error": "could not analyze the campaign data"}, status_code=400)
 
     try:
-        state = store.commit_fold(generation, tenant=tenant)
+        # The fold and the analysis that describes it, in one transaction.
+        store.commit_fold(generation, tenant=tenant, analysis=result)
+    except CampaignArchived as exc:
+        return _archived(exc)
     except CampaignError as exc:
         # The campaign was reseeded/rewritten while _analyze ran: `result`
-        # describes a base dataset that no longer exists. Do NOT _save_latest —
-        # that would overwrite /api/latest with stale numbers over the fresh
-        # upload. Leave the campaign as-is and ask the caller to retry.
+        # describes a base dataset that no longer exists. Nothing was written,
+        # neither the fold nor the analysis. Ask the caller to retry.
         log.warning("reanalyze not committed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=409)
 
-    # Best-effort guard on the SEPARATE /api/latest resource: if a fresh upload
-    # reseeded the campaign in the small window since commit_fold wrote it, that
-    # upload's own _save_latest has already published the newer analysis — our
-    # `result` is now stale, so skip the write rather than clobber it. (campaign
-    # and _LATEST have independent locks taken in opposite orders by the upload
-    # path, so they cannot be spanned by one lock without risking deadlock; this
-    # re-check is the safe ceiling — see this function's docstring.)
-    current = store.get(tenant=tenant)
-    if current is None or current.get("generation") != state["generation"]:
-        log.warning("reanalyze committed but a fresh upload landed; skipping stale /api/latest write")
-        return JSONResponse(
-            {"error": "the campaign changed during re-analysis (a new upload landed); please re-analyze again"},
-            status_code=409,
-        )
-
-    _save_latest(
-        result,
-        f"campaign round {state['round']}",
-        tenant=tenant,
-        # Tie the published analysis to the campaign it describes: the fold we
-        # just committed. `summary()` compares this against the live generation
-        # to report `analysis_in_sync`.
-        campaign_generation=state["generation"],
-    )
-    # Return the SAME shape GET /api/latest returns: _save_latest stamps the
-    # persisted state with `dataset` and `updated`, so read it back rather than
-    # returning the bare `result` (which lacks those two fields the frontend's
-    # PopulatedResult type expects).
-    saved = _load_latest(tenant) or result
+    # Return the SAME shape GET /api/latest returns (the stored analysis carries
+    # `dataset` and `updated`, which the frontend's PopulatedResult type expects).
+    saved = store.load_analysis(tenant=tenant) or result
     return JSONResponse(
         {"analysis": {"has_data": True, **saved}, "campaign": store.summary(tenant=tenant)}
     )

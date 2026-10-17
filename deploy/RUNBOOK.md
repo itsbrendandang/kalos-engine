@@ -166,11 +166,13 @@ against `experiments.db` and `portal.db` on `BACKUP_INTERVAL_SECONDS`
 (default daily), keeping `BACKUP_KEEP_DAYS` (default 7) of history under
 `deploy/backups/{experiments,portal}/`. See `deploy/backup/backup.sh`'s
 header comment for exactly why `.backup` and not `cp`/`tar` of the live
-files: kalos's stores run in SQLite's default rollback-journal mode (not
-WAL), so a plain file copy can land mid-write and produce a backup that
-opens fine but is silently missing the in-flight transaction. `.backup`
-uses SQLite's Online Backup API, which is safe against a concurrently
-writing engine process.
+files: `experiments.db` runs in rollback-journal mode and `portal.db` (schema
+v2, docs/MIGRATIONS.md) in WAL mode, and in both a plain file copy can land
+mid-write or miss commits still in `-wal`, producing a backup that opens fine
+but is silently missing data. `.backup` uses SQLite's Online Backup API, which
+is safe against a concurrently writing engine process. The sidecar's mount is
+read-only; with the engine stopped (no `-wal`) it falls back to an
+`immutable=1` snapshot, and every snapshot must pass `PRAGMA quick_check`.
 
 **Verify a backup is actually happening:**
 

@@ -56,10 +56,13 @@ def test_reseeding_one_tenant_does_not_touch_another(tmp_path):
 
 def test_latest_is_isolated_per_tenant(tmp_path, monkeypatch):
     from kalos.portal import app as portal
+    from kalos.portal import campaign as campaign_module
 
     monkeypatch.setattr(portal, "_STATE_DIR", tmp_path)
     monkeypatch.setattr(portal, "_LATEST_DIR", tmp_path / "latest")
-    monkeypatch.setattr(portal, "_LATEST", {})
+    # Since schema v2 the analysis lives in portal.db (the tenant's default
+    # campaign), so pin the store the helpers resolve to this test's tmp dir.
+    monkeypatch.setattr(campaign_module, "_STORE", CampaignStore(tmp_path))
 
     portal._save_latest({"target": "a"}, "acme.csv", tenant="acme")
     portal._save_latest({"target": "b"}, "globex.csv", tenant="globex")
@@ -67,8 +70,8 @@ def test_latest_is_isolated_per_tenant(tmp_path, monkeypatch):
     assert portal._load_latest("acme")["dataset"] == "acme.csv"
     assert portal._load_latest("globex")["dataset"] == "globex.csv"
     assert portal._load_latest("nobody") is None
-    # a fresh process (empty in-memory cache) still reloads each tenant's own file
-    monkeypatch.setattr(portal, "_LATEST", {})
+    # a fresh process (a new store on the same database) still reads each tenant's own
+    monkeypatch.setattr(campaign_module, "_STORE", CampaignStore(tmp_path))
     assert portal._load_latest("acme")["dataset"] == "acme.csv"
 
 

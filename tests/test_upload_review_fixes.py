@@ -39,7 +39,6 @@ def client(tmp_path, monkeypatch):
     store = CampaignStore(tmp_path)
     monkeypatch.setattr(portal_module, "_STATE_DIR", tmp_path)
     monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
-    monkeypatch.setattr(portal_module, "_LATEST", {})
     monkeypatch.setattr(campaign_module, "_STORE", store)
     portal_module.app.dependency_overrides[get_campaign_store] = lambda: store
     try:
