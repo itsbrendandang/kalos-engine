@@ -655,7 +655,8 @@ async def _run_uploaded(
                     _run_uploaded_sync, raw, target or None, anonymize, filename, roles,
                     tenant=tenant, sheet=(sheet or sheet_query or None), store=store,
                     campaign_id=campaign_id,
-                )
+                ),
+                tenant=tenant,
             )
         )
         return JSONResponse(result)

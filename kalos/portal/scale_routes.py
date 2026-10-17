@@ -501,7 +501,8 @@ async def scale_readout(
                     target_spec,
                     physics_overrides=physics_overrides,
                     raw_bytes=raw,
-                )
+                ),
+                tenant=principal.tenant,
             )
         )
     except AnalysisBusy as busy:

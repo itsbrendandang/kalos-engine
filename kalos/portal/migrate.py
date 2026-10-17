@@ -975,14 +975,14 @@ def migrate_down(
             goal = _target_for(version)
             if goal is None:
                 return MigrationResult("dry_run", DownPlan(db, version).render())
-            parts = []
+            dry_parts: list[str] = []
             if version == SCHEMA_VERSION:
-                parts.append(_render_down_v3(db, ro))
+                dry_parts.append(_render_down_v3(db, ro))
             if goal == 1:
-                parts.append(_plan_down(ro, db).render())
+                dry_parts.append(_plan_down(ro, db).render())
         finally:
             ro.close()
-        return MigrationResult("dry_run", "\n".join(parts))
+        return MigrationResult("dry_run", "\n".join(dry_parts))
 
     conn = connect(db)
     try:
