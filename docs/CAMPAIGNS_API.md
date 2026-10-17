@@ -15,7 +15,7 @@ below), which the first legacy upload creates. A campaign made with
 
 | Rule | Behaviour |
 |---|---|
-| Authentication | Every route needs a principal (`Authorization: Bearer <token>` once tokens are configured; 401 without one). |
+| Authentication | Every route needs a principal (`Authorization: Bearer <token>` once tokens are configured; 401 without one). A campaign upload without a bearer token is refused with 401 before its body is read, the same as `/api/run`. |
 | Scopes | `read` for GET; `write` for POST and PATCH; `admin` as well for archiving or unarchiving. Missing scope: `403 {"detail": "requires '<scope>' scope"}`. Scope is checked before the campaign id is looked at. |
 | Tenant | Always the authenticated principal's tenant. A tenant in the path, query, body or headers is ignored (an unknown body field is a 400). |
 | Campaign ids | `cmp_` + 32 lowercase hex characters (a uuid4), validated before the store is read. |
