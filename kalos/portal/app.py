@@ -63,6 +63,7 @@ from kalos.portal.limits import (
     RequestSizeLimitMiddleware,
     UploadAuthPrecheckMiddleware,
     max_request_bytes,
+    route_path,
 )
 from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.campaign_routes import router as _campaign_router
@@ -170,7 +171,7 @@ _PROBE_PATHS = frozenset({"/healthz", "/readyz"})
 # immediately with no restart either.
 @app.middleware("http")
 async def _refuse_open_remote_access(request, call_next):
-    if _PRODUCTION and request.url.path not in _PROBE_PATHS:
+    if _PRODUCTION and route_path(request.scope) not in _PROBE_PATHS:
         # Production refuses to START without tokens, but tokens are re-read per
         # request (rotation without restart), so an emptied tokens file would
         # silently reopen the API. Fail closed instead, local callers included.
@@ -687,7 +688,7 @@ async def _validation_error(request: Request, exc: RequestValidationError) -> JS
     input (so the client parses one shape). The message names WHERE and WHAT
     (field location + pydantic's message) but never echoes the input value.
     Every other route keeps FastAPI's default 422."""
-    if not request.url.path.startswith("/api/campaign"):
+    if not route_path(request.scope).startswith("/api/campaign"):
         return await request_validation_exception_handler(request, exc)
     parts = []
     for err in exc.errors()[:5]:
