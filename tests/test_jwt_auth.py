@@ -178,7 +178,6 @@ def test_valid_token_resolves_to_a_jwt_principal(keys):
     (["campaigns:write"], {WRITE}),  # no implication: write does not grant read
     (["org:admin"], {ADMIN}),
     (["campaigns:read", "campaigns:write", "org:admin"], {READ, WRITE, ADMIN}),
-    ([], set()),
 ])
 def test_scope_mapping(keys, scopes, expected):
     p = keys.auth.principal_for(f"Bearer {_sign(keys.k1, _claims(scopes=scopes))}")
@@ -394,13 +393,19 @@ def test_bad_tenants_are_rejected_not_sanitised(keys, tenant, caplog):
     assert _reason(keys.auth, _sign(keys.k1, _claims(tenant=tenant)), caplog) == "bad_tenant"
 
 
-@pytest.mark.parametrize("tenant", ["ACME", "Acme_Bio-2", "a" * 64, "x"])
+def test_reserved_default_tenant_is_rejected(keys, caplog):
+    """'default' belongs to open/anonymous mode (#86): no credential may name it."""
+    assert _reason(keys.auth, _sign(keys.k1, _claims(tenant="default")), caplog) == "bad_tenant"
+
+
+@pytest.mark.parametrize("tenant", ["ACME", "Acme_Bio-2", "a" * 64, "x", "Default"])
 def test_good_tenants_pass_through_unchanged(keys, tenant):
     p = keys.auth.principal_for(f"Bearer {_sign(keys.k1, _claims(tenant=tenant))}")
     assert p.tenant == tenant
 
 
 @pytest.mark.parametrize("scopes", [
+    [],  # a token granting nothing is a minting bug
     ["campaigns:read", "campaigns:delete"],  # unknown scope rejects, it is not filtered
     ["read"],  # engine scope names are not token scopes
     ["admin"],
@@ -888,6 +893,18 @@ def test_static_tokens_carry_exactly_one_tenant(clean_env):
     _static(clean_env, service_account=True, tenants=["acme", "globex"])
     with pytest.raises(AuthConfigError, match="exactly one"):
         Authenticator().principal_for("Bearer svc-tok")
+
+
+@pytest.mark.parametrize("subject", ["svc 1", "a,b", "ü", "tab\tx", "x" * 257])
+def test_static_subject_must_be_deny_listable(clean_env, subject):
+    _static(clean_env, subject=subject)
+    with pytest.raises(AuthConfigError, match="subject"):
+        Authenticator().principal_for("Bearer svc-tok")
+
+
+def test_static_subject_may_use_printable_ascii(clean_env):
+    _static(clean_env, subject="svc|ingest@lab.example!")
+    assert Authenticator().principal_for("Bearer svc-tok").subject == "svc|ingest@lab.example!"
 
 
 def test_service_account_must_be_boolean(clean_env):
