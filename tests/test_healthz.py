@@ -147,3 +147,21 @@ def test_readyz_performs_a_read_not_a_write(client):
     assert store.get(tenant="default") is None  # nothing seeded yet
     client.get("/readyz")
     assert store.get(tenant="default") is None  # /readyz did not seed one
+
+
+def test_readyz_is_a_generic_503_when_the_store_cannot_even_be_built(monkeypatch, caplog):
+    """Building the store (opening/migrating portal.db) happens inside the
+    readiness try, so a failure there is the same generic 503, not a 500."""
+    def _cannot_open():
+        raise PermissionError("unable to open database file /srv/secret/portal.db")
+
+    app.dependency_overrides[get_campaign_store] = _cannot_open
+    try:
+        with caplog.at_level("ERROR", logger="kalos.portal"):
+            resp = TestClient(app, raise_server_exceptions=False).get("/readyz")
+    finally:
+        app.dependency_overrides.pop(get_campaign_store, None)
+    assert resp.status_code == 503
+    assert resp.json() == {"status": "unavailable", "reason": "campaign store unavailable"}
+    assert "/srv/secret" not in resp.text
+    assert "/srv/secret" in caplog.text

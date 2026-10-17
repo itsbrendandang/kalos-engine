@@ -57,7 +57,7 @@ from kalos.portal.config import (
     log_security_posture,
     open_access_explicitly_allowed,
 )
-from kalos.portal.campaign import CampaignStore, get_campaign_store
+from kalos.portal.campaign import get_campaign_store
 from kalos.portal.limits import (
     MULTIPART_OVERHEAD_BYTES,
     RequestSizeLimitMiddleware,
@@ -387,7 +387,7 @@ async def healthz() -> dict:
 
 
 @app.get("/readyz")
-def readyz(store: CampaignStore = Depends(get_campaign_store)) -> JSONResponse:
+def readyz() -> JSONResponse:
     """Readiness probe: unlike `/healthz`, this DOES touch the database - on
     purpose, to answer "can this instance actually serve requests that need
     the store", not just "is the process up".
@@ -402,8 +402,14 @@ def readyz(store: CampaignStore = Depends(get_campaign_store)) -> JSONResponse:
     unauthenticated, and exception text (sqlite messages, filesystem paths)
     is server detail an anonymous caller must not see; the full exception is
     logged server-side instead.
+
+    The store is obtained INSIDE the try (not as a `Depends`), so a failure
+    to even construct it (unwritable state dir, corrupt file at open) is the
+    same generic 503 rather than an unhandled 500. Resolved through
+    `app.dependency_overrides` so tests can still point it at a temp store.
     """
     try:
+        store = app.dependency_overrides.get(get_campaign_store, get_campaign_store)()
         store.ping()
     except Exception:  # noqa: BLE001 - any store failure means "not ready", not a 500
         log.exception("readiness check failed: campaign store unavailable")
@@ -536,7 +542,7 @@ def _run_uploaded_sync(
         # A fresh upload starts a fresh campaign (docs/CAMPAIGN_LOOP.md,
         # "Seeding") for THIS tenant. Best-effort: a seeding failure must never
         # break the upload response the client is waiting on.
-        from kalos.portal.campaign import CampaignStore, get_campaign_store
+        from kalos.portal.campaign import get_campaign_store
 
         generation = get_campaign_store().seed(
             df, result["target"], result["proposal_features"], tenant=tenant
