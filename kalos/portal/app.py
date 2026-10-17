@@ -305,7 +305,8 @@ def readyz(store: CampaignStore = Depends(get_campaign_store)) -> JSONResponse:
     try:
         store.get()
     except Exception as exc:  # noqa: BLE001 - any store failure means "not ready", not a 500
-        return JSONResponse({"status": "unavailable", "reason": str(exc)}, status_code=503)
+        log.warning("readyz check failed: %s", exc)
+        return JSONResponse({"status": "unavailable", "reason": "store check failed"}, status_code=503)
     return JSONResponse({"status": "ok"})
 
 
