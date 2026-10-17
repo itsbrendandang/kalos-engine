@@ -30,6 +30,21 @@ MAX_UPLOAD_BYTES = int(_MAX_UPLOAD_MB * 1024 * 1024)
 MAX_CSV_ROWS = 100_000       # rows read from a CSV/TSV upload
 MAX_COLUMNS = 512            # columns allowed in any upload (CSV or xlsx)
 MAX_XLSX_CELLS = 2_000_000   # rows * cols ceiling for a parsed xlsx (zip-bomb guard)
+MAX_XLSX_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+# Ceiling on the TOTAL uncompressed size of every part of an xlsx, from the zip
+# central directory, checked BEFORE anything is parsed. Python's zipfile never
+# yields more than an entry's declared `file_size` (it truncates and then fails
+# the CRC), so this bounds every byte openpyxl/pandas can read out of the
+# workbook - whatever a sheet's `<dimension>` claims - and therefore the total
+# parse work across all sheets (~5 s of openpyxl at ~13 MB/s). 64 MiB is about
+# 1.5M simple numeric cells, far above any run sheet the GP can fit
+# (MAX_FIT_ROWS x MAX_COLUMNS = ~1M cells); in practice it binds before
+# MAX_XLSX_CELLS.
+_MIN_CELL_XML_BYTES = 16
+# A sheet cell costs at least this many bytes of XML (`<c r="A1"><v>1</v></c>`
+# is 22), so `part_size // _MIN_CELL_XML_BYTES` is an upper bound on the cells a
+# sheet part can hold. Used to charge the default-sheet scan budget for a sheet
+# that failed mid-parse, whose real cell count is unknown.
 _ZIP_MAGIC = b"PK\x03\x04"   # xlsx/xls-as-zip start-of-file marker
 
 # Separate, tighter cap on the rows the SURROGATE is actually fit on. A
@@ -88,6 +103,59 @@ _ERR_FIT = (
 )
 
 
+MAX_REFLECTED_CHARS = 100
+MAX_REFLECTED_NAMES = 20
+# Error responses (and their messages) may name a column or sheet the uploader
+# supplied. Such reflected strings are clipped to MAX_REFLECTED_CHARS and name
+# lists capped at MAX_REFLECTED_NAMES (`<key>_total` then carries the true
+# count), so a crafted header cannot turn an error body into a large or
+# arbitrary-content echo.
+
+
+def clip_name(name: object) -> str:
+    """`str(name)`, clipped to `MAX_REFLECTED_CHARS` (with a trailing ellipsis)."""
+    text = str(name)
+    if len(text) <= MAX_REFLECTED_CHARS:
+        return text
+    return text[: MAX_REFLECTED_CHARS - 1] + "\u2026"
+
+
+def clip_names(names) -> list[str]:
+    """At most `MAX_REFLECTED_NAMES` names, each clipped (see `clip_name`)."""
+    return [clip_name(n) for n in list(names)[:MAX_REFLECTED_NAMES]]
+
+
+def safe_context(context: dict) -> dict:
+    """An error context with every reflected string clipped and every list of
+    names capped; a capped list adds `<key>_total` with its full length."""
+    out: dict = {}
+    for key, value in context.items():
+        if isinstance(value, str):
+            out[key] = clip_name(value)
+        elif isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
+            out[key] = clip_names(value)
+            if len(value) > MAX_REFLECTED_NAMES:
+                out[f"{key}_total"] = len(value)
+        else:
+            out[key] = value
+    return out
+
+
+def rejection_counts(rej: "UploadRejected") -> str:
+    """A log suffix with only the numeric facts of a rejection (`n_rows=4
+    min_rows=6`, list lengths as `n_<key>`), never names or values, so the
+    server log carries no customer column or sheet names."""
+    parts: list[str] = []
+    for key, value in rej.context.items():
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            parts.append(f"{key}={value}")
+        elif isinstance(value, (list, tuple)):
+            parts.append(f"n_{key}={len(value)}")
+    return (" " + " ".join(parts)) if parts else ""
+
+
 class UploadRejected(ValueError):
     """A client upload failed a safety guard or cannot be analyzed.
 
@@ -113,7 +181,7 @@ class UploadRejected(ValueError):
         body: dict = {"error": self.message}
         if self.code:
             body["code"] = self.code
-        for key, value in self.context.items():
+        for key, value in safe_context(self.context).items():
             if key not in ("error", "code"):
                 body[key] = value
         return body
@@ -174,9 +242,16 @@ def _reject_oversized_xlsx_via_openpyxl(raw: bytes) -> None:
         wb.close()
 
 
-def _reject_oversized_xlsx(raw: bytes) -> None:
+def _reject_oversized_xlsx(raw: bytes) -> dict[str, int]:
     """Reject an xlsx whose declared dimensions exceed the cell / column caps,
-    BEFORE `pd.read_excel` materializes the frame (the zip-bomb guard).
+    or whose parts add up to more than `MAX_XLSX_UNCOMPRESSED_BYTES`
+    uncompressed, BEFORE `pd.read_excel` materializes the frame (the zip-bomb
+    guard). Returns `{part name: uncompressed size}` for every zip entry.
+
+    The uncompressed-size total is the guard that does not trust the sheet: a
+    `<dimension>` tag can understate the real content (a "lying" sheet), but
+    the bytes behind it are capped by the zip's declared sizes, which zipfile
+    enforces on read.
 
     Reads each sheet's `<dimension ref="...">` tag straight out of the raw zip
     entry (`xl/worksheets/sheet*.xml`) via a lightweight regex - this is the
@@ -211,11 +286,15 @@ def _reject_oversized_xlsx(raw: bytes) -> None:
                 what = " (this is a zip archive, not an Excel workbook)"
             raise UploadRejected(_ERR_UNSUPPORTED.format(what=what), code="unsupported_file_type")
         sheet_names = [n for n in zf.namelist() if _SHEET_XML_RE.match(n)]
+        part_sizes = {info.filename: int(info.file_size) for info in zf.infolist()}
+        if sum(part_sizes.values()) > MAX_XLSX_UNCOMPRESSED_BYTES:
+            log.warning("rejected an xlsx upload over the uncompressed-size cap")
+            raise UploadRejected(_ERR_TOO_LARGE)
         if not sheet_names:
             # Not a recognizable xlsx layout (or a non-xlsx zip) - let openpyxl's
             # own validation produce the generic parse-rejection.
             _reject_oversized_xlsx_via_openpyxl(raw)
-            return
+            return part_sizes
 
         needs_fallback = False
         for name in sheet_names:
@@ -237,6 +316,7 @@ def _reject_oversized_xlsx(raw: bytes) -> None:
 
     if needs_fallback:
         _reject_oversized_xlsx_via_openpyxl(raw)
+    return part_sizes
 
 
 def _apply_orientation_prepass(df: pd.DataFrame) -> pd.DataFrame:
@@ -413,7 +493,7 @@ class ParsedUpload:
         others = [n for n in self.sheets if n != self.sheet_used]
         if others and self.sheet_used is not None:
             message += (
-                f" (This was sheet {self.sheet_used!r}; the workbook also has "
+                f" (This was sheet {clip_name(self.sheet_used)!r}; the workbook also has "
                 f"{_quote_list(others)}. Choose another sheet to analyze it instead.)"
             )
         return UploadRejected(
@@ -422,7 +502,10 @@ class ParsedUpload:
 
 
 def _quote_list(names: list[str]) -> str:
-    return ", ".join(repr(n) for n in names)
+    """Names for a message: clipped, at most `MAX_REFLECTED_NAMES`, then a count."""
+    shown = ", ".join(repr(n) for n in clip_names(names))
+    extra = len(names) - MAX_REFLECTED_NAMES
+    return shown + (f" and {extra} more" if extra > 0 else "")
 
 
 def _check_frame_caps(df: pd.DataFrame) -> None:
@@ -457,7 +540,7 @@ def _parse_excel(raw: bytes, sheet: str | None) -> ParsedUpload:
     # xlsx/xls: enforce the cell-count ceiling BEFORE pd.read_excel fully
     # materializes the frame, so a zip-bomb whose DECLARED sheet dimensions are
     # enormous is rejected without the memory spike of building the DataFrame.
-    _reject_oversized_xlsx(raw)
+    part_sizes = _reject_oversized_xlsx(raw)
     try:
         book = pd.ExcelFile(io.BytesIO(raw))
         names = [str(n) for n in book.sheet_names]
@@ -474,7 +557,7 @@ def _parse_excel(raw: bytes, sheet: str | None) -> ParsedUpload:
         except Exception as exc:  # noqa: BLE001 - e.g. a chart sheet, a damaged part
             log.warning("could not read an xlsx sheet: %s", type(exc).__name__)
             raise UploadRejected(
-                f"Sheet {name!r} could not be read. " + _ERR_CORRUPT_EXCEL,
+                f"Sheet {clip_name(name)!r} could not be read. " + _ERR_CORRUPT_EXCEL,
                 code="corrupt_excel",
                 context={**ctx, "sheet": name},
             ) from exc
@@ -489,7 +572,7 @@ def _parse_excel(raw: bytes, sheet: str | None) -> ParsedUpload:
             chosen = _match_sheet(sheet, names)
             if chosen is None:
                 raise UploadRejected(
-                    f"The workbook has no sheet named {sheet!r}. Its sheets are: "
+                    f"The workbook has no sheet named {clip_name(sheet)!r}. Its sheets are: "
                     f"{_quote_list(names)}.",
                     code="sheet_not_found",
                     context={**ctx, "sheet": sheet},
@@ -498,14 +581,22 @@ def _parse_excel(raw: bytes, sheet: str | None) -> ParsedUpload:
 
         if len(names) == 1:
             return ParsedUpload(_read(names[0]), "excel", names, names[0])
+        # Scan budget in cells, shared by every sheet tried: a parsed sheet is
+        # charged its real size; one that failed mid-parse is charged the most
+        # cells its XML part could hold (it may have been read almost to the
+        # end before failing), so broken sheets cannot multiply the work.
         budget = MAX_XLSX_CELLS
         for name in names[:MAX_SHEETS_SCANNED]:
             try:
                 df = _read(name)
             except UploadRejected as rej:
-                if rej.code == "corrupt_excel":
-                    continue  # an unreadable sheet is not a candidate; try the next
-                raise
+                if rej.code != "corrupt_excel":
+                    raise
+                # an unreadable sheet is not a candidate; charge it, try the next
+                budget -= _sheet_cell_bound(book, name, part_sizes)
+                if budget <= 0:
+                    break
+                continue
             if table_shape_problem(df) is None:
                 return ParsedUpload(df, "excel", names, name)
             budget -= int(df.shape[0] * df.shape[1])
@@ -521,6 +612,19 @@ def _parse_excel(raw: bytes, sheet: str | None) -> ParsedUpload:
         )
     finally:
         book.close()
+
+
+def _sheet_cell_bound(book: pd.ExcelFile, name: str, part_sizes: dict[str, int]) -> int:
+    """Upper bound on the cells sheet `name` can hold, from its XML part's
+    uncompressed size. Falls back to an even share of the cell cap when the
+    part cannot be located (a non-openpyxl reader, a private attribute gone)."""
+    fallback = max(MAX_XLSX_CELLS // MAX_SHEETS_SCANNED, 1)
+    try:
+        path = getattr(book.book[name], "_worksheet_path", None)
+    except Exception:  # noqa: BLE001 - only an estimate; never fail the upload here
+        return fallback
+    size = part_sizes.get(str(path or "").lstrip("/"))
+    return max(size // _MIN_CELL_XML_BYTES, 1) if size else fallback
 
 
 def _parse_text(raw: bytes) -> ParsedUpload:
@@ -575,9 +679,15 @@ def parse_upload(
     if len(raw) == 0 or raw.strip(b" \t\r\n\x00\xef\xbb\xbf\xff\xfe") == b"":
         raise UploadRejected(_ERR_EMPTY, code="empty_file")
     if raw[:4] == _ZIP_MAGIC:
-        return _parse_excel(raw, sheet)
-    _reject_non_tabular(raw, filename)
-    return _parse_text(raw)
+        parsed = _parse_excel(raw, sheet)
+    else:
+        _reject_non_tabular(raw, filename)
+        parsed = _parse_text(raw)
+    # Column names are always strings: an xlsx header cell holding the number 1
+    # arrives from pandas as the int 1, which would never equal a requested
+    # `target="1"` and would mix types in every name list downstream.
+    parsed.df.columns = parsed.df.columns.map(str)
+    return parsed
 
 
 def _parse_upload(raw: bytes) -> pd.DataFrame:

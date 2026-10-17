@@ -189,6 +189,103 @@ def test_mixed_space_batch_is_distinct(collapse_joint_batch):
     assert set(np.unique(pb.X[:, 1])) <= {0.0, 1.0, 2.0}
 
 
+# --- review fixes: pending runs, categorical-only without cardinalities, mixed
+# repair, determinism ------------------------------------------------------------- #
+
+
+@pytest.fixture
+def collapse_mixed_joint_batch(monkeypatch):
+    """Collapse the JOINT mixed (categorical) batch onto its first row, leaving
+    the q=1 calls of the sequential repair untouched."""
+    real = optimize._optimize_mixed
+
+    def collapsed(acq, b, q, *args, **kwargs):
+        cands = real(acq, b, q, *args, **kwargs)
+        if q > 1:
+            cands = cands[:1].expand(cands.shape[0], -1).clone()
+        return cands
+
+    monkeypatch.setattr(optimize, "_optimize_mixed", collapsed)
+
+
+def _mixed(seed=2, n=24):
+    rng = np.random.default_rng(seed)
+    x = rng.uniform(0, 1, n)
+    lvl = rng.integers(0, 3, n).astype(float)
+    y = 3 * x + lvl + rng.normal(0, 0.05, n)
+    X = np.column_stack([x, lvl])
+    return X, y, np.array([[0.0, 0.0], [1.0, 2.0]])
+
+
+def test_mixed_space_collapsed_batch_is_repaired(collapse_mixed_joint_batch):
+    X, y, bounds = _mixed()
+    s = _fit(X, y, bounds, cat_dims=[1])
+    pb = propose_batch(s, bounds, q=5, cat_dims=[1], cat_cardinalities=[3], seed=0)
+    assert pb.returned == 5 and pb.notice is None
+    assert pb.near_duplicates_replaced == 4
+    assert _pairwise_min(pb.X, bounds, cat_dims=[1]) >= NEAR_DUPLICATE_TOL
+    assert set(np.unique(pb.X[:, 1])) <= {0.0, 1.0, 2.0}
+    assert (pb.X[:, 0] >= 0.0).all() and (pb.X[:, 0] <= 1.0).all()
+
+
+def test_same_seed_gives_the_same_repaired_batch(collapse_mixed_joint_batch):
+    X, y, bounds = _mixed(seed=5)
+    s = _fit(X, y, bounds, cat_dims=[1])
+    pending = np.array([[0.9, 2.0]])
+    kw = dict(q=4, cat_dims=[1], cat_cardinalities=[3], pending=pending, seed=7)
+    torch.manual_seed(0)
+    a = propose_batch(s, bounds, **kw)
+    torch.manual_seed(999)  # a different global RNG state must not matter
+    b = propose_batch(s, bounds, **kw)
+    np.testing.assert_array_equal(a.X, b.X)
+    assert a.near_duplicates_replaced == b.near_duplicates_replaced
+    assert a.notice == b.notice
+
+
+def test_proposals_are_distinct_from_runs_already_in_flight(monkeypatch):
+    """A joint batch that re-proposes an in-flight recipe must not return it:
+    pending runs count in the distinctness check, not only in the acquisition."""
+    X, y, bounds = _monotonic(seed=4)
+    s = _fit(X, y, bounds)
+    in_flight = np.array([[2.5, 6.5]])
+    real = optimize.optimize_acqf
+
+    def proposes_the_pending_run(*args, **kwargs):
+        cands, vals = real(*args, **kwargs)
+        if kwargs.get("q", 1) > 1 and kwargs.get("return_best_only", True):
+            cands = cands.clone()
+            cands[0] = torch.as_tensor(in_flight[0], dtype=cands.dtype)
+        return cands, vals
+
+    monkeypatch.setattr(optimize, "optimize_acqf", proposes_the_pending_run)
+    pb = propose_batch(s, bounds, q=3, pending=in_flight, seed=0)
+    lo, hi = sanitize_bounds(bounds)
+    for row in pb.X:
+        assert proposal_separation(row, in_flight[0], lo, hi) >= NEAR_DUPLICATE_TOL, row
+    assert pb.near_duplicates_replaced >= 1
+
+
+def test_categorical_only_space_without_cardinalities_does_not_crash():
+    """`cat_dims` without `cat_cardinalities` used to crash the categorical-only
+    repair (an empty product grid); the level counts now come from the box."""
+    codes = np.array([[i, j] for i in range(2) for j in range(2)] * 3, float)
+    rng = np.random.default_rng(0)
+    y = codes[:, 0] + 0.5 * codes[:, 1] + rng.normal(0, 0.05, len(codes))
+    bounds = np.array([[0.0, 0.0], [1.0, 1.0]])
+    s = _fit(codes, y, bounds, cat_dims=[0, 1])
+    pb = propose_batch(s, bounds, q=5, cat_dims=[0, 1], seed=0)
+    assert pb.returned == 4
+    assert len({tuple(r) for r in pb.X}) == 4
+    assert pb.notice is not None and pb.notice["code"] == "fewer_distinct_candidates"
+
+
+def test_resolve_cardinalities():
+    lo, hi = np.array([0.0, 0.0, 0.0]), np.array([1.0, 3.0, 2.0])
+    assert optimize._resolve_cardinalities([1, 2], [4, 3], lo, hi) == [4, 3]
+    assert optimize._resolve_cardinalities([1, 2], None, lo, hi) == [4, 3]
+    assert optimize._resolve_cardinalities([1, 2], [5], lo, hi) == [5, 3]
+
+
 # --- the portal response ---------------------------------------------------------- #
 
 pytest.importorskip("fastapi")

@@ -54,7 +54,11 @@ from kalos.portal.campaign_routes import (
     campaign_error_response,
     campaign_not_found_response,
 )
-from kalos.portal.limits import RequestSizeLimitMiddleware
+from kalos.portal.limits import (
+    RequestSizeLimitMiddleware,
+    UploadAuthPrecheckMiddleware,
+    route_path,
+)
 from kalos.portal.migrate import CAMPAIGN_ID_PATTERN
 
 log = logging.getLogger("kalos.portal")
@@ -79,6 +83,24 @@ class CampaignUploadSizeLimit(RequestSizeLimitMiddleware):
         if CAMPAIGN_UPLOAD_PATH.fullmatch(path) is not None:
             return self.upload_cap
         return super().cap_for(path)
+
+
+class CampaignUploadAuthPrecheck(UploadAuthPrecheckMiddleware):
+    """`UploadAuthPrecheckMiddleware` that also covers `POST
+    /api/campaigns/{id}/upload`: with auth enforced, a campaign upload carrying
+    no bearer token is a 401 before its multipart body is read. The check
+    itself is the parent's, run with this one path registered."""
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http":
+            path = route_path(scope)
+            if CAMPAIGN_UPLOAD_PATH.fullmatch(path) is not None:
+                inner = UploadAuthPrecheckMiddleware(
+                    self.app, upload_paths=(path,), auth_enforced=self.auth_enforced
+                )
+                await inner(scope, receive, send)
+                return
+        await super().__call__(scope, receive, send)
 
 
 # --- helpers ------------------------------------------------------------------ #

@@ -39,6 +39,7 @@ from kalos.portal.uploads import (
     MIN_FIT_ROWS,
     UploadRejected,
     _ERR_TOO_MANY_FIT_ROWS,
+    clip_name,
     numeric_columns,
 )
 from kalos.portal.validate import column_provenance, provenance_dicts
@@ -187,7 +188,7 @@ def _too_few_rows(n: int, target: str | None = None) -> UploadRejected:
     else:
         msg = (
             f"Only {n} row{'s have' if n != 1 else ' has'} a numeric value for the target "
-            f"{target!r}; at least {MIN_FIT_ROWS} are needed to fit a model. Add more "
+            f"{clip_name(target)!r}; at least {MIN_FIT_ROWS} are needed to fit a model. Add more "
             "measured runs, or choose another target column."
         )
     ctx: dict = {"min_rows": MIN_FIT_ROWS, "n_rows": int(n)}
@@ -690,6 +691,10 @@ def _refuse_unusable_target(
     verdict = assess_target_variation(df[target])
     if verdict.varies:
         return
+    if verdict.status == "constant" and verdict.n_numeric < MIN_FIT_ROWS:
+        # Too few measured values to fit anything, whether or not they agree:
+        # "add more runs" is the actionable answer, not "the target is constant".
+        raise _too_few_rows(verdict.n_numeric, str(target))
     ctx = _target_error_context(df, target, num, profile, verdict)
     tail = "No model can be fit and no proposals were generated."
     if verdict.status == "constant":
@@ -701,7 +706,7 @@ def _refuse_unusable_target(
                 f"{verdict.value_max:.15g}) differ only by floating-point rounding"
             )
         raise UploadRejected(
-            f"The target column {str(target)!r} {what}, so there is nothing to learn "
+            f"The target column {clip_name(target)!r} {what}, so there is nothing to learn "
             f"from. {tail} Choose a target that varies across runs, or add runs "
             "where it differs.",
             code="target_constant",
@@ -709,13 +714,13 @@ def _refuse_unusable_target(
         )
     if verdict.status == "empty":
         raise UploadRejected(
-            f"The target column {str(target)!r} has no values. {tail} "
+            f"The target column {clip_name(target)!r} has no values. {tail} "
             "Fill in the measured outcome, or choose another target column.",
             code="target_empty",
             context=ctx,
         )
     raise UploadRejected(
-        f"The target column {str(target)!r} has no numeric values. {tail} "
+        f"The target column {clip_name(target)!r} has no numeric values. {tail} "
         "The target must be a measured number (e.g. a titer); choose another column.",
         code="target_not_numeric",
         context=ctx,
@@ -820,7 +825,7 @@ def _analyze(
         if str(requested_target) in original_columns:
             # It was there, but every cell was blank (dropped above).
             raise UploadRejected(
-                f"The target column {str(requested_target)!r} has no values. No model "
+                f"The target column {clip_name(requested_target)!r} has no values. No model "
                 "can be fit and no proposals were generated. Fill in the measured "
                 "outcome, or choose another target column.",
                 code="target_empty",
@@ -830,7 +835,7 @@ def _analyze(
             str(c) for c in _numeric_cols(df) if profile.outcome_hint.search(str(c))
         ] or [str(c) for c in _numeric_cols(df)]
         raise UploadRejected(
-            f"The requested target column {str(requested_target)!r} is not in this sheet. "
+            f"The requested target column {clip_name(requested_target)!r} is not in this sheet. "
             "Choose one of the sheet's columns as the target.",
             code="target_not_found",
             context={"target": str(requested_target), "available_targets": available},
@@ -2005,6 +2010,33 @@ def _anonymize_result(result: dict) -> dict:
         _alias_named_row(e, alias) for e in out.get("design_box_exclusions", [])
     ]
     return out
+
+
+def anonymize_rejection(rej: UploadRejected) -> UploadRejected:
+    """The `anonymize=True` counterpart of `_anonymize_result` for a refused
+    upload: identifier-type column names in the error context (`target`,
+    `available_targets`) and in its message are replaced by the same stable
+    pseudonyms a successful response would use. Sheet names are not column
+    names and are left as they are (a successful response returns them too)."""
+    def alias(name: str) -> str:
+        return f"col_{_hash(name)[:8]}" if _is_identifier_name(name) else name
+
+    context = dict(rej.context)
+    message = rej.message
+    names: list[str] = []
+    if isinstance(context.get("target"), str):
+        names.append(context["target"])
+        context["target"] = alias(context["target"])
+    if isinstance(context.get("available_targets"), list):
+        names.extend(n for n in context["available_targets"] if isinstance(n, str))
+        context["available_targets"] = [
+            alias(n) if isinstance(n, str) else n for n in context["available_targets"]
+        ]
+    for name in names:
+        aliased = alias(name)
+        if aliased != name:
+            message = message.replace(repr(clip_name(name)), repr(aliased))
+    return UploadRejected(message, code=rej.code, context=context)
 
 
 def _alias_named_row(row: dict, alias: Callable[[str], str]) -> dict:

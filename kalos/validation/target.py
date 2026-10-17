@@ -104,6 +104,12 @@ def assess_target_variation(values) -> TargetVariation:
     n_nonblank = int(nonblank_mask.sum())
     if n_nonblank == 0:
         return TargetVariation("empty", 0, 0, 0, None, None)
+    if pd.api.types.is_datetime64_any_dtype(s) or pd.api.types.is_timedelta64_dtype(s):
+        # Dates and durations are not measured outcomes: `pd.to_numeric` would
+        # turn them into nanosecond counts that "vary" and get fit. Refused as
+        # not numeric, explicitly. (Object columns of date cells already
+        # coerce to NaN below.)
+        return TargetVariation("not_numeric", n_nonblank, 0, 0, None, None)
     numeric = pd.to_numeric(s[nonblank_mask], errors="coerce").to_numpy(dtype=float)
     finite = numeric[np.isfinite(numeric)]
     n_numeric = int(finite.size)

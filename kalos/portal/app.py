@@ -40,7 +40,7 @@ from starlette.concurrency import run_in_threadpool
 from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
 
 from kalos.domains import BIOPROCESS_PROFILE, GENERIC_PROFILE, ColumnRoles
-from kalos.portal.analysis import _analyze, _annotate
+from kalos.portal.analysis import _analyze, _annotate, anonymize_rejection
 from kalos.portal.auth import (
     READ,
     WRITE,
@@ -67,7 +67,7 @@ from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.campaign_routes import audit as _audit
 from kalos.portal.campaign_routes import campaign_error_response
 from kalos.portal.campaign_routes import router as _campaign_router
-from kalos.portal.campaigns_api import CampaignUploadSizeLimit
+from kalos.portal.campaigns_api import CampaignUploadAuthPrecheck, CampaignUploadSizeLimit
 from kalos.portal.campaigns_api import router as _campaigns_router
 from kalos.portal.scale_routes import router as _scale_router
 from kalos.portal.uploads import (
@@ -81,6 +81,8 @@ from kalos.portal.uploads import (
     _ERR_TOO_MANY_FIT_ROWS,
     _parse_upload,
     parse_upload,
+    rejection_counts as _rejection_counts,
+    safe_context,
 )
 from kalos.providers import provider_status
 
@@ -146,10 +148,20 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     Opening it applies the schema migration when `portal.db` is still v1
     (kalos/portal/migrate.py, docs/MIGRATIONS.md): backup first, then one
-    transaction. Doing it here makes a failed backup or an unsupported schema
-    stop the process at startup instead of surfacing as 500s on first use.
+    transaction. A failed backup or an unsupported schema (`MigrationError`,
+    `SchemaError`) stops the process at startup: serving on top of a database
+    that could not be migrated safely is never right. Any other failure to open
+    the store (e.g. an unwritable state dir) is logged and the process starts
+    anyway, so `/readyz` reports it as a generic 503, as it did before.
     """
-    get_campaign_store()
+    from kalos.portal.migrate import MigrationError, SchemaError
+
+    try:
+        get_campaign_store()
+    except (MigrationError, SchemaError):
+        raise
+    except Exception:  # noqa: BLE001 - surfaced by /readyz instead
+        log.exception("campaign store could not be opened at startup")
     yield
 
 
@@ -234,6 +246,14 @@ app.add_middleware(
     default_cap=max_request_bytes(),
     upload_cap=MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES,
     upload_paths=UPLOAD_PATHS,
+)
+# With auth enforced, an upload carrying no bearer token is a 401 before its
+# (up to ~25 MB) multipart body is read. Presence check only; the token is
+# verified by `require_principal` as before (kalos/portal/limits.py).
+app.add_middleware(
+    CampaignUploadAuthPrecheck,  # UploadAuthPrecheckMiddleware + /api/campaigns/{id}/upload
+    upload_paths=UPLOAD_PATHS,
+    auth_enforced=lambda: get_authenticator().enforces(),
 )
 app.add_middleware(CORSMiddleware, **cors_config())
 
@@ -369,7 +389,7 @@ async def healthz() -> dict:
 
 
 @app.get("/readyz")
-def readyz(store: CampaignStore = Depends(get_campaign_store)) -> JSONResponse:
+def readyz() -> JSONResponse:
     """Readiness probe: unlike `/healthz`, this DOES touch the database - on
     purpose, to answer "can this instance actually serve requests that need
     the store", not just "is the process up".
@@ -384,8 +404,14 @@ def readyz(store: CampaignStore = Depends(get_campaign_store)) -> JSONResponse:
     unauthenticated, and exception text (sqlite messages, filesystem paths)
     is server detail an anonymous caller must not see; the full exception is
     logged server-side instead.
+
+    The store is obtained INSIDE the try (not as a `Depends`), so a failure
+    to even construct it (unwritable state dir, corrupt file at open) is the
+    same generic 503 rather than an unhandled 500. Resolved through
+    `app.dependency_overrides` so tests can still point it at a temp store.
     """
     try:
+        store = app.dependency_overrides.get(get_campaign_store, get_campaign_store)()
         store.ping()
     except Exception:  # noqa: BLE001 - any store failure means "not ready", not a 500
         log.exception("readiness check failed: campaign store unavailable")
@@ -520,8 +546,10 @@ def _run_uploaded_sync(
             result = _analyze(df, target, anonymize=anonymize, profile=BIOPROCESS_PROFILE)
     except UploadRejected as rej:
         # Name the sheet that was analyzed and list the others, so a client can
-        # offer a sheet selector on the error.
-        raise parsed.annotate(rej) from rej
+        # offer a sheet selector on the error. With `anonymize`, identifier-type
+        # column names in the error get the same pseudonyms a result would.
+        refused = anonymize_rejection(rej) if anonymize else rej
+        raise parsed.annotate(refused) from rej
     except Exception as exc:
         # Any other failure still gets the sheet list on its (generic) error body.
         try:
@@ -645,7 +673,9 @@ async def _run_uploaded(
         # A guard tripped: the message is already generic and safe to return.
         # `to_body()` is `{"error": ..., "code": ..., **context}`; `error` is
         # always present, so a client that only reads `d.error` is unaffected.
-        log.warning("upload rejected (%s): %s", rej.code or "guard", rej)
+        # Logged by code and counts only: the message can name the customer's
+        # columns and sheets, which do not belong in server logs.
+        log.warning("upload rejected: code=%s%s", rej.code or "guard", _rejection_counts(rej))
         return JSONResponse(rej.to_body(), status_code=400)
     except FitError as exc:
         # A numerically-hard-but-valid file that defeated the jittered fit retry.
@@ -653,7 +683,7 @@ async def _run_uploaded(
         # the exception text itself is already generic, but we do not echo it.
         log.warning("upload rejected: model could not be fit (ill-conditioned rows)")
         return JSONResponse(
-            {"error": _ERR_FIT, "code": "fit_failed", **getattr(exc, "upload_context", {})},
+            {"error": _ERR_FIT, "code": "fit_failed", **safe_context(getattr(exc, "upload_context", {}))},
             status_code=400,
         )
     except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError, UnicodeError) as exc:
@@ -662,7 +692,7 @@ async def _run_uploaded(
         # ever reaches the (unauthenticated) client.
         log.exception("failed to parse or analyze an uploaded file")
         return JSONResponse(
-            {"error": _ERR_PARSE, "code": "parse_error", **getattr(exc, "upload_context", {})},
+            {"error": _ERR_PARSE, "code": "parse_error", **safe_context(getattr(exc, "upload_context", {}))},
             status_code=400,
         )
     except Exception as exc:  # noqa: BLE001 - normalized to a generic 400 below
@@ -674,7 +704,7 @@ async def _run_uploaded(
         # message reaches the (unauthenticated) client.
         log.exception("failed to parse or analyze an uploaded file")
         return JSONResponse(
-            {"error": _ERR_PARSE, "code": "parse_error", **getattr(exc, "upload_context", {})},
+            {"error": _ERR_PARSE, "code": "parse_error", **safe_context(getattr(exc, "upload_context", {}))},
             status_code=400,
         )
 
