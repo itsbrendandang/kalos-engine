@@ -428,7 +428,9 @@ def run_single(
         y = np.concatenate([y, _titer(nxt)])
         traj.append({"round": r + 1, "best": float(y.max()), "n": int(len(y))})
     # annotate the last proposed batch with predicted value + uncertainty + why
-    incumbent = float(y[:-q].max())  # best before this batch was measured
+    # best before this batch was measured; len(nxt), not q: a batch can come
+    # back short when the space has fewer than q distinct candidates
+    incumbent = float(y[: -len(nxt)].max())
     mean, std = s.posterior(nxt)
     proposals = _annotate(nxt, mean, std, incumbent)
     bi = int(y.argmax())

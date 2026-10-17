@@ -760,7 +760,7 @@ def _analyze(
     )
     from kalos.core.feasibility import FeasibilityClassifier, feasibility_cv_report, feasible_labels
     from kalos.core.gates import GatesConfig, check_gates
-    from kalos.core.optimize import MAX_MIXED_COMBOS, propose
+    from kalos.core.optimize import MAX_MIXED_COMBOS, propose_batch
     from kalos.core.surrogate import FitError, Surrogate
     from kalos.portal.viz_utils import (
         _embedding_pca,
@@ -1487,7 +1487,10 @@ def _analyze(
     # reported rather than assumed equal to what the caller passed.
     X_pending = _encode_pending(pending, cont_feats, kept_cats, code_maps, X.shape[1])
     n_pending = 0 if X_pending is None else int(X_pending.shape[0])
-    batch = propose(
+    # `propose_batch` never returns two near-duplicate recipes (see its
+    # docstring); on a design space with fewer than q distinct candidates the
+    # batch comes back SHORT, and `proposal_notice` below says so.
+    proposal = propose_batch(
         s,
         bounds,
         q=5,
@@ -1502,6 +1505,7 @@ def _analyze(
         constraint_surrogate=constraint_surrogate if constraint_applied else None,
         constraint_floor=constraint_floor_val if constraint_applied else None,
     )
+    batch = proposal.X
     show = [d["name"] for d in drv[:4]]
     show_idx = [d["_idx"] for d in drv[:4]]  # carry the feature index, not a name lookup
     for d in drv:
@@ -1759,6 +1763,13 @@ def _analyze(
         # batch. Closes the interior-optimum blind spot in the rank drivers.
         "gp_shapes": gp_shapes,
         "proposal_features": show,
+        # None when the full batch came back; otherwise
+        # `{code: "fewer_distinct_candidates", requested, returned, min_separation,
+        # message}` explaining why `proposals` is shorter than requested.
+        "proposal_notice": proposal.notice,
+        # How distinct the batch is and how many collapsed (near-duplicate) rows
+        # of the joint optimization were replaced by sequential selection.
+        "batch_diversity": proposal.diversity_report(),
         "proposals": _annotate(
             batch, p_mean, p_std, incumbent, cols=show_idx, design=design,
             p_feasible=p_feasible_arr, constraint=constraint_pred,

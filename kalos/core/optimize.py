@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -60,6 +61,7 @@ from botorch.optim import (
     optimize_acqf_mixed,
     optimize_acqf_mixed_alternating,
 )
+from botorch.utils.sampling import draw_sobol_samples
 
 from .feasibility import FeasibilityClassifier
 from .surrogate import DEVICE, DTYPE, Surrogate, sanitize_bounds
@@ -71,6 +73,34 @@ logger = logging.getLogger(__name__)
 # we switch to the alternating optimizer, which does not enumerate. 64 keeps the
 # exact path (the better optimizer) for realistic small categorical spaces.
 MAX_MIXED_COMBOS = 64
+
+NEAR_DUPLICATE_TOL = 0.05
+# Two proposals in one batch are NEAR-DUPLICATES when they use the same level of
+# every categorical factor AND every continuous factor differs by less than 5%
+# of that factor's design range (Chebyshev distance in the range-normalised
+# space; see `proposal_separation`).
+#
+# Why 5%: a lab sets each factor of a recipe with a set-point error of roughly
+# 1-2.5% of a typical screening range (a pH meter's +-0.05 on a 5-7 box is
+# 2.5%; pipettes and balances are 1-2%). Two INTENDED recipes closer than twice
+# that error (~5%) in every factor can therefore come out as the same physical
+# experiment, run twice, whose outcomes differ only by assay noise - a wasted
+# slot in a batch of five. It is a policy constant, not a fitted one: it is
+# large enough to catch the corner-collapse and "recipes 1 and 2 nearly
+# identical" cases seen in QA, and small enough (at least 21 distinct settings
+# per factor) never to bind on a continuous design. Chebyshev (max over
+# factors) rather than Euclidean, so the rule reads per factor ("at least one
+# setting differs by >= 5% of its range") and does not depend on how many
+# factors the sheet has.
+
+POOL_EVAL_CHUNK = 512
+# Candidate-pool points scored per acquisition call when filling a slot left by
+# a near-duplicate (bounds peak memory; does not change the result).
+
+MAX_ENUMERATED_DISCRETE = 4096
+# A purely categorical design with at most this many level combinations is
+# enumerated exhaustively when a slot needs filling, so "fewer distinct
+# candidates than q" is decided over the WHOLE space, not over a sample of it.
 
 
 class _FeasibilityGate(torch.nn.Module):
@@ -185,6 +215,98 @@ class _FeasibilityGatedLogNEI(AcquisitionFunction):
         return log_ei + log_pf
 
 
+def proposal_separation(
+    a: np.ndarray,
+    b: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    cat_dims: list[int] | None = None,
+) -> float:
+    """Distance between two proposals in the range-normalised design space.
+
+    Each continuous coordinate is scaled by its design range (`upper - lower`),
+    and the distance is the largest per-factor difference (Chebyshev), so 0.02
+    means "no factor differs by more than 2% of its range". Categorical
+    coordinates (integer level codes) are compared EXACTLY: any differing level
+    makes the two recipes maximally different (distance 1.0, the full range),
+    because there is no "nearby" level of an unordered factor.
+    """
+    a = np.asarray(a, float)
+    b = np.asarray(b, float)
+    cats = set(cat_dims or [])
+    for j in cats:
+        if int(round(a[j])) != int(round(b[j])):
+            return 1.0
+    cont = [j for j in range(a.shape[0]) if j not in cats]
+    if not cont:
+        return 0.0
+    width = np.asarray(upper, float)[cont] - np.asarray(lower, float)[cont]
+    width = np.where(width > 0, width, 1.0)
+    return float(np.max(np.abs(a[cont] - b[cont]) / width))
+
+
+def _is_distinct(
+    x: np.ndarray,
+    accepted: list[np.ndarray],
+    lower: np.ndarray,
+    upper: np.ndarray,
+    cat_dims: list[int] | None,
+    tol: float,
+) -> bool:
+    return all(proposal_separation(x, a, lower, upper, cat_dims) >= tol for a in accepted)
+
+
+@dataclass(frozen=True)
+class ProposalBatch:
+    """A proposed batch plus an honest account of how distinct it is.
+
+    `X` has `returned <= requested` rows; every pair of rows is at least
+    `min_separation` apart (`proposal_separation`). `near_duplicates_replaced`
+    counts rows of the jointly-optimized batch that collapsed onto another row
+    and were replaced by sequential, pending-aware selection. `notice` is None
+    when the full batch was returned, else a machine- and human-readable dict
+    explaining why fewer rows came back.
+    """
+
+    X: np.ndarray
+    requested: int
+    near_duplicates_replaced: int
+    min_separation: float
+    notice: dict | None
+
+    @property
+    def returned(self) -> int:
+        return int(self.X.shape[0])
+
+    def diversity_report(self) -> dict:
+        return {
+            "requested": int(self.requested),
+            "returned": self.returned,
+            "near_duplicates_replaced": int(self.near_duplicates_replaced),
+            "min_separation": float(self.min_separation),
+            "metric": (
+                "max over continuous factors of |difference| / factor range; "
+                "any differing categorical level counts as fully distinct"
+            ),
+        }
+
+
+def _fewer_notice(requested: int, returned: int, tol: float) -> dict:
+    return {
+        "code": "fewer_distinct_candidates",
+        "requested": int(requested),
+        "returned": int(returned),
+        "min_separation": float(tol),
+        "message": (
+            f"Only {returned} of the {requested} requested proposals are distinct. "
+            "The design space has no further candidate that differs from every "
+            f"proposal already in the batch by at least {tol:.0%} of a factor's "
+            "range or by a categorical level, so the batch is returned short "
+            "rather than repeating a recipe."
+        ),
+    }
+
+
 def propose(
     surrogate: Surrogate,
     bounds,
@@ -200,7 +322,67 @@ def propose(
     constraint_surrogate: Surrogate | None = None,
     constraint_floor: float | None = None,
 ) -> np.ndarray:
-    """Return `q` proposed points (shape q x d) maximizing constrained-free qLogNEI.
+    """The proposed points only (`propose_batch(...).X`); see `propose_batch`.
+
+    Returns AT MOST `q` rows: a batch never contains two near-duplicate recipes,
+    so a design space with fewer than `q` distinct candidates yields fewer rows.
+    Callers that need to explain a short batch should call `propose_batch`.
+    """
+    return propose_batch(
+        surrogate,
+        bounds,
+        q,
+        num_restarts,
+        raw_samples,
+        cat_dims=cat_dims,
+        cat_cardinalities=cat_cardinalities,
+        pending=pending,
+        seed=seed,
+        feasibility_classifier=feasibility_classifier,
+        constraint_surrogate=constraint_surrogate,
+        constraint_floor=constraint_floor,
+    ).X
+
+
+def propose_batch(
+    surrogate: Surrogate,
+    bounds,
+    q: int = 3,
+    num_restarts: int = 10,
+    raw_samples: int = 256,
+    *,
+    cat_dims: list[int] | None = None,
+    cat_cardinalities: list[int] | None = None,
+    pending: np.ndarray | None = None,
+    seed: int | None = None,
+    feasibility_classifier: FeasibilityClassifier | None = None,
+    constraint_surrogate: Surrogate | None = None,
+    constraint_floor: float | None = None,
+    min_separation: float = NEAR_DUPLICATE_TOL,
+) -> ProposalBatch:
+    """Propose up to `q` DISTINCT points maximizing qLogNEI, with an account of
+    the batch's distinctness (`ProposalBatch`).
+
+    BATCH DIVERSITY. The q points are first optimized jointly (the historical
+    path, unchanged). A joint qLogNEI batch can still collapse two points onto
+    the same recipe - typically at a box corner when the optimum lies on the
+    edge of the design, where the second copy adds ~zero joint improvement and
+    L-BFGS-B projects both onto the same bound. Such a batch is repaired
+    WITHOUT random jitter: rows are kept in order while they are at least
+    `min_separation` (`NEAR_DUPLICATE_TOL`, see `proposal_separation`) from
+    every row already kept; each dropped slot is then refilled by SEQUENTIAL,
+    pending-aware selection - the accepted rows are added to `X_pending` (so the
+    acquisition integrates over their unknown outcomes, the same fantasy
+    handling the in-flight runs get), a candidate pool is built from the
+    optimizer's own multi-start local optima plus a quasi-random (Sobol) pool
+    over the design box (or the full enumeration of a small purely-categorical
+    space), and the highest-acquisition candidate that clears the distance rule
+    is taken. Every candidate comes from the box (clipped, categorical codes
+    snapped), and is scored by the same, optionally constrained / gated,
+    acquisition, so the repair honors everything the joint optimization did.
+    If no remaining candidate clears the rule, the batch is returned SHORT
+    with a `notice` rather than padded with a repeat. A batch that was already
+    distinct is returned exactly as the joint optimizer produced it.
 
     bounds: array-like of shape (2, d) = [lower_row, upper_row].
 
@@ -278,7 +460,7 @@ def propose(
     )
     X_pending = _sanitize_pending(pending, lower, upper, cat_dims)
 
-    def _run_acqf_optimization() -> torch.Tensor:
+    def _build_acq(X_pending_t: torch.Tensor | None) -> AcquisitionFunction:
         # Noisy EI over the observed baseline (titer/yield are noisy), pruning
         # baseline points that cannot be optimal so the acquisition stays cheap.
         # X_baseline is the raw training design; the model applies its input
@@ -311,13 +493,30 @@ def propose(
             model,
             X_baseline=surrogate._X,
             prune_baseline=True,
-            X_pending=X_pending,
+            X_pending=X_pending_t,
             objective=objective,
             constraints=constraints,
         )
         if feasibility_classifier is not None and feasibility_classifier.fitted:
             mean, scale, coef, intercept = feasibility_classifier.torch_gate_params()
             acq = _FeasibilityGatedLogNEI(acq, _FeasibilityGate(mean, scale, coef, intercept))
+        return acq
+
+    def _finish(candidates: torch.Tensor) -> np.ndarray:
+        out = candidates.detach().cpu().numpy().reshape(-1, len(lower))
+        # Belt-and-suspenders: clamp each coordinate back into the observed box. The
+        # optimizer respects the bounds it is given, but a NaN/degenerate corner or a
+        # numerical overshoot must never surface as an absurd out-of-range recipe.
+        out = np.clip(out, lower, upper)
+        # Snap categorical coordinates to their integer level codes: optimize_acqf_mixed
+        # already pins them, but the clip + float round-trip must never leave a
+        # fractional code that would decode to the wrong level.
+        for j in cat_dims or []:
+            out[:, j] = np.rint(out[:, j])
+        return out
+
+    def _run_acqf_optimization() -> torch.Tensor:
+        acq = _build_acq(X_pending)
         if cat_dims:
             return _optimize_mixed(
                 acq, b, q, num_restarts, raw_samples, cat_dims, cat_cardinalities or []
@@ -331,26 +530,101 @@ def propose(
         )
         return candidates
 
+    def _candidate_pool(acq: AcquisitionFunction) -> np.ndarray:
+        """Candidates for ONE more batch slot: the optimizer's local optima plus a
+        quasi-random sweep of the box (or every point of a small discrete space)."""
+        d = len(lower)
+        cats = list(cat_dims or [])
+        cards = [max(int(k), 1) for k in (cat_cardinalities or [])]
+        cont = [j for j in range(d) if j not in set(cats)]
+        parts: list[np.ndarray] = []
+        if cats:
+            parts.append(
+                _finish(_optimize_mixed(acq, b, 1, num_restarts, raw_samples, cats, cards))
+            )
+        else:
+            local, _ = optimize_acqf(
+                acq_function=acq,
+                bounds=b,
+                q=1,
+                num_restarts=num_restarts,
+                raw_samples=raw_samples,
+                return_best_only=False,
+            )
+            parts.append(_finish(local))
+        n_combos = int(np.prod(cards)) if cats else 1
+        if cats and not cont and n_combos <= MAX_ENUMERATED_DISCRETE:
+            grid = np.array(list(itertools.product(*(range(k) for k in cards))), float)
+            full = np.zeros((grid.shape[0], d))
+            full[:, cats] = grid
+            parts.append(full)
+        else:
+            sob = draw_sobol_samples(bounds=b, n=max(int(raw_samples), 1), q=1)
+            sob_np = sob.detach().cpu().numpy().reshape(-1, d)
+            for j, k in zip(cats, cards):
+                # level codes uniformly from the Sobol coordinate's unit position
+                unit = (sob_np[:, j] - lower[j]) / max(upper[j] - lower[j], 1e-12)
+                sob_np[:, j] = np.clip(np.floor(unit * k), 0, k - 1)
+            parts.append(_finish(torch.as_tensor(sob_np)))
+        return np.vstack(parts)
+
+    def _score(acq: AcquisitionFunction, pool: np.ndarray) -> np.ndarray:
+        vals: list[np.ndarray] = []
+        with torch.no_grad():
+            for start in range(0, pool.shape[0], POOL_EVAL_CHUNK):
+                chunk = torch.as_tensor(
+                    pool[start : start + POOL_EVAL_CHUNK], dtype=DTYPE, device=DEVICE
+                ).unsqueeze(1)
+                vals.append(acq(chunk).detach().cpu().numpy().reshape(-1))
+        return np.concatenate(vals) if vals else np.empty(0)
+
+    def _next_distinct(accepted: list[np.ndarray]) -> np.ndarray | None:
+        """Best-acquisition candidate at least `min_separation` from every accepted
+        row, with the accepted rows treated as pending (fantasised) points."""
+        acc = torch.as_tensor(np.vstack(accepted), dtype=DTYPE, device=DEVICE)
+        pend = acc if X_pending is None else torch.cat([X_pending, acc], dim=0)
+        acq = _build_acq(pend)
+        pool = _candidate_pool(acq)
+        scores = _score(acq, pool)
+        for i in np.argsort(-scores, kind="stable"):
+            if not np.isfinite(scores[i]):
+                continue
+            if _is_distinct(pool[i], accepted, lower, upper, cat_dims, min_separation):
+                return pool[i]
+        return None
+
+    def _run() -> ProposalBatch:
+        out = _finish(_run_acqf_optimization())
+        accepted: list[np.ndarray] = []
+        for row in out:
+            if _is_distinct(row, accepted, lower, upper, cat_dims, min_separation):
+                accepted.append(row)
+        if len(accepted) == out.shape[0]:
+            return ProposalBatch(out, q, 0, float(min_separation), None)
+        n_collapsed = out.shape[0] - len(accepted)
+        logger.info(
+            "joint batch had %d near-duplicate row(s); refilling by sequential selection",
+            n_collapsed,
+        )
+        n_replaced = 0
+        while len(accepted) < q:
+            nxt = _next_distinct(accepted)
+            if nxt is None:
+                break
+            accepted.append(nxt)
+            n_replaced += 1
+        X = np.vstack(accepted)
+        notice = None if X.shape[0] >= q else _fewer_notice(q, X.shape[0], min_separation)
+        return ProposalBatch(X, q, n_replaced, float(min_separation), notice)
+
     if seed is None:
-        candidates = _run_acqf_optimization()
-    else:
-        # devices=[] restricts the fork to CPU RNG state (DEVICE is always CPU
-        # here), avoiding an unnecessary and potentially warning-raising probe
-        # of CUDA RNG state on machines without a GPU.
-        with torch.random.fork_rng(devices=[]):
-            torch.manual_seed(seed)
-            candidates = _run_acqf_optimization()
-    out = candidates.detach().cpu().numpy()
-    # Belt-and-suspenders: clamp each coordinate back into the observed box. The
-    # optimizer respects the bounds it is given, but a NaN/degenerate corner or a
-    # numerical overshoot must never surface as an absurd out-of-range recipe.
-    out = np.clip(out, lower, upper)
-    # Snap categorical coordinates to their integer level codes: optimize_acqf_mixed
-    # already pins them, but the clip + float round-trip must never leave a
-    # fractional code that would decode to the wrong level.
-    for j in cat_dims or []:
-        out[:, j] = np.rint(out[:, j])
-    return out
+        return _run()
+    # devices=[] restricts the fork to CPU RNG state (DEVICE is always CPU
+    # here), avoiding an unnecessary and potentially warning-raising probe
+    # of CUDA RNG state on machines without a GPU.
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(seed)
+        return _run()
 
 
 def _sanitize_pending(

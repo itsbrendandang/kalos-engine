@@ -4,6 +4,24 @@ Newest first.
 
 ## Unreleased
 
+### Fixed - a proposed batch never repeats a recipe
+
+On a sheet whose optimum sits on the edge of the design box, the joint q=5
+qLogNEI optimization could collapse two batch points onto the same corner and
+the API returned two identical recipes. `kalos.core.optimize.propose_batch`
+(which `propose` now wraps) keeps the jointly optimized batch when it is
+already distinct, and otherwise refills each collapsed slot by sequential,
+pending-aware selection: the accepted rows become `X_pending`, and the best
+candidate from the optimizer's multi-start optima plus a Sobol pool over the
+box (or the full enumeration of a small categorical space) that is at least
+`NEAR_DUPLICATE_TOL` = 0.05 away is taken. No random jitter, every candidate
+stays in the box and is scored by the same (constrained / gated) acquisition.
+Distance is Chebyshev in the range-normalised space, with categorical levels
+compared exactly (`proposal_separation`). If the space has fewer than q
+distinct candidates the batch comes back short. The analysis response gains
+`proposal_notice` (null, or `{code: "fewer_distinct_candidates", requested,
+returned, min_separation, message}`) and `batch_diversity`.
+
 ### Fixed - a target that does not vary is refused, not optimized
 
 A run sheet whose target had the same value on every row (or the same value

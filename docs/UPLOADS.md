@@ -31,6 +31,11 @@ Because the sheet comes from an external client, the upload path is guarded:
 - **Proposals stay physically possible.**
   The design box for each continuous feature is built from physically valid observations only, so one `-999` sensor sentinel cannot widen the search space into impossible recipes (it once produced proposals at -422 C, below absolute zero).
   Any narrowing is reported in `design_box_exclusions`, never silent, in every validation mode.
+- **A batch never repeats a recipe.**
+  No two proposals in one batch are within `NEAR_DUPLICATE_TOL` (5%) of each other: same level of every categorical factor and every continuous factor within 5% of its design range (`kalos.core.optimize.proposal_separation`).
+  A jointly optimized batch that collapsed (typically two points on the same box corner when the optimum is on the edge of the design) is refilled by sequential, pending-aware selection from a candidate pool, not by random jitter.
+  When the design space has fewer distinct candidates than requested (e.g. a small all-categorical design), the batch comes back short and `proposal_notice` says so: `{"code": "fewer_distinct_candidates", "requested": 5, "returned": 4, "min_separation": 0.05, "message": "..."}`; otherwise it is `null`.
+  `batch_diversity` reports `requested`, `returned`, `near_duplicates_replaced`, `min_separation`, and `metric`.
 - **Reproducibility.**
   The analyze path is seeded, so the same upload yields identical proposals; the response carries `seed`, `timestamp`, and `engine_version`.
   Protein embeddings pin the ESM-2 checkpoint to an immutable commit, so upstream cannot change model features without a diff here.
