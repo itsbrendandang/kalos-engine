@@ -33,6 +33,7 @@ from typing import Any
 
 from fastapi import Depends, Header, HTTPException
 
+from kalos.portal.config import is_production
 from kalos.portal.tenancy import (  # noqa: F401 - TENANT_ID_PATTERN/validate_tenant_id re-exported
     TENANT_ID_PATTERN,
     is_valid_tenant_id,
@@ -182,6 +183,12 @@ class Authenticator:
         """
         records = self._load_records()
         if not records:
+            if is_production():
+                # Fail closed: the middleware checked the tokens a moment ago, but
+                # they are re-read here, so a file emptied in between must not
+                # yield the anonymous read+write principal in production.
+                log.error("kalos auth: KALOS_ENV=production but no tokens loaded; refusing")
+                raise HTTPException(status_code=503, detail="authentication is not configured")
             if not self._warned_open:
                 log.warning(
                     "kalos auth: no tokens configured - API is OPEN (anonymous '%s' tenant, "
