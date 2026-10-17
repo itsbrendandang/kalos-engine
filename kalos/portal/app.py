@@ -30,7 +30,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from fastapi import Depends, FastAPI, File, Form, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Query, Request, UploadFile
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
@@ -39,14 +41,31 @@ from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
 
 from kalos.domains import BIOPROCESS_PROFILE, GENERIC_PROFILE, ColumnRoles
 from kalos.portal.analysis import _analyze, _annotate
-from kalos.portal.auth import READ, WRITE, Principal, get_authenticator, require_scope
+from kalos.portal.auth import (
+    READ,
+    WRITE,
+    AuthConfigError,
+    Principal,
+    get_authenticator,
+    require_scope,
+)
 from kalos.portal.config import (
+    assert_production_posture,
     cors_config,
+    is_production,
     is_local_client,
     log_security_posture,
     open_access_explicitly_allowed,
 )
-from kalos.portal.campaign import CampaignStore, get_campaign_store
+from kalos.portal.campaign import get_campaign_store
+from kalos.portal.limits import (
+    MULTIPART_OVERHEAD_BYTES,
+    RequestSizeLimitMiddleware,
+    UploadAuthPrecheckMiddleware,
+    max_request_bytes,
+    route_path,
+)
+from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.campaign_routes import router as _campaign_router
 from kalos.portal.scale_routes import router as _scale_router
 from kalos.portal.uploads import (
@@ -63,6 +82,10 @@ from kalos.portal.uploads import (
 from kalos.providers import provider_status
 
 log = logging.getLogger("kalos.portal")
+
+# Routes that accept a multipart file upload, and so get the upload-sized body
+# cap rather than the small JSON one (kalos/portal/limits.py).
+UPLOAD_PATHS = frozenset({"/api/run", "/api/scale/readout"})
 
 # --- CPU thread budget ------------------------------------------------------- #
 # The upload handler offloads its CPU-bound body (pandas parse + ~7 GP fits +
@@ -104,7 +127,25 @@ def _ensure_torch_threads() -> None:
     torch.set_num_threads(_TORCH_THREADS)
     _torch_threads_configured = True
 
-app = FastAPI(title="Kalos Engine API")
+# --- deployment environment (KALOS_ENV) --------------------------------------- #
+# Decided once, at startup. KALOS_ENV=production (docs/HARDENING.md):
+#   - refuses to start (import fails) unless authentication is enforced; the
+#     KALOS_ALLOW_OPEN_ACCESS escape hatch does not apply;
+#   - disables the interactive docs and the schema (/docs, /redoc, /openapi.json);
+#   - does not register the demo routes /api/single and /api/multi (CPU-heavy GP
+#     loops that run OUTSIDE the single analysis slot), so they are 404.
+_PRODUCTION = is_production()
+assert_production_posture(auth_enforced=get_authenticator().enforces())
+
+app = FastAPI(
+    title="Kalos Engine API",
+    docs_url=None if _PRODUCTION else "/docs",
+    redoc_url=None if _PRODUCTION else "/redoc",
+    openapi_url=None if _PRODUCTION else "/openapi.json",
+)
+
+# Probes stay reachable in every posture: they carry no tenant data.
+_PROBE_PATHS = frozenset({"/healthz", "/readyz"})
 
 # CORS policy: an explicit allowlist when `KALOS_CORS_ORIGINS` is set (production),
 # else the permissive localhost default (dev/pilot). See kalos.portal.config.
@@ -127,6 +168,22 @@ app = FastAPI(title="Kalos Engine API")
 # immediately with no restart either.
 @app.middleware("http")
 async def _refuse_open_remote_access(request, call_next):
+    if _PRODUCTION and route_path(request.scope) not in _PROBE_PATHS:
+        # Production refuses to START without tokens, but tokens are re-read per
+        # request (rotation without restart), so an emptied tokens file would
+        # silently reopen the API. Fail closed instead, local callers included.
+        try:
+            enforced = get_authenticator().enforces()
+        except AuthConfigError:
+            log.exception("kalos auth: token configuration is invalid")
+            return JSONResponse({"error": "authentication is misconfigured"}, status_code=500)
+        if not enforced:
+            log.error("refused a request: KALOS_ENV=production but authentication is not enforced")
+            return JSONResponse(
+                {"error": "This kalos portal is in production mode without authentication "
+                          "configured and is refusing all requests."},
+                status_code=503,
+            )
     if not is_local_client(request.client.host if request.client else None):
         if not get_authenticator().enforces() and not open_access_explicitly_allowed():
             log.warning(
@@ -151,6 +208,24 @@ async def _refuse_open_remote_access(request, call_next):
     return await call_next(request)
 
 
+# Bound every request body before any route parses it (kalos/portal/limits.py):
+# a Content-Length over the cap is a 413 without reading the body; a chunked
+# body is counted as it streams. Added before CORS so CORS stays outermost and
+# a 413 still carries the CORS headers a browser client needs to read it.
+app.add_middleware(
+    RequestSizeLimitMiddleware,
+    default_cap=max_request_bytes(),
+    upload_cap=MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES,
+    upload_paths=UPLOAD_PATHS,
+)
+# With auth enforced, an upload carrying no bearer token is a 401 before its
+# (up to ~25 MB) multipart body is read. Presence check only; the token is
+# verified by `require_principal` as before (kalos/portal/limits.py).
+app.add_middleware(
+    UploadAuthPrecheckMiddleware,
+    upload_paths=UPLOAD_PATHS,
+    auth_enforced=lambda: get_authenticator().enforces(),
+)
 app.add_middleware(CORSMiddleware, **cors_config())
 
 # Log the effective security posture (auth + CORS) once at import/startup.
@@ -194,13 +269,28 @@ _LATEST_LOCK = threading.Lock()
 
 
 def _latest_path(tenant: str) -> Path:
-    """Per-tenant best-effort cache file. The tenant is sanitized to a safe
-    filename so a token-provisioned tenant id can never traverse the path."""
-    safe = "".join(c if (c.isalnum() or c in "_.-") else "_" for c in tenant) or "default"
-    return _LATEST_DIR / f"{safe}.json"
+    """Per-tenant best-effort cache file.
+
+    The filename is an INJECTIVE encoding of the tenant id - the lowercase hex of
+    its UTF-8 bytes - so two distinct tenants can never share a file. The old
+    scheme sanitised characters to `_`, which mapped `acme/bio` and `acme_bio`
+    to the same file (a cross-tenant read/overwrite). Hex digits are lowercase
+    only, so the mapping stays injective on case-insensitive filesystems too
+    (`Acme` and `acme` differ in bytes). The id is also validated (defense in
+    depth: auth already rejects malformed ids at config load), and the output
+    alphabet is `[0-9a-f]`, so it can never traverse the path.
+
+    Changing the scheme orphans caches written under the old names: the first
+    `/api/latest` after upgrading reports `has_data: false` until the tenant's
+    next upload or reanalyze. The cache is best-effort by design and the
+    campaign itself lives in SQLite, so nothing durable is lost.
+    """
+    validate_tenant_id(tenant)
+    return _LATEST_DIR / f"t-{tenant.encode('utf-8').hex()}.json"
 
 
-def _load_latest(tenant: str = "default") -> dict | None:
+def _load_latest(tenant: str) -> dict | None:
+    validate_tenant_id(tenant)
     with _LATEST_LOCK:
         if tenant not in _LATEST:
             path = _latest_path(tenant)
@@ -214,7 +304,7 @@ def _load_latest(tenant: str = "default") -> dict | None:
 
 
 def _save_latest(
-    result: dict, dataset: str, *, tenant: str = "default", campaign_generation: str | None = None
+    result: dict, dataset: str, *, tenant: str, campaign_generation: str | None = None
 ) -> None:
     """Publish `result` as this tenant's `/api/latest`.
 
@@ -227,7 +317,11 @@ def _save_latest(
     report `analysis_in_sync` (docs/CAMPAIGN_LOOP.md, "Analysis/campaign
     coherence"). `None` means the analysis is not tied to any campaign, which
     reads as out-of-sync rather than as fine.
+
+    `tenant` is required (no `default` fallback) so a caller can never publish
+    into the open-mode tenant by omission; a malformed id raises `ValueError`.
     """
+    validate_tenant_id(tenant)
     with _LATEST_LOCK:
         state = {
             **result,
@@ -266,7 +360,7 @@ def providers(principal: Principal = Depends(require_scope(READ))) -> dict:
 
 
 @app.get("/healthz")
-def healthz() -> dict:
+async def healthz() -> dict:
     """Liveness probe for a deploy healthcheck (deploy/engine/Containerfile).
 
     Unauthenticated BY DESIGN, and safe to leave that way: no
@@ -284,35 +378,51 @@ def healthz() -> dict:
     liveness probe that can block on a locked/slow SQLite file would make an
     orchestrator restart a perfectly healthy process because the DB, not the
     process, was briefly unavailable.
+
+    `async def` on purpose: a sync handler runs on the bounded worker
+    threadpool, so a liveness probe could queue behind threads busy with
+    upload/reanalyze work and time out on a healthy process. On the event loop
+    it answers as long as the loop is alive, which is what "live" means.
     """
     return {"status": "ok"}
 
 
 @app.get("/readyz")
-def readyz(store: CampaignStore = Depends(get_campaign_store)) -> JSONResponse:
+def readyz() -> JSONResponse:
     """Readiness probe: unlike `/healthz`, this DOES touch the database - on
     purpose, to answer "can this instance actually serve requests that need
     the store", not just "is the process up".
 
-    Read-only: `store.get()` is a plain SELECT (the `default` tenant's
-    campaign row, or None if none seeded yet - either is a healthy answer),
-    never a write, so a readiness check can never itself be the thing that
-    corrupts or contends for the store it is checking. Degrades to a 503
-    with a `reason` on any failure (missing/corrupt/locked database file)
-    instead of raising, so an orchestrator's readiness probe always gets a
-    normal HTTP response rather than a stack trace.
+    Read-only and tenant-agnostic: `store.ping()` is a plain `SELECT 1 FROM
+    campaigns LIMIT 1`, never a write and never any tenant's data, so a
+    readiness check can neither corrupt nor contend for the store it checks.
+    Degrades to a 503 on any failure (missing/corrupt/locked database file)
+    instead of raising, so an orchestrator always gets a normal HTTP response.
+
+    The 503 body carries a FIXED generic reason. This endpoint is
+    unauthenticated, and exception text (sqlite messages, filesystem paths)
+    is server detail an anonymous caller must not see; the full exception is
+    logged server-side instead.
+
+    The store is obtained INSIDE the try (not as a `Depends`), so a failure
+    to even construct it (unwritable state dir, corrupt file at open) is the
+    same generic 503 rather than an unhandled 500. Resolved through
+    `app.dependency_overrides` so tests can still point it at a temp store.
     """
     try:
-        store.get()
-    except Exception as exc:  # noqa: BLE001 - any store failure means "not ready", not a 500
-        return JSONResponse({"status": "unavailable", "reason": str(exc)}, status_code=503)
+        store = app.dependency_overrides.get(get_campaign_store, get_campaign_store)()
+        store.ping()
+    except Exception:  # noqa: BLE001 - any store failure means "not ready", not a 500
+        log.exception("readiness check failed: campaign store unavailable")
+        return JSONResponse(
+            {"status": "unavailable", "reason": "campaign store unavailable"}, status_code=503
+        )
     return JSONResponse({"status": "ok"})
 
 
 # The demo routes take their work size from the URL, so it is capped: each round
 # is a GP fit + acquisition, and an unbounded `rounds`/`q` let one request queue
 # hours of CPU outside the single analysis slot.
-@app.get("/api/single")
 def run_single(
     rounds: int = Query(6, ge=1, le=12),
     q: int = Query(2, ge=1, le=4),
@@ -347,7 +457,6 @@ def run_single(
     }
 
 
-@app.get("/api/multi")
 def run_multi(
     rounds: int = Query(5, ge=1, le=12),  # >= 1, so last_batch is always bound
     q: int = Query(2, ge=1, le=4),
@@ -398,9 +507,15 @@ def run_multi(
     }
 
 
+# Demo routes are development conveniences: never served in production.
+if not _PRODUCTION:
+    app.get("/api/single")(run_single)
+    app.get("/api/multi")(run_multi)
+
+
 def _run_uploaded_sync(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
-    *, tenant: str = "default",
+    *, tenant: str,
 ) -> dict:
     """The CPU-bound body of an upload: parse -> analyze -> persist -> result.
 
@@ -512,6 +627,34 @@ async def run_uploaded(
 # in `kalos.portal.campaign_routes`; mounted here so they are served by this
 # app.
 app.include_router(_campaign_router)
+
+
+_CAMPAIGN_BODY_FIELDS = frozenset(
+    {"recipes", "recipe", "pred", "std", "mode", "reason", "id", "value", "[key]"}
+)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Body validation failures on `/api/campaign/*` answer 400 with the
+    `{"error": ...}` envelope those routes already use for every other bad
+    input (so the client parses one shape). The message names WHERE and WHAT
+    (field location + pydantic's message) but never echoes the input value.
+    Every other route keeps FastAPI's default 422."""
+    if not route_path(request.scope).startswith("/api/campaign"):
+        return await request_validation_exception_handler(request, exc)
+    parts = []
+    for err in exc.errors()[:5]:
+        # Dict keys show up in `loc` (a recipe's feature names): those are caller
+        # input, so anything that is not a list index or a known field name is
+        # masked rather than echoed.
+        loc = ".".join(
+            str(p) if isinstance(p, int) or p in _CAMPAIGN_BODY_FIELDS else "<key>"
+            for p in err.get("loc", ())
+            if p != "body"
+        )
+        parts.append(f"{loc or 'body'}: {err.get('msg', 'invalid')}"[:200])
+    return JSONResponse({"error": "invalid request body: " + "; ".join(parts)}, status_code=400)
 
 # --- Scale-Up Readout: /api/scale/readout (stateless, D6) - a one-page HTML
 # readout over an uploaded multi-scale run sheet. Routes live in

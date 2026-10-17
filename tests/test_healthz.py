@@ -87,7 +87,7 @@ def test_healthz_does_not_touch_the_database(client, monkeypatch):
     def _boom(*args, **kwargs):
         raise AssertionError("healthz must never touch the store")
 
-    monkeypatch.setattr(CampaignStore, "get", _boom)
+    monkeypatch.setattr(CampaignStore, "ping", _boom)
     resp = client.get("/healthz")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
@@ -102,22 +102,66 @@ def test_readyz_is_ok_on_a_working_store(client):
     assert resp.json() == {"status": "ok"}
 
 
-def test_readyz_degrades_to_503_with_a_reason_when_the_store_is_broken(client, monkeypatch):
+def test_readyz_degrades_to_503_with_a_generic_reason_when_the_store_is_broken(
+    client, monkeypatch, caplog
+):
     def _boom(*args, **kwargs):
-        raise RuntimeError("database disk image is malformed")
+        raise RuntimeError("database disk image is malformed at /srv/secret/portal.db")
 
-    monkeypatch.setattr(CampaignStore, "get", _boom)
-    resp = client.get("/readyz")
+    monkeypatch.setattr(CampaignStore, "ping", _boom)
+    with caplog.at_level("ERROR", logger="kalos.portal"):
+        resp = client.get("/readyz")
     assert resp.status_code == 503
     body = resp.json()
-    assert body["status"] == "unavailable"
-    assert "malformed" in body["reason"]
+    # Unauthenticated endpoint: a fixed reason, never the exception text.
+    assert body == {"status": "unavailable", "reason": "campaign store unavailable"}
+    assert "malformed" not in resp.text and "/srv/secret" not in resp.text
+    # ...but the operator still gets the detail, server-side.
+    assert "malformed" in caplog.text
+
+
+def test_readyz_does_not_read_tenant_data(client, monkeypatch):
+    """Readiness is tenant-agnostic: it pings the store, never fetches a
+    tenant's campaign row."""
+    def _no_tenant_reads(*args, **kwargs):
+        raise AssertionError("readyz must not read a tenant's campaign")
+
+    monkeypatch.setattr(CampaignStore, "get", _no_tenant_reads)
+    assert client.get("/readyz").json() == {"status": "ok"}
+
+
+def test_healthz_is_an_async_handler():
+    """A sync handler would run on the bounded threadpool and could queue
+    behind upload/reanalyze work; liveness must answer from the event loop."""
+    import inspect
+
+    from kalos.portal import app as portal
+
+    assert inspect.iscoroutinefunction(portal.healthz)
 
 
 def test_readyz_performs_a_read_not_a_write(client):
     """Readiness must not mutate the store it is checking - no campaign
     should appear as a side effect of polling /readyz."""
     store = app.dependency_overrides[get_campaign_store]()
-    assert store.get() is None  # nothing seeded yet
+    assert store.get(tenant="default") is None  # nothing seeded yet
     client.get("/readyz")
-    assert store.get() is None  # /readyz did not seed one
+    assert store.get(tenant="default") is None  # /readyz did not seed one
+
+
+def test_readyz_is_a_generic_503_when_the_store_cannot_even_be_built(monkeypatch, caplog):
+    """Building the store (opening/migrating portal.db) happens inside the
+    readiness try, so a failure there is the same generic 503, not a 500."""
+    def _cannot_open():
+        raise PermissionError("unable to open database file /srv/secret/portal.db")
+
+    app.dependency_overrides[get_campaign_store] = _cannot_open
+    try:
+        with caplog.at_level("ERROR", logger="kalos.portal"):
+            resp = TestClient(app, raise_server_exceptions=False).get("/readyz")
+    finally:
+        app.dependency_overrides.pop(get_campaign_store, None)
+    assert resp.status_code == 503
+    assert resp.json() == {"status": "unavailable", "reason": "campaign store unavailable"}
+    assert "/srv/secret" not in resp.text
+    assert "/srv/secret" in caplog.text
