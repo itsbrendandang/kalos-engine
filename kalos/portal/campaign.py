@@ -362,6 +362,11 @@ class CampaignStore:
             allowed.discard(target)
             now = time.time()
             appended: list[dict[str, Any]] = []
+            # Each value must fit the kind of column it lands in (numeric vs
+            # categorical level, read from base_rows); see kalos.portal.recipe_values.
+            from kalos.portal.recipe_values import check_recipe_values, column_kinds
+
+            kinds = column_kinds(state.get("base_rows") or [], allowed)
             for recipe in recipes:
                 # Validate the recipe mapping HERE, at the point of the bad
                 # input, so a malformed body 400s cleanly at /api/campaign/start
@@ -379,6 +384,9 @@ class CampaignStore:
                         f"recipe has {len(unknown)} key(s) that are not feature columns of "
                         "this campaign's dataset (the target column is not a feature)"
                     )
+                recipe_map, problem = check_recipe_values(recipe_map, kinds)
+                if problem:
+                    raise CampaignError(problem)
                 run = {
                     "id": uuid.uuid4().hex,
                     "recipe": recipe_map,
