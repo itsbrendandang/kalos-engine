@@ -300,9 +300,9 @@ def _fewer_notice(requested: int, returned: int, tol: float) -> dict:
         "message": (
             f"Only {returned} of the {requested} requested proposals are distinct. "
             "The design space has no further candidate that differs from every "
-            f"proposal already in the batch by at least {tol:.0%} of a factor's "
-            "range or by a categorical level, so the batch is returned short "
-            "rather than repeating a recipe."
+            "proposal already in the batch, and from every run already in flight, "
+            f"by at least {tol:.0%} of a factor's range or by a categorical level, "
+            "so the batch is returned short rather than repeating a recipe."
         ),
     }
 
@@ -459,6 +459,17 @@ def propose_batch(
         ]
     )
     X_pending = _sanitize_pending(pending, lower, upper, cat_dims)
+    if cat_dims:
+        # One level count per categorical dim, for the joint optimizer and the
+        # repair pool alike (derived from the box when the caller gave none).
+        cat_cardinalities = _resolve_cardinalities(
+            list(cat_dims), cat_cardinalities, lower, upper
+        )
+    # In-flight runs count for distinctness too: a proposal within the
+    # tolerance of a run already started is the same experiment run twice.
+    pending_rows: list[np.ndarray] = (
+        [] if X_pending is None else list(X_pending.detach().cpu().numpy().reshape(-1, len(lower)))
+    )
 
     def _build_acq(X_pending_t: torch.Tensor | None) -> AcquisitionFunction:
         # Noisy EI over the observed baseline (titer/yield are noisy), pruning
@@ -535,7 +546,7 @@ def propose_batch(
         quasi-random sweep of the box (or every point of a small discrete space)."""
         d = len(lower)
         cats = list(cat_dims or [])
-        cards = [max(int(k), 1) for k in (cat_cardinalities or [])]
+        cards = _resolve_cardinalities(cats, cat_cardinalities, lower, upper)
         cont = [j for j in range(d) if j not in set(cats)]
         parts: list[np.ndarray] = []
         if cats:
@@ -557,7 +568,7 @@ def propose_batch(
             grid = np.array(list(itertools.product(*(range(k) for k in cards))), float)
             full = np.zeros((grid.shape[0], d))
             full[:, cats] = grid
-            parts.append(full)
+            parts.append(_finish(torch.as_tensor(full)))  # clipped into the box like every candidate
         else:
             sob = draw_sobol_samples(bounds=b, n=max(int(raw_samples), 1), q=1)
             sob_np = sob.detach().cpu().numpy().reshape(-1, d)
@@ -589,7 +600,9 @@ def propose_batch(
         for i in np.argsort(-scores, kind="stable"):
             if not np.isfinite(scores[i]):
                 continue
-            if _is_distinct(pool[i], accepted, lower, upper, cat_dims, min_separation):
+            if _is_distinct(
+                pool[i], accepted + pending_rows, lower, upper, cat_dims, min_separation
+            ):
                 return pool[i]
         return None
 
@@ -597,7 +610,7 @@ def propose_batch(
         out = _finish(_run_acqf_optimization())
         accepted: list[np.ndarray] = []
         for row in out:
-            if _is_distinct(row, accepted, lower, upper, cat_dims, min_separation):
+            if _is_distinct(row, accepted + pending_rows, lower, upper, cat_dims, min_separation):
                 accepted.append(row)
         if len(accepted) == out.shape[0]:
             return ProposalBatch(out, q, 0, float(min_separation), None)
@@ -625,6 +638,32 @@ def propose_batch(
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(seed)
         return _run()
+
+
+def _resolve_cardinalities(
+    cat_dims: list[int],
+    cat_cardinalities: list[int] | None,
+    lower: np.ndarray,
+    upper: np.ndarray,
+) -> list[int]:
+    """One level count per categorical dim, for building candidate pools.
+
+    Uses `cat_cardinalities` where given (codes `0..k-1`, the convention
+    `_optimize_mixed` and the portal use). A caller that passes `cat_dims`
+    without (or with too few) cardinalities used to crash (botorch's mixed
+    optimizer was handed the dims as continuous, and the categorical-only
+    repair built an empty product grid); the missing counts are now derived
+    from the box, `floor(upper) + 1` levels, i.e. codes `0..floor(upper)`
+    (codes below `lower` are clipped back into the box by `_finish`).
+    """
+    given = [max(int(k), 1) for k in (cat_cardinalities or [])]
+    out: list[int] = []
+    for i, j in enumerate(cat_dims):
+        if i < len(given):
+            out.append(given[i])
+        else:
+            out.append(max(int(np.floor(upper[j])) + 1, 1))
+    return out
 
 
 def _sanitize_pending(
