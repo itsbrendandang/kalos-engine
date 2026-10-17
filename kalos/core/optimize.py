@@ -199,6 +199,7 @@ def propose(
     feasibility_classifier: FeasibilityClassifier | None = None,
     constraint_surrogate: Surrogate | None = None,
     constraint_floor: float | None = None,
+    linear_constraints: list[tuple[list[int], list[float], float]] | None = None,
 ) -> np.ndarray:
     """Return `q` proposed points (shape q x d) maximizing constrained-free qLogNEI.
 
@@ -260,6 +261,12 @@ def propose(
     of the pair raises `ValueError`, since a floor with no model (or a model
     with no floor) cannot be turned into a constraint.
 
+    `linear_constraints` are HARD linear inequalities on the design in raw units,
+    BoTorch's own convention: each `(indices, coefficients, rhs)` requires
+    `sum(coefficients[k] * x[indices[k]]) >= rhs` (flip the signs for a `<=`; e.g.
+    total supplement mass <= 12 g/L is `([i, j, k], [-1, -1, -1], -12)`). Box limits
+    are the `bounds` argument. Not supported together with categorical dims.
+
     Both compositions are independent and stack: gating and constraining can be
     combined by passing both.
     """
@@ -269,7 +276,14 @@ def propose(
             "constraint_surrogate and constraint_floor must be given together "
             "(a floor with no model, or a model with no floor, is not a constraint)"
         )
+    if linear_constraints and cat_dims:
+        raise ValueError("linear_constraints are not supported together with categorical dimensions")
     lower, upper = sanitize_bounds(bounds)
+    lin = _validate_linear_constraints(linear_constraints, lower, upper)
+    ineq = [
+        (torch.as_tensor(idx, dtype=torch.long), torch.as_tensor(coef, dtype=DTYPE), float(rhs))
+        for idx, coef, rhs in lin
+    ] or None
     b = torch.stack(
         [
             torch.as_tensor(lower, dtype=DTYPE, device=DEVICE),
@@ -328,19 +342,32 @@ def propose(
             q=q,
             num_restarts=num_restarts,
             raw_samples=raw_samples,
+            inequality_constraints=ineq,
         )
         return candidates
 
-    if seed is None:
-        candidates = _run_acqf_optimization()
-    else:
+    def _attempt(attempt: int) -> torch.Tensor:
+        if seed is None:
+            return _run_acqf_optimization()
         # devices=[] restricts the fork to CPU RNG state (DEVICE is always CPU
         # here), avoiding an unnecessary and potentially warning-raising probe
         # of CUDA RNG state on machines without a GPU.
         with torch.random.fork_rng(devices=[]):
-            torch.manual_seed(seed)
-            candidates = _run_acqf_optimization()
-    out = candidates.detach().cpu().numpy()
+            torch.manual_seed(seed + attempt)
+            return _run_acqf_optimization()
+
+    out = np.clip(_attempt(0).detach().cpu().numpy(), lower, upper)
+    if lin:
+        # The optimizer works to the constraints, but the clip below and numerical
+        # slack can still leave a row outside them. Never return a violating recipe:
+        # retry with a different draw, then fail loudly.
+        for attempt in range(1, 4):
+            if _satisfies_linear(out, lin):
+                break
+            out = np.clip(_attempt(attempt).detach().cpu().numpy(), lower, upper)
+        else:
+            if not _satisfies_linear(out, lin):
+                raise RuntimeError("could not find proposals satisfying the linear constraints")
     # Belt-and-suspenders: clamp each coordinate back into the observed box. The
     # optimizer respects the bounds it is given, but a NaN/degenerate corner or a
     # numerical overshoot must never surface as an absurd out-of-range recipe.
@@ -351,6 +378,61 @@ def propose(
     for j in cat_dims or []:
         out[:, j] = np.rint(out[:, j])
     return out
+
+
+_LIN_TOL = 1e-6
+
+
+def _validate_linear_constraints(constraints, lower: np.ndarray, upper: np.ndarray):
+    """Normalise and sanity-check `(indices, coefficients, rhs)` triples, and raise a
+    clear ValueError if they cannot all hold inside the box (checked by LP)."""
+    if not constraints:
+        return []
+    d = len(lower)
+    out = []
+    for k, c in enumerate(constraints):
+        try:
+            idx, coef, rhs = c
+        except (TypeError, ValueError):
+            raise ValueError(f"linear constraint {k} must be (indices, coefficients, rhs)") from None
+        try:
+            idx = [int(i) if float(i).is_integer() else -1 for i in idx]
+            coef = [float(x) for x in coef]
+            rhs = float(rhs)
+        except (TypeError, ValueError):
+            raise ValueError(f"linear constraint {k} must be (indices, coefficients, rhs) of numbers") from None
+        if not idx:
+            raise ValueError(f"linear constraint {k} has no indices")
+        if len(idx) != len(coef):
+            raise ValueError(f"linear constraint {k}: {len(idx)} indices but {len(coef)} coefficients")
+        if any(i < 0 or i >= d for i in idx):
+            raise ValueError(f"linear constraint {k}: indices must be in [0, {d - 1}] (negative indices are not allowed)")
+        if len(set(idx)) != len(idx):
+            raise ValueError(f"linear constraint {k}: repeated index")
+        if not np.isfinite(coef).all() or not np.isfinite(float(rhs)):
+            raise ValueError(f"linear constraint {k}: coefficients and rhs must be finite")
+        if not any(coef):
+            raise ValueError(f"linear constraint {k}: all coefficients are zero")
+        out.append((idx, coef, float(rhs)))
+    from scipy.optimize import linprog
+
+    a = np.zeros((len(out), d))
+    for r, (idx, coef, _) in enumerate(out):
+        a[r, idx] = coef
+    b = np.array([rhs for _, _, rhs in out])
+    # sum(coef*x) >= rhs   <=>   -sum(coef*x) <= -rhs
+    res = linprog(np.zeros(d), A_ub=-a, b_ub=-b, bounds=list(zip(lower, upper)), method="highs")
+    if res.status == 2:
+        raise ValueError("linear constraints are infeasible within the bounds: no recipe can satisfy them")
+    return out
+
+
+def _satisfies_linear(X: np.ndarray, lin) -> bool:
+    for idx, coef, rhs in lin:
+        lhs = X[:, idx] @ np.asarray(coef)
+        if (lhs < rhs - _LIN_TOL * max(1.0, abs(rhs))).any():
+            return False
+    return True
 
 
 def _sanitize_pending(
