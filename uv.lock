@@ -887,7 +887,7 @@ requires-dist = [
     { name = "openpyxl", marker = "extra == 'portal'", specifier = ">=3.1" },
     { name = "pandas", specifier = ">=2.0" },
     { name = "pandas-stubs", marker = "extra == 'dev'" },
-    { name = "pyjwt", extras = ["crypto"], marker = "extra == 'portal'", specifier = ">=2.10" },
+    { name = "pyjwt", extras = ["crypto"], marker = "extra == 'portal'", specifier = ">=2.10.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },
     { name = "python-multipart", marker = "extra == 'portal'", specifier = ">=0.0.9" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
