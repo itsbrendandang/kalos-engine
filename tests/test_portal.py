@@ -74,21 +74,27 @@ def test_analyze_excludes_outputs_and_reports_honest_cv():
 
 def test_latest_reflects_last_upload(tmp_path, monkeypatch):
     from kalos.portal import app as portal
+    from kalos.portal import campaign as campaign_module
     from kalos.portal.auth import READ, Principal
 
     princ = Principal(subject="anon", tenant="default", scopes=frozenset({READ}))
 
     monkeypatch.setattr(portal, "_STATE_DIR", tmp_path)
     monkeypatch.setattr(portal, "_LATEST_DIR", tmp_path / "latest")
-    monkeypatch.setattr(portal, "_LATEST", {})
+    # Since schema v2 the analysis lives in portal.db (the tenant's default
+    # campaign); `latest` takes the store as a dependency.
+    from kalos.portal.campaign import CampaignStore
+
+    store = CampaignStore(tmp_path)
+    monkeypatch.setattr(campaign_module, "_STORE", store)
 
     # before any upload the Overview must know there is no data (not fake it)
-    assert portal.latest(princ) == {"has_data": False}
+    assert portal.latest(princ, store) == {"has_data": False}
 
     result = portal._analyze(_sheet())
     portal._save_latest(result, "runs.csv", tenant="default")
 
-    got = portal.latest(princ)
+    got = portal.latest(princ, store)
     assert got["has_data"] is True
     assert got["dataset"] == "runs.csv"
     assert got["target"] == "lipase_titer"
@@ -96,9 +102,8 @@ def test_latest_reflects_last_upload(tmp_path, monkeypatch):
     assert len(got["proposals"]) >= 1
     assert "updated" in got
 
-    # survives a restart (reloads from disk when the in-memory copy is gone)
-    monkeypatch.setattr(portal, "_LATEST", {})
-    reloaded = portal.latest(princ)
+    # survives a restart (a fresh store on the same database)
+    reloaded = portal.latest(princ, CampaignStore(tmp_path))
     assert reloaded["has_data"] is True and reloaded["dataset"] == "runs.csv"
 
 

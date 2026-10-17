@@ -24,8 +24,6 @@ import functools
 import json
 import logging
 import os
-import threading
-import time
 from pathlib import Path
 
 import numpy as np
@@ -63,7 +61,9 @@ from kalos.portal.limits import (
     RequestSizeLimitMiddleware,
     max_request_bytes,
 )
+from kalos.portal.migrate import legacy_latest_filename
 from kalos.portal.tenancy import validate_tenant_id
+from kalos.portal.campaign_routes import audit as _audit
 from kalos.portal.campaign_routes import router as _campaign_router
 from kalos.portal.scale_routes import router as _scale_router
 from kalos.portal.uploads import (
@@ -244,99 +244,70 @@ def _objectives(X: np.ndarray) -> np.ndarray:
     return np.stack([_titer(x), _purity(x)], axis=-1)
 
 
-# --- persistence of the most-recently analyzed real dataset, PER TENANT ------ #
+# --- the most-recently analyzed real dataset, PER TENANT ---------------------- #
 # The Overview reads /api/latest so the landing page reflects the LAST dataset a
-# tenant actually uploaded. Keyed by tenant (docs/HARDENING.md, Phase 1b) so two
-# tenants never see each other's analysis. In-memory is the source of truth; a
-# per-tenant JSON file is best-effort so it survives a portal restart.
+# tenant actually uploaded. Since schema v2 (kalos/portal/migrate.py) that is the
+# `analyses` row of the tenant's DEFAULT campaign in portal.db: one durable
+# source of truth, written in the same transaction as the campaign it describes
+# (`CampaignStore.seed`/`commit_fold`). The former in-memory map and the
+# per-tenant `latest/*.json` files are gone; the files of an existing install
+# are imported once by the migration and left on disk untouched.
 _STATE_DIR = Path(os.environ.get("KALOS_STATE_DIR", Path.home() / ".kalos"))
 _LATEST_DIR = _STATE_DIR / "latest"
-_LATEST: dict[str, dict] = {}  # tenant -> latest analysis state
-# `_analyze` runs in a worker thread (see `run_uploaded`), so `_save_latest`/
-# `_load_latest` touch the `_LATEST` map and the per-tenant files from multiple
-# threads. This lock serializes the read-modify-write + file write so two
-# overlapping uploads cannot interleave a half-written entry or file.
-_LATEST_LOCK = threading.Lock()
 
 
 def _latest_path(tenant: str) -> Path:
-    """Per-tenant best-effort cache file.
+    """The LEGACY (schema v1) per-tenant cache file. Nothing writes these any
+    more; kept because the v1 -> v2 migration imports them and `migrate down`
+    writes them back, and both must agree on the name.
 
     The filename is an INJECTIVE encoding of the tenant id - the lowercase hex of
-    its UTF-8 bytes - so two distinct tenants can never share a file. The old
-    scheme sanitised characters to `_`, which mapped `acme/bio` and `acme_bio`
-    to the same file (a cross-tenant read/overwrite). Hex digits are lowercase
-    only, so the mapping stays injective on case-insensitive filesystems too
-    (`Acme` and `acme` differ in bytes). The id is also validated (defense in
-    depth: auth already rejects malformed ids at config load), and the output
-    alphabet is `[0-9a-f]`, so it can never traverse the path.
-
-    Changing the scheme orphans caches written under the old names: the first
-    `/api/latest` after upgrading reports `has_data: false` until the tenant's
-    next upload or reanalyze. The cache is best-effort by design and the
-    campaign itself lives in SQLite, so nothing durable is lost.
+    its UTF-8 bytes - so two distinct tenants can never share a file. The id is
+    validated (defense in depth: auth already rejects malformed ids at config
+    load), and the output alphabet is `[0-9a-f]`, so it can never traverse the
+    path.
     """
     validate_tenant_id(tenant)
-    return _LATEST_DIR / f"t-{tenant.encode('utf-8').hex()}.json"
+    return _LATEST_DIR / legacy_latest_filename(tenant)
 
 
-def _load_latest(tenant: str) -> dict | None:
+def _load_latest(tenant: str, *, store: CampaignStore | None = None) -> dict | None:
+    """The tenant's published analysis (its default campaign's), or None."""
     validate_tenant_id(tenant)
-    with _LATEST_LOCK:
-        if tenant not in _LATEST:
-            path = _latest_path(tenant)
-            if not path.exists():
-                return None
-            try:
-                _LATEST[tenant] = json.loads(path.read_text())
-            except (OSError, ValueError):  # a corrupt cache must not break the API
-                return None
-        return _LATEST.get(tenant)
+    return (store or get_campaign_store()).load_analysis(tenant=tenant)
 
 
 def _save_latest(
-    result: dict, dataset: str, *, tenant: str, campaign_generation: str | None = None
+    result: dict, dataset: str, *, tenant: str, campaign_generation: str | None = None,
+    store: CampaignStore | None = None,
 ) -> None:
-    """Publish `result` as this tenant's `/api/latest`.
+    """Publish `result` as this tenant's `/api/latest`, outside any campaign write.
 
-    `campaign_generation` is the campaign this analysis describes. The campaign
-    and `_LATEST` are separate resources with independent locks and independent
-    persistence, so nothing else ties them together: without the stamp the two
-    can describe different run sheets while both look valid, which is how
-    `/results` and `/decide` came to report different bests off the same portal.
-    `CampaignStore.summary()` compares this stamp against the live campaign to
-    report `analysis_in_sync` (docs/CAMPAIGN_LOOP.md, "Analysis/campaign
-    coherence"). `None` means the analysis is not tied to any campaign, which
-    reads as out-of-sync rather than as fine.
+    The normal paths publish atomically with the campaign instead
+    (`CampaignStore.seed(..., analysis=)`, `commit_fold(..., analysis=)`). This
+    is the fallback when that could not happen, e.g. seeding failed: the
+    analysis is still published, stamped with `campaign_generation` (None =
+    not tied to any campaign state, which `GET /api/campaign` reports as
+    `analysis_in_sync: false` rather than assuming fine).
 
     `tenant` is required (no `default` fallback) so a caller can never publish
     into the open-mode tenant by omission; a malformed id raises `ValueError`.
     """
     validate_tenant_id(tenant)
-    with _LATEST_LOCK:
-        state = {
-            **result,
-            "dataset": dataset,
-            "updated": time.time(),
-            "campaign_generation": campaign_generation,
-        }
-        _LATEST[tenant] = state
-        try:
-            path = _latest_path(tenant)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(state))
-        except (OSError, TypeError, ValueError):
-            # Disk persistence is best-effort; in-memory still serves this run and a
-            # serialization hiccup must never fail the upload.
-            pass
+    (store or get_campaign_store()).save_analysis(
+        result, dataset, tenant=tenant, campaign_generation=campaign_generation
+    )
 
 
 @app.get("/api/latest")
-def latest(principal: Principal = Depends(require_scope(READ))) -> dict:
+def latest(
+    principal: Principal = Depends(require_scope(READ)),
+    store: CampaignStore = Depends(get_campaign_store),
+) -> dict:
     """The most recent real (uploaded) analysis for the caller's tenant, for the
     Overview. `has_data` is False until the first successful /api/run so the home
     can show an upload prompt instead of pretending there is data."""
-    data = _load_latest(principal.tenant)
+    data = _load_latest(principal.tenant, store=store)
     if not data:
         return {"has_data": False}
     return {"has_data": True, **data}
@@ -384,8 +355,8 @@ def readyz(store: CampaignStore = Depends(get_campaign_store)) -> JSONResponse:
     purpose, to answer "can this instance actually serve requests that need
     the store", not just "is the process up".
 
-    Read-only and tenant-agnostic: `store.ping()` is a plain `SELECT 1 FROM
-    campaigns LIMIT 1`, never a write and never any tenant's data, so a
+    Read-only and tenant-agnostic: `store.ping()` reads the schema version
+    (`schema_migrations`), never a write and never any tenant's data, so a
     readiness check can neither corrupt nor contend for the store it checks.
     Degrades to a 503 on any failure (missing/corrupt/locked database file)
     instead of raising, so an orchestrator always gets a normal HTTP response.
@@ -502,7 +473,7 @@ if not _PRODUCTION:
 
 def _run_uploaded_sync(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
-    *, tenant: str, sheet: str | None = None,
+    *, tenant: str, sheet: str | None = None, store: CampaignStore | None = None,
 ) -> dict:
     """The CPU-bound body of an upload: parse -> analyze -> persist -> result.
 
@@ -541,24 +512,26 @@ def _run_uploaded_sync(
     # Excel uploads only: `sheets` (every sheet, workbook order) and
     # `sheet_used` (the one analyzed), so a client can offer a sheet selector.
     result = {**result, **parsed.context()}
-    generation: str | None = None
+    # A fresh upload starts a fresh campaign state (docs/CAMPAIGN_LOOP.md,
+    # "Seeding") in THIS tenant's default campaign, and publishes the analysis
+    # in the same transaction, stamped with the generation it was seeded with.
+    # Best-effort: a seeding failure must never break the upload response.
+    if store is None:
+        store = get_campaign_store()
     try:
-        # A fresh upload starts a fresh campaign (docs/CAMPAIGN_LOOP.md,
-        # "Seeding") for THIS tenant. Best-effort: a seeding failure must never
-        # break the upload response the client is waiting on.
-        from kalos.portal.campaign import get_campaign_store
-
-        generation = get_campaign_store().seed(
-            df, result["target"], result["proposal_features"], tenant=tenant
+        store.seed(
+            df, result["target"], result["proposal_features"], tenant=tenant,
+            analysis=result, dataset=filename,
         )
     except Exception:  # noqa: BLE001 - seeding must never fail the upload
         log.exception("failed to seed the campaign from an uploaded run sheet")
-    # Seed BEFORE publishing so the analysis can carry the generation it was
-    # seeded alongside. The two resources take their locks sequentially (never
-    # nested), so the order is free of deadlock either way. If seeding failed,
-    # the stamp is None and the campaign reports itself out of sync with
-    # /api/latest instead of the two silently describing different run sheets.
-    _save_latest(result, filename, tenant=tenant, campaign_generation=generation)
+        # Still publish the analysis, unstamped: the campaign then reports
+        # itself out of sync with /api/latest instead of the two silently
+        # describing different run sheets.
+        try:
+            _save_latest(result, filename, tenant=tenant, campaign_generation=None, store=store)
+        except Exception:  # noqa: BLE001 - publishing is best-effort too
+            log.exception("failed to publish the analysis of an uploaded run sheet")
     return result
 
 
@@ -571,6 +544,7 @@ async def run_uploaded(
     sheet: str = Form(default=""),
     sheet_query: str | None = Query(default=None, alias="sheet"),
     _principal: Principal = Depends(require_scope(WRITE)),
+    store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
     """Upload a run sheet and analyze it.
 
@@ -579,7 +553,21 @@ async def run_uploaded(
     order that holds a usable table is analyzed (`kalos.portal.uploads.
     _parse_excel`). Ignored for CSV/TSV uploads. Excel responses, success or
     error, carry `sheets` and `sheet_used`.
+
+    The outcome is written to the audit log (tenant, subject, status; never the
+    file, its name, or its contents).
     """
+    response = await _run_uploaded(
+        file, target, anonymize, roles, sheet, sheet_query, _principal, store
+    )
+    _audit(store, _principal, "run.upload", response.status_code)
+    return response
+
+
+async def _run_uploaded(
+    file: UploadFile, target: str, anonymize: bool, roles: str, sheet: str,
+    sheet_query: str | None, _principal: Principal, store: CampaignStore,
+) -> JSONResponse:
     from kalos.core.surrogate import FitError  # deferred: only needed to match the except below
 
     # One byte past the cap is enough for `_parse_upload` to reject it; never
@@ -598,7 +586,7 @@ async def run_uploaded(
             run_exclusively(
                 functools.partial(
                     _run_uploaded_sync, raw, target or None, anonymize, filename, roles,
-                    tenant=tenant, sheet=(sheet or sheet_query or None),
+                    tenant=tenant, sheet=(sheet or sheet_query or None), store=store,
                 )
             )
         )

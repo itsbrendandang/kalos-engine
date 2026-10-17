@@ -173,9 +173,15 @@ def test_repeated_migration_does_not_clobber_an_earlier_backup(tmp_path):
     conn.commit()
     conn.close()
 
-    CampaignStore(state_dir=tmp_path)  # -> campaigns_backup_1
+    CampaignStore(state_dir=tmp_path).close()  # -> campaigns_backup_1, then schema v2
 
     # Put an incompatible table back, as a downgrade/upgrade ping-pong would.
+    # Since schema v2 the store refuses (SchemaError) to run on a v2-stamped
+    # database whose tables were swapped out by hand, so the downgrade goes
+    # through the supported path first: `migrate down` back to the v1 shape.
+    from kalos.portal.migrate import migrate_down
+
+    migrate_down(db)
     conn = sqlite3.connect(str(db))
     conn.execute("DROP TABLE campaigns")
     conn.execute(_LEGACY_MULTI_CAMPAIGN)
