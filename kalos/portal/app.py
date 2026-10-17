@@ -30,7 +30,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from fastapi import Depends, FastAPI, File, Form, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Query, Request, UploadFile
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
@@ -53,6 +55,11 @@ from kalos.portal.config import (
     open_access_explicitly_allowed,
 )
 from kalos.portal.campaign import CampaignStore, get_campaign_store
+from kalos.portal.limits import (
+    MULTIPART_OVERHEAD_BYTES,
+    RequestSizeLimitMiddleware,
+    max_request_bytes,
+)
 from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.campaign_routes import router as _campaign_router
 from kalos.portal.scale_routes import router as _scale_router
@@ -70,6 +77,10 @@ from kalos.portal.uploads import (
 from kalos.providers import provider_status
 
 log = logging.getLogger("kalos.portal")
+
+# Routes that accept a multipart file upload, and so get the upload-sized body
+# cap rather than the small JSON one (kalos/portal/limits.py).
+UPLOAD_PATHS = frozenset({"/api/run", "/api/scale/readout"})
 
 # --- CPU thread budget ------------------------------------------------------- #
 # The upload handler offloads its CPU-bound body (pandas parse + ~7 GP fits +
@@ -158,6 +169,16 @@ async def _refuse_open_remote_access(request, call_next):
     return await call_next(request)
 
 
+# Bound every request body before any route parses it (kalos/portal/limits.py):
+# a Content-Length over the cap is a 413 without reading the body; a chunked
+# body is counted as it streams. Added before CORS so CORS stays outermost and
+# a 413 still carries the CORS headers a browser client needs to read it.
+app.add_middleware(
+    RequestSizeLimitMiddleware,
+    default_cap=max_request_bytes(),
+    upload_cap=MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES,
+    upload_paths=UPLOAD_PATHS,
+)
 app.add_middleware(CORSMiddleware, **cors_config())
 
 # Log the effective security posture (auth + CORS) once at import/startup.
@@ -549,6 +570,34 @@ async def run_uploaded(
 # in `kalos.portal.campaign_routes`; mounted here so they are served by this
 # app.
 app.include_router(_campaign_router)
+
+
+_CAMPAIGN_BODY_FIELDS = frozenset(
+    {"recipes", "recipe", "pred", "std", "mode", "reason", "id", "value", "[key]"}
+)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Body validation failures on `/api/campaign/*` answer 400 with the
+    `{"error": ...}` envelope those routes already use for every other bad
+    input (so the client parses one shape). The message names WHERE and WHAT
+    (field location + pydantic's message) but never echoes the input value.
+    Every other route keeps FastAPI's default 422."""
+    if not request.url.path.startswith("/api/campaign"):
+        return await request_validation_exception_handler(request, exc)
+    parts = []
+    for err in exc.errors()[:5]:
+        # Dict keys show up in `loc` (a recipe's feature names): those are caller
+        # input, so anything that is not a list index or a known field name is
+        # masked rather than echoed.
+        loc = ".".join(
+            str(p) if isinstance(p, int) or p in _CAMPAIGN_BODY_FIELDS else "<key>"
+            for p in err.get("loc", ())
+            if p != "body"
+        )
+        parts.append(f"{loc or 'body'}: {err.get('msg', 'invalid')}"[:200])
+    return JSONResponse({"error": "invalid request body: " + "; ".join(parts)}, status_code=400)
 
 # --- Scale-Up Readout: /api/scale/readout (stateless, D6) - a one-page HTML
 # readout over an uploaded multi-scale run sheet. Routes live in

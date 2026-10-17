@@ -348,6 +348,18 @@ class CampaignStore:
             state = self._read_locked(tenant)
             if state is None:
                 raise CampaignError("no active campaign; upload a run sheet first")
+            # Recipe keys are restricted to the campaign's own feature columns:
+            # the dataset's columns minus the target. A recipe is folded back
+            # into the base dataset as `{**recipe, target: result}`, so an
+            # unknown key would invent a new column in the tenant's persisted
+            # data. (`features` is only the displayed drivers; the engine's
+            # proposals carry every design dimension, which are all columns of
+            # the base dataset.)
+            target = state["target"]
+            allowed = set(state.get("features") or [])
+            for row in state.get("base_rows") or []:
+                allowed.update(row.keys())
+            allowed.discard(target)
             now = time.time()
             appended: list[dict[str, Any]] = []
             for recipe in recipes:
@@ -359,6 +371,13 @@ class CampaignStore:
                 if not isinstance(recipe_map, dict) or not recipe_map:
                     raise CampaignError(
                         "each recipe must include a non-empty 'recipe' mapping of feature -> value"
+                    )
+                unknown = [k for k in recipe_map if k not in allowed]
+                if unknown:
+                    # The offending names are not echoed: they are caller input.
+                    raise CampaignError(
+                        f"recipe has {len(unknown)} key(s) that are not feature columns of "
+                        "this campaign's dataset (the target column is not a feature)"
                     )
                 run = {
                     "id": uuid.uuid4().hex,
