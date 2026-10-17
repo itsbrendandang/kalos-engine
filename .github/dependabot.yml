@@ -7,6 +7,10 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      # One weekly PR per ecosystem for minor + patch bumps; majors still arrive separately.
+      minor-and-patch:
+        update-types: ["minor", "patch"]
 
   # Keeps the actions pinned in .github/workflows/*.yml (checkout,
   # setup-python) current without a human remembering to check.
@@ -14,3 +18,7 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      # One weekly PR per ecosystem for minor + patch bumps; majors still arrive separately.
+      minor-and-patch:
+        update-types: ["minor", "patch"]
