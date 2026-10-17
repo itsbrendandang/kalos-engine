@@ -11,13 +11,15 @@ first undo the wrong mean. Judge a mechanistic model on held-out data before use
 
 OPT-IN, OFF BY DEFAULT. Nothing in the portal or `propose` uses this module; a
 caller must construct a `HybridSurrogate` explicitly. The evidence for a
-mechanistic prior mean is thin (one n=23 study), so it is not a default. A
-simulated check (examples/mechanistic_benchmark.py; Monod fed-batch truth with
-Haldane inhibition, 10 seeds) found: a correct or mildly wrong ODE reached 95% of
-the best response in ~5 evaluations vs ~9 for the plain GP; a severely wrong ODE
-was no better (3 seeds faster, 3 slower, 4 tied); an adversarial ODE was
-slightly worse (1 faster, 3 slower, 6 tied). Judge your own ODE on held-out
-data before turning it on.
+mechanistic prior mean is thin: a single n=23 study (Richelle et al., CSBJ 2026,
+doi 10.34133/csbj.0078; cited from the project's literature notes, not independently
+checked). A simulated check (examples/mechanistic_benchmark.py; Monod fed-batch
+truth with Haldane inhibition, 10 seeds, one fixed held-out split per seed) is saved in
+examples/results/mechanistic_benchmark_10seeds.json: a correct or mildly wrong ODE
+reached 95% of the best response sooner than the plain GP in most seeds; a badly
+wrong or adversarial ODE was no better and sometimes worse. Read the exact counts,
+reach rates and spreads from that file (regenerate with the script); judge your own
+ODE on held-out data before turning it on.
 
 Example (Monod fed-batch as the GP prior mean):
 
