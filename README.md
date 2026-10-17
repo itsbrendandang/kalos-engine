@@ -83,7 +83,7 @@ flowchart LR
 Today the browser talks to the Next.js app, whose server-side proxy forwards to this engine using one configured bearer token.
 The web app has **no user login**, so anyone who can reach the proxy acts as that token's tenant.
 The planned design adds a Better Auth session in the web app, a short-lived EdDSA-signed internal JWT (issuer `kalos-web`, audience `kalos-engine`, lifetime of at most 120 seconds) that the engine verifies on its own, organisations as tenants, multiple campaigns per organisation, and local job workers.
-Details and sequence diagrams for the campaign loop: [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md).
+Current and planned request flows: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Campaign loop details: [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md).
 
 ## Local development
 
