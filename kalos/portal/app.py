@@ -57,17 +57,18 @@ from kalos.portal.config import (
     log_security_posture,
     open_access_explicitly_allowed,
 )
-from kalos.portal.campaign import CampaignStore, get_campaign_store
+from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_store
 from kalos.portal.limits import (
     MULTIPART_OVERHEAD_BYTES,
-    RequestSizeLimitMiddleware,
-    UploadAuthPrecheckMiddleware,
     max_request_bytes,
 )
 from kalos.portal.migrate import legacy_latest_filename
 from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.campaign_routes import audit as _audit
+from kalos.portal.campaign_routes import campaign_error_response
 from kalos.portal.campaign_routes import router as _campaign_router
+from kalos.portal.campaigns_api import CampaignUploadAuthPrecheck, CampaignUploadSizeLimit
+from kalos.portal.campaigns_api import router as _campaigns_router
 from kalos.portal.scale_routes import router as _scale_router
 from kalos.portal.uploads import (
     MAX_COLUMNS,
@@ -241,7 +242,7 @@ async def _refuse_open_remote_access(request, call_next):
 # body is counted as it streams. Added before CORS so CORS stays outermost and
 # a 413 still carries the CORS headers a browser client needs to read it.
 app.add_middleware(
-    RequestSizeLimitMiddleware,
+    CampaignUploadSizeLimit,  # RequestSizeLimitMiddleware + /api/campaigns/{id}/upload
     default_cap=max_request_bytes(),
     upload_cap=MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES,
     upload_paths=UPLOAD_PATHS,
@@ -250,7 +251,7 @@ app.add_middleware(
 # (up to ~25 MB) multipart body is read. Presence check only; the token is
 # verified by `require_principal` as before (kalos/portal/limits.py).
 app.add_middleware(
-    UploadAuthPrecheckMiddleware,
+    CampaignUploadAuthPrecheck,  # UploadAuthPrecheckMiddleware + /api/campaigns/{id}/upload
     upload_paths=UPLOAD_PATHS,
     auth_enforced=lambda: get_authenticator().enforces(),
 )
@@ -316,7 +317,7 @@ def _load_latest(tenant: str, *, store: CampaignStore | None = None) -> dict | N
 
 def _save_latest(
     result: dict, dataset: str, *, tenant: str, campaign_generation: str | None = None,
-    store: CampaignStore | None = None,
+    store: CampaignStore | None = None, campaign_id: str | None = None,
 ) -> None:
     """Publish `result` as this tenant's `/api/latest`, outside any campaign write.
 
@@ -332,7 +333,8 @@ def _save_latest(
     """
     validate_tenant_id(tenant)
     (store or get_campaign_store()).save_analysis(
-        result, dataset, tenant=tenant, campaign_generation=campaign_generation
+        result, dataset, tenant=tenant, campaign_id=campaign_id,
+        campaign_generation=campaign_generation,
     )
 
 
@@ -517,6 +519,7 @@ if not _PRODUCTION:
 def _run_uploaded_sync(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
     *, tenant: str, sheet: str | None = None, store: CampaignStore | None = None,
+    campaign_id: str | None = None,
 ) -> dict:
     """The CPU-bound body of an upload: parse -> analyze -> persist -> result.
 
@@ -566,18 +569,36 @@ def _run_uploaded_sync(
     try:
         store.seed(
             df, result["target"], result["proposal_features"], tenant=tenant,
-            analysis=result, dataset=filename,
+            campaign_id=campaign_id, analysis=result, dataset=filename,
         )
+    except CampaignError:
+        # An explicit campaign (POST /api/campaigns/{id}/upload) that vanished
+        # or was archived mid-analysis: say so (404/409) instead of returning
+        # an analysis that was never stored.
+        if campaign_id is not None:
+            raise
+        log.exception("failed to seed the campaign from an uploaded run sheet")
+        _publish_unstamped(result, filename, tenant=tenant, store=store)
     except Exception:  # noqa: BLE001 - seeding must never fail the upload
         log.exception("failed to seed the campaign from an uploaded run sheet")
         # Still publish the analysis, unstamped: the campaign then reports
         # itself out of sync with /api/latest instead of the two silently
         # describing different run sheets.
-        try:
-            _save_latest(result, filename, tenant=tenant, campaign_generation=None, store=store)
-        except Exception:  # noqa: BLE001 - publishing is best-effort too
-            log.exception("failed to publish the analysis of an uploaded run sheet")
+        _publish_unstamped(result, filename, tenant=tenant, store=store, campaign_id=campaign_id)
     return result
+
+
+def _publish_unstamped(
+    result: dict, filename: str, *, tenant: str, store: CampaignStore,
+    campaign_id: str | None = None,
+) -> None:
+    try:
+        _save_latest(
+            result, filename, tenant=tenant, campaign_generation=None, store=store,
+            campaign_id=campaign_id,
+        )
+    except Exception:  # noqa: BLE001 - publishing is best-effort too
+        log.exception("failed to publish the analysis of an uploaded run sheet")
 
 
 @app.post("/api/run")
@@ -612,6 +633,7 @@ async def run_uploaded(
 async def _run_uploaded(
     file: UploadFile, target: str, anonymize: bool, roles: str, sheet: str,
     sheet_query: str | None, _principal: Principal, store: CampaignStore,
+    *, campaign_id: str | None = None,
 ) -> JSONResponse:
     from kalos.core.surrogate import FitError  # deferred: only needed to match the except below
 
@@ -632,6 +654,7 @@ async def _run_uploaded(
                 functools.partial(
                     _run_uploaded_sync, raw, target or None, anonymize, filename, roles,
                     tenant=tenant, sheet=(sheet or sheet_query or None), store=store,
+                    campaign_id=campaign_id,
                 )
             )
         )
@@ -642,6 +665,10 @@ async def _run_uploaded(
             status_code=503,
             headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
         )
+    except CampaignError as exc:
+        # Only raised for an explicit campaign id (see _run_uploaded_sync).
+        log.warning("campaign upload not stored: %s", exc)
+        return campaign_error_response(exc)
     except UploadRejected as rej:
         # A guard tripped: the message is already generic and safe to return.
         # `to_body()` is `{"error": ..., "code": ..., **context}`; `error` is
@@ -687,10 +714,12 @@ async def _run_uploaded(
 # in `kalos.portal.campaign_routes`; mounted here so they are served by this
 # app.
 app.include_router(_campaign_router)
+app.include_router(_campaigns_router)  # /api/campaigns* (kalos.portal.campaigns_api)
 
 
 _CAMPAIGN_BODY_FIELDS = frozenset(
-    {"recipes", "recipe", "pred", "std", "mode", "reason", "id", "value", "[key]"}
+    {"recipes", "recipe", "pred", "std", "mode", "reason", "id", "value", "[key]",
+     "name", "archived", "include_archived"}
 )
 
 

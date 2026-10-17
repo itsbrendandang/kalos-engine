@@ -419,6 +419,59 @@ class CampaignStore:
             assert row is not None
             return row.info(is_default=False)
 
+    def update_campaign(
+        self, *, tenant: str, campaign_id: str, name: str | None = None,
+        archived: bool | None = None,
+    ) -> dict[str, Any]:
+        """Rename and/or (un)archive one of `tenant`'s campaigns, in ONE transaction.
+
+        Order inside the transaction: unarchive, rename, archive, so
+        `{name, archived: false}` revives and renames an archived campaign and
+        `{name, archived: true}` renames and then archives. Renaming an archived
+        campaign (without unarchiving it) raises `CampaignArchived`. Archiving
+        clears the tenant default exactly like `archive_campaign`; unarchiving
+        does not restore it. CampaignNotFound for any id that is not this
+        tenant's. Name validation (length, control characters) is the route's
+        job; here it is only stripped and clipped like `create_campaign`.
+        """
+        self._check(tenant, campaign_id)
+        if name is not None:
+            if not isinstance(name, str) or not name.strip():
+                raise CampaignError("campaign name must be a non-empty string")
+            name = name.strip()[:MAX_CAMPAIGN_NAME_CHARS]
+        with self._txn(write=True) as conn:
+            row = self._resolve(conn, tenant, campaign_id, create=False)
+            assert row is not None
+            now = time.time()
+            if archived is False and row.archived_at is not None:
+                conn.execute(
+                    "UPDATE campaigns SET archived_at = NULL, updated_at = ? "
+                    "WHERE id = ? AND tenant = ?",
+                    (now, campaign_id, tenant),
+                )
+                row.archived_at = None
+            if name is not None:
+                if row.archived_at is not None:
+                    raise CampaignArchived()
+                conn.execute(
+                    "UPDATE campaigns SET name = ?, updated_at = ? "
+                    "WHERE id = ? AND tenant = ? AND archived_at IS NULL",
+                    (name, now, campaign_id, tenant),
+                )
+            if archived is True and row.archived_at is None:
+                conn.execute(
+                    "UPDATE campaigns SET archived_at = ? "
+                    "WHERE id = ? AND tenant = ? AND archived_at IS NULL",
+                    (now, campaign_id, tenant),
+                )
+                conn.execute(
+                    "DELETE FROM tenant_defaults WHERE tenant = ? AND campaign_id = ?",
+                    (tenant, campaign_id),
+                )
+            row = self._row(conn, tenant, campaign_id)
+            assert row is not None
+            return row.info(is_default=self._default_id(conn, tenant) == campaign_id)
+
     def for_tenant(self, tenant: str) -> TenantCampaigns:
         """A view of this store bound to one tenant (every call gets `tenant=`)."""
         return TenantCampaigns(self, tenant)
@@ -834,7 +887,7 @@ class CampaignStore:
 
 _TENANT_METHODS = frozenset({
     "create_campaign", "campaign_info", "list_campaigns", "default_campaign_id",
-    "archive_campaign", "seed", "get", "summary", "start", "set_result", "plan_fold",
+    "archive_campaign", "update_campaign", "seed", "get", "summary", "start", "set_result", "plan_fold",
     "awaiting_recipes", "commit_fold", "save_analysis", "load_analysis",
     "record_audit", "audit_entries",
 })

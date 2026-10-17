@@ -26,7 +26,9 @@ from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
 from kalos.portal.campaign import (
     CampaignArchived,
+    CampaignConflict,
     CampaignError,
+    CampaignNotFound,
     CampaignStore,
     get_campaign_store,
 )
@@ -61,6 +63,28 @@ def audit(
 
 def _archived(exc: CampaignArchived) -> JSONResponse:
     return JSONResponse({"error": str(exc)}, status_code=409)
+
+
+_NOT_FOUND_BODY = {"error": "campaign not found"}
+
+
+def campaign_not_found_response() -> JSONResponse:
+    """THE 404 for a campaign id the caller may not see: malformed, missing,
+    and another tenant's all get this byte-identical response (status, body,
+    headers), so existence can never be probed. Used by
+    `kalos.portal.campaigns_api` and by `_reanalyze` below."""
+    return JSONResponse(_NOT_FOUND_BODY, status_code=404)
+
+
+def campaign_error_response(exc: CampaignError) -> JSONResponse:
+    """Map a store error on an EXPLICIT campaign id to its HTTP response:
+    not found -> the shared 404, archived/conflict -> 409, anything else -> 400
+    with the store-authored (input-free) message."""
+    if isinstance(exc, CampaignNotFound):
+        return campaign_not_found_response()
+    if isinstance(exc, (CampaignArchived, CampaignConflict)):
+        return JSONResponse({"error": str(exc)}, status_code=409)
+    return JSONResponse({"error": str(exc)}, status_code=400)
 
 
 # --- request-body bounds (P0 hardening) ------------------------------------- #
@@ -214,16 +238,22 @@ async def reanalyze_campaign(
     return response
 
 
-async def _reanalyze(store: CampaignStore, principal: Principal) -> JSONResponse:
+async def _reanalyze(
+    store: CampaignStore, principal: Principal, campaign_id: str | None = None
+) -> JSONResponse:
     from kalos.domains import BIOPROCESS_PROFILE
     from kalos.portal.app import _analyze
 
     tenant = principal.tenant
     # Transactional re-analyze (docs/CAMPAIGN_LOOP.md): plan the fold in memory,
     # run the (slow, thread-offloaded) analysis, and only THEN commit. All store
-    # access is scoped to this tenant's default campaign.
+    # access is scoped to this tenant and to `campaign_id` (None = the tenant's
+    # default campaign, the legacy route; an explicit id comes from
+    # `kalos.portal.campaigns_api`).
     try:
-        df, target, generation = store.plan_fold(tenant=tenant)
+        df, target, generation = store.plan_fold(tenant=tenant, campaign_id=campaign_id)
+    except CampaignNotFound:
+        return campaign_not_found_response()
     except CampaignArchived as exc:
         return _archived(exc)
     except CampaignError as exc:
@@ -233,7 +263,7 @@ async def _reanalyze(store: CampaignStore, principal: Principal) -> JSONResponse
     # Runs still in the incubator. They have no outcome to fold, so they never
     # reach `df`; passed separately they keep the next batch from re-proposing an
     # experiment already underway.
-    awaiting = store.awaiting_recipes(tenant=tenant)
+    awaiting = store.awaiting_recipes(tenant=tenant, campaign_id=campaign_id)
 
     if df.empty:
         log.warning("reanalyze rejected: campaign has no base rows to analyze")
@@ -273,7 +303,9 @@ async def _reanalyze(store: CampaignStore, principal: Principal) -> JSONResponse
 
     try:
         # The fold and the analysis that describes it, in one transaction.
-        store.commit_fold(generation, tenant=tenant, analysis=result)
+        store.commit_fold(generation, tenant=tenant, campaign_id=campaign_id, analysis=result)
+    except CampaignNotFound:
+        return campaign_not_found_response()
     except CampaignArchived as exc:
         return _archived(exc)
     except CampaignError as exc:
@@ -285,7 +317,13 @@ async def _reanalyze(store: CampaignStore, principal: Principal) -> JSONResponse
 
     # Return the SAME shape GET /api/latest returns (the stored analysis carries
     # `dataset` and `updated`, which the frontend's PopulatedResult type expects).
-    saved = store.load_analysis(tenant=tenant) or result
+    saved = store.load_analysis(tenant=tenant, campaign_id=campaign_id) or result
     return JSONResponse(
-        {"analysis": {"has_data": True, **saved}, "campaign": store.summary(tenant=tenant)}
+        {
+            "analysis": {"has_data": True, **saved},
+            "campaign": store.summary(
+                tenant=tenant, campaign_id=campaign_id,
+                analysis_generation=saved.get("campaign_generation"),
+            ) if campaign_id is not None else store.summary(tenant=tenant),
+        }
     )
