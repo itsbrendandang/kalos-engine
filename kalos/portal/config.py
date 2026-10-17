@@ -48,6 +48,51 @@ def cors_config() -> dict:
 
 
 _ALLOW_OPEN_VAR = "KALOS_ALLOW_OPEN_ACCESS"
+_ENV_VAR = "KALOS_ENV"
+_KNOWN_ENVS = frozenset({"development", "production"})
+
+
+class ProductionConfigError(RuntimeError):
+    """`KALOS_ENV=production` was requested with a posture it does not allow."""
+
+
+def deployment_env() -> str:
+    """The deployment environment from `KALOS_ENV`: `production` or
+    `development` (the default when unset/empty).
+
+    An unrecognised value RAISES instead of falling back to development: a typo
+    such as `KALOS_ENV=prod` would otherwise silently drop every production
+    guard, which is exactly the kind of silent failure startup checks exist for.
+    """
+    raw = os.environ.get(_ENV_VAR, "").strip().lower()
+    if not raw:
+        return "development"
+    if raw not in _KNOWN_ENVS:
+        raise ProductionConfigError(
+            f"{_ENV_VAR}={raw!r} is not recognised; use 'production' or 'development'"
+        )
+    return raw
+
+
+def is_production() -> bool:
+    """Whether `KALOS_ENV=production` (see `deployment_env`)."""
+    return deployment_env() == "production"
+
+
+def assert_production_posture(*, auth_enforced: bool) -> None:
+    """In production, refuse to start without enforced authentication.
+
+    Unlike the non-loopback bind check, `KALOS_ALLOW_OPEN_ACCESS` does NOT
+    override this: an operator who declares production has said the portal is
+    not a bench box, so tokenless open access is never acceptable. A no-op
+    outside production.
+    """
+    if is_production() and not auth_enforced:
+        raise ProductionConfigError(
+            f"{_ENV_VAR}=production requires authentication: set KALOS_AUTH_TOKENS_FILE "
+            "(or KALOS_AUTH_TOKENS) to a list with at least one token. "
+            f"{_ALLOW_OPEN_VAR} is ignored in production (docs/HARDENING.md)."
+        )
 
 
 class InsecureBindError(RuntimeError):

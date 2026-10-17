@@ -44,12 +44,15 @@ from kalos.portal.analysis import _analyze, _annotate
 from kalos.portal.auth import (
     READ,
     WRITE,
+    AuthConfigError,
     Principal,
     get_authenticator,
     require_scope,
 )
 from kalos.portal.config import (
+    assert_production_posture,
     cors_config,
+    is_production,
     is_local_client,
     log_security_posture,
     open_access_explicitly_allowed,
@@ -122,7 +125,25 @@ def _ensure_torch_threads() -> None:
     torch.set_num_threads(_TORCH_THREADS)
     _torch_threads_configured = True
 
-app = FastAPI(title="Kalos Engine API")
+# --- deployment environment (KALOS_ENV) --------------------------------------- #
+# Decided once, at startup. KALOS_ENV=production (docs/HARDENING.md):
+#   - refuses to start (import fails) unless authentication is enforced; the
+#     KALOS_ALLOW_OPEN_ACCESS escape hatch does not apply;
+#   - disables the interactive docs and the schema (/docs, /redoc, /openapi.json);
+#   - does not register the demo routes /api/single and /api/multi (CPU-heavy GP
+#     loops that run OUTSIDE the single analysis slot), so they are 404.
+_PRODUCTION = is_production()
+assert_production_posture(auth_enforced=get_authenticator().enforces())
+
+app = FastAPI(
+    title="Kalos Engine API",
+    docs_url=None if _PRODUCTION else "/docs",
+    redoc_url=None if _PRODUCTION else "/redoc",
+    openapi_url=None if _PRODUCTION else "/openapi.json",
+)
+
+# Probes stay reachable in every posture: they carry no tenant data.
+_PROBE_PATHS = frozenset({"/healthz", "/readyz"})
 
 # CORS policy: an explicit allowlist when `KALOS_CORS_ORIGINS` is set (production),
 # else the permissive localhost default (dev/pilot). See kalos.portal.config.
@@ -145,6 +166,22 @@ app = FastAPI(title="Kalos Engine API")
 # immediately with no restart either.
 @app.middleware("http")
 async def _refuse_open_remote_access(request, call_next):
+    if _PRODUCTION and request.url.path not in _PROBE_PATHS:
+        # Production refuses to START without tokens, but tokens are re-read per
+        # request (rotation without restart), so an emptied tokens file would
+        # silently reopen the API. Fail closed instead, local callers included.
+        try:
+            enforced = get_authenticator().enforces()
+        except AuthConfigError:
+            log.exception("kalos auth: token configuration is invalid")
+            return JSONResponse({"error": "authentication is misconfigured"}, status_code=500)
+        if not enforced:
+            log.error("refused a request: KALOS_ENV=production but authentication is not enforced")
+            return JSONResponse(
+                {"error": "This kalos portal is in production mode without authentication "
+                          "configured and is refusing all requests."},
+                status_code=503,
+            )
     if not is_local_client(request.client.host if request.client else None):
         if not get_authenticator().enforces() and not open_access_explicitly_allowed():
             log.warning(
@@ -370,7 +407,6 @@ def readyz(store: CampaignStore = Depends(get_campaign_store)) -> JSONResponse:
 # The demo routes take their work size from the URL, so it is capped: each round
 # is a GP fit + acquisition, and an unbounded `rounds`/`q` let one request queue
 # hours of CPU outside the single analysis slot.
-@app.get("/api/single")
 def run_single(
     rounds: int = Query(6, ge=1, le=12),
     q: int = Query(2, ge=1, le=4),
@@ -405,7 +441,6 @@ def run_single(
     }
 
 
-@app.get("/api/multi")
 def run_multi(
     rounds: int = Query(5, ge=1, le=12),  # >= 1, so last_batch is always bound
     q: int = Query(2, ge=1, le=4),
@@ -454,6 +489,12 @@ def run_multi(
         "all": [{"titer": float(Y[i, 0]), "purity": float(Y[i, 1])} for i in range(len(Y))],
         "proposals": proposals,
     }
+
+
+# Demo routes are development conveniences: never served in production.
+if not _PRODUCTION:
+    app.get("/api/single")(run_single)
+    app.get("/api/multi")(run_multi)
 
 
 def _run_uploaded_sync(
