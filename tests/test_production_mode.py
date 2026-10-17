@@ -87,6 +87,7 @@ def test_unknown_kalos_env_refuses_to_start(tmp_path):
     r = _run("import kalos.portal.app", tmp_path, KALOS_ENV="prod")
     assert r.returncode != 0
     assert "not recognised" in r.stderr
+    assert "Accepted values: 'development', 'production'" in r.stderr
 
 
 def test_production_disables_docs_and_demo_routes(tmp_path):
@@ -164,5 +165,5 @@ def test_config_helpers(monkeypatch):
     with pytest.raises(ProductionConfigError):
         assert_production_posture(auth_enforced=False)
     monkeypatch.setenv("KALOS_ENV", "staging")
-    with pytest.raises(ProductionConfigError):
+    with pytest.raises(ProductionConfigError, match="Accepted values: 'development', 'production'"):
         deployment_env()
