@@ -119,8 +119,9 @@ class _TokenRecord:
 
 
 def _deny_list() -> frozenset[str]:
-    """Subjects and session ids refused outright (`KALOS_AUTH_DENY_SUBJECTS`),
-    read per request so a revocation takes effect without a restart."""
+    """Subjects and session ids refused outright (`KALOS_AUTH_DENY_SUBJECTS`).
+    Read per request, but it is a process environment variable: in a deployment
+    a change needs a restart (or supervisor reload) to reach the process."""
     raw = os.environ.get(DENY_VAR, "")
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
@@ -293,7 +294,8 @@ class Authenticator:
             if not self._warned_open:
                 log.warning(
                     "kalos auth: no tokens configured - API is OPEN (anonymous '%s' tenant, "
-                    "read+write). Set KALOS_AUTH_TOKENS[_FILE] to enforce authentication.",
+                    "read+write). Set KALOS_JWT_PUBLIC_KEYS_FILE and/or KALOS_AUTH_TOKENS[_FILE] "
+                    "to enforce authentication.",
                     _ANON_TENANT,
                 )
                 self._warned_open = True
