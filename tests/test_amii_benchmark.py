@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from kalos.bench.amii import (
-    REGISTRY, amii_data_dir, benchmark_dataset, load_amii_pool, run_trial, runs_to_top,
+    REGISTRY, amii_data_dir, benchmark_dataset, load_amii_pool, paired_comparison, run_trial, runs_to_top,
 )
 
 
@@ -87,3 +87,32 @@ def test_benchmark_requires_five_seeds_and_reports_spread():
     assert set(r["arms"]) == {"bo", "random", "lhs"}
     for v in r["arms"].values():
         assert v["q25"] <= v["median"] <= v["q75"] and v["n_seeds"] == 5
+
+
+def test_paired_comparison_counts_and_sign_test():
+    r = paired_comparison([5, 5, 5, 5, None, 9], [8, 7, 6, 5, 9, 9], cap=71)
+    assert (r["bo_fewer"], r["bo_more"], r["tied"]) == (3, 1, 2)
+    assert 0.0 < r["sign_test_p"] <= 1.0
+    assert paired_comparison([4, 4], [4, 4], cap=9)["sign_test_p"] == 1.0  # no information
+
+
+def test_lhs_breaks_grid_ties_at_random_not_by_file_order():
+    # A 4-level grid has many exact nearest-neighbour ties; LHS picks must vary with the seed.
+    g = np.array([[a, b] for a in range(4) for b in range(4) for _ in range(3)], float)
+    y = np.arange(len(g), dtype=float)
+    picks = {tuple(run_trial(g, y, q=1, budget=6, n_init=4, seed=s, arms=("lhs",))["lhs"]) for s in range(6)}
+    assert len(picks) > 1
+
+
+def test_trial_reports_fit_fallbacks(monkeypatch):
+    from kalos.core.surrogate import FitError, Surrogate
+
+    def boom(self, *a, **k):
+        raise FitError("forced")
+
+    monkeypatch.setattr(Surrogate, "fit", boom)
+    rng = np.random.default_rng(1)
+    X = rng.uniform(size=(40, 2))
+    st: dict = {}
+    run_trial(X, X.sum(1), q=2, budget=6, n_init=4, seed=0, arms=("bo",), stats=st)
+    assert st["fit_fallbacks"] == 3  # 6 evaluations in batches of 2
