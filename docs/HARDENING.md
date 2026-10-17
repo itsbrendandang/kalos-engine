@@ -60,8 +60,40 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 | `KALOS_AUTH_TOKENS_FILE` | Path to a JSON file of provisioned principals (see below). Takes precedence over the env var. | unset |
 | `KALOS_AUTH_TOKENS` | Inline JSON array of provisioned principals. | unset |
 | `KALOS_CORS_ORIGINS` | Comma-separated explicit CORS allowlist (e.g. `https://app.acme.com`). When set, replaces the permissive localhost default. | unset (dev localhost) |
+| `KALOS_ENV` | `production` or `development`. Any other non-empty value refuses to start (a typo must not silently drop the production guards). See "Production mode" below. | unset (= `development`) |
+| `KALOS_MAX_REQUEST_BYTES` | Body-size cap, in bytes, for every non-upload route (the JSON `/api/campaign/*` bodies). Upload routes (`/api/run`, `/api/scale/readout`) are capped at `KALOS_MAX_UPLOAD_MB` + 1 MiB multipart allowance instead. Must be a positive integer. | `1048576` (1 MiB) |
 
 When neither `KALOS_AUTH_TOKENS_FILE` nor `KALOS_AUTH_TOKENS` is set, the API runs in **open mode** (anonymous `default` tenant, read+write, admin withheld) and logs a warning at startup.
+
+### Production mode (`KALOS_ENV=production`)
+
+Decided once at startup. In production the engine:
+
+- **Refuses to start without enforced authentication.** Importing `kalos.portal.app` (and `python -m kalos.portal`) fails with `ProductionConfigError` unless `KALOS_AUTH_TOKENS[_FILE]` holds at least one token. This applies on every bind, loopback included, and `KALOS_ALLOW_OPEN_ACCESS` does **not** override it. A token list of `[]` counts as no auth.
+- **Fails closed at runtime.** Tokens are re-read per request (rotation without restart), so if the token config is emptied after startup every request except `/healthz` and `/readyz` gets a 503, local callers included, instead of silently reopening as anonymous read+write.
+- **Disables the API docs and schema:** `/docs`, `/redoc` and `/openapi.json` are 404.
+- **Does not serve the demo routes** `/api/single` and `/api/multi` (404). They run CPU-heavy GP loops on a synthetic surface outside the single analysis slot (`kalos/portal/busy.py`), so in a shared deployment any token holder could tie up the CPU with them.
+
+Development (the default) keeps all of the above as before.
+
+### Tenant ids
+
+A provisioned principal's `tenant` must match `^[A-Za-z0-9_-]{1,64}$`. A config containing any entry that does not match is **rejected as a whole** (every authenticated request answers 500 "authentication is misconfigured"; the error is logged server-side without echoing the id). Ids are never rewritten or sanitised, because sanitising maps distinct ids (`acme/bio`, `acme_bio`) onto one storage key. The campaign store and the `/api/latest` helpers take `tenant` as a required keyword (no `default` fallback) and validate it too.
+
+The per-tenant `/api/latest` cache file is named `t-<hex of the tenant id's UTF-8 bytes>.json`, an injective encoding that also cannot collide on case-insensitive filesystems. Upgrading orphans cache files written under the old sanitised names: a tenant's `/api/latest` reports `has_data: false` until its next upload or reanalyze. The campaign itself (SQLite) is unaffected.
+
+### Request limits
+
+- Body size: a pure-ASGI middleware (`kalos/portal/limits.py`) answers **413** for a `Content-Length` over the route's cap without reading the body, **400** for a malformed or conflicting `Content-Length`, and counts chunked bodies (no `Content-Length`) as they stream, failing with 413 once they cross the cap.
+- `POST /api/campaign/start`: at most 64 recipes per call; recipe values are finite JSON numbers (bools and numeric strings refused), strings of at most 512 characters (categorical levels), or null; recipe keys are 1-512 characters and must be columns of the campaign's dataset other than the target; `pred`/`std` are finite numbers or null; `mode`/`reason` are at most 512 characters. Unknown extra fields are ignored and not stored.
+- `POST /api/campaign/result`: `id` is 1-512 characters; `value` is a JSON number (a non-finite value is still refused by the store).
+- Validation failures on `/api/campaign/*` answer 400 with the usual `{"error": ...}` envelope naming the field (dict keys masked, input values never echoed). Other routes keep FastAPI's 422.
+
+### Probes
+
+`/healthz` is an `async` handler so it answers from the event loop and cannot queue behind worker threads busy with analysis. `/readyz` runs a tenant-agnostic `SELECT 1 FROM campaigns LIMIT 1`; on failure it answers 503 with the fixed reason `campaign store unavailable` and logs the exception server-side (no exception text in the unauthenticated response).
+
+Not covered here: per-tenant concurrency limits (design pending).
 
 ### Provisioned-principal shape
 
@@ -100,4 +132,5 @@ A review of progress against the readiness scorecard surfaced that campaign + la
 - Phase 1b tenant-scoped persistence: **done** (merged) - campaign -> SQLite rows per tenant; `/api/latest` per tenant; every store call keyed by `Principal.tenant`.
 - Phase 1c transport/CORS: **done** on `feat/hardening-1c` - CORS allowlist via `KALOS_CORS_ORIGINS`, startup security-posture logging, TLS-via-proxy deployment note. Secrets-provider abstraction deferred.
 - P1 experiments store tenant-scope + auth-gate: **done** on `feat/hardening-experiments-tenancy` - closes the cross-tenant leak the review found; the tenancy guarantee now covers all three stores (campaign, latest, experiments).
+- P0 engine hardening: **done** on `security/p0-engine-hardening` - tenant-id validation + injective latest-cache names, required `tenant` keyword on the stores, `KALOS_ENV=production`, async `/healthz` and generic `/readyz` reason, body-size cap + bounded campaign bodies. Per-tenant concurrency is out of scope (design pending).
 - P2 observability, P3 async job queue, P4 latest->SQLite, P5 backups: planned, not started (see "Next backbone" above).
