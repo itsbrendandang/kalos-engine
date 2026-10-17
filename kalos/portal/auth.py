@@ -59,12 +59,14 @@ from kalos.portal.jwt_auth import (
     JwksKeyStore,
     JwtSettings,
     TokenRejected,
+    is_valid_subject,
     jwt_settings_from_env,
     log_config_error_once,
     safe_log_value,
     verify_engine_token,
 )
 from kalos.portal.tenancy import (  # noqa: F401 - TENANT_ID_PATTERN/validate_tenant_id re-exported
+    RESERVED_ANON_TENANT,
     TENANT_ID_PATTERN,
     is_valid_tenant_id,
     validate_tenant_id,
@@ -78,7 +80,7 @@ ADMIN = "admin"
 _VALID_SCOPES = frozenset({READ, WRITE, ADMIN})
 
 # The tenant/subject an unauthenticated request is attributed to in open mode.
-_ANON_TENANT = "default"
+_ANON_TENANT = RESERVED_ANON_TENANT
 _ANON_SUBJECT = "anonymous"
 _OPEN_MODE_SCOPES = frozenset({READ, WRITE})  # never ADMIN without a real token
 
@@ -184,6 +186,13 @@ class Authenticator:
                 raise AuthConfigError(f"token entry {i} is missing 'token_sha256'")
             if not isinstance(subject, str) or not subject:
                 raise AuthConfigError(f"token entry {i} is missing 'subject'")
+            if not is_valid_subject(subject):
+                # Same alphabet as engine-token sub/sid, so every subject can be
+                # named in KALOS_AUTH_DENY_SUBJECTS (comma-separated).
+                raise AuthConfigError(
+                    f"token entry {i} has an invalid 'subject'; use 1-256 printable ASCII "
+                    "characters without spaces or commas"
+                )
             if not isinstance(tenant, str) or not tenant:
                 raise AuthConfigError(f"token entry {i} is missing 'tenant'")
             if not is_valid_tenant_id(tenant):

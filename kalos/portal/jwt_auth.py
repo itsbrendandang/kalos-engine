@@ -48,7 +48,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from kalos.portal.auth_errors import JwtConfigError
 from kalos.portal.config import is_production
-from kalos.portal.tenancy import is_valid_tenant_id
+from kalos.portal.tenancy import RESERVED_ANON_TENANT, is_valid_tenant_id
 
 log = logging.getLogger("kalos.portal")
 
@@ -392,6 +392,16 @@ def safe_log_value(value: object) -> str:
     return "<unprintable>"
 
 
+def is_valid_subject(value: object) -> bool:
+    """Whether `value` is an acceptable subject / session id: 1-256 printable
+    ASCII characters without space or comma (static-record subjects too)."""
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= _MAX_ID_CHARS
+        and _SUBJECT_CHARS.fullmatch(value) is not None
+    )
+
+
 def _numeric_date(claims: Mapping[str, Any], name: str) -> float:
     value = claims.get(name)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -512,11 +522,16 @@ def verify_engine_token(
         raise TokenRejected("bad_identity_claim", kid=kid, token_id=jti) from None
 
     tenant = claims.get("tenant")
-    if not isinstance(tenant, str) or not is_valid_tenant_id(tenant):
+    if (
+        not isinstance(tenant, str)
+        or not is_valid_tenant_id(tenant)
+        or tenant == RESERVED_ANON_TENANT  # open/anonymous mode only
+    ):
         raise TokenRejected("bad_tenant", kid=kid, token_id=token_id)
 
     raw_scopes = claims.get("scopes")
-    if not isinstance(raw_scopes, list) or not all(
+    # Non-empty: a token that grants nothing is a minting bug, not a credential.
+    if not isinstance(raw_scopes, list) or not raw_scopes or not all(
         isinstance(s, str) and s in SCOPE_MAP for s in raw_scopes
     ):
         raise TokenRejected("bad_scopes", kid=kid, token_id=token_id)
