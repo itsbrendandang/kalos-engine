@@ -40,7 +40,7 @@ from starlette.concurrency import run_in_threadpool
 from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
 
 from kalos.domains import BIOPROCESS_PROFILE, GENERIC_PROFILE, ColumnRoles
-from kalos.portal.analysis import _analyze, _annotate
+from kalos.portal.analysis import _analyze, _annotate, anonymize_rejection
 from kalos.portal.auth import (
     READ,
     WRITE,
@@ -78,6 +78,8 @@ from kalos.portal.uploads import (
     _ERR_TOO_MANY_FIT_ROWS,
     _parse_upload,
     parse_upload,
+    rejection_counts as _rejection_counts,
+    safe_context,
 )
 from kalos.providers import provider_status
 
@@ -544,8 +546,10 @@ def _run_uploaded_sync(
             result = _analyze(df, target, anonymize=anonymize, profile=BIOPROCESS_PROFILE)
     except UploadRejected as rej:
         # Name the sheet that was analyzed and list the others, so a client can
-        # offer a sheet selector on the error.
-        raise parsed.annotate(rej) from rej
+        # offer a sheet selector on the error. With `anonymize`, identifier-type
+        # column names in the error get the same pseudonyms a result would.
+        refused = anonymize_rejection(rej) if anonymize else rej
+        raise parsed.annotate(refused) from rej
     except Exception as exc:
         # Any other failure still gets the sheet list on its (generic) error body.
         try:
@@ -628,7 +632,9 @@ async def run_uploaded(
         # A guard tripped: the message is already generic and safe to return.
         # `to_body()` is `{"error": ..., "code": ..., **context}`; `error` is
         # always present, so a client that only reads `d.error` is unaffected.
-        log.warning("upload rejected (%s): %s", rej.code or "guard", rej)
+        # Logged by code and counts only: the message can name the customer's
+        # columns and sheets, which do not belong in server logs.
+        log.warning("upload rejected: code=%s%s", rej.code or "guard", _rejection_counts(rej))
         return JSONResponse(rej.to_body(), status_code=400)
     except FitError as exc:
         # A numerically-hard-but-valid file that defeated the jittered fit retry.
@@ -636,7 +642,7 @@ async def run_uploaded(
         # the exception text itself is already generic, but we do not echo it.
         log.warning("upload rejected: model could not be fit (ill-conditioned rows)")
         return JSONResponse(
-            {"error": _ERR_FIT, "code": "fit_failed", **getattr(exc, "upload_context", {})},
+            {"error": _ERR_FIT, "code": "fit_failed", **safe_context(getattr(exc, "upload_context", {}))},
             status_code=400,
         )
     except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError, UnicodeError) as exc:
@@ -645,7 +651,7 @@ async def run_uploaded(
         # ever reaches the (unauthenticated) client.
         log.exception("failed to parse or analyze an uploaded file")
         return JSONResponse(
-            {"error": _ERR_PARSE, "code": "parse_error", **getattr(exc, "upload_context", {})},
+            {"error": _ERR_PARSE, "code": "parse_error", **safe_context(getattr(exc, "upload_context", {}))},
             status_code=400,
         )
     except Exception as exc:  # noqa: BLE001 - normalized to a generic 400 below
@@ -657,7 +663,7 @@ async def run_uploaded(
         # message reaches the (unauthenticated) client.
         log.exception("failed to parse or analyze an uploaded file")
         return JSONResponse(
-            {"error": _ERR_PARSE, "code": "parse_error", **getattr(exc, "upload_context", {})},
+            {"error": _ERR_PARSE, "code": "parse_error", **safe_context(getattr(exc, "upload_context", {}))},
             status_code=400,
         )
 

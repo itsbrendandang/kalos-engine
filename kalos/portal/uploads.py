@@ -103,6 +103,59 @@ _ERR_FIT = (
 )
 
 
+MAX_REFLECTED_CHARS = 100
+MAX_REFLECTED_NAMES = 20
+# Error responses (and their messages) may name a column or sheet the uploader
+# supplied. Such reflected strings are clipped to MAX_REFLECTED_CHARS and name
+# lists capped at MAX_REFLECTED_NAMES (`<key>_total` then carries the true
+# count), so a crafted header cannot turn an error body into a large or
+# arbitrary-content echo.
+
+
+def clip_name(name: object) -> str:
+    """`str(name)`, clipped to `MAX_REFLECTED_CHARS` (with a trailing ellipsis)."""
+    text = str(name)
+    if len(text) <= MAX_REFLECTED_CHARS:
+        return text
+    return text[: MAX_REFLECTED_CHARS - 1] + "\u2026"
+
+
+def clip_names(names) -> list[str]:
+    """At most `MAX_REFLECTED_NAMES` names, each clipped (see `clip_name`)."""
+    return [clip_name(n) for n in list(names)[:MAX_REFLECTED_NAMES]]
+
+
+def safe_context(context: dict) -> dict:
+    """An error context with every reflected string clipped and every list of
+    names capped; a capped list adds `<key>_total` with its full length."""
+    out: dict = {}
+    for key, value in context.items():
+        if isinstance(value, str):
+            out[key] = clip_name(value)
+        elif isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
+            out[key] = clip_names(value)
+            if len(value) > MAX_REFLECTED_NAMES:
+                out[f"{key}_total"] = len(value)
+        else:
+            out[key] = value
+    return out
+
+
+def rejection_counts(rej: "UploadRejected") -> str:
+    """A log suffix with only the numeric facts of a rejection (`n_rows=4
+    min_rows=6`, list lengths as `n_<key>`), never names or values, so the
+    server log carries no customer column or sheet names."""
+    parts: list[str] = []
+    for key, value in rej.context.items():
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            parts.append(f"{key}={value}")
+        elif isinstance(value, (list, tuple)):
+            parts.append(f"n_{key}={len(value)}")
+    return (" " + " ".join(parts)) if parts else ""
+
+
 class UploadRejected(ValueError):
     """A client upload failed a safety guard or cannot be analyzed.
 
@@ -128,7 +181,7 @@ class UploadRejected(ValueError):
         body: dict = {"error": self.message}
         if self.code:
             body["code"] = self.code
-        for key, value in self.context.items():
+        for key, value in safe_context(self.context).items():
             if key not in ("error", "code"):
                 body[key] = value
         return body
@@ -440,7 +493,7 @@ class ParsedUpload:
         others = [n for n in self.sheets if n != self.sheet_used]
         if others and self.sheet_used is not None:
             message += (
-                f" (This was sheet {self.sheet_used!r}; the workbook also has "
+                f" (This was sheet {clip_name(self.sheet_used)!r}; the workbook also has "
                 f"{_quote_list(others)}. Choose another sheet to analyze it instead.)"
             )
         return UploadRejected(
@@ -449,7 +502,10 @@ class ParsedUpload:
 
 
 def _quote_list(names: list[str]) -> str:
-    return ", ".join(repr(n) for n in names)
+    """Names for a message: clipped, at most `MAX_REFLECTED_NAMES`, then a count."""
+    shown = ", ".join(repr(n) for n in clip_names(names))
+    extra = len(names) - MAX_REFLECTED_NAMES
+    return shown + (f" and {extra} more" if extra > 0 else "")
 
 
 def _check_frame_caps(df: pd.DataFrame) -> None:
@@ -501,7 +557,7 @@ def _parse_excel(raw: bytes, sheet: str | None) -> ParsedUpload:
         except Exception as exc:  # noqa: BLE001 - e.g. a chart sheet, a damaged part
             log.warning("could not read an xlsx sheet: %s", type(exc).__name__)
             raise UploadRejected(
-                f"Sheet {name!r} could not be read. " + _ERR_CORRUPT_EXCEL,
+                f"Sheet {clip_name(name)!r} could not be read. " + _ERR_CORRUPT_EXCEL,
                 code="corrupt_excel",
                 context={**ctx, "sheet": name},
             ) from exc
@@ -516,7 +572,7 @@ def _parse_excel(raw: bytes, sheet: str | None) -> ParsedUpload:
             chosen = _match_sheet(sheet, names)
             if chosen is None:
                 raise UploadRejected(
-                    f"The workbook has no sheet named {sheet!r}. Its sheets are: "
+                    f"The workbook has no sheet named {clip_name(sheet)!r}. Its sheets are: "
                     f"{_quote_list(names)}.",
                     code="sheet_not_found",
                     context={**ctx, "sheet": sheet},
