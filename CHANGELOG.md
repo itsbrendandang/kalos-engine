@@ -4,6 +4,22 @@ Newest first.
 
 ## Unreleased
 
+### Fixed - every upload failure says what is wrong; workbooks can pick a sheet
+
+An empty file, a corrupt `.xlsx`, a `.txt` of prose, a 4-row sheet, a
+one-column sheet, and a workbook whose data is on sheet 2 all used to return
+"Could not parse the uploaded file". Each now returns a specific, engine-
+authored message and a `code` (`empty_file`, `unsupported_file_type`,
+`corrupt_excel`, `not_a_table`, `too_few_rows` with `min_rows`/`n_rows`,
+`too_few_columns`, `no_numeric_inputs`, `no_process_inputs`,
+`target_not_found`, `sheet_not_found`, `no_usable_sheet`, ...); no exception
+text ever reaches the client. A requested `target` that is not a column is now
+an error instead of silently analyzing a different column. `POST /api/run`
+takes an optional `sheet` (form field or query); without it the first sheet
+holding a usable table is analyzed, and Excel responses carry `sheets` and
+`sheet_used`. UTF-16 "Unicode Text" exports and UTF-8 BOMs are now read.
+See `docs/UPLOADS.md`.
+
 ### Fixed - a proposed batch never repeats a recipe
 
 On a sheet whose optimum sits on the edge of the design box, the joint q=5

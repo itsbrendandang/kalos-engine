@@ -76,6 +76,7 @@ from kalos.portal.uploads import (
     _ERR_PARSE,
     _ERR_TOO_MANY_FIT_ROWS,
     _parse_upload,
+    parse_upload,
 )
 from kalos.providers import provider_status
 
@@ -501,7 +502,7 @@ if not _PRODUCTION:
 
 def _run_uploaded_sync(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
-    *, tenant: str,
+    *, tenant: str, sheet: str | None = None,
 ) -> dict:
     """The CPU-bound body of an upload: parse -> analyze -> persist -> result.
 
@@ -518,12 +519,28 @@ def _run_uploaded_sync(
     infers roles exactly as before.
     """
     _ensure_torch_threads()
-    df = _parse_upload(raw)
-    if roles_json.strip():
-        roles = ColumnRoles.from_dict(json.loads(roles_json))
-        result = _analyze(df, target, anonymize=anonymize, roles=roles, profile=GENERIC_PROFILE)
-    else:
-        result = _analyze(df, target, anonymize=anonymize, profile=BIOPROCESS_PROFILE)
+    parsed = parse_upload(raw, filename=filename, sheet=sheet)
+    df = parsed.df
+    try:
+        if roles_json.strip():
+            roles = ColumnRoles.from_dict(json.loads(roles_json))
+            result = _analyze(df, target, anonymize=anonymize, roles=roles, profile=GENERIC_PROFILE)
+        else:
+            result = _analyze(df, target, anonymize=anonymize, profile=BIOPROCESS_PROFILE)
+    except UploadRejected as rej:
+        # Name the sheet that was analyzed and list the others, so a client can
+        # offer a sheet selector on the error.
+        raise parsed.annotate(rej) from rej
+    except Exception as exc:
+        # Any other failure still gets the sheet list on its (generic) error body.
+        try:
+            exc.upload_context = parsed.context()  # type: ignore[attr-defined]
+        except AttributeError:  # an exception type that forbids new attributes
+            pass
+        raise
+    # Excel uploads only: `sheets` (every sheet, workbook order) and
+    # `sheet_used` (the one analyzed), so a client can offer a sheet selector.
+    result = {**result, **parsed.context()}
     generation: str | None = None
     try:
         # A fresh upload starts a fresh campaign (docs/CAMPAIGN_LOOP.md,
@@ -551,8 +568,18 @@ async def run_uploaded(
     target: str = Form(default=""),
     anonymize: bool = Form(default=False),
     roles: str = Form(default=""),
+    sheet: str = Form(default=""),
+    sheet_query: str | None = Query(default=None, alias="sheet"),
     _principal: Principal = Depends(require_scope(WRITE)),
 ) -> JSONResponse:
+    """Upload a run sheet and analyze it.
+
+    `sheet` (multipart form field, or `?sheet=` query parameter; the form field
+    wins) picks a workbook sheet by name. Omitted, the first sheet in workbook
+    order that holds a usable table is analyzed (`kalos.portal.uploads.
+    _parse_excel`). Ignored for CSV/TSV uploads. Excel responses, success or
+    error, carry `sheets` and `sheet_used`.
+    """
     from kalos.core.surrogate import FitError  # deferred: only needed to match the except below
 
     # One byte past the cap is enough for `_parse_upload` to reject it; never
@@ -570,7 +597,8 @@ async def run_uploaded(
         result = await run_in_threadpool(
             run_exclusively(
                 functools.partial(
-                    _run_uploaded_sync, raw, target or None, anonymize, filename, roles, tenant=tenant
+                    _run_uploaded_sync, raw, target or None, anonymize, filename, roles,
+                    tenant=tenant, sheet=(sheet or sheet_query or None),
                 )
             )
         )
@@ -587,19 +615,25 @@ async def run_uploaded(
         # always present, so a client that only reads `d.error` is unaffected.
         log.warning("upload rejected (%s): %s", rej.code or "guard", rej)
         return JSONResponse(rej.to_body(), status_code=400)
-    except FitError:
+    except FitError as exc:
         # A numerically-hard-but-valid file that defeated the jittered fit retry.
         # Give it a DISTINCT message so it does not masquerade as a parse failure;
         # the exception text itself is already generic, but we do not echo it.
         log.warning("upload rejected: model could not be fit (ill-conditioned rows)")
-        return JSONResponse({"error": _ERR_FIT}, status_code=400)
-    except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError, UnicodeError):
+        return JSONResponse(
+            {"error": _ERR_FIT, "code": "fit_failed", **getattr(exc, "upload_context", {})},
+            status_code=400,
+        )
+    except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError, UnicodeError) as exc:
         # Log the full traceback server-side for debugging; return a generic
         # message so no parser detail, column name, cell value, or stack trace
         # ever reaches the (unauthenticated) client.
         log.exception("failed to parse or analyze an uploaded file")
-        return JSONResponse({"error": _ERR_PARSE}, status_code=400)
-    except Exception:  # noqa: BLE001 - normalized to a generic 400 below
+        return JSONResponse(
+            {"error": _ERR_PARSE, "code": "parse_error", **getattr(exc, "upload_context", {})},
+            status_code=400,
+        )
+    except Exception as exc:  # noqa: BLE001 - normalized to a generic 400 below
         # Catch-all so a fit-time failure that is NOT a plain ValueError still
         # returns the {error} JSON envelope the frontend parses, never FastAPI's
         # default text/plain HTTP 500. This covers torch.linalg.LinAlgError from a
@@ -607,7 +641,10 @@ async def run_uploaded(
         # above, the full traceback is logged server-side and only the generic
         # message reaches the (unauthenticated) client.
         log.exception("failed to parse or analyze an uploaded file")
-        return JSONResponse({"error": _ERR_PARSE}, status_code=400)
+        return JSONResponse(
+            {"error": _ERR_PARSE, "code": "parse_error", **getattr(exc, "upload_context", {})},
+            status_code=400,
+        )
 
 
 # --- campaign loop: /api/campaign* (docs/CAMPAIGN_LOOP.md) - the closed
@@ -662,4 +699,6 @@ __all__ = [
     "_ERR_FIT",
     "_ERR_PARSE",
     "_ERR_TOO_MANY_FIT_ROWS",
+    "_parse_upload",
+    "parse_upload",
 ]

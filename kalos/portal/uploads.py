@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import zipfile
+from dataclasses import dataclass, field
 
 import pandas as pd
 
@@ -39,9 +40,39 @@ _ZIP_MAGIC = b"PK\x03\x04"   # xlsx/xls-as-zip start-of-file marker
 # invisible, non-deterministic data loss). Override with KALOS_MAX_FIT_ROWS.
 MAX_FIT_ROWS = int(os.environ.get("KALOS_MAX_FIT_ROWS", "").strip() or "2000")
 
-# Generic, non-leaking messages. We never echo the parser error, a column name,
-# or a cell value back to an unauthenticated caller.
+MIN_FIT_ROWS = 6
+# The fewest data rows (with a numeric target) a model is fit on - the floor
+# `kalos.portal.analysis._analyze` has always enforced, named here so the upload
+# error can state it.
+
+# Non-leaking messages. We never echo the parser/exception text or a cell value.
+# Each message below is ENGINE-AUTHORED and names the specific problem and what
+# to do about it; the only user content that may appear in one is a column or
+# sheet name the uploader themselves supplied (the success response returns
+# those names anyway).
 _ERR_PARSE = "Could not parse the uploaded file. Check it is a CSV or Excel run-sheet."
+_ERR_EMPTY = (
+    "The uploaded file is empty. Upload a CSV or Excel (.xlsx) run sheet with a "
+    "header row and at least one data row per run."
+)
+_ERR_UNSUPPORTED = (
+    "Unsupported file type{what}. Upload the run sheet as CSV or tab-separated text "
+    "(.csv, .tsv, .txt) or as an Excel workbook (.xlsx)."
+)
+_ERR_LEGACY_EXCEL = (
+    "This looks like a legacy Excel 97-2003 (.xls) or password-protected workbook, "
+    "which cannot be read. Open it in Excel and save it as an unprotected .xlsx "
+    "workbook, or export the sheet as CSV."
+)
+_ERR_CORRUPT_EXCEL = (
+    "The Excel file could not be opened: it looks corrupt or is not a valid .xlsx "
+    "workbook. Re-save it from Excel as .xlsx, or export the run sheet as CSV."
+)
+_ERR_NOT_A_TABLE = (
+    "The file could not be read as a table: its lines do not have a consistent "
+    "number of comma- or tab-separated fields. Export the run sheet from Excel as "
+    "CSV, or upload the .xlsx workbook."
+)
 _ERR_TOO_LARGE = "The uploaded file is too large."
 _ERR_TOO_MANY_COLUMNS = "The uploaded file has too many columns."
 _ERR_TOO_MANY_FIT_ROWS = (
@@ -128,9 +159,9 @@ def _reject_oversized_xlsx_via_openpyxl(raw: bytes) -> None:
 
     try:
         wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True)
-    except Exception as exc:  # noqa: BLE001 - corrupt/non-xlsx zip -> generic 400
+    except Exception as exc:  # noqa: BLE001 - corrupt/non-xlsx zip -> specific safe 400
         log.warning("rejected an unreadable xlsx upload: %s", type(exc).__name__)
-        raise UploadRejected(_ERR_PARSE) from exc
+        raise UploadRejected(_ERR_CORRUPT_EXCEL, code="corrupt_excel") from exc
     try:
         for ws in wb.worksheets:
             cols = ws.max_column or 0
@@ -160,9 +191,25 @@ def _reject_oversized_xlsx(raw: bytes) -> None:
         zf = zipfile.ZipFile(io.BytesIO(raw))
     except zipfile.BadZipFile as exc:
         log.warning("rejected an unreadable xlsx upload: %s", type(exc).__name__)
-        raise UploadRejected(_ERR_PARSE) from exc
+        raise UploadRejected(_ERR_CORRUPT_EXCEL, code="corrupt_excel") from exc
 
     with zf:
+        try:
+            names = set(zf.namelist())
+        except Exception as exc:  # noqa: BLE001 - a damaged central directory
+            raise UploadRejected(_ERR_CORRUPT_EXCEL, code="corrupt_excel") from exc
+        if "xl/workbook.xml" not in names:
+            # A well-formed zip that is not an Excel workbook: a Word or
+            # PowerPoint file, or a plain archive. Say what it is, not "corrupt".
+            if any(n.startswith("word/") for n in names):
+                what = " (this is a Word document)"
+            elif any(n.startswith("ppt/") for n in names):
+                what = " (this is a PowerPoint file)"
+            elif any(n.startswith("xl/") for n in names):
+                raise UploadRejected(_ERR_CORRUPT_EXCEL, code="corrupt_excel")
+            else:
+                what = " (this is a zip archive, not an Excel workbook)"
+            raise UploadRejected(_ERR_UNSUPPORTED.format(what=what), code="unsupported_file_type")
         sheet_names = [n for n in zf.namelist() if _SHEET_XML_RE.match(n)]
         if not sheet_names:
             # Not a recognizable xlsx layout (or a non-xlsx zip) - let openpyxl's
@@ -220,58 +267,320 @@ def _apply_orientation_prepass(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _parse_upload(raw: bytes) -> pd.DataFrame:
-    """Turn raw upload bytes into a bounded dataframe, or raise `UploadRejected`.
+# --- file-type sniffing ----------------------------------------------------- #
 
-    Guards, in order:
-      1. byte-size cap (default 25 MB, env `KALOS_MAX_UPLOAD_MB`);
-      2. filetype sniff by MAGIC BYTES, not extension: a zip header (`PK\\x03\\x04`)
-         is treated as xlsx/xls, anything else as UTF-8 text/CSV;
-      3. shape caps: CSV/TSV rows and a column ceiling, and an xlsx cell-count
-         (rows * cols) ceiling to blunt zip-bomb expansion.
-    All rejection messages are generic (no parser text, column, or cell echoed).
+_OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # legacy .xls / encrypted OOXML
+_BINARY_MAGICS: tuple[tuple[bytes, str], ...] = (
+    (b"%PDF", "a PDF"),
+    (b"\x89PNG", "a PNG image"),
+    (b"\xff\xd8\xff", "a JPEG image"),
+    (b"GIF8", "a GIF image"),
+    (b"\x1f\x8b", "a gzip archive"),
+    (b"7z\xbc\xaf", "a 7z archive"),
+    (b"Rar!", "a RAR archive"),
+    (b"{\\rtf", "a rich-text document"),
+)
+# Extensions that are never a run sheet, rejected by name even when the bytes
+# would decode as text (a .json or .html file "parses" into nonsense columns).
+# A real xlsx is still accepted whatever it is named: magic bytes win when they
+# positively identify a workbook (`tests/test_hardening.py` pins that an xlsx
+# uploaded as `runs.csv` works).
+_NON_TABULAR_EXTS = frozenset({
+    ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".odt", ".rtf", ".png", ".jpg",
+    ".jpeg", ".gif", ".zip", ".gz", ".7z", ".rar", ".json", ".xml", ".html",
+    ".htm", ".md", ".py", ".js", ".yaml", ".yml",
+})
+
+
+def _extension(filename: str | None) -> str:
+    return os.path.splitext(filename or "")[1].lower()
+
+
+def _reject_non_tabular(raw: bytes, filename: str | None) -> None:
+    """Refuse bytes that are recognisably not a CSV/TSV/xlsx run sheet."""
+    if raw[:8] == _OLE2_MAGIC:
+        raise UploadRejected(_ERR_LEGACY_EXCEL, code="unsupported_file_type")
+    for magic, what in _BINARY_MAGICS:
+        if raw.startswith(magic):
+            raise UploadRejected(
+                _ERR_UNSUPPORTED.format(what=f" (this looks like {what})"),
+                code="unsupported_file_type",
+            )
+    ext = _extension(filename)
+    if ext in _NON_TABULAR_EXTS:
+        raise UploadRejected(
+            _ERR_UNSUPPORTED.format(what=f" ({ext} files are not run sheets)"),
+            code="unsupported_file_type",
+        )
+    if ext == ".xls":
+        # Text bytes under a legacy-Excel name (e.g. an HTML "xls" export).
+        raise UploadRejected(_ERR_LEGACY_EXCEL, code="unsupported_file_type")
+
+
+def _decode_text(raw: bytes) -> str:
+    """Decode a text upload. UTF-16 is honoured only via its BOM (Excel's
+    "Unicode Text" export); otherwise UTF-8 (a leading BOM is stripped), with
+    undecodable bytes replaced as before. A NUL byte in UTF-8 text means the
+    file is binary, not a table."""
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        try:
+            return raw.decode("utf-16")
+        except UnicodeError as exc:
+            raise UploadRejected(_ERR_NOT_A_TABLE, code="not_a_table") from exc
+    if b"\x00" in raw[:8192]:
+        raise UploadRejected(
+            _ERR_UNSUPPORTED.format(what=" (the file is binary, not text)"),
+            code="unsupported_file_type",
+        )
+    return raw.decode("utf-8-sig", errors="replace")
+
+
+# --- what makes a sheet usable ---------------------------------------------- #
+
+
+def numeric_columns(df: pd.DataFrame) -> list:
+    """Columns where >=80% of the NON-BLANK cells parse as numbers (and there are
+    at least 3 of them). Blanks count as "absent", so a sparse component column
+    still counts. The single definition `kalos.portal.analysis` also uses."""
+    out = []
+    for c in df.columns:
+        s = df[c]
+        if isinstance(s, pd.DataFrame):  # duplicate header; analysis dedupes later
+            s = s.iloc[:, 0]
+        nonblank = s.notna() & (s.astype(str).str.strip() != "")
+        if nonblank.sum() < 3:
+            continue
+        if pd.to_numeric(s[nonblank], errors="coerce").notna().mean() >= 0.8:
+            out.append(c)
+    return out
+
+
+def table_shape_problem(df: pd.DataFrame) -> str | None:
+    """Why `df` cannot be a run-sheet table, or None if it plausibly can.
+
+    A NECESSARY condition only (never stricter than what `_analyze` needs): at
+    least 2 non-empty columns, at least `MIN_FIT_ROWS` non-empty data rows, and
+    at least one numeric column. Used to pick a workbook's default sheet.
     """
-    if len(raw) > MAX_UPLOAD_BYTES:
+    trimmed = df.dropna(axis=1, how="all").dropna(axis=0, how="all")
+    if trimmed.shape[1] < 2:
+        return "too_few_columns"
+    if trimmed.shape[0] < MIN_FIT_ROWS:
+        return "too_few_rows"
+    if not numeric_columns(trimmed):
+        return "no_numeric_inputs"
+    return None
+
+
+# --- parsing ------------------------------------------------------------------ #
+
+
+MAX_SHEETS_SCANNED = 20
+# The default-sheet search parses sheets in workbook order until one is usable.
+# Capped (and also bounded by the cumulative MAX_XLSX_CELLS budget below) so a
+# workbook of many near-cap sheets cannot multiply the parse cost.
+
+
+@dataclass
+class ParsedUpload:
+    """A parsed upload plus where in the file it came from.
+
+    `kind` is "excel" or "text". For Excel, `sheets` lists every sheet name in
+    workbook order and `sheet_used` names the one that was parsed (None for a
+    text upload, where both are absent from the response). `sheet_requested`
+    is True when the caller chose the sheet explicitly.
+    """
+
+    df: pd.DataFrame
+    kind: str
+    sheets: list[str] = field(default_factory=list)
+    sheet_used: str | None = None
+    sheet_requested: bool = False
+
+    def context(self) -> dict:
+        """The keys the API response carries (Excel uploads only)."""
+        if self.kind != "excel":
+            return {}
+        return {"sheets": list(self.sheets), "sheet_used": self.sheet_used}
+
+    def annotate(self, rej: UploadRejected) -> UploadRejected:
+        """Return `rej` with this workbook's sheet context, and, for a
+        multi-sheet workbook, a sentence naming the sheet that was analyzed and
+        the others the caller could choose instead."""
+        if self.kind != "excel" or "sheets" in rej.context:
+            return rej
+        message = rej.message
+        others = [n for n in self.sheets if n != self.sheet_used]
+        if others and self.sheet_used is not None:
+            message += (
+                f" (This was sheet {self.sheet_used!r}; the workbook also has "
+                f"{_quote_list(others)}. Choose another sheet to analyze it instead.)"
+            )
+        return UploadRejected(
+            message, code=rej.code, context={**rej.context, **self.context()}
+        )
+
+
+def _quote_list(names: list[str]) -> str:
+    return ", ".join(repr(n) for n in names)
+
+
+def _check_frame_caps(df: pd.DataFrame) -> None:
+    rows, cols = df.shape
+    if cols > MAX_COLUMNS:
+        raise UploadRejected(_ERR_TOO_MANY_COLUMNS)
+    if rows * cols > MAX_XLSX_CELLS:
         raise UploadRejected(_ERR_TOO_LARGE)
 
-    if raw[:4] == _ZIP_MAGIC:
-        # xlsx/xls: enforce the cell-count ceiling BEFORE pd.read_excel fully
-        # materializes the frame, so a zip-bomb whose DECLARED sheet dimensions are
-        # enormous is rejected without the memory spike of building the DataFrame.
-        # A zip header on a corrupt or non-xlsx zip (BadZipFile, openpyxl's
-        # InvalidFileException, ValueError) is a client error, not a server one.
-        _reject_oversized_xlsx(raw)
+
+def _match_sheet(requested: str, names: list[str]) -> str | None:
+    """Exact sheet name, else a unique case-/whitespace-insensitive match."""
+    if requested in names:
+        return requested
+    key = requested.strip().casefold()
+    hits = [n for n in names if n.strip().casefold() == key]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _parse_excel(raw: bytes, sheet: str | None) -> ParsedUpload:
+    """Parse one sheet of an xlsx workbook.
+
+    SHEET RULE. `sheet` given: that sheet (exact name, else a unique
+    case-insensitive match), or a `sheet_not_found` error listing the sheets.
+    `sheet` omitted: the FIRST sheet in workbook order that holds a usable
+    table (`table_shape_problem` is None) - for a single-sheet workbook, or one
+    whose first sheet is the data, that is exactly the old "first sheet"
+    behaviour. If no sheet is usable: a single-sheet workbook is still parsed
+    (so the analysis can say precisely what is wrong with it); a multi-sheet
+    workbook is refused with `no_usable_sheet` and the sheet list.
+    """
+    # xlsx/xls: enforce the cell-count ceiling BEFORE pd.read_excel fully
+    # materializes the frame, so a zip-bomb whose DECLARED sheet dimensions are
+    # enormous is rejected without the memory spike of building the DataFrame.
+    _reject_oversized_xlsx(raw)
+    try:
+        book = pd.ExcelFile(io.BytesIO(raw))
+        names = [str(n) for n in book.sheet_names]
+    except Exception as exc:  # noqa: BLE001 - any reader failure is a corrupt workbook
+        log.warning("rejected an unreadable xlsx upload: %s", type(exc).__name__)
+        raise UploadRejected(_ERR_CORRUPT_EXCEL, code="corrupt_excel") from exc
+    if not names:
+        raise UploadRejected(_ERR_CORRUPT_EXCEL, code="corrupt_excel")
+    ctx = {"sheets": names, "sheet_used": None}
+
+    def _read(name: str) -> pd.DataFrame:
         try:
-            df = pd.read_excel(io.BytesIO(raw))
-        except Exception as exc:  # noqa: BLE001 - normalized to a generic 400 below
-            log.warning("rejected an unreadable xlsx upload: %s", type(exc).__name__)
-            raise UploadRejected(_ERR_PARSE) from exc
-        rows, cols = df.shape
+            df = book.parse(name)
+        except Exception as exc:  # noqa: BLE001 - e.g. a chart sheet, a damaged part
+            log.warning("could not read an xlsx sheet: %s", type(exc).__name__)
+            raise UploadRejected(
+                f"Sheet {name!r} could not be read. " + _ERR_CORRUPT_EXCEL,
+                code="corrupt_excel",
+                context={**ctx, "sheet": name},
+            ) from exc
         # Belt-and-suspenders: re-check the materialized shape. The pre-read guard
         # uses the sheet's declared dimensions; this catches a mismatch and the
         # column ceiling on the actual parsed frame.
-        if cols > MAX_COLUMNS:
-            raise UploadRejected(_ERR_TOO_MANY_COLUMNS)
-        if rows * cols > MAX_XLSX_CELLS:
-            raise UploadRejected(_ERR_TOO_LARGE)
+        _check_frame_caps(df)
         return _apply_orientation_prepass(df)
 
-    # Otherwise treat as text/CSV. A binary blob that is neither a zip nor valid
-    # tabular text will not yield usable numeric columns and is rejected downstream
-    # with the same generic parse message.
-    text = raw.decode("utf-8", errors="replace")
+    try:
+        if sheet is not None and sheet.strip():
+            chosen = _match_sheet(sheet, names)
+            if chosen is None:
+                raise UploadRejected(
+                    f"The workbook has no sheet named {sheet!r}. Its sheets are: "
+                    f"{_quote_list(names)}.",
+                    code="sheet_not_found",
+                    context={**ctx, "sheet": sheet},
+                )
+            return ParsedUpload(_read(chosen), "excel", names, chosen, sheet_requested=True)
+
+        if len(names) == 1:
+            return ParsedUpload(_read(names[0]), "excel", names, names[0])
+        budget = MAX_XLSX_CELLS
+        for name in names[:MAX_SHEETS_SCANNED]:
+            try:
+                df = _read(name)
+            except UploadRejected as rej:
+                if rej.code == "corrupt_excel":
+                    continue  # an unreadable sheet is not a candidate; try the next
+                raise
+            if table_shape_problem(df) is None:
+                return ParsedUpload(df, "excel", names, name)
+            budget -= int(df.shape[0] * df.shape[1])
+            if budget <= 0:
+                break
+        raise UploadRejected(
+            f"None of the workbook's {len(names)} sheets ({_quote_list(names)}) holds a "
+            f"usable run-sheet table: one needs a header row, at least 2 columns, at "
+            f"least {MIN_FIT_ROWS} data rows, and numeric columns. Put the run sheet "
+            "on its own sheet, or export it as CSV.",
+            code="no_usable_sheet",
+            context=ctx,
+        )
+    finally:
+        book.close()
+
+
+def _parse_text(raw: bytes) -> ParsedUpload:
+    text = _decode_text(raw)
     if text.strip() == "":
-        raise UploadRejected(_ERR_PARSE)
+        raise UploadRejected(_ERR_EMPTY, code="empty_file")
     head = text[:4000]
     sep = "\t" if head.count("\t") > head.count(",") else ","
-    # cap columns first (cheap, from the header) before reading the full body
-    ncols = pd.read_csv(io.StringIO(text), sep=sep, nrows=0).shape[1]
-    if ncols > MAX_COLUMNS:
-        raise UploadRejected(_ERR_TOO_MANY_COLUMNS)
-    df = pd.read_csv(io.StringIO(text), sep=sep)
+    try:
+        # cap columns first (cheap, from the header) before reading the full body
+        ncols = pd.read_csv(io.StringIO(text), sep=sep, nrows=0).shape[1]
+        if ncols > MAX_COLUMNS:
+            raise UploadRejected(_ERR_TOO_MANY_COLUMNS)
+        df = pd.read_csv(io.StringIO(text), sep=sep)
+    except pd.errors.ParserError as exc:
+        log.warning("rejected an unparseable text upload: %s", type(exc).__name__)
+        raise UploadRejected(_ERR_NOT_A_TABLE, code="not_a_table") from exc
+    except pd.errors.EmptyDataError as exc:
+        raise UploadRejected(_ERR_EMPTY, code="empty_file") from exc
     # Fail closed on the row cap rather than silently truncating to the first
     # MAX_CSV_ROWS rows: silent data loss would contradict the safe-errors
     # contract, so an over-cap CSV is rejected like the xlsx cell-cap guard.
     if len(df) > MAX_CSV_ROWS:
         raise UploadRejected(_ERR_TOO_LARGE)
-    return _apply_orientation_prepass(df)
+    return ParsedUpload(_apply_orientation_prepass(df), "text")
+
+
+def parse_upload(
+    raw: bytes, *, filename: str | None = None, sheet: str | None = None
+) -> ParsedUpload:
+    """Turn raw upload bytes into a bounded dataframe (plus sheet metadata), or
+    raise `UploadRejected` with a specific, safe message and `code`.
+
+    Guards, in order:
+      1. byte-size cap (default 25 MB, env `KALOS_MAX_UPLOAD_MB`);
+      2. empty file (`empty_file`);
+      3. filetype sniff by MAGIC BYTES first: a zip header (`PK\\x03\\x04`) is an
+         xlsx candidate (a non-workbook zip such as .docx is
+         `unsupported_file_type`, a damaged one `corrupt_excel`); a legacy/
+         encrypted OLE2 file, a PDF/image/archive, a binary blob, or a
+         non-tabular extension (.pdf, .json, ...) is `unsupported_file_type`;
+         anything else is read as UTF-8 (or BOM-marked UTF-16) CSV/TSV, and
+         text that is not a consistent table is `not_a_table`;
+      4. shape caps: CSV/TSV rows and a column ceiling, and an xlsx cell-count
+         (rows * cols) ceiling to blunt zip-bomb expansion.
+    `sheet` selects a workbook sheet by name (ignored for text uploads); see
+    `_parse_excel` for the default-sheet rule. No message ever contains parser
+    or exception text.
+    """
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise UploadRejected(_ERR_TOO_LARGE)
+    if len(raw) == 0 or raw.strip(b" \t\r\n\x00\xef\xbb\xbf\xff\xfe") == b"":
+        raise UploadRejected(_ERR_EMPTY, code="empty_file")
+    if raw[:4] == _ZIP_MAGIC:
+        return _parse_excel(raw, sheet)
+    _reject_non_tabular(raw, filename)
+    return _parse_text(raw)
+
+
+def _parse_upload(raw: bytes) -> pd.DataFrame:
+    """Backward-compatible wrapper: `parse_upload(raw).df` (first usable sheet
+    of a workbook; no filename-based checks)."""
+    return parse_upload(raw).df

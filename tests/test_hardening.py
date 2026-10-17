@@ -124,12 +124,13 @@ def test_demo_routes_still_serve_in_bounds_requests(path):
 
 
 def test_wrong_magic_bytes_rejected_400():
-    # A PNG header is neither a zip (xlsx) nor tabular text -> generic parse error.
+    # A PNG header is neither a zip (xlsx) nor tabular text. Sniffed by magic
+    # bytes, not the misleading .csv name -> a specific unsupported-type 400.
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 512
     resp = _post(png, filename="image.csv")
     assert resp.status_code == 400
-    # binary blob yields no numeric columns -> the generic parse message
-    assert resp.json()["error"].startswith("Could not parse")
+    assert resp.json()["code"] == "unsupported_file_type"
+    assert resp.json()["error"].startswith("Unsupported file type")
 
 
 def test_too_many_columns_rejected_400():
@@ -147,7 +148,8 @@ def test_corrupt_zip_xlsx_rejected_400_not_500():
     corrupt = b"PK\x03\x04" + b"\x00" * 300
     resp = _post(corrupt, filename="book.xlsx")
     assert resp.status_code == 400
-    assert resp.json()["error"].startswith("Could not parse")
+    assert resp.json()["code"] == "corrupt_excel"
+    assert resp.json()["error"].startswith("The Excel file could not be opened")
     assert "Traceback" not in resp.text and "/Users/" not in resp.text
 
 
@@ -177,14 +179,19 @@ def test_malformed_bytes_generic_400_no_leak():
 
 
 def test_short_sheet_error_does_not_echo_details():
-    # A real ValueError from _analyze ("need at least 6 rows ...") must be masked.
+    # A too-short sheet gets an engine-authored, specific message (how many rows
+    # were found, how many are needed) - never a cell value or internal text.
     tiny = pd.DataFrame({"Methanol": [1.0, 2.0], "lipase_titer": [3.0, 4.0]})
     resp = _post(_csv_bytes(tiny))
     assert resp.status_code == 400
-    assert resp.json()["error"] == (
-        "Could not parse the uploaded file. Check it is a CSV or Excel run-sheet."
+    body = resp.json()
+    assert body["code"] == "too_few_rows"
+    assert body["n_rows"] == 2 and body["min_rows"] == 6
+    assert body["error"] == (
+        "The sheet has 2 data rows; at least 6 runs are needed to fit a model. "
+        "Add more runs and upload again."
     )
-    assert "6 rows" not in resp.text  # the raw ValueError text is not echoed
+    assert "Traceback" not in resp.text and "3.0" not in resp.text
 
 
 # --- provenance -------------------------------------------------------------- #

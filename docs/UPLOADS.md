@@ -7,11 +7,33 @@ Because the sheet comes from an external client, the upload path is guarded:
   A raw-byte cap (default 25 MB, override with `KALOS_MAX_UPLOAD_MB`), a 512-column ceiling, a 100k-row CSV cap, and a 2M-cell xlsx cap (a zip-bomb guard).
   Every cap fails closed: an over-cap upload is REJECTED with a 400, never silently truncated.
   The xlsx cell cap is enforced from the workbook's declared dimensions BEFORE the frame is materialized, so a zip-bomb is rejected without the memory spike.
-  Filetype is sniffed by magic bytes (`PK\x03\x04` -> Excel, else text/CSV), not by extension.
-- **Safe errors.**
-  A bad upload returns a generic HTTP 400 ("Could not parse the uploaded file. Check it is a CSV or Excel run-sheet.").
-  This holds even when the failure is a GP fit error (`torch.linalg.LinAlgError`) or a leakage-guard assertion, not just a parser error: a catch-all normalizes any such failure to the same `{error}` JSON envelope.
-  Parser details, column names, cell values, paths, and stack traces are logged server-side and never returned to the caller.
+  Filetype is sniffed by magic bytes first (`PK\x03\x04` -> Excel, known binary signatures -> refused, else UTF-8 or BOM-marked UTF-16 text/CSV); an xlsx is read as Excel whatever its name, and a few clearly non-tabular extensions (`.pdf`, `.json`, `.docx`, ...) are refused by name.
+- **Specific, safe errors.**
+  A bad upload returns HTTP 400 with `{"error": "<what is wrong and what to do>", "code": "<machine code>", ...context}`; `error` is always present, so a client that only shows `error` keeps working.
+  Messages are engine-authored: parser text, exception text, paths, cell values and stack traces are logged server-side and never returned. The only user content a message may name is a column or sheet name the uploader supplied.
+
+  | `code` | When | Extra fields |
+  | --- | --- | --- |
+  | `empty_file` | zero bytes, or only whitespace / a BOM | |
+  | `unsupported_file_type` | PDF, image, archive, Word/PowerPoint zip, legacy `.xls` or password-protected (OLE2) workbook, binary bytes, or a non-tabular extension (`.json`, `.pdf`, ...) | |
+  | `corrupt_excel` | a zip/xlsx that cannot be opened, or a sheet that cannot be read | `sheets`, `sheet` when known |
+  | `not_a_table` | text whose lines have inconsistent numbers of comma/tab fields | |
+  | `too_few_columns` | fewer than 2 columns (e.g. prose in a `.txt`, a one-column CSV) | `n_columns` |
+  | `too_few_rows` | fewer than 6 data rows, or fewer than 6 rows with a numeric target | `min_rows`, `n_rows`, `target` |
+  | `no_numeric_inputs` | no numeric column at all | |
+  | `no_process_inputs` | numeric columns exist, but all are the target, ids, other outputs, or constant | |
+  | `target_not_found` | the requested `target` is not a column | `target`, `available_targets` |
+  | `target_empty` / `target_not_numeric` / `target_constant` | the target has no values / no numbers / does not vary | `target`, `available_targets` (+ `target_summary`) |
+  | `sheet_not_found` | the requested `sheet` does not exist | `sheet`, `sheets`, `sheet_used: null` |
+  | `no_usable_sheet` | no sheet of a multi-sheet workbook holds a usable table | `sheets`, `sheet_used: null` |
+  | `parse_error` / `fit_failed` | anything else (generic message), or a numerically intractable fit | `sheets`/`sheet_used` for Excel |
+
+  A size or shape cap (`too large`, `too many columns`) keeps its existing message.
+- **Workbooks and sheets.**
+  `POST /api/run` accepts an optional `sheet` (multipart form field, or `?sheet=` query parameter; the form field wins) naming the sheet to analyze; an exact name, else a unique case- and whitespace-insensitive match.
+  Without it, the engine analyzes the FIRST sheet in workbook order that holds a usable table: at least 2 columns, at least 6 data rows, and a numeric column. A workbook whose first sheet is the data therefore behaves exactly as before; a workbook with a notes sheet in front of the data now finds the data.
+  A single-sheet workbook is always analyzed, so its error is the specific one; a multi-sheet workbook with no usable sheet is refused with `no_usable_sheet`.
+  Every Excel response, success or error, carries `sheets` (all names, workbook order) and `sheet_used` (the analyzed sheet, or `null`). When an analyzed sheet of a multi-sheet workbook is unusable, the message names it and lists the others. CSV/TSV responses carry neither key, and `sheet` is ignored for them.
 - **Provenance.**
   The response includes a `provenance` list: for every column, its status (`kept_feature`, `target`, `dropped_id`, `dropped_output`, `dropped_constant`, `dropped_constant_on_fitted_rows`, `dropped_sparse`, `dropped_all_blank`) and how many cells had to be coerced from non-numeric text (units like "34.6 C").
   A feature that varies over the full sheet but is constant on the target-present rows the GP actually fits is dropped and flagged (`dropped_constant_on_fitted_rows`), never silently pinned to a zero-width bound.

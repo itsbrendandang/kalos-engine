@@ -34,7 +34,13 @@ from kalos.domains import (
     Dimension,
     DomainProfile,
 )
-from kalos.portal.uploads import MAX_FIT_ROWS, UploadRejected, _ERR_TOO_MANY_FIT_ROWS
+from kalos.portal.uploads import (
+    MAX_FIT_ROWS,
+    MIN_FIT_ROWS,
+    UploadRejected,
+    _ERR_TOO_MANY_FIT_ROWS,
+    numeric_columns,
+)
 from kalos.portal.validate import column_provenance, provenance_dicts
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
 from kalos.validation.bounds import DIMENSION_BOUNDS, infer_dimension
@@ -161,15 +167,33 @@ def _annotate(
 def _numeric_cols(df: pd.DataFrame) -> list:
     # Numeric if >=80% of NON-BLANK cells parse as numbers. Blanks are treated as
     # "absent" (filled with 0 later), so a sparse component column still counts.
-    out = []
-    for c in df.columns:
-        s = df[c]
-        nonblank = s.notna() & (s.astype(str).str.strip() != "")
-        if nonblank.sum() < 3:
-            continue
-        if pd.to_numeric(s[nonblank], errors="coerce").notna().mean() >= 0.8:
-            out.append(c)
-    return out
+    # One definition, shared with the upload layer's default-sheet rule.
+    return numeric_columns(df)
+
+
+_ERR_NO_PROCESS_INPUTS = (
+    "No usable process-input columns: every numeric column other than the target is "
+    "an identifier, another measured output, or constant. Add at least one varying "
+    "process input (for example pH, temperature, or a feed rate)."
+)
+
+
+def _too_few_rows(n: int, target: str | None = None) -> UploadRejected:
+    if target is None:
+        msg = (
+            f"The sheet has {n} data row{'s' if n != 1 else ''}; at least {MIN_FIT_ROWS} "
+            "runs are needed to fit a model. Add more runs and upload again."
+        )
+    else:
+        msg = (
+            f"Only {n} row{'s have' if n != 1 else ' has'} a numeric value for the target "
+            f"{target!r}; at least {MIN_FIT_ROWS} are needed to fit a model. Add more "
+            "measured runs, or choose another target column."
+        )
+    ctx: dict = {"min_rows": MIN_FIT_ROWS, "n_rows": int(n)}
+    if target is not None:
+        ctx["target"] = str(target)
+    return UploadRejected(msg, code="too_few_rows", context=ctx)
 
 
 # Deterministic seed for the analyze path. The same upload -> the same GP fit and
@@ -769,7 +793,48 @@ def _analyze(
     )
 
     _seed_everything()
+    original_columns = {str(c) for c in df.columns}
+    n_header_columns = int(df.shape[1])
     df = _dedupe_columns(df.dropna(axis=1, how="all"))
+
+    # Shape problems that no model can work around get a specific, actionable
+    # refusal (never the parser's or numpy's own text). Checked before anything
+    # else so a one-column or four-row upload says exactly that. Columns are
+    # counted once empty ones are dropped - except on a sheet with no data rows
+    # at all (a header line, or one line of prose in a .txt), where every column
+    # is "empty" and the header's own width is the useful number.
+    n_columns = int(df.shape[1]) if len(df) else n_header_columns
+    if n_columns < 2:
+        raise UploadRejected(
+            f"The sheet has {n_columns} column{'s' if n_columns != 1 else ''}; "
+            "a run sheet needs at least 2 (process inputs and a measured target). If "
+            "this is a text file, check its values are separated by commas or tabs.",
+            code="too_few_columns",
+            context={"n_columns": n_columns},
+        )
+    n_data_rows = int(len(df.dropna(axis=0, how="all")))
+    if n_data_rows < MIN_FIT_ROWS:
+        raise _too_few_rows(n_data_rows)
+    requested_target = roles.target if roles is not None else target
+    if requested_target is not None and str(requested_target) not in {str(c) for c in df.columns}:
+        if str(requested_target) in original_columns:
+            # It was there, but every cell was blank (dropped above).
+            raise UploadRejected(
+                f"The target column {str(requested_target)!r} has no values. No model "
+                "can be fit and no proposals were generated. Fill in the measured "
+                "outcome, or choose another target column.",
+                code="target_empty",
+                context={"target": str(requested_target)},
+            )
+        available = [
+            str(c) for c in _numeric_cols(df) if profile.outcome_hint.search(str(c))
+        ] or [str(c) for c in _numeric_cols(df)]
+        raise UploadRejected(
+            f"The requested target column {str(requested_target)!r} is not in this sheet. "
+            "Choose one of the sheet's columns as the target.",
+            code="target_not_found",
+            context={"target": str(requested_target), "available_targets": available},
+        )
 
     # The validation gate runs FIRST, on the sheet as uploaded, before any
     # column is typed or dropped - it has to see the raw cells to catch a mixed
@@ -790,7 +855,12 @@ def _analyze(
 
     num = _numeric_cols(df)
     if not num:
-        raise ValueError("no numeric columns found")
+        raise UploadRejected(
+            "No numeric columns were found. A run sheet needs numeric process-input "
+            "columns (for example pH or temperature) and a numeric target column "
+            "(for example a titer), one run per row.",
+            code="no_numeric_inputs",
+        )
     target, cont_feats, cat_feats, gcol, declared = _resolve_columns(
         df, num, target, roles, profile
     )
@@ -832,15 +902,15 @@ def _analyze(
             varying.append(c)
     cont_feats = varying
     if not cont_feats and not cat_feats:
-        raise ValueError("no varying process-input columns found (only outputs/ids?)")
+        raise UploadRejected(_ERR_NO_PROCESS_INPUTS, code="no_process_inputs")
 
     y_all = pd.to_numeric(df[target], errors="coerce")
     keep = y_all.notna()
     Xc_raw = df.loc[keep, cont_feats].apply(pd.to_numeric, errors="coerce")  # NaN preserved (for grouping)
     Xc_zf = Xc_raw.fillna(0.0)                                               # zero-filled (for the GP + box)
     y = y_all[keep].to_numpy(float)
-    if len(y) < 6:
-        raise ValueError(f"need at least 6 rows with a numeric {target!r}; got {len(y)}")
+    if len(y) < MIN_FIT_ROWS:
+        raise _too_few_rows(len(y), str(target))
     # Cap the rows the O(n^2) exact GP is fit on, separately from the raw-upload
     # cap. Reject rather than subsample: silent subsampling would be invisible,
     # non-deterministic data loss and contradict the reproducibility contract.
@@ -880,7 +950,7 @@ def _analyze(
         cat_dims_map[c] = levels
 
     if not cont_feats and not kept_cats:
-        raise ValueError("no varying process-input columns on the target-present rows")
+        raise UploadRejected(_ERR_NO_PROCESS_INPUTS, code="no_process_inputs")
 
     # Drop fitted rows whose value for any kept categorical is blank/unknown, so a
     # missing categorical can never poison the GP (as a NaN code) or surface as a
