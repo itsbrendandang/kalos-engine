@@ -50,6 +50,7 @@ from kalos.portal.auth import (
     require_scope,
 )
 from kalos.portal.auth_errors import JwtConfigError
+from kalos.portal.jwt_auth import log_config_error_once
 from kalos.portal.config import (
     ProductionConfigError,
     assert_production_posture,
@@ -240,7 +241,7 @@ def _auth_config_error_response(exc: AuthConfigError) -> JSONResponse:
     """Fail closed on a broken auth config: 503 for the JWT key file (the
     caller can do nothing about it), 500 for a malformed static-token list."""
     if isinstance(exc, JwtConfigError):
-        log.error("kalos auth: engine-token (JWT) configuration is invalid: %s", exc)
+        log_config_error_once(exc)  # once per change, not per request
         return JSONResponse({"error": "authentication unavailable"}, status_code=503)
     log.error("kalos auth: token configuration is invalid: %s", exc)
     return JSONResponse({"error": "authentication is misconfigured"}, status_code=500)
