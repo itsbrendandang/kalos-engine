@@ -646,6 +646,24 @@ def test_size_limits_and_the_analysis_slot_still_apply(env):
         assert r.status_code == 503 and r.headers["Retry-After"]
 
 
+def test_campaign_upload_without_a_bearer_is_401_before_the_body_is_read(env):
+    """The #86 upload precheck covers the campaign upload route too: no bearer
+    -> 401 from the middleware, even for a body over the upload cap."""
+    tc, store = env
+    cid = tc.post("/api/campaigns", json={"name": "a"}, headers=H("a-write")).json()["id"]
+    for body in (_csv(_df(20)), b"0" * (MAX_UPLOAD_BYTES + 2 * 1024 * 1024)):
+        r = tc.post(f"/api/campaigns/{cid}/upload",
+                    files={"file": ("r.csv", body, "text/csv")})
+        assert r.status_code == 401, r.status_code
+        assert r.headers.get("www-authenticate") == "Bearer"
+        assert set(r.json()) == {"detail"}
+    # a foreign/missing id without a bearer is the same 401 (no existence oracle)
+    r = tc.post(f"/api/campaigns/{_missing_id()}/upload",
+                files={"file": ("r.csv", _csv(_df(20)), "text/csv")})
+    assert r.status_code == 401
+    assert store.get(tenant="acme", campaign_id=cid) is None
+
+
 def test_upload_size_cap_only_widens_for_well_formed_campaign_upload_paths():
     mw = CampaignUploadSizeLimit(app, default_cap=10, upload_cap=1000,
                                  upload_paths={"/api/run"})
