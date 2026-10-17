@@ -61,6 +61,7 @@ from kalos.portal.campaign import CampaignStore, get_campaign_store
 from kalos.portal.limits import (
     MULTIPART_OVERHEAD_BYTES,
     RequestSizeLimitMiddleware,
+    UploadAuthPrecheckMiddleware,
     max_request_bytes,
 )
 from kalos.portal.tenancy import validate_tenant_id
@@ -215,6 +216,14 @@ app.add_middleware(
     default_cap=max_request_bytes(),
     upload_cap=MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES,
     upload_paths=UPLOAD_PATHS,
+)
+# With auth enforced, an upload carrying no bearer token is a 401 before its
+# (up to ~25 MB) multipart body is read. Presence check only; the token is
+# verified by `require_principal` as before (kalos/portal/limits.py).
+app.add_middleware(
+    UploadAuthPrecheckMiddleware,
+    upload_paths=UPLOAD_PATHS,
+    auth_enforced=lambda: get_authenticator().enforces(),
 )
 app.add_middleware(CORSMiddleware, **cors_config())
 
@@ -527,7 +536,7 @@ def _run_uploaded_sync(
         # A fresh upload starts a fresh campaign (docs/CAMPAIGN_LOOP.md,
         # "Seeding") for THIS tenant. Best-effort: a seeding failure must never
         # break the upload response the client is waiting on.
-        from kalos.portal.campaign import get_campaign_store
+        from kalos.portal.campaign import CampaignStore, get_campaign_store
 
         generation = get_campaign_store().seed(
             df, result["target"], result["proposal_features"], tenant=tenant
