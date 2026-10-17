@@ -19,6 +19,24 @@ Design (deliberately self-hosted, no external identity provider):
   (today's behavior) - and a warning is logged once at startup. `admin` is never
   granted in open mode. The moment tokens are provisioned, enforcement turns on;
   there is no half-authenticated state.
+
+Two kinds of bearer token are accepted (docs/ENGINE_TOKEN.md):
+
+- **Engine tokens (JWT).** A bearer token with exactly two dots is a compact
+  JWS and takes the JWT branch: an EdDSA token minted per request by kalos-web
+  for a signed-in user, verified against the public keys in
+  `KALOS_JWT_PUBLIC_KEYS_FILE` (`kalos.portal.jwt_auth`).
+- **Static tokens.** Anything else (a `secrets.token_urlsafe` value has no
+  dots) is hashed and matched against the provisioned records, as before. In
+  `KALOS_ENV=production` static records are for service accounts only
+  (`service_account: true`, exactly one tenant, never `admin`).
+
+`KALOS_AUTH_DENY_SUBJECTS` (comma-separated subjects and/or session ids) is the
+revocation lever for both kinds: a match is a 401. There is no revocation DB;
+engine tokens are short-lived by contract.
+
+Every rejection answers the same generic 401 body; the reason code is logged
+server-side with at most the token's `kid`/`jti`, never the token.
 """
 from __future__ import annotations
 
@@ -27,14 +45,28 @@ import hmac
 import json
 import logging
 import os
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, Header, HTTPException
 
+from kalos.portal.auth_errors import AuthConfigError, JwtConfigError
 from kalos.portal.config import is_production
+from kalos.portal.jwt_auth import (
+    JwksKeyStore,
+    JwtSettings,
+    TokenRejected,
+    is_valid_subject,
+    jwt_settings_from_env,
+    log_config_error_once,
+    safe_log_value,
+    verify_engine_token,
+)
 from kalos.portal.tenancy import (  # noqa: F401 - TENANT_ID_PATTERN/validate_tenant_id re-exported
+    RESERVED_ANON_TENANT,
     TENANT_ID_PATTERN,
     is_valid_tenant_id,
     validate_tenant_id,
@@ -48,10 +80,19 @@ ADMIN = "admin"
 _VALID_SCOPES = frozenset({READ, WRITE, ADMIN})
 
 # The tenant/subject an unauthenticated request is attributed to in open mode.
-_ANON_TENANT = "default"
+_ANON_TENANT = RESERVED_ANON_TENANT
 _ANON_SUBJECT = "anonymous"
 _OPEN_MODE_SCOPES = frozenset({READ, WRITE})  # never ADMIN without a real token
 
+# Auth methods recorded on a Principal.
+AUTH_ANONYMOUS = "anonymous"
+AUTH_STATIC = "static"
+AUTH_JWT = "jwt"
+
+DENY_VAR = "KALOS_AUTH_DENY_SUBJECTS"
+
+# The one body every bad/expired/revoked token gets: no hint of which check failed.
+_INVALID_TOKEN_DETAIL = "invalid or expired token"
 
 
 @dataclass(frozen=True)
@@ -63,6 +104,9 @@ class Principal:
     tenant: str
     scopes: frozenset[str]
     anonymous: bool = False
+    auth_method: str = AUTH_STATIC  # 'anonymous' | 'static' | 'jwt'
+    session_id: str | None = None  # JWT `sid`
+    token_id: str | None = None  # JWT `jti`
 
     def has(self, scope: str) -> bool:
         return scope in self.scopes
@@ -74,6 +118,42 @@ class _TokenRecord:
     subject: str
     tenant: str
     scopes: frozenset[str]
+    service_account: bool = False
+
+
+@dataclass(frozen=True)
+class _DenyList:
+    subjects: frozenset[str]
+    sessions: frozenset[str]
+
+    def denies(self, subject: str, session_id: str | None = None) -> bool:
+        return subject in self.subjects or (
+            session_id is not None and session_id in self.sessions
+        )
+
+
+def _deny_list() -> _DenyList:
+    """Subjects and session ids refused outright (`KALOS_AUTH_DENY_SUBJECTS`).
+
+    Comma-separated entries: `sub:<subject>` denies a subject, `sid:<session>`
+    denies one session, and a bare `<value>` (legacy, ambiguous) denies it as
+    either. Read per request, but it is a process environment variable: in a
+    deployment a change needs a restart (or supervisor reload) to reach the
+    process."""
+    subjects: set[str] = set()
+    sessions: set[str] = set()
+    for part in os.environ.get(DENY_VAR, "").split(","):
+        entry = part.strip()
+        if not entry:
+            continue
+        if entry.startswith("sub:"):
+            subjects.add(entry[4:])
+        elif entry.startswith("sid:"):
+            sessions.add(entry[4:])
+        else:
+            subjects.add(entry)
+            sessions.add(entry)
+    return _DenyList(frozenset(subjects), frozenset(sessions))
 
 
 @dataclass
@@ -85,12 +165,15 @@ class Authenticator:
     GP fit, and it keeps the class stateless and test-friendly.
     """
 
+    clock: Callable[[], float] = time.time
     _warned_open: bool = field(default=False, init=False, repr=False)
+    _key_store: JwksKeyStore | None = field(default=None, init=False, repr=False)
 
     def _load_records(self) -> list[_TokenRecord]:
         raw = self._load_raw_config()
         if raw is None:
             return []
+        production = is_production()
         records: list[_TokenRecord] = []
         for i, entry in enumerate(raw):
             if not isinstance(entry, dict):
@@ -103,6 +186,13 @@ class Authenticator:
                 raise AuthConfigError(f"token entry {i} is missing 'token_sha256'")
             if not isinstance(subject, str) or not subject:
                 raise AuthConfigError(f"token entry {i} is missing 'subject'")
+            if not is_valid_subject(subject):
+                # Same alphabet as engine-token sub/sid, so every subject can be
+                # named in KALOS_AUTH_DENY_SUBJECTS (comma-separated).
+                raise AuthConfigError(
+                    f"token entry {i} has an invalid 'subject'; use 1-256 printable ASCII "
+                    "characters without spaces or commas"
+                )
             if not isinstance(tenant, str) or not tenant:
                 raise AuthConfigError(f"token entry {i} is missing 'tenant'")
             if not is_valid_tenant_id(tenant):
@@ -124,12 +214,34 @@ class Authenticator:
                 raise AuthConfigError(
                     f"token entry {i} has invalid scopes; allowed: {sorted(_VALID_SCOPES)}"
                 )
+            if "tenants" in entry:
+                raise AuthConfigError(
+                    f"token entry {i} has 'tenants'; a static token carries exactly one 'tenant'"
+                )
+            service_account = entry.get("service_account", False)
+            if not isinstance(service_account, bool):
+                raise AuthConfigError(f"token entry {i} has a non-boolean 'service_account'")
+            if production:
+                # Production: users arrive with engine tokens (JWT); static tokens
+                # are long-lived, so they are confined to service accounts with a
+                # single tenant and no admin. Refuse the whole config otherwise.
+                if not service_account:
+                    raise AuthConfigError(
+                        f"token entry {i}: KALOS_ENV=production only accepts static tokens "
+                        "for service accounts ('service_account': true)"
+                    )
+                if ADMIN in scopes_in:
+                    raise AuthConfigError(
+                        f"token entry {i}: KALOS_ENV=production refuses the 'admin' scope "
+                        "on static tokens"
+                    )
             records.append(
                 _TokenRecord(
                     token_sha256=token_hash.lower(),
                     subject=subject,
                     tenant=tenant,
                     scopes=frozenset(scopes_in),
+                    service_account=service_account,
                 )
             )
         return records
@@ -156,6 +268,31 @@ class Authenticator:
             raise AuthConfigError("auth token config must be a JSON array")
         return data
 
+    def _jwt(self) -> tuple[JwtSettings, JwksKeyStore] | None:
+        """The JWT settings and key store, or None when JWT auth is not
+        configured. Raises `JwtConfigError` on a bad `KALOS_JWT_*` knob."""
+        settings = jwt_settings_from_env()
+        if settings is None:
+            return None
+        if self._key_store is None or self._key_store.path != settings.keys_file:
+            self._key_store = JwksKeyStore(settings.keys_file)
+        return settings, self._key_store
+
+    def jwt_key_count(self) -> int:
+        """How many public keys the JWT branch trusts right now (0 when JWT is
+        not configured). Raises `JwtConfigError` when the key file is bad."""
+        jwt_cfg = self._jwt()
+        return 0 if jwt_cfg is None else len(jwt_cfg[1].keys())
+
+    def has_auth_source(self) -> bool:
+        """Whether at least one credential could actually authenticate: a static
+        record, or a JWT public key. This is what production requires at startup
+        and at runtime (see `kalos.portal.app`). Raises on bad config."""
+        # Validate the key file FIRST and unconditionally: a broken JWKS must
+        # fail closed even when static records alone would satisfy the check.
+        key_count = self.jwt_key_count()
+        return bool(self._load_records()) or key_count > 0
+
     def is_configured(self) -> bool:
         """Whether an auth config is PRESENT. Not the same as whether it enforces.
 
@@ -163,7 +300,7 @@ class Authenticator:
         grants everyone the anonymous principal. Prefer `enforces` for any security
         decision.
         """
-        return self._load_raw_config() is not None
+        return self._load_raw_config() is not None or jwt_settings_from_env() is not None
 
     def enforces(self) -> bool:
         """Whether authentication is ACTUALLY enforced: at least one usable token.
@@ -179,17 +316,26 @@ class Authenticator:
         Every security decision (the bind refusal, the remote-request guard, the
         startup posture line) keys off this method so the answer matches what
         `principal_for` will actually do.
+
+        Configuring `KALOS_JWT_PUBLIC_KEYS_FILE` also enforces (even if the file
+        holds no keys yet: then every token is refused, never anonymous). A bad
+        key file raises `JwtConfigError` here, so callers fail closed.
         """
-        return bool(self._load_records())
+        jwt_configured = self._jwt() is not None
+        if jwt_configured:
+            self.jwt_key_count()  # surface an unreadable/malformed key file, always
+        return jwt_configured or bool(self._load_records())
 
     def principal_for(self, authorization: str | None) -> Principal:
         """The `Principal` for a request's `Authorization` header.
 
-        Open mode (no tokens configured): the anonymous principal. Configured:
-        a valid `Bearer <token>` mapping to a provisioned record, else 401.
+        Open mode (no static tokens, no JWT keys file): the anonymous principal.
+        Configured: a valid engine token (JWT) or a `Bearer <token>` mapping to a
+        provisioned record, else 401 with a generic body.
         """
         records = self._load_records()
-        if not records:
+        jwt_cfg = self._jwt()
+        if not records and jwt_cfg is None:
             if is_production():
                 # Fail closed: the middleware checked the tokens a moment ago, but
                 # they are re-read here, so a file emptied in between must not
@@ -199,28 +345,94 @@ class Authenticator:
             if not self._warned_open:
                 log.warning(
                     "kalos auth: no tokens configured - API is OPEN (anonymous '%s' tenant, "
-                    "read+write). Set KALOS_AUTH_TOKENS[_FILE] to enforce authentication.",
+                    "read+write). Set KALOS_JWT_PUBLIC_KEYS_FILE and/or KALOS_AUTH_TOKENS[_FILE] "
+                    "to enforce authentication.",
                     _ANON_TENANT,
                 )
                 self._warned_open = True
             return Principal(
-                subject=_ANON_SUBJECT, tenant=_ANON_TENANT, scopes=_OPEN_MODE_SCOPES, anonymous=True
+                subject=_ANON_SUBJECT,
+                tenant=_ANON_TENANT,
+                scopes=_OPEN_MODE_SCOPES,
+                anonymous=True,
+                auth_method=AUTH_ANONYMOUS,
             )
 
         token = _bearer(authorization)
         if token is None:
             raise HTTPException(status_code=401, detail="authentication required")
+        if token.count(".") == 2:
+            return self._principal_from_jwt(token, jwt_cfg, records)
+        return self._principal_from_static(token, records)
+
+    def _principal_from_jwt(
+        self,
+        token: str,
+        jwt_cfg: tuple[JwtSettings, JwksKeyStore] | None,
+        records: list[_TokenRecord],
+    ) -> Principal:
+        # A two-dot bearer that is not even a parseable JWS (or arrives while JWT
+        # auth is off) falls back to the static-hash branch, so an operator's
+        # static token that happens to contain two dots still works. A token
+        # that parses as a JWS but fails verification NEVER falls back.
+        if jwt_cfg is None:
+            if records:
+                return self._principal_from_static(token, records)
+            log.info("kalos auth: rejected token reason=jwt_not_configured")
+            raise _invalid_token()
+        settings, store = jwt_cfg
+        keys = store.keys()  # JwtConfigError propagates: fail closed (503)
+        try:
+            verified = verify_engine_token(token, settings=settings, keys=keys, now=self.clock())
+        except TokenRejected as exc:
+            if exc.reason == "malformed" and records:
+                return self._principal_from_static(token, records)
+            log.info(
+                "kalos auth: rejected jwt reason=%s kid=%s jti=%s",
+                exc.reason, safe_log_value(exc.kid), safe_log_value(exc.token_id),
+            )
+            raise _invalid_token() from None
+        if _deny_list().denies(verified.subject, verified.session_id):
+            log.info(
+                "kalos auth: rejected jwt reason=denied kid=%s jti=%s",
+                safe_log_value(verified.kid), safe_log_value(verified.token_id),
+            )
+            raise _invalid_token()
+        return Principal(
+            subject=verified.subject,
+            tenant=verified.tenant,
+            scopes=verified.scopes,
+            auth_method=AUTH_JWT,
+            session_id=verified.session_id,
+            token_id=verified.token_id,
+        )
+
+    @staticmethod
+    def _principal_from_static(token: str, records: list[_TokenRecord]) -> Principal:
         presented = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        match: _TokenRecord | None = None
         for rec in records:
-            # constant-time compare so a wrong token can't be recovered byte-by-byte
-            if hmac.compare_digest(presented, rec.token_sha256):
-                return Principal(subject=rec.subject, tenant=rec.tenant, scopes=rec.scopes)
-        raise HTTPException(status_code=401, detail="invalid token")
+            # constant-time compare so a wrong token can't be recovered byte-by-byte;
+            # no early exit, so the loop length does not reveal the match position
+            if hmac.compare_digest(presented, rec.token_sha256) and match is None:
+                match = rec
+        if match is None:
+            log.info("kalos auth: rejected static token reason=no_match")
+            raise _invalid_token()
+        if _deny_list().denies(match.subject):
+            log.info("kalos auth: rejected static token reason=denied")
+            raise _invalid_token()
+        return Principal(
+            subject=match.subject, tenant=match.tenant, scopes=match.scopes, auth_method=AUTH_STATIC
+        )
 
 
-class AuthConfigError(RuntimeError):
-    """The auth token configuration is malformed. Surfaced as a 500 (an operator
-    misconfiguration), never echoing token material."""
+def _invalid_token() -> HTTPException:
+    return HTTPException(
+        status_code=401,
+        detail=_INVALID_TOKEN_DETAIL,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def _bearer(authorization: str | None) -> str | None:
@@ -256,6 +468,12 @@ def require_principal(
     (anonymous in open mode, else resolved from the bearer token or 401)."""
     try:
         return auth.principal_for(authorization)
+    except JwtConfigError as exc:
+        # Fail closed: an unreadable/malformed key file is a server posture
+        # problem the caller cannot fix, and stale keys are never used. Logged
+        # once per change, not per request.
+        log_config_error_once(exc)
+        raise HTTPException(status_code=503, detail="authentication unavailable") from None
     except AuthConfigError:
         log.exception("kalos auth: token configuration is invalid")
         raise HTTPException(status_code=500, detail="authentication is misconfigured") from None

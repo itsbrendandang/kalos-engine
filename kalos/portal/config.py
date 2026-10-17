@@ -93,8 +93,9 @@ def assert_production_posture(*, auth_enforced: bool) -> None:
     """
     if is_production() and not auth_enforced:
         raise ProductionConfigError(
-            f"{_ENV_VAR}=production requires authentication: set KALOS_AUTH_TOKENS_FILE "
-            "(or KALOS_AUTH_TOKENS) to a list with at least one token. "
+            f"{_ENV_VAR}=production requires authentication: set KALOS_JWT_PUBLIC_KEYS_FILE "
+            "to a JWKS with at least one Ed25519 key, and/or KALOS_AUTH_TOKENS_FILE (or "
+            "KALOS_AUTH_TOKENS) to a list with at least one service-account token. "
             f"{_ALLOW_OPEN_VAR} is ignored in production (docs/HARDENING.md)."
         )
 

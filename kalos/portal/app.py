@@ -49,7 +49,10 @@ from kalos.portal.auth import (
     get_authenticator,
     require_scope,
 )
+from kalos.portal.auth_errors import JwtConfigError
+from kalos.portal.jwt_auth import log_config_error_once
 from kalos.portal.config import (
+    ProductionConfigError,
     assert_production_posture,
     cors_config,
     is_production,
@@ -135,7 +138,31 @@ def _ensure_torch_threads() -> None:
 #   - does not register the demo routes /api/single and /api/multi (CPU-heavy GP
 #     loops that run OUTSIDE the single analysis slot), so they are 404.
 _PRODUCTION = is_production()
-assert_production_posture(auth_enforced=get_authenticator().enforces())
+
+
+def _startup_auth_posture() -> bool:
+    """Check the auth posture once at import; return whether auth is enforced.
+
+    Production requires a USABLE auth source (a JWT public key or a
+    service-account static token), and any auth config error - including an
+    unreadable or malformed JWT key file - refuses to start.
+    """
+    auth = get_authenticator()
+    try:
+        enforced = auth.enforces()
+        has_source = auth.has_auth_source()
+    except AuthConfigError as exc:
+        if _PRODUCTION:
+            # The detail (never token material) is in the chained exception.
+            raise ProductionConfigError(
+                "KALOS_ENV=production: the authentication configuration is invalid"
+            ) from exc
+        raise
+    assert_production_posture(auth_enforced=has_source)
+    return enforced
+
+
+_AUTH_ENFORCED_AT_STARTUP = _startup_auth_posture()
 
 app = FastAPI(
     title="Kalos Engine API",
@@ -173,10 +200,9 @@ async def _refuse_open_remote_access(request, call_next):
         # request (rotation without restart), so an emptied tokens file would
         # silently reopen the API. Fail closed instead, local callers included.
         try:
-            enforced = get_authenticator().enforces()
-        except AuthConfigError:
-            log.exception("kalos auth: token configuration is invalid")
-            return JSONResponse({"error": "authentication is misconfigured"}, status_code=500)
+            enforced = get_authenticator().has_auth_source()
+        except AuthConfigError as exc:
+            return _auth_config_error_response(exc)
         if not enforced:
             log.error("refused a request: KALOS_ENV=production but authentication is not enforced")
             return JSONResponse(
@@ -185,7 +211,11 @@ async def _refuse_open_remote_access(request, call_next):
                 status_code=503,
             )
     if not is_local_client(request.client.host if request.client else None):
-        if not get_authenticator().enforces() and not open_access_explicitly_allowed():
+        try:
+            remote_enforced = get_authenticator().enforces()
+        except AuthConfigError as exc:
+            return _auth_config_error_response(exc)
+        if not remote_enforced and not open_access_explicitly_allowed():
             log.warning(
                 "refused a remote request to an unauthenticated portal from %s %s",
                 request.client.host if request.client else "unknown",
@@ -206,6 +236,16 @@ async def _refuse_open_remote_access(request, call_next):
                 status_code=503,
             )
     return await call_next(request)
+
+
+def _auth_config_error_response(exc: AuthConfigError) -> JSONResponse:
+    """Fail closed on a broken auth config: 503 for the JWT key file (the
+    caller can do nothing about it), 500 for a malformed static-token list."""
+    if isinstance(exc, JwtConfigError):
+        log_config_error_once(exc)  # once per change, not per request
+        return JSONResponse({"error": "authentication unavailable"}, status_code=503)
+    log.error("kalos auth: token configuration is invalid: %s", exc)
+    return JSONResponse({"error": "authentication is misconfigured"}, status_code=500)
 
 
 # Bound every request body before any route parses it (kalos/portal/limits.py):
@@ -229,7 +269,7 @@ app.add_middleware(
 app.add_middleware(CORSMiddleware, **cors_config())
 
 # Log the effective security posture (auth + CORS) once at import/startup.
-log_security_posture(auth_enforced=get_authenticator().enforces())
+log_security_posture(auth_enforced=_AUTH_ENFORCED_AT_STARTUP)
 
 BOUNDS = np.array([[0, 0, 0], [1, 1, 1]], float)
 TITER_OPT = np.array([0.7, 0.3, 0.5])
