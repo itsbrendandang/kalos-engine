@@ -4,6 +4,36 @@ Newest first.
 
 ## Unreleased
 
+### Added - background analysis jobs (`feat/background-jobs`, docs/JOBS.md)
+
+- `POST /api/campaigns/{id}/jobs` queues an upload analysis and returns `202`;
+  `GET /api/jobs/{id}` reports its state, stage, progress and error;
+  `POST /api/jobs/{id}/cancel` cancels it; `GET /api/campaigns/{id}/jobs` lists
+  a campaign's jobs. The bad-sheet refusals of `/api/run` are returned before
+  queueing.
+- Each job runs in its own worker process and publishes the campaign and its
+  analysis in one transaction, as a compare-and-swap on the generation it was
+  submitted under. A cancelled or timed-out job publishes nothing; a campaign
+  that changed while the job waited fails the job instead of being overwritten.
+- Per-tenant limits: concurrent analyses (`KALOS_JOB_PER_TENANT`), queue depth
+  (`KALOS_JOB_QUEUE_DEPTH`, 429), upload size (`KALOS_JOB_MAX_UPLOAD_BYTES`,
+  413), and a wall-clock limit per job (`KALOS_JOB_TIMEOUT_S`). Engine-wide
+  concurrency is `KALOS_JOB_WORKERS`; sync routes share the same limiter and
+  yield to queued work of other tenants.
+- Restart recovery: jobs a previous process left running are failed
+  (`interrupted`), and their workers are killed if still alive.
+- Schema v3 (`jobs` table), additive, with the usual pre-migration backup
+  (docs/MIGRATIONS.md).
+
+### Changed
+
+- The sync upload, reanalyze and demo routes now share one analysis path and
+  one limiter (`kalos/portal/pipeline.py`, `kalos/portal/busy.py`). The single
+  global analysis slot is now a per-tenant cap plus a global cap, so one tenant
+  no longer answers every other tenant's upload with 503.
+- `/api/single` and `/api/multi` (development only) run under the same limiter
+  and a wall-clock timeout (`KALOS_DEMO_TIMEOUT_S`).
+
 ### Fixed - every upload failure says what is wrong; workbooks can pick a sheet
 
 An empty file, a corrupt `.xlsx`, a `.txt` of prose, a 4-row sheet, a

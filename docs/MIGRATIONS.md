@@ -36,6 +36,29 @@ Every connection sets `PRAGMA foreign_keys = ON` and `busy_timeout = 5000`.
 The file is in WAL mode. The composite foreign keys mean an analysis or a
 default can only point at a campaign of the same tenant.
 
+## Schema v3: background jobs
+
+Schema v3 adds one table, `jobs`, for the background-job queue (docs/JOBS.md).
+The change is additive: no v2 table is altered, and no data moves.
+
+- `python -m kalos.portal.migrate up` brings a v2 database to v3. It takes an
+  online backup first, named `portal.db.pre-v3-<UTC timestamp>` (a v1 database
+  gets `pre-v2-...` and goes through v2 to v3 in the same transaction), then
+  creates the table and its two indexes in one `BEGIN IMMEDIATE` transaction.
+- A v3 database is a no-op for `up`. The engine runs the same check at startup.
+- `python -m kalos.portal.migrate down` steps back ONE version (v3 -> v2). It
+  renames `jobs` to `jobs_v3_rolledback` rather than dropping it, so the queue
+  history is kept. `down --to 1` steps all the way back.
+- Job input files are NOT in the database: they live under
+  `<KALOS_STATE_DIR>/jobs/`. A rollback leaves them in place; the next engine
+  start with jobs enabled sweeps any that no live job refers to.
+- `down` is for running OLDER code, which does not know the `jobs` table. An
+  engine started on a v2 database migrates it back to v3 (with a fresh
+  `pre-v3` backup), so do not start the new engine after a rollback you did not
+  intend to undo.
+
+Restoring the `pre-v3` backup gives the exact pre-upgrade state, as for v2.
+
 ## What the v1 -> v2 migration does
 
 It runs on its own when the engine first opens a v1 database
