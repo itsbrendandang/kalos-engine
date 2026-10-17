@@ -48,7 +48,7 @@ LEVELS = {
     "severe": fed_batch(mu_max=0.60, ks=0.5, ki=None, y_xs=0.20, qp=0.05),  # no inhibition, wrong yield
     # strong inhibition at low substrate. NOTE: despite the name this prior is NOT adversarial:
     # its rank correlation with the truth over the pool grid is about +0.81 and its argmax is next
-    # to the true one (measured in review); only its magnitude is far off. "severe" is the level
+    # to the true one (Spearman +0.81, argmax [5, 0] vs true [5, 0.021]; reproduced locally); only its magnitude is far off. "severe" is the level
     # that is anti-correlated with the truth. Names kept so the committed results JSON stays valid.
     "adversarial": fed_batch(mu_max=0.35, ks=4.0, ki=3.0, y_xs=0.45, qp=0.25),
 }
