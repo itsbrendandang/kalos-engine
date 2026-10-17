@@ -119,8 +119,10 @@ def test_hybrid_accepts_plain_callable_and_none():
 
 def test_compare_requires_five_seeds():
     X = np.random.default_rng(0).uniform(size=(40, 2))
-    with pytest.raises(ValueError, match="at least 5 seeds"):
+    with pytest.raises(ValueError, match="at least 5 distinct seeds"):
         compare({"a": (X, X.sum(1))}, seeds=[0, 1, 2])
+    with pytest.raises(ValueError, match="at least 5 distinct seeds"):
+        compare({"a": (X, X.sum(1))}, seeds=[0, 0, 0, 0, 0, 0])
 
 
 def test_compare_shrinks_small_pool_and_skips_tiny_one():
@@ -130,6 +132,22 @@ def test_compare_shrinks_small_pool_and_skips_tiny_one():
     small = out["arms"]["small"]
     assert small["rounds"] < 10 and small["requested_rounds"] == 10 and small["n_init"] + small["rounds"] * 2 <= 12
     assert "skipped" in out["arms"]["tiny"]
+
+
+def test_small_pool_is_never_exhausted_and_makes_no_claim():
+    rng = np.random.default_rng(0)
+    X = rng.uniform(size=(11, 2))
+    out = compare({"tiny": (X, X.sum(1))}, seeds=list(range(5)))
+    t = out["arms"]["tiny"]
+    assert t["exhaustive"] is False and t["fraction_evaluated"] <= 0.7 + 1e-9
+    assert t["claim_supported"] is False and t["bo_gain_over_random"] is None and "too small" in t["note"]
+
+
+def test_large_pool_supports_a_claim():
+    rng = np.random.default_rng(0)
+    X = rng.uniform(size=(60, 2))
+    t = compare({"ok": (X, X.sum(1))}, rounds=3, q=2, n_init=5, seeds=list(range(5)))["arms"]["ok"]
+    assert t["claim_supported"] is True and t["exhaustive"] is False
 
 
 def test_report_has_no_nan_curves_for_skipped_arm(tmp_path):
@@ -196,15 +214,18 @@ def test_gp_is_only_fit_on_already_measured_rows(monkeypatch):
         assert len(set(ev[5 + r * 2:])) == len(ev[5 + r * 2:])  # later picks never seen by the fit
 
 
-def test_indpensim_loader_aggregates_per_batch(tmp_path, monkeypatch):
-    rows = ["Batch ID,Penicillin concentration(P:g/L),a,b"]
+def test_indpensim_loader_aggregates_per_batch_by_time_in_chunks(tmp_path, monkeypatch):
+    rows = ["Batch ID,Time (h),Penicillin concentration(P:g/L),a,b"]
     for b in (1, 2, 3):
-        for t in range(4):
-            rows.append(f"{b},{b * 10 + t},{b + t},{2 * b}")
+        for t in (3, 0, 1, 2):  # deliberately NOT time-sorted: the last value must be the t=3 one
+            rows.append(f"{b},{t},{b * 10 + t},{b + t},{2 * b}")
     f = tmp_path / "100_Batches_IndPenSim_V3.csv"
     f.write_text("\n".join(rows))
-    X, y, names = load_indpensim_pool(f, recipe_cols=("a", "b"))
-    assert X.shape == (3, 2) and y.tolist() == [13.0, 23.0, 33.0] and names == ["a", "b"]
+    X, y, names = load_indpensim_pool(f, recipe_cols=("a", "b"), chunksize=3)  # tiny chunks
+    assert X.shape == (3, 2) and names == ["a", "b"]
+    assert y.tolist() == [13.0, 23.0, 33.0]  # value at the latest time, wherever the row sits
+    assert X[0].tolist() == [2.5, 2.0]  # per-batch mean of a = mean(4, 1, 2, 3)
+    assert load_indpensim_pool(f, recipe_cols=("a", "b"), chunksize=100)[1].tolist() == y.tolist()
     monkeypatch.setenv("KALOS_MEDIA_DATA", str(tmp_path))
     monkeypatch.delenv("KALOS_INDPENSIM_PATH", raising=False)
     assert indpensim_path() == f.resolve()
@@ -213,6 +234,13 @@ def test_indpensim_loader_aggregates_per_batch(tmp_path, monkeypatch):
     monkeypatch.delenv("KALOS_MEDIA_DATA")
     with pytest.raises(FileNotFoundError):
         load_indpensim_pool(None)
+
+
+def test_indpensim_glob_ignores_directories(tmp_path, monkeypatch):
+    (tmp_path / "x_IndPenSim_dir.csv").mkdir()
+    monkeypatch.setenv("KALOS_MEDIA_DATA", str(tmp_path))
+    monkeypatch.delenv("KALOS_INDPENSIM_PATH", raising=False)
+    assert indpensim_path() is None
 
 
 # ---- mechanistic hardening -----------------------------------------------
