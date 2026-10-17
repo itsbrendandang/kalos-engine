@@ -14,8 +14,9 @@ torch/botorch import tax and the store stays trivially unit-testable.
 
 Persistence is a SQLite table `campaigns(tenant, state, updated_at)` in
 `<KALOS_STATE_DIR>/portal.db` (default `~/.kalos`), **one row per tenant**
-(docs/HARDENING.md, Phase 1b). Every method takes a `tenant` (defaulting to
-`"default"`, the open-mode tenant), so two tenants can never see or overwrite
+(docs/HARDENING.md, Phase 1b). Every method takes a REQUIRED keyword `tenant` (no
+default, so a call site cannot fall into the open-mode `default` tenant by
+omission), so two tenants can never see or overwrite
 each other's campaign. A single lock serializes read-modify-write cycles, and
 each write runs in a SQLite transaction, so a reader never observes a partial
 state. The generation-token check that makes re-analyze transactional is
@@ -35,6 +36,8 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+from kalos.portal.tenancy import validate_tenant_id
 
 log = logging.getLogger("kalos.portal")
 
@@ -175,8 +178,9 @@ class CampaignStore:
 
     Every read and write is guarded by a single lock and runs in a SQLite
     transaction, so a concurrent reader never observes a partial state. Each
-    public method takes a `tenant` (default `"default"`, the open-mode tenant);
-    rows are keyed by tenant, so no two tenants share a campaign
+    public method takes a REQUIRED keyword `tenant` (no default: omitting it is a
+    TypeError, never a silent read of the open-mode `default` tenant), validated
+    against `^[A-Za-z0-9_-]{1,64}$`; rows are keyed by tenant, so no two tenants share a campaign
     (docs/HARDENING.md, Phase 1b).
     """
 
@@ -199,6 +203,7 @@ class CampaignStore:
 
     def _read_locked(self, tenant: str) -> dict[str, Any] | None:
         """Read the campaign row for `tenant`. Caller must hold `self._lock`."""
+        validate_tenant_id(tenant)
         row = self._conn.execute(
             "SELECT state FROM campaigns WHERE tenant = ?", (tenant,)
         ).fetchone()
@@ -222,6 +227,7 @@ class CampaignStore:
         concurrent upload from silently destroying just-folded measured data
         (see docs/CAMPAIGN_LOOP.md, "Re-analyze = the loop closing").
         """
+        validate_tenant_id(tenant)
         state["generation"] = uuid.uuid4().hex
         with self._conn:
             self._conn.execute(
@@ -234,7 +240,7 @@ class CampaignStore:
     # --- public API ----------------------------------------------------------- #
 
     def seed(
-        self, df: pd.DataFrame, target: str, features: list[str], *, tenant: str = "default"
+        self, df: pd.DataFrame, target: str, features: list[str], *, tenant: str
     ) -> str:
         """Start a FRESH campaign, overwriting any existing one. Returns the
         `generation` token minted for the new campaign.
@@ -269,13 +275,20 @@ class CampaignStore:
             self._write_locked(tenant, state)
             return str(state["generation"])
 
-    def get(self, *, tenant: str = "default") -> dict[str, Any] | None:
+    def ping(self) -> None:
+        """Readiness check: a read-only, tenant-agnostic query against the
+        store. Raises whatever sqlite3 raises when the database is missing,
+        corrupt or locked; returns None when it is usable."""
+        with self._lock:
+            self._conn.execute("SELECT 1 FROM campaigns LIMIT 1").fetchall()
+
+    def get(self, *, tenant: str) -> dict[str, Any] | None:
         """The raw campaign state for `tenant`, or None if none seeded yet."""
         with self._lock:
             return self._read_locked(tenant)
 
     def summary(
-        self, *, tenant: str = "default", analysis_generation: str | None = None
+        self, *, tenant: str, analysis_generation: str | None = None
     ) -> dict[str, Any]:
         """The `GET /api/campaign` response: `{"has_campaign": False}` before
         any upload has ever seeded a campaign, else the full summary
@@ -327,7 +340,7 @@ class CampaignStore:
         }
 
     def start(
-        self, recipes: list[dict[str, Any]], *, tenant: str = "default"
+        self, recipes: list[dict[str, Any]], *, tenant: str
     ) -> list[dict[str, Any]]:
         """Append each proposed recipe as a pending, awaiting run. Returns
         the appended runs (each with its assigned `id`)."""
@@ -365,7 +378,7 @@ class CampaignStore:
             return appended
 
     def set_result(
-        self, run_id: str, value: float, *, tenant: str = "default"
+        self, run_id: str, value: float, *, tenant: str
     ) -> dict[str, Any]:
         """Set the measured outcome on a pending run. Raises `CampaignError`
         (never silently ignored) if `run_id` is unknown or `value` is not a
@@ -387,7 +400,7 @@ class CampaignStore:
                     return run
             raise CampaignError(f"unknown pending run id {run_id!r}")
 
-    def plan_fold(self, *, tenant: str = "default") -> tuple[pd.DataFrame, str, str | None]:
+    def plan_fold(self, *, tenant: str) -> tuple[pd.DataFrame, str, str | None]:
         """Compute the folded base dataset WITHOUT persisting anything.
 
         Returns `(DataFrame(folded_base_rows), target, generation)` where the
@@ -426,7 +439,7 @@ class CampaignStore:
                 raise CampaignError("no measured runs to fold; log at least one result first")
             return pd.DataFrame(folded), target, state.get("generation")
 
-    def awaiting_recipes(self, *, tenant: str = "default") -> list[dict[str, Any]]:
+    def awaiting_recipes(self, *, tenant: str) -> list[dict[str, Any]]:
         """The recipes that have been STARTED but not yet measured, as plain dicts.
 
         These are the runs currently in the incubator: proposed, dispensed, and
@@ -450,7 +463,7 @@ class CampaignStore:
                 if run["result"] is None and isinstance(run.get("recipe"), dict)
             ]
 
-    def commit_fold(self, generation: str | None, *, tenant: str = "default") -> dict[str, Any]:
+    def commit_fold(self, generation: str | None, *, tenant: str) -> dict[str, Any]:
         """Make the fold planned by `plan_fold` durable, but ONLY if the
         campaign has not changed since (its `generation` still matches).
 

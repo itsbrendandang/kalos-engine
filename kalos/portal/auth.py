@@ -27,12 +27,17 @@ import hmac
 import json
 import logging
 import os
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, Header, HTTPException
+
+from kalos.portal.tenancy import (  # noqa: F401 - TENANT_ID_PATTERN/validate_tenant_id re-exported
+    TENANT_ID_PATTERN,
+    is_valid_tenant_id,
+    validate_tenant_id,
+)
 
 log = logging.getLogger("kalos.portal")
 
@@ -46,28 +51,6 @@ _ANON_TENANT = "default"
 _ANON_SUBJECT = "anonymous"
 _OPEN_MODE_SCOPES = frozenset({READ, WRITE})  # never ADMIN without a real token
 
-# A tenant id is used as a storage key (SQLite rows, the per-tenant latest cache
-# file) and in logs, so it is restricted to a conservative alphabet. A config
-# entry that does not match is REJECTED, never sanitised: sanitising would map
-# distinct ids (`acme/bio`, `acme_bio`) onto one key and silently merge two
-# tenants' data.
-TENANT_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
-
-
-def is_valid_tenant_id(tenant: object) -> bool:
-    """Whether `tenant` is a well-formed tenant id (`^[A-Za-z0-9_-]{1,64}$`)."""
-    return isinstance(tenant, str) and TENANT_ID_PATTERN.fullmatch(tenant) is not None
-
-
-def validate_tenant_id(tenant: object) -> str:
-    """Return `tenant` unchanged if well-formed, else raise `ValueError`.
-    Never rewrites the id."""
-    if not is_valid_tenant_id(tenant):
-        raise ValueError(
-            "invalid tenant id: must match ^[A-Za-z0-9_-]{1,64}$"
-        )
-    assert isinstance(tenant, str)
-    return tenant
 
 
 @dataclass(frozen=True)

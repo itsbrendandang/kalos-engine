@@ -129,3 +129,47 @@ def test_similar_tenants_get_separate_cache_files_on_disk(latest_dir):
     assert portal._load_latest("acme_bio")["dataset"] == "a.csv"
     assert portal._load_latest("acme-bio")["dataset"] == "b.csv"
     assert portal._load_latest("Acme_bio")["dataset"] == "c.csv"
+
+
+# --- tenant is a REQUIRED keyword on the store and latest helpers ------------ #
+
+import inspect  # noqa: E402
+
+from kalos.portal.campaign import CampaignStore  # noqa: E402
+
+_STORE_METHODS = ["seed", "get", "summary", "start", "set_result", "plan_fold",
+                  "awaiting_recipes", "commit_fold"]
+
+
+@pytest.mark.parametrize("name", _STORE_METHODS)
+def test_store_methods_require_a_keyword_only_tenant(name):
+    param = inspect.signature(getattr(CampaignStore, name)).parameters["tenant"]
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY
+    assert param.default is inspect.Parameter.empty  # no silent 'default'
+
+
+@pytest.mark.parametrize("fn", ["_load_latest", "_save_latest", "_run_uploaded_sync"])
+def test_latest_helpers_require_a_tenant(fn):
+    param = inspect.signature(getattr(portal, fn)).parameters["tenant"]
+    assert param.default is inspect.Parameter.empty
+
+
+def test_omitting_tenant_is_a_type_error_not_the_default_tenant(tmp_path):
+    store = CampaignStore(tmp_path)
+    with pytest.raises(TypeError):
+        store.get()  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        portal._load_latest()  # type: ignore[call-arg]
+
+
+def test_store_refuses_malformed_tenant_ids(tmp_path):
+    import pandas as pd
+
+    store = CampaignStore(tmp_path)
+    df = pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [1.0, 2.0, 3.0]})
+    with pytest.raises(ValueError):
+        store.seed(df, "y", ["x"], tenant="acme/bio")
+    with pytest.raises(ValueError):
+        store.get(tenant="../default")
+    store.seed(df, "y", ["x"], tenant="acme_bio")
+    assert store.get(tenant="acme_bio") is not None

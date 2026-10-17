@@ -87,7 +87,7 @@ def test_healthz_does_not_touch_the_database(client, monkeypatch):
     def _boom(*args, **kwargs):
         raise AssertionError("healthz must never touch the store")
 
-    monkeypatch.setattr(CampaignStore, "get", _boom)
+    monkeypatch.setattr(CampaignStore, "ping", _boom)
     resp = client.get("/healthz")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
@@ -106,7 +106,7 @@ def test_readyz_degrades_to_503_with_a_reason_when_the_store_is_broken(client, m
     def _boom(*args, **kwargs):
         raise RuntimeError("database disk image is malformed")
 
-    monkeypatch.setattr(CampaignStore, "get", _boom)
+    monkeypatch.setattr(CampaignStore, "ping", _boom)
     resp = client.get("/readyz")
     assert resp.status_code == 503
     body = resp.json()
@@ -118,6 +118,6 @@ def test_readyz_performs_a_read_not_a_write(client):
     """Readiness must not mutate the store it is checking - no campaign
     should appear as a side effect of polling /readyz."""
     store = app.dependency_overrides[get_campaign_store]()
-    assert store.get() is None  # nothing seeded yet
+    assert store.get(tenant="default") is None  # nothing seeded yet
     client.get("/readyz")
-    assert store.get() is None  # /readyz did not seed one
+    assert store.get(tenant="default") is None  # /readyz did not seed one

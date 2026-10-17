@@ -45,7 +45,6 @@ from kalos.portal.auth import (
     Principal,
     get_authenticator,
     require_scope,
-    validate_tenant_id,
 )
 from kalos.portal.config import (
     cors_config,
@@ -54,6 +53,7 @@ from kalos.portal.config import (
     open_access_explicitly_allowed,
 )
 from kalos.portal.campaign import CampaignStore, get_campaign_store
+from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.campaign_routes import router as _campaign_router
 from kalos.portal.scale_routes import router as _scale_router
 from kalos.portal.uploads import (
@@ -329,7 +329,7 @@ def readyz(store: CampaignStore = Depends(get_campaign_store)) -> JSONResponse:
     normal HTTP response rather than a stack trace.
     """
     try:
-        store.get()
+        store.ping()
     except Exception as exc:  # noqa: BLE001 - any store failure means "not ready", not a 500
         return JSONResponse({"status": "unavailable", "reason": str(exc)}, status_code=503)
     return JSONResponse({"status": "ok"})
