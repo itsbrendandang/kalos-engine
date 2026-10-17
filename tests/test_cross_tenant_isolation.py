@@ -337,11 +337,12 @@ def test_every_mutation_is_audited_with_subject_and_auth_method(env):
                   headers=H("a-admin")).json()["started"][0]
     tc.post(f"/api/campaigns/{cid}/runs/{run['id']}/result", json={"value": 1.0},
             headers=H("a-admin"))
-    busy._slot.acquire()  # keep the reanalyze cheap: it answers 503 without fitting
+    lease = busy.limiter().try_acquire("acme")  # keep the reanalyze cheap: 503 without fitting
+    assert lease is not None
     try:
         tc.post(f"/api/campaigns/{cid}/reanalyze", headers=H("a-admin"))
     finally:
-        busy._slot.release()
+        lease.release()
     tc.patch(f"/api/campaigns/{cid}", json={"archived": True}, headers=H("a-admin"))
     tc.patch(f"/api/campaigns/{cid}", json={"archived": False}, headers=H("a-admin"))
     got = [(e["action"], e["outcome"]) for e in reversed(store.audit_entries(tenant="acme"))]
@@ -635,13 +636,14 @@ def test_size_limits_and_the_analysis_slot_still_apply(env):
     # the single analysis slot: busy -> 503 + Retry-After on upload and reanalyze
     run = store.start([_recipe()], tenant="acme", campaign_id=cid)[0]
     store.set_result(run["id"], 2.0, tenant="acme", campaign_id=cid)
-    busy._slot.acquire()
+    lease = busy.limiter().try_acquire("acme")  # acme's one slot is busy
+    assert lease is not None
     try:
         r1 = tc.post(f"/api/campaigns/{cid}/upload",
                      files={"file": ("r.csv", _csv(_df(20)), "text/csv")}, headers=H("a-write"))
         r2 = tc.post(f"/api/campaigns/{cid}/reanalyze", headers=H("a-write"))
     finally:
-        busy._slot.release()
+        lease.release()
     for r in (r1, r2):
         assert r.status_code == 503 and r.headers["Retry-After"]
 

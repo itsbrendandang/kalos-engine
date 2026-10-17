@@ -46,7 +46,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
@@ -69,6 +69,9 @@ DEFAULT_CAMPAIGN_NAME = "Default campaign"
 LEGACY_CREATOR = "legacy-route"
 MAX_CAMPAIGN_NAME_CHARS = 200
 MAX_AUDIT_FIELD_CHARS = 512
+# `seed(expected_generation=...)` default: no explicit compare-and-swap token
+# (the write still CASes on the generation it read in the same transaction).
+_UNCHECKED: Any = object()
 
 __all__ = [
     "CampaignArchived",
@@ -203,6 +206,11 @@ class CampaignStore:
         ensure_schema(self._path, latest_dir=self._dir / "latest")
         self._lock = threading.Lock()
         self._conn = connect(self._path, check_same_thread=False)
+
+    @property
+    def state_dir(self) -> Path:
+        """The state directory holding `portal.db` (and background-job inputs)."""
+        return self._dir
 
     def close(self) -> None:
         with self._lock:
@@ -479,9 +487,11 @@ class CampaignStore:
     # --- the loop (campaign_id=None => the tenant's default campaign) -------- #
 
     def seed(
-        self, df: pd.DataFrame, target: str, features: list[str], *, tenant: str,
+        self, df: pd.DataFrame | None, target: str, features: list[str], *, tenant: str,
         campaign_id: str | None = None, analysis: dict[str, Any] | None = None,
-        dataset: str | None = None,
+        dataset: str | None = None, base_rows: list[dict[str, Any]] | None = None,
+        expected_generation: Any = _UNCHECKED,
+        on_commit: Callable[[sqlite3.Connection, str], None] | None = None,
     ) -> str:
         """Start a FRESH campaign state, overwriting the campaign's current one.
         Returns the `generation` token minted for it.
@@ -499,11 +509,22 @@ class CampaignStore:
         the SAME transaction, stamped with the new generation, so `/api/latest`
         and `/api/campaign` can never describe different run sheets
         (docs/CAMPAIGN_LOOP.md, "Analysis/campaign coherence").
+
+        Background jobs (kalos/portal/jobs.py) pass three more arguments:
+        `base_rows` (the JSON-safe rows the worker process computed, instead of
+        `df`), `expected_generation` (the campaign generation the job started
+        from: the write is a compare-and-swap on it and raises
+        `CampaignConflict` if any other write landed meanwhile) and
+        `on_commit(conn, new_generation)`, run inside the SAME transaction
+        after the write; if it raises, nothing is written.
         """
         from kalos.portal.serialization import _json_safe_records  # local: avoids a cycle at import time
 
         self._check(tenant, campaign_id)
-        base_rows = _json_safe_records(df)
+        if base_rows is None:
+            if df is None:
+                raise TypeError("seed() needs df or base_rows")
+            base_rows = _json_safe_records(df)
         now = time.time()
         state: dict[str, Any] = {
             "target": target,
@@ -521,11 +542,14 @@ class CampaignStore:
             assert row is not None
             if row.archived_at is not None:
                 raise CampaignArchived()
-            generation = self._cas_write(conn, tenant, row, state, row.generation)
+            expected = row.generation if expected_generation is _UNCHECKED else expected_generation
+            generation = self._cas_write(conn, tenant, row, state, expected)
             if analysis is not None:
                 blob = self._analysis_blob(analysis, dataset or "uploaded dataset", generation, now)
                 if blob is not None:
                     self._write_analysis(conn, tenant, row.id, blob, dataset, generation, now)
+            if on_commit is not None:
+                on_commit(conn, generation)
             return generation
 
     def ping(self) -> None:

@@ -21,7 +21,6 @@ below so existing call sites and tests keep working unchanged.
 from __future__ import annotations
 
 import functools
-import json
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -39,8 +38,7 @@ from starlette.concurrency import run_in_threadpool
 
 from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
 
-from kalos.domains import BIOPROCESS_PROFILE, GENERIC_PROFILE, ColumnRoles
-from kalos.portal.analysis import _analyze, _annotate, anonymize_rejection
+from kalos.portal.analysis import _analyze, _annotate
 from kalos.portal.auth import (
     READ,
     WRITE,
@@ -67,8 +65,10 @@ from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.campaign_routes import audit as _audit
 from kalos.portal.campaign_routes import campaign_error_response
 from kalos.portal.campaign_routes import router as _campaign_router
-from kalos.portal.campaigns_api import CampaignUploadAuthPrecheck, CampaignUploadSizeLimit
 from kalos.portal.campaigns_api import router as _campaigns_router
+from kalos.portal.jobs_api import JobUploadAuthPrecheck, JobUploadSizeLimit
+from kalos.portal.jobs_api import router as _jobs_router
+from kalos.portal.pipeline import compute_upload_analysis, publish_upload_analysis
 from kalos.portal.scale_routes import router as _scale_router
 from kalos.portal.uploads import (
     MAX_COLUMNS,
@@ -109,28 +109,10 @@ UPLOAD_PATHS = frozenset({"/api/run", "/api/scale/readout"})
 # the first real compose deployment. The 4-thread default is kept for bare
 # metal (where it was tuned and behaves); containers, which already isolate
 # CPU, should set 0 - deploy/compose.yaml now does.
-_TORCH_THREADS = int(
-    os.environ.get("KALOS_TORCH_THREADS", "").strip() or str(min(4, os.cpu_count() or 1))
-)
-_torch_threads_configured = False
-
-
-def _ensure_torch_threads() -> None:
-    """Apply `_TORCH_THREADS` on first use. Deferred (not applied at import
-    time) so `import kalos.portal.app` stays torch-free until a fit actually
-    runs; idempotent, so it is cheap to call before every fit path."""
-    global _torch_threads_configured
-    if _torch_threads_configured:
-        return
-    if _TORCH_THREADS <= 0:
-        # 0 (or negative) = do not pin at all; torch keeps its own default.
-        # See the KALOS_TORCH_THREADS comment above for the measured reason.
-        _torch_threads_configured = True
-        return
-    import torch
-
-    torch.set_num_threads(_TORCH_THREADS)
-    _torch_threads_configured = True
+# The value and the pin live in `kalos.portal.pipeline` (shared with the
+# background-job worker process); re-exported under the historical names.
+from kalos.portal.pipeline import TORCH_THREADS as _TORCH_THREADS  # noqa: E402,F401
+from kalos.portal.pipeline import ensure_torch_threads as _ensure_torch_threads  # noqa: E402
 
 # --- deployment environment (KALOS_ENV) --------------------------------------- #
 # Decided once, at startup. KALOS_ENV=production (docs/HARDENING.md):
@@ -138,7 +120,8 @@ def _ensure_torch_threads() -> None:
 #     KALOS_ALLOW_OPEN_ACCESS escape hatch does not apply;
 #   - disables the interactive docs and the schema (/docs, /redoc, /openapi.json);
 #   - does not register the demo routes /api/single and /api/multi (CPU-heavy GP
-#     loops that run OUTSIDE the single analysis slot), so they are 404.
+#     loops), so they are 404. Outside production they now run under the same
+#     admission limiter as every analysis, with a wall-clock timeout.
 _PRODUCTION = is_production()
 assert_production_posture(auth_enforced=get_authenticator().enforces())
 
@@ -154,15 +137,33 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     the store (e.g. an unwritable state dir) is logged and the process starts
     anyway, so `/readyz` reports it as a generic 503, as it did before.
     """
+    from kalos.portal.job_runner import start_job_runner, stop_job_runner
+    from kalos.portal.jobs import job_settings
     from kalos.portal.migrate import MigrationError, SchemaError
 
+    job_settings()  # a malformed KALOS_JOB_* value fails the boot, not the first job
+
+    store = None
     try:
-        get_campaign_store()
+        store = app.dependency_overrides.get(get_campaign_store, get_campaign_store)()
     except (MigrationError, SchemaError):
         raise
     except Exception:  # noqa: BLE001 - surfaced by /readyz instead
         log.exception("campaign store could not be opened at startup")
-    yield
+    # The background-job runner (docs/JOBS.md): recovers jobs orphaned by a
+    # previous process, then schedules worker processes. KALOS_JOBS_ENABLED=0
+    # leaves it off and the job routes answer 503.
+    runner = None
+    if store is not None:
+        try:
+            runner = start_job_runner(store)
+        except Exception:  # noqa: BLE001 - jobs are optional; the sync routes still work
+            log.exception("background job runner could not be started")
+    try:
+        yield
+    finally:
+        if runner is not None:
+            stop_job_runner(runner)
 
 
 app = FastAPI(
@@ -242,7 +243,7 @@ async def _refuse_open_remote_access(request, call_next):
 # body is counted as it streams. Added before CORS so CORS stays outermost and
 # a 413 still carries the CORS headers a browser client needs to read it.
 app.add_middleware(
-    CampaignUploadSizeLimit,  # RequestSizeLimitMiddleware + /api/campaigns/{id}/upload
+    JobUploadSizeLimit,  # CampaignUploadSizeLimit + POST /api/campaigns/{id}/jobs
     default_cap=max_request_bytes(),
     upload_cap=MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES,
     upload_paths=UPLOAD_PATHS,
@@ -251,7 +252,7 @@ app.add_middleware(
 # (up to ~25 MB) multipart body is read. Presence check only; the token is
 # verified by `require_principal` as before (kalos/portal/limits.py).
 app.add_middleware(
-    CampaignUploadAuthPrecheck,  # UploadAuthPrecheckMiddleware + /api/campaigns/{id}/upload
+    JobUploadAuthPrecheck,  # CampaignUploadAuthPrecheck + POST /api/campaigns/{id}/jobs
     upload_paths=UPLOAD_PATHS,
     auth_enforced=lambda: get_authenticator().enforces(),
 )
@@ -424,11 +425,7 @@ def readyz() -> JSONResponse:
 # The demo routes take their work size from the URL, so it is capped: each round
 # is a GP fit + acquisition, and an unbounded `rounds`/`q` let one request queue
 # hours of CPU outside the single analysis slot.
-def run_single(
-    rounds: int = Query(6, ge=1, le=12),
-    q: int = Query(2, ge=1, le=4),
-    _principal: Principal = Depends(require_scope(READ)),
-) -> dict:
+def _single_compute(rounds: int, q: int) -> dict:
     from kalos.core.optimize import propose
     from kalos.core.surrogate import Surrogate
 
@@ -460,11 +457,7 @@ def run_single(
     }
 
 
-def run_multi(
-    rounds: int = Query(5, ge=1, le=12),  # >= 1, so last_batch is always bound
-    q: int = Query(2, ge=1, le=4),
-    _principal: Principal = Depends(require_scope(READ)),
-) -> dict:
+def _multi_compute(rounds: int, q: int) -> dict:
     from kalos.core.multiobjective import MultiObjectiveSurrogate, propose_multiobjective
     from kalos.core.surrogate import DEVICE, DTYPE
 
@@ -510,6 +503,50 @@ def run_multi(
     }
 
 
+# Demo-route wall clock. The thread cannot be killed, so on timeout the client
+# gets a 504 while the computation finishes in the background, STILL holding
+# its admission slot (released by the worker thread, kalos/portal/busy.py).
+DEMO_TIMEOUT_SECONDS = float(os.environ.get("KALOS_DEMO_TIMEOUT_S", "").strip() or "120")
+
+
+async def _run_demo(fn, principal: Principal, *args) -> JSONResponse:
+    """Run a demo GP loop in the threadpool under the shared admission limiter
+    (busy.py) and a wall-clock timeout, so a demo call can neither starve the
+    analysis paths nor block the event loop (health probes stay live)."""
+    import asyncio
+
+    try:
+        locked = run_exclusively(functools.partial(fn, *args), tenant=principal.tenant)
+    except AnalysisBusy as busy:
+        return JSONResponse(
+            {"error": str(busy)}, status_code=503,
+            headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
+        )
+    task = asyncio.ensure_future(run_in_threadpool(locked))
+    try:
+        result = await asyncio.wait_for(asyncio.shield(task), timeout=DEMO_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        log.warning("demo route exceeded %ss; answered 504", DEMO_TIMEOUT_SECONDS)
+        return JSONResponse({"error": "the demo computation timed out"}, status_code=504)
+    return JSONResponse(result)
+
+
+async def run_single(
+    rounds: int = Query(6, ge=1, le=12),
+    q: int = Query(2, ge=1, le=4),
+    _principal: Principal = Depends(require_scope(READ)),
+) -> JSONResponse:
+    return await _run_demo(_single_compute, _principal, rounds, q)
+
+
+async def run_multi(
+    rounds: int = Query(5, ge=1, le=12),  # >= 1, so last_batch is always bound
+    q: int = Query(2, ge=1, le=4),
+    _principal: Principal = Depends(require_scope(READ)),
+) -> JSONResponse:
+    return await _run_demo(_multi_compute, _principal, rounds, q)
+
+
 # Demo routes are development conveniences: never served in production.
 if not _PRODUCTION:
     app.get("/api/single")(run_single)
@@ -535,70 +572,24 @@ def _run_uploaded_sync(
     inferring bioprocess roles from column names. Omitted, the bioprocess profile
     infers roles exactly as before.
     """
-    _ensure_torch_threads()
-    parsed = parse_upload(raw, filename=filename, sheet=sheet)
-    df = parsed.df
-    try:
-        if roles_json.strip():
-            roles = ColumnRoles.from_dict(json.loads(roles_json))
-            result = _analyze(df, target, anonymize=anonymize, roles=roles, profile=GENERIC_PROFILE)
-        else:
-            result = _analyze(df, target, anonymize=anonymize, profile=BIOPROCESS_PROFILE)
-    except UploadRejected as rej:
-        # Name the sheet that was analyzed and list the others, so a client can
-        # offer a sheet selector on the error. With `anonymize`, identifier-type
-        # column names in the error get the same pseudonyms a result would.
-        refused = anonymize_rejection(rej) if anonymize else rej
-        raise parsed.annotate(refused) from rej
-    except Exception as exc:
-        # Any other failure still gets the sheet list on its (generic) error body.
-        try:
-            exc.upload_context = parsed.context()  # type: ignore[attr-defined]
-        except AttributeError:  # an exception type that forbids new attributes
-            pass
-        raise
-    # Excel uploads only: `sheets` (every sheet, workbook order) and
-    # `sheet_used` (the one analyzed), so a client can offer a sheet selector.
-    result = {**result, **parsed.context()}
+    # parse -> analyze (the CPU-heavy part), then seed + publish: the same two
+    # functions the background-job worker uses (kalos/portal/pipeline.py).
+    # `_analyze` is resolved from THIS module at call time so tests can stub it.
+    validate_tenant_id(tenant)
+    df, result = compute_upload_analysis(
+        raw, target, anonymize, filename, roles_json, sheet=sheet, analyze=_analyze,
+    )
     # A fresh upload starts a fresh campaign state (docs/CAMPAIGN_LOOP.md,
-    # "Seeding") in THIS tenant's default campaign, and publishes the analysis
-    # in the same transaction, stamped with the generation it was seeded with.
-    # Best-effort: a seeding failure must never break the upload response.
-    if store is None:
-        store = get_campaign_store()
-    try:
-        store.seed(
-            df, result["target"], result["proposal_features"], tenant=tenant,
-            campaign_id=campaign_id, analysis=result, dataset=filename,
-        )
-    except CampaignError:
-        # An explicit campaign (POST /api/campaigns/{id}/upload) that vanished
-        # or was archived mid-analysis: say so (404/409) instead of returning
-        # an analysis that was never stored.
-        if campaign_id is not None:
-            raise
-        log.exception("failed to seed the campaign from an uploaded run sheet")
-        _publish_unstamped(result, filename, tenant=tenant, store=store)
-    except Exception:  # noqa: BLE001 - seeding must never fail the upload
-        log.exception("failed to seed the campaign from an uploaded run sheet")
-        # Still publish the analysis, unstamped: the campaign then reports
-        # itself out of sync with /api/latest instead of the two silently
-        # describing different run sheets.
-        _publish_unstamped(result, filename, tenant=tenant, store=store, campaign_id=campaign_id)
+    # "Seeding") in THIS tenant's default campaign (or the explicit
+    # `campaign_id`), and publishes the analysis in the same transaction,
+    # stamped with the generation it was seeded with. Best-effort for the
+    # default campaign; an explicit campaign that vanished or was archived
+    # mid-analysis raises (404/409) instead of returning an unstored analysis.
+    publish_upload_analysis(
+        store if store is not None else get_campaign_store(), result, filename,
+        tenant=tenant, campaign_id=campaign_id, df=df,
+    )
     return result
-
-
-def _publish_unstamped(
-    result: dict, filename: str, *, tenant: str, store: CampaignStore,
-    campaign_id: str | None = None,
-) -> None:
-    try:
-        _save_latest(
-            result, filename, tenant=tenant, campaign_generation=None, store=store,
-            campaign_id=campaign_id,
-        )
-    except Exception:  # noqa: BLE001 - publishing is best-effort too
-        log.exception("failed to publish the analysis of an uploaded run sheet")
 
 
 @app.post("/api/run")
@@ -635,8 +626,6 @@ async def _run_uploaded(
     sheet_query: str | None, _principal: Principal, store: CampaignStore,
     *, campaign_id: str | None = None,
 ) -> JSONResponse:
-    from kalos.core.surrogate import FitError  # deferred: only needed to match the except below
-
     # One byte past the cap is enough for `_parse_upload` to reject it; never
     # load a multi-GB body into this single process just to measure it.
     raw = await file.read(MAX_UPLOAD_BYTES + 1)
@@ -655,10 +644,22 @@ async def _run_uploaded(
                     _run_uploaded_sync, raw, target or None, anonymize, filename, roles,
                     tenant=tenant, sheet=(sheet or sheet_query or None), store=store,
                     campaign_id=campaign_id,
-                )
+                ),
+                tenant=tenant,
             )
         )
         return JSONResponse(result)
+    except Exception as exc:  # noqa: BLE001 - mapped to the documented envelopes
+        return upload_error_response(exc)
+
+
+def upload_error_response(error: BaseException) -> JSONResponse:
+    """THE error contract of an upload analysis (`/api/run`, the campaign
+    upload, and the pre-queue check of `POST /api/campaigns/{id}/jobs`)."""
+    from kalos.core.surrogate import FitError  # deferred: only needed to match below
+
+    try:
+        raise error
     except AnalysisBusy as busy:
         return JSONResponse(
             {"error": str(busy)},
@@ -715,6 +716,7 @@ async def _run_uploaded(
 # app.
 app.include_router(_campaign_router)
 app.include_router(_campaigns_router)  # /api/campaigns* (kalos.portal.campaigns_api)
+app.include_router(_jobs_router)  # background jobs (kalos.portal.jobs_api, docs/JOBS.md)
 
 
 _CAMPAIGN_BODY_FIELDS = frozenset(

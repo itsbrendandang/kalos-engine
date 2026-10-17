@@ -736,6 +736,8 @@ def _analyze(
     profile: DomainProfile = BIOPROCESS_PROFILE,
     pending: pd.DataFrame | Sequence[Mapping[str, Any]] | None = None,
     constraint: Mapping[str, Any] | None = None,
+    progress: Callable[[str, float], None] | None = None,
+    preflight_only: bool = False,
 ) -> dict:
     """Run the engine on an arbitrary run sheet: pick the target (the value to
     maximize), use the process INPUTS as features (other measured outputs are
@@ -772,32 +774,46 @@ def _analyze(
     proposals. Returns a per-column `provenance` report (what was kept/dropped and
     why) plus `seed`, `timestamp`, and `engine_version` for audit. When
     `anonymize` is True, identifier-type column names are replaced with stable
-    pseudonyms in the response (the owner UI keeps real names when False)."""
-    # Deferred: these transitively import torch/botorch/gpytorch (see the
-    # module-level note above). This is the one place in this module that
-    # actually needs them, so this is where the torch tax is paid.
-    # `kalos.core.gates` and `kalos.core.feasibility` do not themselves import
-    # torch, but they are only ever used from inside this function, so they are
-    # kept in this same deferred block rather than opening a second import site.
-    from kalos.core.evaluation import (
-        group_mean_baseline_spearman,
-        grouped_cv_report,
-        interval_calibration,
-        logo_report,
-        producer_only_spearman,
-        top_k_overlap,
-    )
-    from kalos.core.feasibility import FeasibilityClassifier, feasibility_cv_report, feasible_labels
-    from kalos.core.gates import GatesConfig, check_gates
-    from kalos.core.optimize import MAX_MIXED_COMBOS, propose_batch
-    from kalos.core.surrogate import FitError, Surrogate
-    from kalos.portal.viz_utils import (
-        _embedding_pca,
-        _correlation_spearman,
-        _response_surface_gp,
-    )
+    pseudonyms in the response (the owner UI keeps real names when False).
 
-    _seed_everything()
+    `progress(stage, fraction)` (background jobs, docs/JOBS.md) is called at the
+    stage boundaries: `fitting` (cross-validation fits), `calibrating`
+    (interval calibration and diagnostics), `proposing` (final fit + batch).
+
+    `preflight_only=True` runs only the refusals that precede the first model
+    fit (shape, target, constant target, process inputs, row caps), then
+    returns `{}` - without importing torch, seeding any RNG, or fitting. The
+    job API uses it to refuse bad input with the sync route's 400 BEFORE
+    queueing; it is the same code, stopped early, so the two cannot drift."""
+    if not preflight_only:
+        # Deferred: these transitively import torch/botorch/gpytorch (see the
+        # module-level note above). This is the one place in this module that
+        # actually needs them, so this is where the torch tax is paid.
+        # `kalos.core.gates` and `kalos.core.feasibility` do not themselves
+        # import torch, but they are only ever used from inside this function,
+        # so they are kept in this same deferred block rather than opening a
+        # second import site. Skipped by a preflight, which returns before any
+        # of these names is used.
+        from kalos.core.evaluation import (
+            group_mean_baseline_spearman,
+            grouped_cv_report,
+            interval_calibration,
+            logo_report,
+            producer_only_spearman,
+            top_k_overlap,
+        )
+        from kalos.core.feasibility import FeasibilityClassifier, feasibility_cv_report, feasible_labels
+        from kalos.core.gates import GatesConfig, check_gates
+        from kalos.core.optimize import MAX_MIXED_COMBOS, propose_batch
+        from kalos.core.surrogate import FitError, Surrogate
+        from kalos.portal.viz_utils import (
+            _embedding_pca,
+            _correlation_spearman,
+            _response_surface_gp,
+        )
+
+        _seed_everything()
+    _progress = progress if progress is not None else (lambda _stage, _fraction: None)
     original_columns = {str(c) for c in df.columns}
     n_header_columns = int(df.shape[1])
     df = _dedupe_columns(df.dropna(axis=1, how="all"))
@@ -981,6 +997,10 @@ def _analyze(
         Xc_zf = Xc_zf.iloc[pos]
         keep_index = keep_index[pos]
 
+    if preflight_only:
+        # Every refusal that does not need a fitted model has run.
+        return {}
+
     # Assemble the design space with continuous dims first, categorical dims last.
     # BoTorch's mixed models accept arbitrary cat_dims indices, so this order is not
     # required; it just keeps X and the continuous driver slice `X[:, :n_cont]` simple.
@@ -1113,6 +1133,7 @@ def _analyze(
 
     # honest grouped cross-validation: pooled out-of-fold predictions + a
     # group-level bootstrap CI, all through the single leakage-checked splitter.
+    _progress("fitting", 0.15)
     rep = grouped_cv_report(
         X, y, groups=groups, n_splits=5, bounds=bounds, cat_dims=cat_dims, n_repeats=CV_N_REPEATS,
     )
@@ -1150,6 +1171,7 @@ def _analyze(
     # Reported, NOT folded into `clears_floor`. Tightening the verdict changes
     # which uploads the API accepts, which is a product decision - the same line
     # `producer_clears_floor` sits on.
+    _progress("calibrating", 0.55)
     calibration = interval_calibration(oof_a, oof_p, oof_s)
 
     # PRODUCER-ONLY ranking. The pooled `rho` above is taken over every held-out
@@ -1554,6 +1576,7 @@ def _analyze(
             X_fit, y_fit = Xf, yf
 
     # proposed next batch, with predicted target + uncertainty + a why per row
+    _progress("proposing", 0.8)
     if not replicate_aware:
         s = Surrogate().fit(X, y, bounds=bounds, cat_dims=cat_dims)
     # In-flight recipes, encoded into this design so the acquisition treats them

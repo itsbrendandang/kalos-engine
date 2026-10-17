@@ -124,7 +124,9 @@ def test_fresh_database_is_created_at_v2_without_a_backup(tmp_path):
     store = CampaignStore(tmp_path)
     db = tmp_path / "portal.db"
     assert {"schema_migrations", "campaigns", "analyses", "tenant_defaults", "audit_log"} <= _tables(db)
-    assert _q(db, "SELECT version, name FROM schema_migrations") == [(2, migrate.V2_NAME)]
+    # schema v3 (background jobs) is applied on top of v2 in the same transaction
+    assert _q(db, "SELECT version, name FROM schema_migrations ORDER BY version") == [
+        (2, migrate.V2_NAME), (3, migrate.V3_NAME)]
     assert not list(tmp_path.glob("portal.db.pre-*"))
     assert store.get(tenant="acme") is None
     assert store.summary(tenant="acme") == {"has_campaign": False}
@@ -237,7 +239,7 @@ def test_corrupt_v1_row_is_kept_verbatim(tmp_path, caplog):
     assert store.summary(tenant="acme") == {"has_campaign": False}
     assert store.get(tenant="globex") == json.loads(good)
     # ... and survives a rollback byte-for-byte
-    migrate.migrate_down(db)
+    migrate.migrate_down(db, target=1)
     assert _q(db, "SELECT state FROM campaigns WHERE tenant = 'acme'") == [("{not json",)]
 
 
@@ -256,7 +258,7 @@ def test_regex_failing_legacy_tenant_is_imported_unchanged(tmp_path, caplog):
     with pytest.raises(ValueError):
         store.get(tenant=odd)
     # ...and restored as-is by a rollback
-    migrate.migrate_down(db)
+    migrate.migrate_down(db, target=1)
     assert _q(db, "SELECT state FROM campaigns WHERE tenant = ?", (odd,)) == [(blob,)]
 
 
@@ -348,7 +350,7 @@ def test_migration_is_idempotent(tmp_path):
     CampaignStore(tmp_path)
     CampaignStore(tmp_path)
     assert _q(db, "SELECT id FROM campaigns ORDER BY id") == ids
-    assert _q(db, "SELECT version FROM schema_migrations") == [(2,)]
+    assert _q(db, "SELECT version FROM schema_migrations ORDER BY version") == [(2,), (3,)]
     assert len(list(tmp_path.glob("portal.db.pre-v2-*"))) == 1
     assert migrate.migrate_up(db, dry_run=True).plan_text.endswith("nothing to do")
 
@@ -357,7 +359,7 @@ def test_newer_schema_is_refused(tmp_path):
     CampaignStore(tmp_path).close()
     db = tmp_path / "portal.db"
     conn = sqlite3.connect(str(db))
-    conn.execute("INSERT INTO schema_migrations VALUES (3, 'future', 0)")
+    conn.execute("INSERT INTO schema_migrations VALUES (4, 'future', 0)")
     conn.commit()
     conn.close()
     with pytest.raises(migrate.SchemaError, match="newer"):
@@ -380,9 +382,9 @@ def test_down_restores_the_v1_shape_the_old_code_reads(tmp_path):
     store.seed(_sheet(seed=9), "lipase_titer", ["Methanol", "pH"], tenant="acme", campaign_id=other["id"])
     store.close()
 
-    plan = migrate.migrate_down(db, dry_run=True)
-    assert "schema v2 -> v1" in plan.plan_text
-    result = migrate.migrate_down(db)
+    plan = migrate.migrate_down(db, dry_run=True, target=1)
+    assert "schema v3 -> v2" in plan.plan_text and "schema v2 -> v1" in plan.plan_text
+    result = migrate.migrate_down(db, target=1)
     assert result.action == "rolled_back" and result.backup_path is not None
 
     conn = sqlite3.connect(str(db))
@@ -418,7 +420,7 @@ def test_down_moves_an_existing_latest_file_aside(tmp_path):
     store.close()
     path = tmp_path / "latest" / migrate.legacy_latest_filename("acme")
     _write_latest(path.parent, path.name, {"target": "old"})
-    migrate.migrate_down(tmp_path / "portal.db")
+    migrate.migrate_down(tmp_path / "portal.db", target=1)
     assert json.loads(path.read_text())["target"] == "new"
     aside = list(path.parent.glob(path.name + ".pre-down-*"))
     assert len(aside) == 1 and json.loads(aside[0].read_text())["target"] == "old"
@@ -429,8 +431,8 @@ def test_cli_up_down_status(tmp_path, capsys):
     assert migrate.main(["up", "--state-dir", str(tmp_path)]) == 0
     assert "result: migrated" in capsys.readouterr().out
     assert migrate.main(["status", "--state-dir", str(tmp_path)]) == 0
-    assert "schema version: v2" in capsys.readouterr().out
-    assert migrate.main(["down", "--state-dir", str(tmp_path)]) == 0
+    assert "schema version: v3" in capsys.readouterr().out
+    assert migrate.main(["down", "--to", "1", "--state-dir", str(tmp_path)]) == 0
     assert "result: rolled_back" in capsys.readouterr().out
 
 
@@ -758,5 +760,5 @@ def test_startup_migrates_and_a_failed_backup_stops_the_app(tmp_path, monkeypatc
 
     with TestClient(portal_module.app) as tc:
         assert tc.get("/readyz").json() == {"status": "ok"}
-    assert _q(db, "SELECT version FROM schema_migrations") == [(2,)]
+    assert _q(db, "SELECT version FROM schema_migrations ORDER BY version") == [(2,), (3,)]
     assert campaign_module._STORE.get(tenant="acme") == json.loads(blobs["acme"])

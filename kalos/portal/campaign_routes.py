@@ -277,7 +277,8 @@ async def _reanalyze(
             run_exclusively(
                 functools.partial(
                     _analyze, df, target, profile=BIOPROCESS_PROFILE, pending=awaiting
-                )
+                ),
+                tenant=tenant,
             )
         )
     except AnalysisBusy as busy:
