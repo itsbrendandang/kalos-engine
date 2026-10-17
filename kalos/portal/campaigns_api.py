@@ -103,6 +103,9 @@ def _audit(
     """Best-effort audit row. `campaign_id` is recorded only when the request
     resolved to one of the caller's campaigns (never for a 404, so probe input
     is not persisted). A failure to audit never fails the request."""
+    outcome = "ok" if status_code < 400 else f"http_{status_code}"
+    # Server log: action + outcome only (no ids, names, or payloads).
+    log.info("campaigns api: %s -> %s", action, outcome)
     try:
         store.record_audit(
             tenant=principal.tenant,
@@ -110,7 +113,7 @@ def _audit(
             auth_method=_auth_method(principal),
             action=action,
             campaign_id=campaign_id if status_code != 404 else None,
-            outcome="ok" if status_code < 400 else f"http_{status_code}",
+            outcome=outcome,
             detail=detail,
         )
     except Exception:  # noqa: BLE001 - auditing must not break the audited request
