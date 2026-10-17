@@ -5,33 +5,39 @@
 #
 # WHY .backup AND NOT `cp`/`cat`/`tar` OF THE LIVE .db FILES
 # ------------------------------------------------------------------------
-# kalos's two SQLite stores (kalos/store/sqlite_store.py's experiments.db,
-# kalos/portal/campaign.py's portal.db) do not set `journal_mode=WAL` -
-# both open plain `sqlite3.connect(...)` connections, which leaves SQLite's
-# default rollback-journal mode in effect. Under that mode a write in
-# progress can, at any instant, have the main .db file and a same-named
-# `-journal` sidecar file in an interdependent, transiently-inconsistent
-# pairing; a file-level copy of just the .db file can land mid-write and
-# either capture a torn page or miss the journal entirely, producing a
-# backup that LOOKS like a valid SQLite file (it opens) but is silently
-# missing or corrupting the transaction that was in flight - the worst kind
-# of backup failure because nothing about it fails loudly.
+# A file-level copy of a live SQLite database can land mid-write. In
+# rollback-journal mode (experiments.db, kalos/store/sqlite_store.py) the .db
+# file and its `-journal` are transiently inconsistent; in WAL mode
+# (portal.db since schema v2, kalos/portal/migrate.py) committed data lives
+# in `-wal` until a checkpoint, so copying the .db file alone silently drops
+# recent commits. Either way the copy LOOKS valid (it opens) but is missing or
+# corrupting data - the worst kind of backup failure.
 #
-# `sqlite3 <db> ".backup <dest>"` instead uses SQLite's own Online Backup
-# API: it takes SQLite's own internal read lock and copies committed pages
-# through SQLite itself, producing a transactionally-consistent snapshot
-# even while the source is being written concurrently by the engine
-# process. This is the correct tool specifically because kalos runs in
-# rollback-journal mode, not WAL - see kalos/store/sqlite_store.py and
-# kalos/portal/campaign.py for where that mode is (implicitly) chosen.
+# `sqlite3 <db> ".backup <dest>"` uses SQLite's Online Backup API: it reads
+# committed pages through SQLite itself (WAL included), producing a
+# transactionally-consistent snapshot while the engine keeps writing. This is
+# correct in both journal modes.
 #
-# The per-tenant "latest analysis" JSON cache under `<state>/latest/*.json`
-# is explicitly best-effort persistence in the source itself
-# (kalos/portal/app.py's `_save_latest`: "Disk persistence is best-effort;
-# in-memory still serves this run") and is fully reconstructible by
-# re-running the last analysis, so it does not get the same backup rigor -
-# it is copied opportunistically below, not treated as a restore-critical
-# artifact.
+# WAL ON A READ-ONLY MOUNT (verified 2026-10-17 with this image, sqlite 3.45.3,
+# against a `:ro` named volume and a concurrently writing engine)
+# ------------------------------------------------------------------------
+# This sidecar mounts the state volume `:ro`, so it cannot create or write
+# portal.db's `-shm`. SQLite >= 3.22 still reads a WAL database read-only as
+# long as `-wal` and `-shm` already exist, which they do while the engine has
+# the database open: `.backup` then works and sees every commit.
+# When the engine is STOPPED, its last connection checkpoints and deletes
+# `-wal`/`-shm`, and a plain open of the WAL database on the read-only mount
+# fails ("unable to open database file"). In that state the main file holds
+# everything and nothing is writing it, so `backup_db` retries with
+# `?immutable=1`. That fallback is used ONLY when no `-wal` file exists; while
+# one exists, immutable would ignore it and miss commits. Every snapshot is
+# then checked with `PRAGMA quick_check` before it gets its final name.
+#
+# The legacy per-tenant analysis cache under `<state>/latest/*.json` is no
+# longer written: since schema v2 analyses are rows in portal.db (and so are
+# covered by its snapshot). Existing files are kept for the migration and for
+# `python -m kalos.portal.migrate down`, so they are still copied
+# opportunistically below, not treated as a restore-critical artifact.
 set -eu
 
 # Default matches deploy/engine/Containerfile's KALOS_STATE_DIR (/home/kalos/.kalos) -
@@ -64,15 +70,24 @@ backup_db() {
     dest="$dest_dir/${name}-${ts}.db"
     tmp="$dest.tmp"
     # Online Backup API - safe against a concurrently-writing engine process,
-    # unlike a plain file copy. See header comment for why.
-    if sqlite3 "$src" ".backup '$tmp'"; then
-        mv "$tmp" "$dest"
-        log "wrote $dest ($(du -h "$dest" | cut -f1))"
-    else
+    # unlike a plain file copy. See header comment for why, and for the
+    # immutable fallback on a stopped engine's WAL database.
+    if ! sqlite3 "$src" ".timeout 5000" ".backup '$tmp'" 2>/dev/null; then
         rm -f "$tmp"
-        log "FAILED to back up $src - left previous backups untouched"
+        if [ -e "$src-wal" ] || ! sqlite3 "file:$src?immutable=1" ".backup '$tmp'"; then
+            rm -f "$tmp"
+            log "FAILED to back up $src - left previous backups untouched"
+            return 1
+        fi
+        log "$name: engine not running (no -wal); snapshot taken with immutable=1"
+    fi
+    if [ "$(sqlite3 "$tmp" "PRAGMA quick_check" 2>/dev/null)" != "ok" ]; then
+        rm -f "$tmp"
+        log "FAILED: snapshot of $src did not pass quick_check - left previous backups untouched"
         return 1
     fi
+    mv "$tmp" "$dest"
+    log "wrote $dest ($(du -h "$dest" | cut -f1))"
 }
 
 backup_latest_cache() {
@@ -95,8 +110,10 @@ prune_old() {
 log "starting - state=$STATE_DIR backups=$BACKUP_DIR keep_days=$KEEP_DAYS interval=${INTERVAL}s"
 
 while true; do
-    backup_db experiments
-    backup_db portal
+    # `|| true`: under `set -e` one failed database used to kill the whole
+    # loop (and the other database's backup); the failure is already logged.
+    backup_db experiments || true
+    backup_db portal || true
     backup_latest_cache
     prune_old
     sleep "$INTERVAL"
