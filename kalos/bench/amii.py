@@ -92,10 +92,14 @@ def load_amii_pool(name: str, data_dir: str | Path | None = None) -> tuple[np.nd
         df = df[df[spec.fidelity_col] == df[spec.fidelity_col].max()]
     n_fidelity = len(df)
 
+    y: pd.Series
     if spec.transform == "log1p_over_poscont":
-        y = np.log1p(pd.to_numeric(df[spec.target], errors="coerce") / pd.to_numeric(df["PosCont FC"], errors="coerce"))
+        y = pd.Series(
+            np.log1p(pd.to_numeric(df[spec.target], errors="coerce") / pd.to_numeric(df["PosCont FC"], errors="coerce")),
+            index=df.index,
+        )
     elif spec.transform == "log1p":
-        y = np.log1p(pd.to_numeric(df[spec.target], errors="coerce"))
+        y = pd.Series(np.log1p(pd.to_numeric(df[spec.target], errors="coerce")), index=df.index)
     else:
         y = pd.to_numeric(df[spec.target], errors="coerce")
     cols = list(spec.features) if spec.features else [
