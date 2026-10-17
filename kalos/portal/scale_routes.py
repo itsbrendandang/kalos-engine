@@ -29,7 +29,13 @@ from starlette.concurrency import run_in_threadpool
 
 from kalos.portal.auth import WRITE, Principal, require_scope
 from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
-from kalos.portal.uploads import _ERR_PARSE, MAX_UPLOAD_BYTES, UploadRejected, _parse_upload
+from kalos.portal.uploads import (
+    _ERR_PARSE,
+    MAX_UPLOAD_BYTES,
+    UploadRejected,
+    _parse_upload,
+    rejection_counts,
+)
 from kalos.scale.readout import MIN_RESIDUALS, MIN_RUNG_N_FOR_LICENSE, NUMBER, NUMBER_WITH_WARNING, REFUSAL, TargetSpec, build_readout
 from kalos.scale.readout import format_liters_plain as _format_liters_plain
 
@@ -475,7 +481,7 @@ async def scale_readout(
     try:
         df = await run_in_threadpool(_parse_upload, raw)
     except UploadRejected as rej:
-        log.warning("scale readout upload rejected: %s", rej)
+        log.warning("scale readout upload rejected: code=%s%s", rej.code or "guard", rejection_counts(rej))
         return JSONResponse(rej.to_body(), status_code=400)
     except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError, UnicodeError):
         log.exception("failed to parse an uploaded run sheet for the scale readout")

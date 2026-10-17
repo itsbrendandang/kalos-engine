@@ -33,7 +33,7 @@ _BAD = [
     "acme/bio", "../etc", "acme bio", "acme.bio", "a" * 65, "tenant\n", "ténant",
     "acme\x00", ".", "..", "C:\\x", "acme:bio",
 ]
-_GOOD = ["default", "acme", "acme_bio", "acme-bio", "A9_z-", "a" * 64, "0"]
+_GOOD = ["acme", "acme_bio", "acme-bio", "A9_z-", "a" * 64, "0"]
 
 
 @pytest.mark.parametrize("tenant", _GOOD)
@@ -64,6 +64,33 @@ def test_invalid_tenant_error_does_not_echo_the_id(monkeypatch):
     with pytest.raises(AuthConfigError) as exc:
         Authenticator().principal_for("Bearer good")
     assert "evil" not in str(exc.value)
+
+
+def test_default_tenant_is_reserved_for_open_mode(monkeypatch):
+    """'default' is the anonymous open-mode tenant; a provisioned token on it
+    would inherit whatever anonymous callers stored there. The whole config is
+    refused (fail closed), like any other invalid entry."""
+    assert is_valid_tenant_id("default")  # still a well-formed STORAGE key
+    _configure(monkeypatch, "default")
+    auth = Authenticator()
+    with pytest.raises(AuthConfigError, match="reserved tenant id 'default'"):
+        auth.principal_for("Bearer good")
+    with pytest.raises(AuthConfigError):
+        auth.enforces()
+
+
+def test_open_mode_keeps_the_anonymous_default_tenant(monkeypatch):
+    monkeypatch.delenv("KALOS_AUTH_TOKENS", raising=False)
+    monkeypatch.delenv("KALOS_AUTH_TOKENS_FILE", raising=False)
+    monkeypatch.delenv("KALOS_ENV", raising=False)
+    p = Authenticator().principal_for(None)
+    assert p.anonymous and p.tenant == "default"
+
+
+@pytest.mark.parametrize("tenant", ["Default", "default2", "_default"])
+def test_names_near_default_are_not_reserved(tenant, monkeypatch):
+    _configure(monkeypatch, tenant)
+    assert Authenticator().principal_for("Bearer tok").tenant == tenant
 
 
 @pytest.mark.parametrize("tenant", ["", 5, None, ["acme"]])

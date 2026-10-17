@@ -68,8 +68,12 @@ def deployment_env() -> str:
     if not raw:
         return "development"
     if raw not in _KNOWN_ENVS:
+        accepted = ", ".join(repr(e) for e in sorted(_KNOWN_ENVS))
         raise ProductionConfigError(
-            f"{_ENV_VAR}={raw!r} is not recognised; use 'production' or 'development'"
+            f"{_ENV_VAR}={raw[:40]!r} is not recognised. Accepted values: {accepted} "
+            "(case-insensitive), or unset/empty for 'development'. Unknown values are "
+            "refused rather than defaulted so a typo cannot drop the production guards "
+            "(docs/HARDENING.md)."
         )
     return raw
 
