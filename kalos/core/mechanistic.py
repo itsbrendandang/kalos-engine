@@ -4,8 +4,10 @@ A mechanistic model (typically an ODE system, e.g. Monod growth + product
 formation) predicts the response from process settings using domain knowledge.
 `HybridSurrogate` keeps that prediction as the mean function and lets a GP learn
 only the *residual* `y - mechanistic(X)`, so the GP spends its data on what the
-physics misses. With a poor mechanistic model the residual GP simply absorbs the
-error, so the hybrid degrades to a plain GP rather than below it.
+physics misses. A good mechanistic model helps; a poor one can leave the hybrid
+no better, or WORSE, than a plain GP (a deliberately wrong ODE did worse in the
+simulated benchmark of examples/mechanistic_benchmark.py), because the GP must
+first undo the wrong mean. Judge a mechanistic model on held-out data before use.
 
 Scope today: fit + predict (mean/std). Handing a hybrid straight to
 `kalos.core.optimize.propose` is NOT supported yet - `propose` needs a BoTorch
@@ -15,9 +17,12 @@ is only touched inside `fit`), keeping `kalos.core.mechanistic` cheap to import.
 """
 from __future__ import annotations
 
-from typing import Callable, Protocol, Sequence, runtime_checkable
+from typing import TYPE_CHECKING, Callable, Protocol, Sequence, runtime_checkable
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from kalos.core.surrogate import Surrogate
 
 
 @runtime_checkable
@@ -111,7 +116,7 @@ class HybridSurrogate:
                 raise TypeError("mechanistic must be a MechanisticModel, a callable X -> y, or None")
             mechanistic = _CallableModel(mechanistic)
         self.mechanistic = mechanistic
-        self.residual = None  # kalos.core.surrogate.Surrogate once fitted
+        self.residual: Surrogate | None = None  # fitted GP on the residual
 
     def _mech(self, X) -> np.ndarray:
         Xa = np.atleast_2d(np.asarray(X, float))

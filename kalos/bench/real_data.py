@@ -223,6 +223,10 @@ def convergence_summary(
     }
 
 
+# Below this many usable rows a pool-replay comparison is not meaningful.
+MIN_POOL_FOR_CLAIM = 30
+
+
 def compare(
     arms: dict[str, tuple[np.ndarray, np.ndarray]],
     *,
@@ -241,12 +245,25 @@ def compare(
     for name, (X, y) in arms.items():
         n = len(y)
         ni = n_init if n >= n_init + 3 * q else max(3, n // 3)
-        r = min(rounds, (n - ni) // q)
+        # Never evaluate the whole pool: once every row is revealed all strategies
+        # tie at the pool best by construction. Cap the total at 70% of the rows.
+        r = min(rounds, (int(0.7 * n) - ni) // q)
         if r < 1 or n < 6:
             out["arms"][name] = {"skipped": f"only {n} usable rows; need > n_init + q", "n_rows": int(n)}
             continue
         s = convergence_summary(X, y, rounds=r, q=q, n_init=ni, seeds=seeds)
+        evaluated = ni + r * q
         s["requested_rounds"], s["requested_n_init"] = rounds, n_init
+        s["fraction_evaluated"] = evaluated / n
+        s["exhaustive"] = evaluated >= n
+        # A tiny pool cannot support a BO-vs-baseline claim even when not exhaustive.
+        s["claim_supported"] = (not s["exhaustive"]) and n >= MIN_POOL_FOR_CLAIM
+        if not s["claim_supported"]:
+            s["bo_gain_over_random"] = None
+            s["note"] = (
+                f"{evaluated} of {n} rows evaluated ({100 * evaluated / n:.0f}%); this pool is too small to support "
+                "any BO-vs-baseline claim. Curves are shown for completeness only."
+            )
         out["arms"][name] = s
     return out
 

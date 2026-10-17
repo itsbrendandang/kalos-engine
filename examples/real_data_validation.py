@@ -49,8 +49,9 @@ def main() -> int:
     Xs, ys, _ = pool_from_frame(syn_df, "titer_g_L")
 
     arms = {
-        # Only the rows flagged data_type == Real: the only measured data here.
-        "real_only": frame_to_pool(real, DATASET_0),
+        # Rows flagged data_type == Real. UNVERIFIED: some look synthetic (TRICH_017/019/020), TRICH_15 appears
+        # twice with different values, TRICH_019 has yield 0.14 labelled 'High Yield'.
+        "flagged_real_unverified": frame_to_pool(real, DATASET_0),
         # Whole table incl. ML-synthesized rows: a semi-synthetic replay, not real data.
         "semi_synthetic_dataset_0": frame_to_pool(semi, DATASET_0),
         "synthetic_fixture": (Xs, ys),
@@ -64,12 +65,16 @@ def main() -> int:
         "excluded_contaminated": not a.include_contaminated,
         "roles": {"titer": DATASET_0.titer, "timepoint": DATASET_0.timepoint, "drivers": list(DATASET_0.drivers)},
         "not_modelled": {"min_do_pct": "measured minimum, not a confirmed controllable setpoint"},
-        "label": "semi_synthetic_dataset_0 is hybrid/semi-synthetic: only the rows flagged Real are measured",
+        "label": "semi_synthetic_dataset_0 is hybrid/semi-synthetic: only the rows flagged Real are (claimed to be) measured",
+        "provenance_notes": "flagged_real_unverified is the data_type==Real subset, unverified; it is too small for any BO-vs-baseline claim.",
     }
     jp, hp = write_report(summary, a.out)
     for name, st in summary["arms"].items():
         if "skipped" in st:
             print(f"{name:26s} SKIPPED: {st['skipped']}")
+            continue
+        if not st.get("claim_supported", True):
+            print(f"{name:26s} n={st['n_rows']:4d}  NO CLAIM: {st['note']}")
             continue
         print(f"{name:26s} n={st['n_rows']:4d} rounds={st['rounds']:2d} final BO {st['final_bo']:.3f}+/-{st['final_bo_std']:.3f} "
               f"random {st['final_random']:.3f} LHS {st['final_lhs']:.3f}")

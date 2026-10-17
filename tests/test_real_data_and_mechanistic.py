@@ -134,6 +134,22 @@ def test_compare_shrinks_small_pool_and_skips_tiny_one():
     assert "skipped" in out["arms"]["tiny"]
 
 
+def test_small_pool_is_never_exhausted_and_makes_no_claim():
+    rng = np.random.default_rng(0)
+    X = rng.uniform(size=(11, 2))
+    out = compare({"tiny": (X, X.sum(1))}, seeds=list(range(5)))
+    t = out["arms"]["tiny"]
+    assert t["exhaustive"] is False and t["fraction_evaluated"] <= 0.7 + 1e-9
+    assert t["claim_supported"] is False and t["bo_gain_over_random"] is None and "too small" in t["note"]
+
+
+def test_large_pool_supports_a_claim():
+    rng = np.random.default_rng(0)
+    X = rng.uniform(size=(60, 2))
+    t = compare({"ok": (X, X.sum(1))}, rounds=3, q=2, n_init=5, seeds=list(range(5)))["arms"]["ok"]
+    assert t["claim_supported"] is True and t["exhaustive"] is False
+
+
 def test_report_has_no_nan_curves_for_skipped_arm(tmp_path):
     out = {"arms": {"x": {"skipped": "tiny", "n_rows": 3}}}
     jp, hp = write_report(out, tmp_path)
