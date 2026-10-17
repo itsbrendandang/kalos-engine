@@ -113,6 +113,13 @@ class Authenticator:
                     f"token entry {i} has an invalid 'tenant' id; tenant ids must match "
                     "^[A-Za-z0-9_-]{1,64}$ (letters, digits, '_' and '-', 1-64 chars)"
                 )
+            if tenant == _ANON_TENANT:
+                # Reserved for open mode: a token on 'default' would inherit
+                # whatever anonymous callers stored there before auth was on.
+                raise AuthConfigError(
+                    f"token entry {i} uses the reserved tenant id '{_ANON_TENANT}' "
+                    "(open/anonymous mode only); provision a named tenant"
+                )
             if not isinstance(scopes_in, list) or not all(s in _VALID_SCOPES for s in scopes_in):
                 raise AuthConfigError(
                     f"token entry {i} has invalid scopes; allowed: {sorted(_VALID_SCOPES)}"
