@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate a synthetic bioprocess dataset to test the drop-and-run flow.
 
-Ported verbatim from the owner's earlier engine (voyager-brain-rebuild,
-samples/make_synthetic.py) into kalos as a non-proprietary benchmark fixture.
+Ported verbatim from an earlier engine repo
+(samples/make_synthetic.py) into kalos as a non-proprietary benchmark fixture.
 Every number here is generated from a fixed seed, not measured - there is no
 client or proprietary data anywhere in this file or the CSV it writes, so
 both are safe to commit.

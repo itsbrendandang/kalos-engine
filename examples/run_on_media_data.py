@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the engine on real media data (media composition + pH -> lipase titer).
 
-Honest test of the BoTorch engine on actual Anagram runs: leakage-controlled
+Honest test of the BoTorch engine on a real media-DoE dataset: leakage-controlled
 grouped-CV of the surrogate, a proposed next batch, and the multi-objective
 titer-vs-purity Pareto front. The data is proprietary and read from
 KALOS_MEDIA_DATA (a merged *_protein_expression_and_media_composition.tsv);
@@ -64,7 +64,7 @@ def load(path: Path):
     # A column that was not measured on every run cannot be used as a feature.
     # Imputing 0.0 turns "not recorded" into "zero concentration", inventing a
     # fake low-dose arm out of the rows where the assay simply was not run.
-    # On the Anagram data that one substitution carried most of the headline
+    # On the real media-DoE data that one substitution carried most of the headline
     # score: zero-filling `Ammonia_hydroxide` (25 of 82 rows missing) took the
     # grouped-CV Spearman from 0.46 to 0.76, and on complete cases only the same
     # axis gives 0.36. The hazard is easiest to see in `Potassium_hydroxide`,

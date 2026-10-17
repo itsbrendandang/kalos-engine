@@ -401,8 +401,8 @@ def logo_report(X, y, groups, *, bounds=None, cat_dims=None) -> dict:
     groups sprinkled among many familiar ones" - an easier question than the
     one a client actually needs answered, which is "can this model generalize
     to the NEXT batch it has never seen anything like". LOGO is the harder,
-    honest version of that question. On the owner's real clone-selection data
-    (see the owner's earlier engine, `voyager-brain-rebuild`) the gap was not
+    honest version of that question. On a real clone-selection dataset
+    (see the earlier engine repo) the gap was not
     subtle: leave-one-strain-out Spearman was -0.12 - worse than chance -
     while a shuffled 5-fold read 0.91 on the SAME model and data. The 5-fold
     number was measuring how well the model memorizes strain identity, not
@@ -504,7 +504,7 @@ def group_mean_baseline_spearman(y, groups) -> dict:
     itself), then reports the Spearman of that prediction against the actual
     `y`. A model this simple - it does not look at a single process feature,
     only which recipe a row belongs to - sets the floor a real model has to
-    clear to be adding anything. On the owner's real data a campaign-mean-only
+    clear to be adding anything. On real data a campaign-mean-only
     baseline of this shape captured about 0.75 of a trained model's ~0.86
     headline Spearman: most of the apparent skill was the model learning
     "which recipe is this", which a lookup table would also learn, not
