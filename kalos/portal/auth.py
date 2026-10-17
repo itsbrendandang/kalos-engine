@@ -27,6 +27,7 @@ import hmac
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,29 @@ _VALID_SCOPES = frozenset({READ, WRITE, ADMIN})
 _ANON_TENANT = "default"
 _ANON_SUBJECT = "anonymous"
 _OPEN_MODE_SCOPES = frozenset({READ, WRITE})  # never ADMIN without a real token
+
+# A tenant id is used as a storage key (SQLite rows, the per-tenant latest cache
+# file) and in logs, so it is restricted to a conservative alphabet. A config
+# entry that does not match is REJECTED, never sanitised: sanitising would map
+# distinct ids (`acme/bio`, `acme_bio`) onto one key and silently merge two
+# tenants' data.
+TENANT_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def is_valid_tenant_id(tenant: object) -> bool:
+    """Whether `tenant` is a well-formed tenant id (`^[A-Za-z0-9_-]{1,64}$`)."""
+    return isinstance(tenant, str) and TENANT_ID_PATTERN.fullmatch(tenant) is not None
+
+
+def validate_tenant_id(tenant: object) -> str:
+    """Return `tenant` unchanged if well-formed, else raise `ValueError`.
+    Never rewrites the id."""
+    if not is_valid_tenant_id(tenant):
+        raise ValueError(
+            "invalid tenant id: must match ^[A-Za-z0-9_-]{1,64}$"
+        )
+    assert isinstance(tenant, str)
+    return tenant
 
 
 @dataclass(frozen=True)
@@ -97,6 +121,14 @@ class Authenticator:
                 raise AuthConfigError(f"token entry {i} is missing 'subject'")
             if not isinstance(tenant, str) or not tenant:
                 raise AuthConfigError(f"token entry {i} is missing 'tenant'")
+            if not is_valid_tenant_id(tenant):
+                # Fail closed: the whole config is rejected (every request 500s
+                # with "authentication is misconfigured") rather than this entry
+                # being skipped or its id rewritten. The id itself is not echoed.
+                raise AuthConfigError(
+                    f"token entry {i} has an invalid 'tenant' id; tenant ids must match "
+                    "^[A-Za-z0-9_-]{1,64}$ (letters, digits, '_' and '-', 1-64 chars)"
+                )
             if not isinstance(scopes_in, list) or not all(s in _VALID_SCOPES for s in scopes_in):
                 raise AuthConfigError(
                     f"token entry {i} has invalid scopes; allowed: {sorted(_VALID_SCOPES)}"

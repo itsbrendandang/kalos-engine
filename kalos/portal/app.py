@@ -39,7 +39,14 @@ from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
 
 from kalos.domains import BIOPROCESS_PROFILE, GENERIC_PROFILE, ColumnRoles
 from kalos.portal.analysis import _analyze, _annotate
-from kalos.portal.auth import READ, WRITE, Principal, get_authenticator, require_scope
+from kalos.portal.auth import (
+    READ,
+    WRITE,
+    Principal,
+    get_authenticator,
+    require_scope,
+    validate_tenant_id,
+)
 from kalos.portal.config import (
     cors_config,
     is_local_client,
@@ -194,13 +201,28 @@ _LATEST_LOCK = threading.Lock()
 
 
 def _latest_path(tenant: str) -> Path:
-    """Per-tenant best-effort cache file. The tenant is sanitized to a safe
-    filename so a token-provisioned tenant id can never traverse the path."""
-    safe = "".join(c if (c.isalnum() or c in "_.-") else "_" for c in tenant) or "default"
-    return _LATEST_DIR / f"{safe}.json"
+    """Per-tenant best-effort cache file.
+
+    The filename is an INJECTIVE encoding of the tenant id - the lowercase hex of
+    its UTF-8 bytes - so two distinct tenants can never share a file. The old
+    scheme sanitised characters to `_`, which mapped `acme/bio` and `acme_bio`
+    to the same file (a cross-tenant read/overwrite). Hex digits are lowercase
+    only, so the mapping stays injective on case-insensitive filesystems too
+    (`Acme` and `acme` differ in bytes). The id is also validated (defense in
+    depth: auth already rejects malformed ids at config load), and the output
+    alphabet is `[0-9a-f]`, so it can never traverse the path.
+
+    Changing the scheme orphans caches written under the old names: the first
+    `/api/latest` after upgrading reports `has_data: false` until the tenant's
+    next upload or reanalyze. The cache is best-effort by design and the
+    campaign itself lives in SQLite, so nothing durable is lost.
+    """
+    validate_tenant_id(tenant)
+    return _LATEST_DIR / f"t-{tenant.encode('utf-8').hex()}.json"
 
 
-def _load_latest(tenant: str = "default") -> dict | None:
+def _load_latest(tenant: str) -> dict | None:
+    validate_tenant_id(tenant)
     with _LATEST_LOCK:
         if tenant not in _LATEST:
             path = _latest_path(tenant)
@@ -214,7 +236,7 @@ def _load_latest(tenant: str = "default") -> dict | None:
 
 
 def _save_latest(
-    result: dict, dataset: str, *, tenant: str = "default", campaign_generation: str | None = None
+    result: dict, dataset: str, *, tenant: str, campaign_generation: str | None = None
 ) -> None:
     """Publish `result` as this tenant's `/api/latest`.
 
@@ -227,7 +249,11 @@ def _save_latest(
     report `analysis_in_sync` (docs/CAMPAIGN_LOOP.md, "Analysis/campaign
     coherence"). `None` means the analysis is not tied to any campaign, which
     reads as out-of-sync rather than as fine.
+
+    `tenant` is required (no `default` fallback) so a caller can never publish
+    into the open-mode tenant by omission; a malformed id raises `ValueError`.
     """
+    validate_tenant_id(tenant)
     with _LATEST_LOCK:
         state = {
             **result,
@@ -400,7 +426,7 @@ def run_multi(
 
 def _run_uploaded_sync(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
-    *, tenant: str = "default",
+    *, tenant: str,
 ) -> dict:
     """The CPU-bound body of an upload: parse -> analyze -> persist -> result.
 
