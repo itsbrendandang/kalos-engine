@@ -38,8 +38,8 @@ All of these are required. If any one is missing (or `null`), the token is refus
 | `sub` | string | The user id. 1-256 characters of printable ASCII (`\x21`-`\x7e`) with no space or comma, so it can always be named in the deny-list. Becomes `Principal.subject`. |
 | `sid` | string | The web session id. Same rules as `sub`. Becomes `Principal.session_id`. |
 | `jti` | string | A unique token id. 1-256 characters. Becomes `Principal.token_id`, and it is the only token-derived identifier that is logged. |
-| `tenant` | string | Must fully match `^[A-Za-z0-9_-]{1,64}$` (`kalos/portal/tenancy.py`). A bad value is **refused, never sanitised**. Case is preserved (`ACME` and `acme` are different tenants). Becomes `Principal.tenant`, which keys every store read and write. |
-| `scopes` | array of strings | Every entry must be one of the scopes below. One unknown entry refuses the whole token. The engine does not filter it out and continue. An empty array is accepted, but that principal gets 403 on every gated route. |
+| `tenant` | string | Must fully match `^[A-Za-z0-9_-]{1,64}$` (`kalos/portal/tenancy.py`). A bad value is **refused, never sanitised**. `default` is reserved for open (anonymous) mode and is refused, as it is for static tokens. Case is preserved (`ACME` and `acme` are different tenants). Becomes `Principal.tenant`, which keys every store read and write. |
+| `scopes` | array of strings | Every entry must be one of the scopes below. One unknown entry refuses the whole token. The engine does not filter it out and continue. An empty array is refused too, because a token that grants nothing is a minting bug. |
 | `iat` | NumericDate | Must not be in the future by more than the leeway. |
 | `nbf` | NumericDate | Must not be in the future by more than the leeway, and must not be after `exp`. |
 | `exp` | NumericDate | Must be after `iat`. The token is expired when `exp <= now - leeway`. `exp - iat` must be no more than `KALOS_JWT_MAX_TTL_S`, even when the signature is valid. |

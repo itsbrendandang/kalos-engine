@@ -130,7 +130,7 @@ Not covered here: per-tenant concurrency limits (design pending).
 ]
 ```
 
-`service_account` defaults to `false` and is required (`true`) in production, where `admin` is also refused on static tokens.
+`service_account` defaults to `false` and is required (`true`) in production, where `admin` is also refused on static tokens. In every environment, `subject` must be 1-256 printable ASCII characters with no spaces or commas, so that any subject can be named in `KALOS_AUTH_DENY_SUBJECTS`. `tenant` may not be the reserved `default`.
 
 Generate a token and its hash out of band, store only the hash here, and hand the raw token to the caller once:
 
