@@ -141,6 +141,22 @@ def safe_context(context: dict) -> dict:
     return out
 
 
+def scrubbed_failure(exc: BaseException) -> str:
+    """A log-safe description of an unexpected failure: the exception TYPE and
+    where it was raised (the innermost few `file:line in function` frames),
+    never `str(exc)`. pandas/openpyxl/numpy messages routinely quote cell
+    values and column names ("could not convert string to float: 'ACME-...'"),
+    and those must not reach the server log; the type plus location is enough
+    to find the bug."""
+    import traceback
+
+    frames = traceback.extract_tb(exc.__traceback__)[-3:]
+    where = " <- ".join(
+        f"{os.path.basename(f.filename)}:{f.lineno} in {f.name}" for f in reversed(frames)
+    )
+    return f"{type(exc).__name__}" + (f" at {where}" if where else "")
+
+
 def rejection_counts(rej: "UploadRejected") -> str:
     """A log suffix with only the numeric facts of a rejection (`n_rows=4
     min_rows=6`, list lengths as `n_<key>`), never names or values, so the

@@ -81,6 +81,7 @@ from kalos.portal.uploads import (
     parse_upload,
     rejection_counts as _rejection_counts,
     safe_context,
+    scrubbed_failure,
 )
 from kalos.providers import provider_status
 
@@ -571,8 +572,8 @@ def _run_uploaded_sync(
         generation = get_campaign_store().seed(
             df, result["target"], result["proposal_features"], tenant=tenant
         )
-    except Exception:  # noqa: BLE001 - seeding must never fail the upload
-        log.exception("failed to seed the campaign from an uploaded run sheet")
+    except Exception as exc:  # noqa: BLE001 - seeding must never fail the upload
+        log.error("failed to seed the campaign from an uploaded run sheet: %s", scrubbed_failure(exc))
     # Seed BEFORE publishing so the analysis can carry the generation it was
     # seeded alongside. The two resources take their locks sequentially (never
     # nested), so the order is free of deadlock either way. If seeding failed,
@@ -647,10 +648,11 @@ async def run_uploaded(
             status_code=400,
         )
     except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError, UnicodeError) as exc:
-        # Log the full traceback server-side for debugging; return a generic
+        # Log the exception TYPE and location server-side (never its message:
+        # pandas quotes cell values and column names in it); return a generic
         # message so no parser detail, column name, cell value, or stack trace
-        # ever reaches the (unauthenticated) client.
-        log.exception("failed to parse or analyze an uploaded file")
+        # ever reaches the client either.
+        log.error("failed to parse or analyze an uploaded file: code=parse_error %s", scrubbed_failure(exc))
         return JSONResponse(
             {"error": _ERR_PARSE, "code": "parse_error", **safe_context(getattr(exc, "upload_context", {}))},
             status_code=400,
@@ -660,9 +662,9 @@ async def run_uploaded(
         # returns the {error} JSON envelope the frontend parses, never FastAPI's
         # default text/plain HTTP 500. This covers torch.linalg.LinAlgError from a
         # GP fit and an AssertionError from the leakage guard, among others. As
-        # above, the full traceback is logged server-side and only the generic
-        # message reaches the (unauthenticated) client.
-        log.exception("failed to parse or analyze an uploaded file")
+        # above, only the exception type and location are logged server-side and
+        # only the generic message reaches the client.
+        log.error("failed to parse or analyze an uploaded file: code=parse_error %s", scrubbed_failure(exc))
         return JSONResponse(
             {"error": _ERR_PARSE, "code": "parse_error", **safe_context(getattr(exc, "upload_context", {}))},
             status_code=400,

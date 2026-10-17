@@ -412,3 +412,29 @@ def test_anonymize_pseudonymizes_identifier_names_in_the_error(client):
     assert "batch_id" not in anon["available_targets"]
     assert any(n.startswith("col_") for n in anon["available_targets"])
     assert "Methanol" in anon["available_targets"]  # process inputs keep their names
+
+
+# --- re-review: catch-all logs carry the exception type, never its text -------- #
+
+
+def test_unexpected_failure_logs_type_and_location_not_the_message(client, monkeypatch, caplog):
+    def _leaky(*_a, **_k):
+        raise ValueError("could not convert string to float: 'ACME-SECRET-CELL'")
+
+    monkeypatch.setattr(portal_module, "_analyze", _leaky)
+    raw = _sheet().to_csv(index=False).encode()
+    with caplog.at_level(logging.DEBUG, logger="kalos.portal"):
+        r = client.post("/api/run", files={"file": ("runs.csv", raw, "text/csv")})
+    assert r.status_code == 400 and r.json()["code"] == "parse_error"
+    assert "ACME-SECRET-CELL" not in caplog.text
+    assert "ACME-SECRET-CELL" not in "".join(
+        str(rec.exc_info) for rec in caplog.records if rec.exc_info
+    )
+    assert "ValueError at test_upload_review_fixes.py" in caplog.text
+    assert "code=parse_error" in caplog.text
+
+
+def test_scrubbed_failure_without_a_traceback():
+    from kalos.portal.uploads import scrubbed_failure
+
+    assert scrubbed_failure(KeyError("secret column")) == "KeyError"
