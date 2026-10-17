@@ -25,7 +25,7 @@ from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
 
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
 from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_store
-from kalos.portal.uploads import MAX_COLUMNS
+from kalos.portal.uploads import MAX_COLUMNS, UploadRejected
 
 log = logging.getLogger("kalos.portal")
 
@@ -214,6 +214,12 @@ async def reanalyze_campaign(
             status_code=503,
             headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
         )
+    except UploadRejected as rej:
+        # An engine-authored, safe refusal (e.g. `target_constant`: every
+        # measured value is identical, so no model can be fit and no batch is
+        # proposed). Nothing was committed, same as the generic branch below.
+        log.warning("reanalyze rejected (%s): %s", rej.code or "guard", rej)
+        return JSONResponse(rej.to_body(), status_code=400)
     except Exception:  # noqa: BLE001 - normalized to a generic 400, same as /api/run
         # Full traceback logged server-side; the client only ever sees a
         # generic message, matching /api/run's catch-all in kalos/portal/app.py.

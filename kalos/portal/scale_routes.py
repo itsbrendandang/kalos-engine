@@ -476,7 +476,7 @@ async def scale_readout(
         df = await run_in_threadpool(_parse_upload, raw)
     except UploadRejected as rej:
         log.warning("scale readout upload rejected: %s", rej)
-        return JSONResponse({"error": str(rej)}, status_code=400)
+        return JSONResponse(rej.to_body(), status_code=400)
     except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError, UnicodeError):
         log.exception("failed to parse an uploaded run sheet for the scale readout")
         return JSONResponse({"error": _ERR_PARSE}, status_code=400)

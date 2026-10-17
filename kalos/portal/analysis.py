@@ -39,6 +39,7 @@ from kalos.portal.validate import column_provenance, provenance_dicts
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
 from kalos.validation.bounds import DIMENSION_BOUNDS, infer_dimension
 from kalos.validation.checks import _RUN_ID_RE
+from kalos.validation.target import TargetVariation, assess_target_variation
 
 # NOTE: `kalos.core.evaluation` (which imports `kalos.core.surrogate`),
 # `kalos.core.optimize`, and `torch` itself are intentionally NOT imported at
@@ -638,6 +639,65 @@ def _physical_range(name: str, col: np.ndarray) -> tuple[float, float, int]:
     return lo, hi, n_excluded
 
 
+def _target_error_context(
+    df: pd.DataFrame, target: str, num: list, profile: DomainProfile, verdict: TargetVariation
+) -> dict:
+    """JSON-safe context for a refused target: the verdict plus the OTHER outcome
+    columns that do vary, so a client can offer them as alternatives."""
+    alternatives = [
+        str(c) for c in num
+        if str(c) != str(target)
+        and profile.outcome_hint.search(str(c))
+        and assess_target_variation(df[c]).varies
+    ]
+    return {
+        "target": str(target),
+        "target_summary": verdict.to_dict(),
+        "available_targets": alternatives,
+    }
+
+
+def _refuse_unusable_target(
+    df: pd.DataFrame, target: str, num: list, profile: DomainProfile
+) -> None:
+    """Raise `UploadRejected` (code `target_constant` / `target_empty` /
+    `target_not_numeric`) when `df[target]` cannot support a model fit; see
+    `kalos.validation.target` for the tolerance and its justification."""
+    verdict = assess_target_variation(df[target])
+    if verdict.varies:
+        return
+    ctx = _target_error_context(df, target, num, profile, verdict)
+    tail = "No model can be fit and no proposals were generated."
+    if verdict.status == "constant":
+        if verdict.n_distinct <= 1:
+            what = f"has the same value ({verdict.value_min:g}) in every row"
+        else:
+            what = (
+                f"does not vary: its values ({verdict.value_min:.15g} to "
+                f"{verdict.value_max:.15g}) differ only by floating-point rounding"
+            )
+        raise UploadRejected(
+            f"The target column {str(target)!r} {what}, so there is nothing to learn "
+            f"from. {tail} Choose a target that varies across runs, or add runs "
+            "where it differs.",
+            code="target_constant",
+            context=ctx,
+        )
+    if verdict.status == "empty":
+        raise UploadRejected(
+            f"The target column {str(target)!r} has no values. {tail} "
+            "Fill in the measured outcome, or choose another target column.",
+            code="target_empty",
+            context=ctx,
+        )
+    raise UploadRejected(
+        f"The target column {str(target)!r} has no numeric values. {tail} "
+        "The target must be a measured number (e.g. a titer); choose another column.",
+        code="target_not_numeric",
+        context=ctx,
+    )
+
+
 def _analyze(
     df: pd.DataFrame,
     target: str | None = None,
@@ -754,6 +814,14 @@ def _analyze(
     else:
         candidate_targets = [target]
 
+    # A target that does not vary (every titer 5.0, or 5.0 +- float noise), or
+    # has no numeric values at all, cannot support ANY model. Refuse here -
+    # before a single surrogate is fit or `propose` is called - rather than
+    # hand back a batch ranked by rounding error. Covers every caller of
+    # `_analyze`: a fresh upload, a re-upload with a different `target`, and the
+    # campaign re-analyze.
+    _refuse_unusable_target(df, target, num, profile)
+
     # Keep only continuous features that actually vary (a constant column carries
     # no signal and would collapse its normalization range). Matches the legacy
     # full-column variance filter.
@@ -832,6 +900,8 @@ def _analyze(
             )
         pos = np.flatnonzero(complete)
         y = y[complete]
+        # Dropping incomplete rows can leave only rows that share one target value.
+        _refuse_unusable_target(df.loc[keep_index[pos]], target, num, profile)
         Xc_raw = Xc_raw.iloc[pos]
         Xc_zf = Xc_zf.iloc[pos]
         keep_index = keep_index[pos]

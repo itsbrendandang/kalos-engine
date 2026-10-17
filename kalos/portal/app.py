@@ -581,8 +581,10 @@ async def run_uploaded(
         )
     except UploadRejected as rej:
         # A guard tripped: the message is already generic and safe to return.
-        log.warning("upload rejected: %s", rej)
-        return JSONResponse({"error": str(rej)}, status_code=400)
+        # `to_body()` is `{"error": ..., "code": ..., **context}`; `error` is
+        # always present, so a client that only reads `d.error` is unaffected.
+        log.warning("upload rejected (%s): %s", rej.code or "guard", rej)
+        return JSONResponse(rej.to_body(), status_code=400)
     except FitError:
         # A numerically-hard-but-valid file that defeated the jittered fit retry.
         # Give it a DISTINCT message so it does not masquerade as a parse failure;

@@ -58,7 +58,34 @@ _ERR_FIT = (
 
 
 class UploadRejected(ValueError):
-    """A client upload failed a safety guard. Carries a generic, safe message."""
+    """A client upload failed a safety guard or cannot be analyzed.
+
+    Carries a safe, engine-authored message (never parser/exception text), plus
+    an optional machine-readable `code` and a small `context` dict of extra
+    JSON-safe fields (e.g. `{"target": ..., "n_rows": ...}`). `to_body()` is
+    the `{"error": ..., "code": ..., **context}` envelope every route returns,
+    so an old client that only reads `error` keeps working unchanged.
+    """
+
+    def __init__(
+        self, message: str, *, code: str | None = None, context: dict | None = None
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.context: dict = dict(context or {})
+
+    @property
+    def message(self) -> str:
+        return str(self.args[0]) if self.args else ""
+
+    def to_body(self) -> dict:
+        body: dict = {"error": self.message}
+        if self.code:
+            body["code"] = self.code
+        for key, value in self.context.items():
+            if key not in ("error", "code"):
+                body[key] = value
+        return body
 
 
 _SHEET_XML_RE = re.compile(r"^xl/worksheets/sheet\d+\.xml$")

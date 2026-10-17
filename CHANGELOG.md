@@ -2,6 +2,22 @@
 
 Newest first.
 
+## Unreleased
+
+### Fixed - a target that does not vary is refused, not optimized
+
+A run sheet whose target had the same value on every row (or the same value
+plus 1e-12 float noise) was accepted with a validation warning and came back
+with five proposed recipes ranked by rounding error. `_analyze` now checks the
+target with `kalos.validation.target.assess_target_variation` before any
+surrogate is fit, and refuses with a 400 `{"error", "code": "target_constant",
+"target", "target_summary", "available_targets"}` (also `target_empty` and
+`target_not_numeric`). No model is fit and `propose` is never called, on the
+upload, the re-upload-with-another-target, and the campaign re-analyze paths.
+"Effectively constant" is `range(y) <= 1e-9 * max|y|`, justified in
+`kalos/validation/target.py`. `UploadRejected` now carries an optional `code`
+and `context`, returned alongside `error`.
+
 ## 2026-10-12 (Apache-2.0 and a public README)
 
 ### Added - the license
