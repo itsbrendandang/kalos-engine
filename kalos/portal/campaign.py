@@ -364,8 +364,15 @@ class CampaignStore:
             appended: list[dict[str, Any]] = []
             # Each value must fit the kind of column it lands in (numeric vs
             # categorical level, read from base_rows); see kalos.portal.recipe_values.
-            from kalos.portal.recipe_values import check_recipe_values, column_kinds
+            from kalos.portal.recipe_values import (
+                check_recipe_values,
+                column_kinds,
+                pending_capacity_problem,
+            )
 
+            capacity = pending_capacity_problem(len(state["pending"]), len(recipes))
+            if capacity:
+                raise CampaignError(capacity)
             kinds = column_kinds(state.get("base_rows") or [], allowed)
             for recipe in recipes:
                 # Validate the recipe mapping HERE, at the point of the bad
