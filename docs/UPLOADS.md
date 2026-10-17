@@ -4,13 +4,16 @@ The engine accepts an uploaded CSV / TSV / Excel run sheet and returns the analy
 Because the sheet comes from an external client, the upload path is guarded:
 
 - **Size + shape caps.**
-  A raw-byte cap (default 25 MB, override with `KALOS_MAX_UPLOAD_MB`), a 512-column ceiling, a 100k-row CSV cap, and a 2M-cell xlsx cap (a zip-bomb guard).
+  A raw-byte cap (default 25 MB, override with `KALOS_MAX_UPLOAD_MB`), a 512-column ceiling, a 100k-row CSV cap, a 2M-cell xlsx cap, and a 64 MiB cap on an xlsx's total uncompressed size (zip-bomb guards).
   Every cap fails closed: an over-cap upload is REJECTED with a 400, never silently truncated.
   The xlsx cell cap is enforced from the workbook's declared dimensions BEFORE the frame is materialized, so a zip-bomb is rejected without the memory spike.
+  Because a sheet can under-declare its dimensions, the total uncompressed size of every part of the workbook (from the zip directory; Python's zipfile never yields more than an entry declares) is also checked before anything is parsed. That bounds the parse work across all sheets to about 1.5M simple cells (a few seconds), and the materialized frame is re-checked against the cell cap after parsing.
+  When the engine searches a multi-sheet workbook for its first usable sheet, every sheet it tries is charged against one shared 2M-cell budget: a parsed sheet by its real size, a sheet that fails mid-parse by the most cells its XML could hold. At most 20 sheets are tried.
+  Column names are always strings (an Excel header cell holding the number `1` is the column `"1"`, so `target=1` finds it).
   Filetype is sniffed by magic bytes first (`PK\x03\x04` -> Excel, known binary signatures -> refused, else UTF-8 or BOM-marked UTF-16 text/CSV); an xlsx is read as Excel whatever its name, and a few clearly non-tabular extensions (`.pdf`, `.json`, `.docx`, ...) are refused by name.
 - **Specific, safe errors.**
   A bad upload returns HTTP 400 with `{"error": "<what is wrong and what to do>", "code": "<machine code>", ...context}`; `error` is always present, so a client that only shows `error` keeps working.
-  Messages are engine-authored: parser text, exception text, paths, cell values and stack traces are logged server-side and never returned. The only user content a message may name is a column or sheet name the uploader supplied.
+  Messages are engine-authored: parser text, exception text, paths, cell values and stack traces are logged server-side and never returned. The only user content a message may name is a column or sheet name the uploader supplied; such names are clipped to 100 characters, and name lists (in the message and in `available_targets`, `sheets`) to 20 entries, with `<key>_total` (e.g. `sheets_total`) carrying the full count when a list was cut. Server logs record a rejection's `code` and counts only, never the names. With `anonymize=true`, identifier-type column names in an error (`target`, `available_targets` and the message) get the same `col_<hash>` pseudonyms a successful response uses; sheet names are not pseudonymized (a successful response returns them too).
 
   | `code` | When | Extra fields |
   | --- | --- | --- |
@@ -19,7 +22,7 @@ Because the sheet comes from an external client, the upload path is guarded:
   | `corrupt_excel` | a zip/xlsx that cannot be opened, or a sheet that cannot be read | `sheets`, `sheet` when known |
   | `not_a_table` | text whose lines have inconsistent numbers of comma/tab fields | |
   | `too_few_columns` | fewer than 2 columns (e.g. prose in a `.txt`, a one-column CSV) | `n_columns` |
-  | `too_few_rows` | fewer than 6 data rows, or fewer than 6 rows with a numeric target | `min_rows`, `n_rows`, `target` |
+  | `too_few_rows` | fewer than 6 data rows, or fewer than 6 rows with a numeric target (even if those few values are identical) | `min_rows`, `n_rows`, `target` |
   | `no_numeric_inputs` | no numeric column at all | |
   | `no_process_inputs` | numeric columns exist, but all are the target, ids, other outputs, or constant | |
   | `target_not_found` | the requested `target` is not a column | `target`, `available_targets` |
@@ -46,7 +49,7 @@ Because the sheet comes from an external client, the upload path is guarded:
 - **A target that does not vary is refused.**
   If the target column has one value on every row, or values that differ only by floating-point rounding (`range <= 1e-9 * max|value|`, see `kalos/validation/target.py`), no model can learn from it.
   The upload (and a campaign re-analyze) is refused with a 400 before any model is fit, and no proposals are generated: `{"error": "...", "code": "target_constant", "target": "...", "target_summary": {...}, "available_targets": [...]}`, where `available_targets` lists other outcome columns that do vary.
-  A target with no values or no numeric values gets `target_empty` / `target_not_numeric`.
+  A target with no values or no numeric values gets `target_empty` / `target_not_numeric`; a date or duration column is `target_not_numeric`. A target with fewer than 6 numeric values is `too_few_rows`, not `target_constant`.
 - **Units are converted, not discarded.**
   Single-unit columns such as `"34.6 C"` are converted to their base unit before feature selection and reported in `validation.conversions` with a human label (`"Celsius"`), instead of failing the numeric test and coming back `dropped_sparse`.
   Only units the registry can actually convert are rewritten: a vessel column of `"5L"`/`"500L"` uses an unrecognized token, and rewriting it would turn an identifier into a measurement, so it is left alone and the client is told.
