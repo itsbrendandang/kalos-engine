@@ -40,7 +40,7 @@ from starlette.concurrency import run_in_threadpool
 from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
 
 from kalos.domains import BIOPROCESS_PROFILE, GENERIC_PROFILE, ColumnRoles
-from kalos.portal.analysis import _analyze, _annotate
+from kalos.portal.analysis import _analyze, _annotate, anonymize_rejection
 from kalos.portal.auth import (
     READ,
     WRITE,
@@ -78,6 +78,10 @@ from kalos.portal.uploads import (
     _ERR_PARSE,
     _ERR_TOO_MANY_FIT_ROWS,
     _parse_upload,
+    parse_upload,
+    rejection_counts as _rejection_counts,
+    safe_context,
+    scrubbed_failure,
 )
 from kalos.providers import provider_status
 
@@ -444,7 +448,9 @@ def run_single(
         y = np.concatenate([y, _titer(nxt)])
         traj.append({"round": r + 1, "best": float(y.max()), "n": int(len(y))})
     # annotate the last proposed batch with predicted value + uncertainty + why
-    incumbent = float(y[:-q].max())  # best before this batch was measured
+    # best before this batch was measured; len(nxt), not q: a batch can come
+    # back short when the space has fewer than q distinct candidates
+    incumbent = float(y[: -len(nxt)].max())
     mean, std = s.posterior(nxt)
     proposals = _annotate(nxt, mean, std, incumbent)
     bi = int(y.argmax())
@@ -515,7 +521,7 @@ if not _PRODUCTION:
 
 def _run_uploaded_sync(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
-    *, tenant: str,
+    *, tenant: str, sheet: str | None = None,
 ) -> dict:
     """The CPU-bound body of an upload: parse -> analyze -> persist -> result.
 
@@ -532,12 +538,30 @@ def _run_uploaded_sync(
     infers roles exactly as before.
     """
     _ensure_torch_threads()
-    df = _parse_upload(raw)
-    if roles_json.strip():
-        roles = ColumnRoles.from_dict(json.loads(roles_json))
-        result = _analyze(df, target, anonymize=anonymize, roles=roles, profile=GENERIC_PROFILE)
-    else:
-        result = _analyze(df, target, anonymize=anonymize, profile=BIOPROCESS_PROFILE)
+    parsed = parse_upload(raw, filename=filename, sheet=sheet)
+    df = parsed.df
+    try:
+        if roles_json.strip():
+            roles = ColumnRoles.from_dict(json.loads(roles_json))
+            result = _analyze(df, target, anonymize=anonymize, roles=roles, profile=GENERIC_PROFILE)
+        else:
+            result = _analyze(df, target, anonymize=anonymize, profile=BIOPROCESS_PROFILE)
+    except UploadRejected as rej:
+        # Name the sheet that was analyzed and list the others, so a client can
+        # offer a sheet selector on the error. With `anonymize`, identifier-type
+        # column names in the error get the same pseudonyms a result would.
+        refused = anonymize_rejection(rej) if anonymize else rej
+        raise parsed.annotate(refused) from rej
+    except Exception as exc:
+        # Any other failure still gets the sheet list on its (generic) error body.
+        try:
+            exc.upload_context = parsed.context()  # type: ignore[attr-defined]
+        except AttributeError:  # an exception type that forbids new attributes
+            pass
+        raise
+    # Excel uploads only: `sheets` (every sheet, workbook order) and
+    # `sheet_used` (the one analyzed), so a client can offer a sheet selector.
+    result = {**result, **parsed.context()}
     generation: str | None = None
     try:
         # A fresh upload starts a fresh campaign (docs/CAMPAIGN_LOOP.md,
@@ -548,8 +572,8 @@ def _run_uploaded_sync(
         generation = get_campaign_store().seed(
             df, result["target"], result["proposal_features"], tenant=tenant
         )
-    except Exception:  # noqa: BLE001 - seeding must never fail the upload
-        log.exception("failed to seed the campaign from an uploaded run sheet")
+    except Exception as exc:  # noqa: BLE001 - seeding must never fail the upload
+        log.error("failed to seed the campaign from an uploaded run sheet: %s", scrubbed_failure(exc))
     # Seed BEFORE publishing so the analysis can carry the generation it was
     # seeded alongside. The two resources take their locks sequentially (never
     # nested), so the order is free of deadlock either way. If seeding failed,
@@ -565,8 +589,18 @@ async def run_uploaded(
     target: str = Form(default=""),
     anonymize: bool = Form(default=False),
     roles: str = Form(default=""),
+    sheet: str = Form(default=""),
+    sheet_query: str | None = Query(default=None, alias="sheet"),
     _principal: Principal = Depends(require_scope(WRITE)),
 ) -> JSONResponse:
+    """Upload a run sheet and analyze it.
+
+    `sheet` (multipart form field, or `?sheet=` query parameter; the form field
+    wins) picks a workbook sheet by name. Omitted, the first sheet in workbook
+    order that holds a usable table is analyzed (`kalos.portal.uploads.
+    _parse_excel`). Ignored for CSV/TSV uploads. Excel responses, success or
+    error, carry `sheets` and `sheet_used`.
+    """
     from kalos.core.surrogate import FitError  # deferred: only needed to match the except below
 
     # One byte past the cap is enough for `_parse_upload` to reject it; never
@@ -584,7 +618,8 @@ async def run_uploaded(
         result = await run_in_threadpool(
             run_exclusively(
                 functools.partial(
-                    _run_uploaded_sync, raw, target or None, anonymize, filename, roles, tenant=tenant
+                    _run_uploaded_sync, raw, target or None, anonymize, filename, roles,
+                    tenant=tenant, sheet=(sheet or sheet_query or None),
                 )
             )
         )
@@ -597,29 +632,43 @@ async def run_uploaded(
         )
     except UploadRejected as rej:
         # A guard tripped: the message is already generic and safe to return.
-        log.warning("upload rejected: %s", rej)
-        return JSONResponse({"error": str(rej)}, status_code=400)
-    except FitError:
+        # `to_body()` is `{"error": ..., "code": ..., **context}`; `error` is
+        # always present, so a client that only reads `d.error` is unaffected.
+        # Logged by code and counts only: the message can name the customer's
+        # columns and sheets, which do not belong in server logs.
+        log.warning("upload rejected: code=%s%s", rej.code or "guard", _rejection_counts(rej))
+        return JSONResponse(rej.to_body(), status_code=400)
+    except FitError as exc:
         # A numerically-hard-but-valid file that defeated the jittered fit retry.
         # Give it a DISTINCT message so it does not masquerade as a parse failure;
         # the exception text itself is already generic, but we do not echo it.
         log.warning("upload rejected: model could not be fit (ill-conditioned rows)")
-        return JSONResponse({"error": _ERR_FIT}, status_code=400)
-    except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError, UnicodeError):
-        # Log the full traceback server-side for debugging; return a generic
+        return JSONResponse(
+            {"error": _ERR_FIT, "code": "fit_failed", **safe_context(getattr(exc, "upload_context", {}))},
+            status_code=400,
+        )
+    except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError, UnicodeError) as exc:
+        # Log the exception TYPE and location server-side (never its message:
+        # pandas quotes cell values and column names in it); return a generic
         # message so no parser detail, column name, cell value, or stack trace
-        # ever reaches the (unauthenticated) client.
-        log.exception("failed to parse or analyze an uploaded file")
-        return JSONResponse({"error": _ERR_PARSE}, status_code=400)
-    except Exception:  # noqa: BLE001 - normalized to a generic 400 below
+        # ever reaches the client either.
+        log.error("failed to parse or analyze an uploaded file: code=parse_error %s", scrubbed_failure(exc))
+        return JSONResponse(
+            {"error": _ERR_PARSE, "code": "parse_error", **safe_context(getattr(exc, "upload_context", {}))},
+            status_code=400,
+        )
+    except Exception as exc:  # noqa: BLE001 - normalized to a generic 400 below
         # Catch-all so a fit-time failure that is NOT a plain ValueError still
         # returns the {error} JSON envelope the frontend parses, never FastAPI's
         # default text/plain HTTP 500. This covers torch.linalg.LinAlgError from a
         # GP fit and an AssertionError from the leakage guard, among others. As
-        # above, the full traceback is logged server-side and only the generic
-        # message reaches the (unauthenticated) client.
-        log.exception("failed to parse or analyze an uploaded file")
-        return JSONResponse({"error": _ERR_PARSE}, status_code=400)
+        # above, only the exception type and location are logged server-side and
+        # only the generic message reaches the client.
+        log.error("failed to parse or analyze an uploaded file: code=parse_error %s", scrubbed_failure(exc))
+        return JSONResponse(
+            {"error": _ERR_PARSE, "code": "parse_error", **safe_context(getattr(exc, "upload_context", {}))},
+            status_code=400,
+        )
 
 
 # --- campaign loop: /api/campaign* (docs/CAMPAIGN_LOOP.md) - the closed
@@ -674,4 +723,6 @@ __all__ = [
     "_ERR_FIT",
     "_ERR_PARSE",
     "_ERR_TOO_MANY_FIT_ROWS",
+    "_parse_upload",
+    "parse_upload",
 ]

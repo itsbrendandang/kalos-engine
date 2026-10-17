@@ -34,11 +34,19 @@ from kalos.domains import (
     Dimension,
     DomainProfile,
 )
-from kalos.portal.uploads import MAX_FIT_ROWS, UploadRejected, _ERR_TOO_MANY_FIT_ROWS
+from kalos.portal.uploads import (
+    MAX_FIT_ROWS,
+    MIN_FIT_ROWS,
+    UploadRejected,
+    _ERR_TOO_MANY_FIT_ROWS,
+    clip_name,
+    numeric_columns,
+)
 from kalos.portal.validate import column_provenance, provenance_dicts
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
 from kalos.validation.bounds import DIMENSION_BOUNDS, infer_dimension
 from kalos.validation.checks import _RUN_ID_RE
+from kalos.validation.target import TargetVariation, assess_target_variation
 
 # NOTE: `kalos.core.evaluation` (which imports `kalos.core.surrogate`),
 # `kalos.core.optimize`, and `torch` itself are intentionally NOT imported at
@@ -160,15 +168,33 @@ def _annotate(
 def _numeric_cols(df: pd.DataFrame) -> list:
     # Numeric if >=80% of NON-BLANK cells parse as numbers. Blanks are treated as
     # "absent" (filled with 0 later), so a sparse component column still counts.
-    out = []
-    for c in df.columns:
-        s = df[c]
-        nonblank = s.notna() & (s.astype(str).str.strip() != "")
-        if nonblank.sum() < 3:
-            continue
-        if pd.to_numeric(s[nonblank], errors="coerce").notna().mean() >= 0.8:
-            out.append(c)
-    return out
+    # One definition, shared with the upload layer's default-sheet rule.
+    return numeric_columns(df)
+
+
+_ERR_NO_PROCESS_INPUTS = (
+    "No usable process-input columns: every numeric column other than the target is "
+    "an identifier, another measured output, or constant. Add at least one varying "
+    "process input (for example pH, temperature, or a feed rate)."
+)
+
+
+def _too_few_rows(n: int, target: str | None = None) -> UploadRejected:
+    if target is None:
+        msg = (
+            f"The sheet has {n} data row{'s' if n != 1 else ''}; at least {MIN_FIT_ROWS} "
+            "runs are needed to fit a model. Add more runs and upload again."
+        )
+    else:
+        msg = (
+            f"Only {n} row{'s have' if n != 1 else ' has'} a numeric value for the target "
+            f"{clip_name(target)!r}; at least {MIN_FIT_ROWS} are needed to fit a model. Add more "
+            "measured runs, or choose another target column."
+        )
+    ctx: dict = {"min_rows": MIN_FIT_ROWS, "n_rows": int(n)}
+    if target is not None:
+        ctx["target"] = str(target)
+    return UploadRejected(msg, code="too_few_rows", context=ctx)
 
 
 # Deterministic seed for the analyze path. The same upload -> the same GP fit and
@@ -638,6 +664,69 @@ def _physical_range(name: str, col: np.ndarray) -> tuple[float, float, int]:
     return lo, hi, n_excluded
 
 
+def _target_error_context(
+    df: pd.DataFrame, target: str, num: list, profile: DomainProfile, verdict: TargetVariation
+) -> dict:
+    """JSON-safe context for a refused target: the verdict plus the OTHER outcome
+    columns that do vary, so a client can offer them as alternatives."""
+    alternatives = [
+        str(c) for c in num
+        if str(c) != str(target)
+        and profile.outcome_hint.search(str(c))
+        and assess_target_variation(df[c]).varies
+    ]
+    return {
+        "target": str(target),
+        "target_summary": verdict.to_dict(),
+        "available_targets": alternatives,
+    }
+
+
+def _refuse_unusable_target(
+    df: pd.DataFrame, target: str, num: list, profile: DomainProfile
+) -> None:
+    """Raise `UploadRejected` (code `target_constant` / `target_empty` /
+    `target_not_numeric`) when `df[target]` cannot support a model fit; see
+    `kalos.validation.target` for the tolerance and its justification."""
+    verdict = assess_target_variation(df[target])
+    if verdict.varies:
+        return
+    if verdict.status == "constant" and verdict.n_numeric < MIN_FIT_ROWS:
+        # Too few measured values to fit anything, whether or not they agree:
+        # "add more runs" is the actionable answer, not "the target is constant".
+        raise _too_few_rows(verdict.n_numeric, str(target))
+    ctx = _target_error_context(df, target, num, profile, verdict)
+    tail = "No model can be fit and no proposals were generated."
+    if verdict.status == "constant":
+        if verdict.n_distinct <= 1:
+            what = f"has the same value ({verdict.value_min:g}) in every row"
+        else:
+            what = (
+                f"does not vary: its values ({verdict.value_min:.15g} to "
+                f"{verdict.value_max:.15g}) differ only by floating-point rounding"
+            )
+        raise UploadRejected(
+            f"The target column {clip_name(target)!r} {what}, so there is nothing to learn "
+            f"from. {tail} Choose a target that varies across runs, or add runs "
+            "where it differs.",
+            code="target_constant",
+            context=ctx,
+        )
+    if verdict.status == "empty":
+        raise UploadRejected(
+            f"The target column {clip_name(target)!r} has no values. {tail} "
+            "Fill in the measured outcome, or choose another target column.",
+            code="target_empty",
+            context=ctx,
+        )
+    raise UploadRejected(
+        f"The target column {clip_name(target)!r} has no numeric values. {tail} "
+        "The target must be a measured number (e.g. a titer); choose another column.",
+        code="target_not_numeric",
+        context=ctx,
+    )
+
+
 def _analyze(
     df: pd.DataFrame,
     target: str | None = None,
@@ -700,7 +789,7 @@ def _analyze(
     )
     from kalos.core.feasibility import FeasibilityClassifier, feasibility_cv_report, feasible_labels
     from kalos.core.gates import GatesConfig, check_gates
-    from kalos.core.optimize import MAX_MIXED_COMBOS, propose
+    from kalos.core.optimize import MAX_MIXED_COMBOS, propose_batch
     from kalos.core.surrogate import FitError, Surrogate
     from kalos.portal.viz_utils import (
         _embedding_pca,
@@ -709,7 +798,48 @@ def _analyze(
     )
 
     _seed_everything()
+    original_columns = {str(c) for c in df.columns}
+    n_header_columns = int(df.shape[1])
     df = _dedupe_columns(df.dropna(axis=1, how="all"))
+
+    # Shape problems that no model can work around get a specific, actionable
+    # refusal (never the parser's or numpy's own text). Checked before anything
+    # else so a one-column or four-row upload says exactly that. Columns are
+    # counted once empty ones are dropped - except on a sheet with no data rows
+    # at all (a header line, or one line of prose in a .txt), where every column
+    # is "empty" and the header's own width is the useful number.
+    n_columns = int(df.shape[1]) if len(df) else n_header_columns
+    if n_columns < 2:
+        raise UploadRejected(
+            f"The sheet has {n_columns} column{'s' if n_columns != 1 else ''}; "
+            "a run sheet needs at least 2 (process inputs and a measured target). If "
+            "this is a text file, check its values are separated by commas or tabs.",
+            code="too_few_columns",
+            context={"n_columns": n_columns},
+        )
+    n_data_rows = int(len(df.dropna(axis=0, how="all")))
+    if n_data_rows < MIN_FIT_ROWS:
+        raise _too_few_rows(n_data_rows)
+    requested_target = roles.target if roles is not None else target
+    if requested_target is not None and str(requested_target) not in {str(c) for c in df.columns}:
+        if str(requested_target) in original_columns:
+            # It was there, but every cell was blank (dropped above).
+            raise UploadRejected(
+                f"The target column {clip_name(requested_target)!r} has no values. No model "
+                "can be fit and no proposals were generated. Fill in the measured "
+                "outcome, or choose another target column.",
+                code="target_empty",
+                context={"target": str(requested_target)},
+            )
+        available = [
+            str(c) for c in _numeric_cols(df) if profile.outcome_hint.search(str(c))
+        ] or [str(c) for c in _numeric_cols(df)]
+        raise UploadRejected(
+            f"The requested target column {clip_name(requested_target)!r} is not in this sheet. "
+            "Choose one of the sheet's columns as the target.",
+            code="target_not_found",
+            context={"target": str(requested_target), "available_targets": available},
+        )
 
     # The validation gate runs FIRST, on the sheet as uploaded, before any
     # column is typed or dropped - it has to see the raw cells to catch a mixed
@@ -730,7 +860,12 @@ def _analyze(
 
     num = _numeric_cols(df)
     if not num:
-        raise ValueError("no numeric columns found")
+        raise UploadRejected(
+            "No numeric columns were found. A run sheet needs numeric process-input "
+            "columns (for example pH or temperature) and a numeric target column "
+            "(for example a titer), one run per row.",
+            code="no_numeric_inputs",
+        )
     target, cont_feats, cat_feats, gcol, declared = _resolve_columns(
         df, num, target, roles, profile
     )
@@ -754,6 +889,14 @@ def _analyze(
     else:
         candidate_targets = [target]
 
+    # A target that does not vary (every titer 5.0, or 5.0 +- float noise), or
+    # has no numeric values at all, cannot support ANY model. Refuse here -
+    # before a single surrogate is fit or `propose` is called - rather than
+    # hand back a batch ranked by rounding error. Covers every caller of
+    # `_analyze`: a fresh upload, a re-upload with a different `target`, and the
+    # campaign re-analyze.
+    _refuse_unusable_target(df, target, num, profile)
+
     # Keep only continuous features that actually vary (a constant column carries
     # no signal and would collapse its normalization range). Matches the legacy
     # full-column variance filter.
@@ -764,15 +907,15 @@ def _analyze(
             varying.append(c)
     cont_feats = varying
     if not cont_feats and not cat_feats:
-        raise ValueError("no varying process-input columns found (only outputs/ids?)")
+        raise UploadRejected(_ERR_NO_PROCESS_INPUTS, code="no_process_inputs")
 
     y_all = pd.to_numeric(df[target], errors="coerce")
     keep = y_all.notna()
     Xc_raw = df.loc[keep, cont_feats].apply(pd.to_numeric, errors="coerce")  # NaN preserved (for grouping)
     Xc_zf = Xc_raw.fillna(0.0)                                               # zero-filled (for the GP + box)
     y = y_all[keep].to_numpy(float)
-    if len(y) < 6:
-        raise ValueError(f"need at least 6 rows with a numeric {target!r}; got {len(y)}")
+    if len(y) < MIN_FIT_ROWS:
+        raise _too_few_rows(len(y), str(target))
     # Cap the rows the O(n^2) exact GP is fit on, separately from the raw-upload
     # cap. Reject rather than subsample: silent subsampling would be invisible,
     # non-deterministic data loss and contradict the reproducibility contract.
@@ -812,7 +955,7 @@ def _analyze(
         cat_dims_map[c] = levels
 
     if not cont_feats and not kept_cats:
-        raise ValueError("no varying process-input columns on the target-present rows")
+        raise UploadRejected(_ERR_NO_PROCESS_INPUTS, code="no_process_inputs")
 
     # Drop fitted rows whose value for any kept categorical is blank/unknown, so a
     # missing categorical can never poison the GP (as a NaN code) or surface as a
@@ -832,6 +975,8 @@ def _analyze(
             )
         pos = np.flatnonzero(complete)
         y = y[complete]
+        # Dropping incomplete rows can leave only rows that share one target value.
+        _refuse_unusable_target(df.loc[keep_index[pos]], target, num, profile)
         Xc_raw = Xc_raw.iloc[pos]
         Xc_zf = Xc_zf.iloc[pos]
         keep_index = keep_index[pos]
@@ -1417,7 +1562,10 @@ def _analyze(
     # reported rather than assumed equal to what the caller passed.
     X_pending = _encode_pending(pending, cont_feats, kept_cats, code_maps, X.shape[1])
     n_pending = 0 if X_pending is None else int(X_pending.shape[0])
-    batch = propose(
+    # `propose_batch` never returns two near-duplicate recipes (see its
+    # docstring); on a design space with fewer than q distinct candidates the
+    # batch comes back SHORT, and `proposal_notice` below says so.
+    proposal = propose_batch(
         s,
         bounds,
         q=5,
@@ -1432,6 +1580,7 @@ def _analyze(
         constraint_surrogate=constraint_surrogate if constraint_applied else None,
         constraint_floor=constraint_floor_val if constraint_applied else None,
     )
+    batch = proposal.X
     show = [d["name"] for d in drv[:4]]
     show_idx = [d["_idx"] for d in drv[:4]]  # carry the feature index, not a name lookup
     for d in drv:
@@ -1689,6 +1838,13 @@ def _analyze(
         # batch. Closes the interior-optimum blind spot in the rank drivers.
         "gp_shapes": gp_shapes,
         "proposal_features": show,
+        # None when the full batch came back; otherwise
+        # `{code: "fewer_distinct_candidates", requested, returned, min_separation,
+        # message}` explaining why `proposals` is shorter than requested.
+        "proposal_notice": proposal.notice,
+        # How distinct the batch is and how many collapsed (near-duplicate) rows
+        # of the joint optimization were replaced by sequential selection.
+        "batch_diversity": proposal.diversity_report(),
         "proposals": _annotate(
             batch, p_mean, p_std, incumbent, cols=show_idx, design=design,
             p_feasible=p_feasible_arr, constraint=constraint_pred,
@@ -1854,6 +2010,33 @@ def _anonymize_result(result: dict) -> dict:
         _alias_named_row(e, alias) for e in out.get("design_box_exclusions", [])
     ]
     return out
+
+
+def anonymize_rejection(rej: UploadRejected) -> UploadRejected:
+    """The `anonymize=True` counterpart of `_anonymize_result` for a refused
+    upload: identifier-type column names in the error context (`target`,
+    `available_targets`) and in its message are replaced by the same stable
+    pseudonyms a successful response would use. Sheet names are not column
+    names and are left as they are (a successful response returns them too)."""
+    def alias(name: str) -> str:
+        return f"col_{_hash(name)[:8]}" if _is_identifier_name(name) else name
+
+    context = dict(rej.context)
+    message = rej.message
+    names: list[str] = []
+    if isinstance(context.get("target"), str):
+        names.append(context["target"])
+        context["target"] = alias(context["target"])
+    if isinstance(context.get("available_targets"), list):
+        names.extend(n for n in context["available_targets"] if isinstance(n, str))
+        context["available_targets"] = [
+            alias(n) if isinstance(n, str) else n for n in context["available_targets"]
+        ]
+    for name in names:
+        aliased = alias(name)
+        if aliased != name:
+            message = message.replace(repr(clip_name(name)), repr(aliased))
+    return UploadRejected(message, code=rej.code, context=context)
 
 
 def _alias_named_row(row: dict, alias: Callable[[str], str]) -> dict:

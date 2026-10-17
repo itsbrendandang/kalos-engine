@@ -2,6 +2,56 @@
 
 Newest first.
 
+## Unreleased
+
+### Fixed - every upload failure says what is wrong; workbooks can pick a sheet
+
+An empty file, a corrupt `.xlsx`, a `.txt` of prose, a 4-row sheet, a
+one-column sheet, and a workbook whose data is on sheet 2 all used to return
+"Could not parse the uploaded file". Each now returns a specific, engine-
+authored message and a `code` (`empty_file`, `unsupported_file_type`,
+`corrupt_excel`, `not_a_table`, `too_few_rows` with `min_rows`/`n_rows`,
+`too_few_columns`, `no_numeric_inputs`, `no_process_inputs`,
+`target_not_found`, `sheet_not_found`, `no_usable_sheet`, ...); no exception
+text ever reaches the client. A requested `target` that is not a column is now
+an error instead of silently analyzing a different column. `POST /api/run`
+takes an optional `sheet` (form field or query); without it the first sheet
+holding a usable table is analyzed, and Excel responses carry `sheets` and
+`sheet_used`. UTF-16 "Unicode Text" exports and UTF-8 BOMs are now read.
+See `docs/UPLOADS.md`.
+
+### Fixed - a proposed batch never repeats a recipe
+
+On a sheet whose optimum sits on the edge of the design box, the joint q=5
+qLogNEI optimization could collapse two batch points onto the same corner and
+the API returned two identical recipes. `kalos.core.optimize.propose_batch`
+(which `propose` now wraps) keeps the jointly optimized batch when it is
+already distinct, and otherwise refills each collapsed slot by sequential,
+pending-aware selection: the accepted rows become `X_pending`, and the best
+candidate from the optimizer's multi-start optima plus a Sobol pool over the
+box (or the full enumeration of a small categorical space) that is at least
+`NEAR_DUPLICATE_TOL` = 0.05 away is taken. No random jitter, every candidate
+stays in the box and is scored by the same (constrained / gated) acquisition.
+Distance is Chebyshev in the range-normalised space, with categorical levels
+compared exactly (`proposal_separation`). If the space has fewer than q
+distinct candidates the batch comes back short. The analysis response gains
+`proposal_notice` (null, or `{code: "fewer_distinct_candidates", requested,
+returned, min_separation, message}`) and `batch_diversity`.
+
+### Fixed - a target that does not vary is refused, not optimized
+
+A run sheet whose target had the same value on every row (or the same value
+plus 1e-12 float noise) was accepted with a validation warning and came back
+with five proposed recipes ranked by rounding error. `_analyze` now checks the
+target with `kalos.validation.target.assess_target_variation` before any
+surrogate is fit, and refuses with a 400 `{"error", "code": "target_constant",
+"target", "target_summary", "available_targets"}` (also `target_empty` and
+`target_not_numeric`). No model is fit and `propose` is never called, on the
+upload, the re-upload-with-another-target, and the campaign re-analyze paths.
+"Effectively constant" is `range(y) <= 1e-9 * max|y|`, justified in
+`kalos/validation/target.py`. `UploadRejected` now carries an optional `code`
+and `context`, returned alongside `error`.
+
 ## 2026-10-12 (Apache-2.0 and a public README)
 
 ### Added - the license
