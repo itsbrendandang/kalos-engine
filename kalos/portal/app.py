@@ -24,6 +24,8 @@ import functools
 import json
 import logging
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import numpy as np
@@ -136,8 +138,22 @@ def _ensure_torch_threads() -> None:
 _PRODUCTION = is_production()
 assert_production_posture(auth_enforced=get_authenticator().enforces())
 
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Open the campaign store before serving the first request.
+
+    Opening it applies the schema migration when `portal.db` is still v1
+    (kalos/portal/migrate.py, docs/MIGRATIONS.md): backup first, then one
+    transaction. Doing it here makes a failed backup or an unsupported schema
+    stop the process at startup instead of surfacing as 500s on first use.
+    """
+    get_campaign_store()
+    yield
+
+
 app = FastAPI(
     title="Kalos Engine API",
+    lifespan=_lifespan,
     docs_url=None if _PRODUCTION else "/docs",
     redoc_url=None if _PRODUCTION else "/redoc",
     openapi_url=None if _PRODUCTION else "/openapi.json",

@@ -735,3 +735,28 @@ def test_readyz_does_not_read_tenant_tables(client):
     assert tc.get("/readyz").json() == {"status": "ok"}
     store._conn.set_trace_callback(None)
     assert seen and not any(_TENANT_TABLE_RE.search(s) for s in seen)
+
+
+def test_startup_migrates_and_a_failed_backup_stops_the_app(tmp_path, monkeypatch):
+    """The lifespan hook opens the store, so a v1 database is migrated before the
+    first request, and a failed backup stops startup instead of serving 500s."""
+    state = tmp_path / "state"
+    db, blobs = _standard_v1(state)
+    monkeypatch.setenv("KALOS_STATE_DIR", str(state))
+    monkeypatch.setattr(campaign_module, "_STORE", None)
+    before = _sha(db)
+
+    def _boom(src, dest):
+        raise OSError("read-only filesystem")
+
+    with monkeypatch.context() as m:
+        m.setattr(migrate, "_online_backup", _boom)
+        with pytest.raises(migrate.MigrationError):
+            with TestClient(portal_module.app):
+                pass
+    assert _sha(db) == before and campaign_module._STORE is None
+
+    with TestClient(portal_module.app) as tc:
+        assert tc.get("/readyz").json() == {"status": "ok"}
+    assert _q(db, "SELECT version FROM schema_migrations") == [(2,)]
+    assert campaign_module._STORE.get(tenant="acme") == json.loads(blobs["acme"])
