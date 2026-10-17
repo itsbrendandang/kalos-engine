@@ -95,6 +95,14 @@ def _sign(priv, claims: dict | None = None, *, kid: str | None = "k1",
                       headers=hdrs)
 
 
+def _sign_raw(priv: Ed25519PrivateKey, claims: dict, kid: str = "k1") -> str:
+    """Sign without PyJWT's encode-side claim checks (it refuses a non-string iss)."""
+    header = {"alg": "EdDSA", "typ": "JWT", "kid": kid}
+    signing_input = (_b64url(json.dumps(header).encode()) + "."
+                     + _b64url(json.dumps(claims).encode()))
+    return signing_input + "." + _b64url(priv.sign(signing_input.encode()))
+
+
 def _unsigned(header: dict, claims: dict, signature: bytes = b"") -> str:
     signing_input = (_b64url(json.dumps(header).encode()) + "."
                      + _b64url(json.dumps(claims).encode()))
@@ -299,6 +307,17 @@ def test_exp_not_after_iat_is_rejected(keys):
     assert _status(keys.auth, _sign(keys.k1, _claims(exp=NOW))) == 401
 
 
+def test_nbf_after_exp_is_rejected(keys, caplog):
+    token = _sign(keys.k1, _claims(nbf=NOW + 61, exp=NOW + 60))
+    assert _reason(keys.auth, token, caplog) == "bad_time_claim"
+
+
+@pytest.mark.parametrize("claim", ["exp", "iat", "nbf"])
+@pytest.mark.parametrize("bad", [10**400, -5, 0, 2**34, 1e300])
+def test_out_of_range_numeric_dates_are_rejected(keys, caplog, claim, bad):
+    assert _reason(keys.auth, _sign(keys.k1, _claims(**{claim: bad})), caplog) == "bad_time_claim"
+
+
 def test_max_ttl_is_configurable_up_to_300(keys, clean_env):
     clean_env.setenv("KALOS_JWT_MAX_TTL_S", "300")
     assert _status(keys.auth, _sign(keys.k1, _claims(exp=NOW + 300))) == 200
@@ -325,8 +344,17 @@ def test_audience_must_be_a_single_string(keys):
     assert _status(keys.auth, _sign(keys.k1, _claims(aud=["kalos-engine"]))) == 401
 
 
-def test_wrong_issuer_is_rejected(keys):
-    assert _status(keys.auth, _sign(keys.k1, _claims(iss="evil"))) == 401
+@pytest.mark.parametrize("iss", [
+    "evil", "kalos", "kalos-we", "alos-web", "kalos-web ", "KALOS-WEB", "",  # substrings etc.
+    ["kalos-web"], ["k", "a"], {"kalos-web": 1}, 1,
+])
+def test_wrong_issuer_is_rejected_exactly(keys, caplog, iss):
+    assert _reason(keys.auth, _sign_raw(keys.k1, _claims(iss=iss)), caplog) in {"bad_iss", "invalid"}
+
+
+def test_string_issuers_are_compared_exactly(keys, caplog):
+    # CVE-2024-53861 (PyJWT 2.10.0): "kalos" in "kalos-web" passed. Ours is exact.
+    assert _reason(keys.auth, _sign(keys.k1, _claims(iss="kalos")), caplog) == "bad_iss"
 
 
 def test_issuer_and_audience_are_configurable(keys, clean_env):
@@ -345,6 +373,18 @@ def test_missing_required_claim_is_rejected(keys, claim, caplog):
 @pytest.mark.parametrize("bad", ["", 123, ["x"], "x" * 257])
 def test_identity_claims_must_be_bounded_strings(keys, claim, bad):
     assert _status(keys.auth, _sign(keys.k1, _claims(**{claim: bad}))) == 401
+
+
+@pytest.mark.parametrize("claim", ["sub", "sid"])
+@pytest.mark.parametrize("bad", ["user 1", "a,b", "ü", "tab\there", "nl\n", "\x7f"])
+def test_sub_and_sid_are_printable_ascii_without_comma(keys, caplog, claim, bad):
+    token = _sign(keys.k1, _claims(**{claim: bad}))
+    assert _reason(keys.auth, token, caplog) == "bad_identity_claim"
+
+
+def test_sub_may_use_the_rest_of_printable_ascii(keys):
+    p = keys.auth.principal_for(f"Bearer {_sign(keys.k1, _claims(sub='u|ser@x.com!~'))}")
+    assert p.subject == "u|ser@x.com!~"
 
 
 @pytest.mark.parametrize("tenant", [
@@ -383,6 +423,20 @@ def test_deny_list_by_subject_and_by_session(keys, clean_env):
     assert _status(keys.auth, token) == 401
     clean_env.setenv("KALOS_AUTH_DENY_SUBJECTS", "sess-1")
     assert _status(keys.auth, token) == 401
+
+
+@pytest.mark.parametrize("entries,denied", [
+    ("sub:user_1", True),
+    ("sid:sess-1", True),
+    ("sid:user_1", False),  # prefixed entries only match their own kind
+    ("sub:sess-1", False),
+    ("user_1", True),  # bare entries (legacy) match either
+    ("sess-1", True),
+    (" sub:other , sid:other ", False),
+])
+def test_deny_list_prefixes(keys, clean_env, entries, denied):
+    clean_env.setenv("KALOS_AUTH_DENY_SUBJECTS", entries)
+    assert _status(keys.auth, _sign(keys.k1)) == (401 if denied else 200)
 
 
 def test_deny_list_applies_to_static_tokens(clean_env):
@@ -489,6 +543,228 @@ def test_jwt_config_error_maps_to_503_without_detail(keys):
     assert exc.value.detail == "authentication unavailable"
 
 
+# --- B1: small-order / non-canonical Ed25519 public keys ---------------------------- #
+
+_L = 2**252 + 27742317777372353535851937790883648493  # prime subgroup order
+
+
+def _encode_point(x: int, y: int) -> bytes:
+    return (y | ((x & 1) << 255)).to_bytes(32, "little")
+
+
+def _scalar_mult(k: int, pt: tuple[int, int]) -> tuple[int, int]:
+    from kalos.portal.jwt_auth import _ed25519_add
+
+    acc, base = (0, 1), pt
+    while k:
+        if k & 1:
+            acc = _ed25519_add(acc, base)
+        base = _ed25519_add(base, base)
+        k >>= 1
+    return acc
+
+
+def _try_decode(raw: bytes) -> tuple[int, int] | None:
+    from kalos.portal.jwt_auth import _ed25519_decode
+
+    try:
+        return _ed25519_decode(raw)
+    except ValueError:
+        return None
+
+
+def _torsion_points() -> list[tuple[int, int]]:
+    """The 8 points of the Ed25519 8-torsion subgroup, computed (not hardcoded)."""
+    for i in range(1000):
+        pt = _try_decode(hashlib.sha256(b"torsion-%d" % i).digest())
+        if pt is None:
+            continue
+        t = _scalar_mult(_L, pt)  # kill the prime-order part, keep the torsion part
+        if _scalar_mult(4, t) != (0, 1):  # order exactly 8: generates the subgroup
+            pts = [_scalar_mult(k, t) for k in range(8)]
+            assert len(set(pts)) == 8
+            return pts
+    raise AssertionError("no order-8 point found")
+
+
+def _small_order_encodings() -> list[bytes]:
+    from kalos.portal.jwt_auth import _P
+
+    torsion = _torsion_points()
+    out = {_encode_point(x, y) for x, y in torsion}
+    assert len(out) == 8
+    for x, y in torsion:
+        if y + _P < 2**255:  # non-canonical y (y=0 -> p, y=1 -> p+1), both sign bits
+            out.add((y + _P).to_bytes(32, "little"))
+            out.add(((y + _P) | (1 << 255)).to_bytes(32, "little"))
+        if x == 0:  # non-canonical sign bit on x=0 (identity and (0,-1))
+            out.add((y | (1 << 255)).to_bytes(32, "little"))
+    return sorted(out)
+
+
+_SMALL_ORDER = _small_order_encodings()
+
+
+def test_small_order_set_includes_zero_and_identity():
+    assert bytes(32) in _SMALL_ORDER
+    assert b"\x01" + bytes(31) in _SMALL_ORDER
+    assert len(_SMALL_ORDER) >= 8 + 4
+
+
+@pytest.mark.parametrize("raw", _SMALL_ORDER, ids=lambda b: b.hex()[:8] + ".." + b.hex()[-4:])
+def test_parse_jwks_rejects_small_order_and_non_canonical_points(raw):
+    jwk = {"kty": "OKP", "crv": "Ed25519", "kid": "evil", "x": _b64url(raw)}
+    with pytest.raises(JwtConfigError, match="large-order"):
+        parse_jwks(json.dumps({"keys": [jwk]}))
+
+
+def test_parse_jwks_rejects_off_curve_points():
+    off = next(raw for raw in (hashlib.sha256(b"off-%d" % i).digest() for i in range(1000))
+               if _try_decode(raw) is None)
+    with pytest.raises(JwtConfigError):
+        parse_jwks(json.dumps({"keys": [
+            {"kty": "OKP", "crv": "Ed25519", "kid": "k", "x": _b64url(off)}]}))
+
+
+def test_parse_jwks_rejects_non_canonical_base64url():
+    good = _jwk(Ed25519PrivateKey.generate(), "k")
+    raw = base64.urlsafe_b64decode(good["x"] + "=")
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    twin = good["x"][:-1] + alphabet[alphabet.index(good["x"][-1]) ^ 1]  # flip a pad bit
+    assert base64.urlsafe_b64decode(twin + "=") == raw and twin != good["x"]
+    with pytest.raises(JwtConfigError):
+        parse_jwks(json.dumps({"keys": [{**good, "x": twin}]}))
+
+
+def _forge_with_small_order_key(raw_key: bytes, claims: dict) -> str:
+    """Forge an EdDSA JWT for a small-order public key A with S=0, by picking
+    R in <A> so that R = -[h]A (h = SHA-512(R || A || M) mod L)."""
+    a = _try_decode(raw_key)
+    assert a is not None
+    order = next(k for k in range(1, 9) if _scalar_mult(k, a) == (0, 1))
+    multiples = [_scalar_mult(k, a) for k in range(order)]
+    header = _b64url(json.dumps({"alg": "EdDSA", "typ": "JWT", "kid": "k1"}).encode())
+    for attempt in range(200):
+        payload = _b64url(json.dumps({**claims, "jti": f"forged-{attempt}"}).encode())
+        msg = f"{header}.{payload}".encode()
+        for k in range(order):
+            r_enc = _encode_point(*multiples[k])
+            h = int.from_bytes(hashlib.sha512(r_enc + raw_key + msg).digest(), "little") % _L
+            if (-h) % order == k:
+                return f"{header}.{payload}.{_b64url(r_enc + bytes(32))}"
+    raise AssertionError("could not forge")
+
+
+@pytest.mark.parametrize("raw_key", [bytes(32), b"\x01" + bytes(31)], ids=["zero", "identity"])
+def test_forged_token_with_a_small_order_key_is_never_accepted(keys, raw_key):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    from kalos.portal.jwt_auth import JwtSettings, verify_engine_token
+
+    forged = _forge_with_small_order_key(raw_key, _claims())
+    # Why the JWKS guard exists: the crypto backend loads such a key, and current
+    # OpenSSL verifies the forged S=0 signature.
+    settings = JwtSettings(keys.path, "kalos-web", "kalos-engine", 30, 120)
+    weak = {"k1": Ed25519PublicKey.from_public_bytes(raw_key)}
+    try:
+        verify_engine_token(forged, settings=settings, keys=weak, now=NOW)
+        backend_accepts = True
+    except Exception:  # noqa: BLE001
+        backend_accepts = False
+    # The engine refuses the key outright (fail closed), so the forgery never verifies.
+    keys.path.write_text(json.dumps({"keys": [
+        {"kty": "OKP", "crv": "Ed25519", "kid": "k1", "x": _b64url(raw_key)}]}))
+    _bump_mtime(keys.path)
+    with pytest.raises(JwtConfigError):
+        keys.auth.principal_for(f"Bearer {forged}")
+    with pytest.raises(HTTPException) as exc:
+        require_principal(authorization=f"Bearer {forged}", auth=keys.auth)
+    assert exc.value.status_code == 503
+    if not backend_accepts:
+        pytest.skip("this crypto backend rejects the forgery itself; the JWKS guard still holds")
+
+
+# --- production refuses the published test-vector keys ------------------------------ #
+
+def test_production_refuses_test_vector_keys(keys, clean_env):
+    vec = json.loads((Path(__file__).parent / "vectors" / "engine-token.json").read_text())
+    primary = vec["keys"]["primary"]["public_jwk"]
+    other = vec["keys"]["other"]["public_jwk"]
+    clean_env.setenv("KALOS_ENV", "production")
+    for jwk in [primary, {**primary, "kid": "prod-1"}, {**other, "kid": "prod-2"},
+                _jwk(Ed25519PrivateKey.generate(), "kalos-test-vectors-new")]:
+        keys.path.write_text(json.dumps({"keys": [jwk]}))
+        _bump_mtime(keys.path)
+        with pytest.raises(JwtConfigError, match="TEST-VECTOR"):
+            keys.auth.jwt_key_count()
+    clean_env.delenv("KALOS_ENV")
+    keys.path.write_text(json.dumps({"keys": [primary]}))
+    _bump_mtime(keys.path)
+    assert keys.auth.jwt_key_count() == 1  # development accepts them (the vector tests)
+
+
+# --- M1: the key file is validated even when static tokens exist -------------------- #
+
+def test_broken_jwks_fails_closed_even_with_static_records(keys, clean_env):
+    clean_env.setenv("KALOS_AUTH_TOKENS", json.dumps([
+        {"token_sha256": _sha("svc-tok"), "subject": "svc", "tenant": "acme",
+         "scopes": [READ], "service_account": True},
+    ]))
+    keys.path.write_text("{broken")
+    _bump_mtime(keys.path)
+    with pytest.raises(JwtConfigError):
+        keys.auth.has_auth_source()
+    with pytest.raises(JwtConfigError):
+        keys.auth.enforces()
+
+
+# --- key-file cache and logging -------------------------------------------------- #
+
+def test_jwks_reload_notices_same_size_same_mtime_rewrites(keys):
+    """ctime is part of the cache key: an in-place rewrite that restores the old
+    mtime and keeps the size is still picked up."""
+    token = _sign(keys.k1)
+    assert _status(keys.auth, token) == 200
+    st = keys.path.stat()
+    time.sleep(0.02)
+    k3 = Ed25519PrivateKey.generate()
+    _write_jwks(keys.path, {"k1": k3})  # same kid -> same length
+    os.utime(keys.path, ns=(st.st_atime_ns, st.st_mtime_ns))
+    st2 = keys.path.stat()
+    assert (st2.st_size, st2.st_mtime_ns, st2.st_ino) == (st.st_size, st.st_mtime_ns, st.st_ino)
+    assert st2.st_ctime_ns != st.st_ctime_ns
+    assert _status(keys.auth, token) == 401
+    assert _status(keys.auth, _sign(k3)) == 200
+
+
+def _errors(caplog) -> int:
+    return len([r for r in caplog.records if r.levelno >= logging.ERROR])
+
+
+def test_key_file_errors_are_logged_once_per_change(keys, caplog):
+    caplog.set_level(logging.ERROR, logger="kalos.portal")
+    keys.path.write_text("{broken")
+    _bump_mtime(keys.path)
+    token = f"Bearer {_sign(keys.k1)}"
+    for _ in range(5):
+        with pytest.raises(HTTPException):
+            require_principal(authorization=token, auth=keys.auth)
+    assert _errors(caplog) == 1
+    keys.path.write_text("{still broken}")  # a change: logged again
+    _bump_mtime(keys.path)
+    with pytest.raises(HTTPException):
+        require_principal(authorization=token, auth=keys.auth)
+    assert _errors(caplog) == 2
+    _write_jwks(keys.path, {"k1": keys.k1})  # fixed, then broken again: logged again
+    _bump_mtime(keys.path)
+    assert _status(keys.auth, _sign(keys.k1)) == 200
+    keys.path.write_text("{broken")
+    _bump_mtime(keys.path)
+    with pytest.raises(HTTPException):
+        require_principal(authorization=token, auth=keys.auth)
+    assert _errors(caplog) == 3
+
+
 def test_parse_jwks_accepts_the_vector_public_key():
     vectors = json.loads((Path(__file__).parent / "vectors" / "engine-token.json").read_text())
     jwk = vectors["keys"]["primary"]["public_jwk"]
@@ -518,12 +794,29 @@ def test_static_token_still_works_alongside_jwt(keys, clean_env):
     assert _status(keys.auth, "wrong-static") == 401
 
 
-def test_two_dot_token_without_jwt_config_is_rejected(clean_env):
+def test_two_dot_static_token_falls_back_when_jwt_is_off(clean_env):
     clean_env.setenv("KALOS_AUTH_TOKENS", json.dumps([
         {"token_sha256": _sha("a.b.c"), "subject": "s", "tenant": "acme", "scopes": [READ]},
     ]))
-    # A two-dot bearer always takes the JWT branch, even if a static hash matches.
-    assert _status(Authenticator(), "a.b.c") == 401
+    p = Authenticator().principal_for("Bearer a.b.c")
+    assert p.auth_method == "static" and p.subject == "s"
+    assert _status(Authenticator(), "x.y.z") == 401
+
+
+def test_unparseable_two_dot_token_falls_back_to_static(keys, clean_env):
+    clean_env.setenv("KALOS_AUTH_TOKENS", json.dumps([
+        {"token_sha256": _sha("a.b.c"), "subject": "s", "tenant": "acme", "scopes": [READ]},
+    ]))
+    assert keys.auth.principal_for("Bearer a.b.c").auth_method == "static"
+    assert _status(keys.auth, "x.y.z") == 401
+
+
+def test_a_parseable_jwt_that_fails_verification_never_falls_back(keys, clean_env, caplog):
+    forged = _sign(Ed25519PrivateKey.generate())  # well-formed JWS, wrong key
+    clean_env.setenv("KALOS_AUTH_TOKENS", json.dumps([
+        {"token_sha256": _sha(forged), "subject": "s", "tenant": "acme", "scopes": [READ]},
+    ]))
+    assert _reason(keys.auth, forged, caplog) == "bad_signature"
 
 
 def test_open_mode_unaffected_in_dev(clean_env):
@@ -658,6 +951,43 @@ def test_production_refuses_to_start_with_a_non_service_account_static_token(tmp
              KALOS_AUTH_TOKENS=tokens)
     assert r.returncode != 0
     assert "ProductionConfigError" in r.stderr
+
+
+def test_production_refuses_to_start_with_a_malformed_jwks_and_valid_static_tokens(tmp_path):
+    path = tmp_path / "jwks.json"
+    path.write_text("{broken")
+    tokens = json.dumps([{"token_sha256": _sha("t"), "subject": "s", "tenant": "acme",
+                          "scopes": [READ], "service_account": True}])
+    r = _run("import kalos.portal.app", tmp_path, KALOS_ENV="production",
+             KALOS_JWT_PUBLIC_KEYS_FILE=str(path), KALOS_AUTH_TOKENS=tokens)
+    assert r.returncode != 0
+    assert "ProductionConfigError" in r.stderr
+
+
+def test_production_middleware_503s_on_a_jwks_broken_at_runtime_despite_static_tokens(tmp_path):
+    path = tmp_path / "jwks.json"
+    _write_jwks(path, {"k1": Ed25519PrivateKey.generate()})
+    tokens = json.dumps([{"token_sha256": _sha("svc-tok"), "subject": "s", "tenant": "acme",
+                          "scopes": [READ], "service_account": True}])
+    script = f"""
+        import json, os, pathlib
+        from fastapi.testclient import TestClient
+        from kalos.portal.app import app
+        c = TestClient(app)
+        auth = {{"Authorization": "Bearer svc-tok"}}
+        before = c.get("/api/latest", headers=auth).status_code
+        p = pathlib.Path({str(path)!r})
+        p.write_text("{{broken")
+        st = p.stat(); os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+        after = c.get("/api/latest", headers=auth)
+        print(json.dumps([before, after.status_code, after.text]))
+    """
+    r = _run(script, tmp_path, KALOS_ENV="production", KALOS_JWT_PUBLIC_KEYS_FILE=str(path),
+             KALOS_AUTH_TOKENS=tokens)
+    assert r.returncode == 0, r.stderr
+    before, after, body = json.loads(r.stdout.strip().splitlines()[-1])
+    assert (before, after) == (200, 503)
+    assert "broken" not in body
 
 
 def test_main_entrypoint_exits_2_on_a_malformed_jwks(tmp_path):
