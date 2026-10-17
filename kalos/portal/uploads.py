@@ -219,6 +219,105 @@ def _parse_dimension_ref(ref: str) -> tuple[int, int] | None:
     return int(row_str), _col_letters_to_index(col_letters)
 
 
+_SPREADSHEETML_NS = frozenset({
+    "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+    "http://purl.oclc.org/ooxml/spreadsheetml/main",  # ISO strict
+})
+_EXTENT_SCAN_CHUNK = 64 * 1024
+
+
+class _NotASheet(Exception):
+    """Stop scanning a zip part whose root element is not a worksheet."""
+
+
+class _SheetExtentScan:
+    """Streaming (expat) scan of one sheet part for the extent pandas will
+    materialize: the largest row index and column index of any `<row>` /
+    `<c>` inside `<sheetData>`, resolved the way openpyxl does (an explicit
+    `r` attribute, else one past the previous row / cell). Raises
+    `UploadRejected` the moment the extent passes the column or cell cap, so a
+    sparse sheet (one cell far to the right on every row, no or a lying
+    `<dimension>`) is refused after reading a few KB, never expanded.
+    Memory is O(1): no tree is built."""
+
+    def __init__(self) -> None:
+        self.max_row = 0
+        self.max_col = 0
+        self._row = 0
+        self._col = 0
+        self._in_data = 0
+        self._seen_root = False
+
+    def _check(self) -> None:
+        if self.max_col > MAX_COLUMNS:
+            raise UploadRejected(_ERR_TOO_MANY_COLUMNS)
+        if self.max_row * max(self.max_col, 1) > MAX_XLSX_CELLS:
+            raise UploadRejected(_ERR_TOO_LARGE)
+
+    def start(self, name: str, attrs: dict[str, str]) -> None:
+        ns, _, local = name.rpartition(" ")
+        if not self._seen_root:
+            self._seen_root = True
+            if local not in ("worksheet", "dialogsheet"):
+                raise _NotASheet
+        if ns not in _SPREADSHEETML_NS:
+            return
+        if local == "sheetData":
+            self._in_data += 1
+        elif self._in_data and local == "row":
+            r = attrs.get("r", "")
+            self._row = int(r) if r.isdigit() else self._row + 1
+            self._col = 0
+            self.max_row = max(self.max_row, self._row)
+            self._check()
+        elif self._in_data and local == "c":
+            m = _CELL_REF_RE.match(attrs.get("r", ""))
+            if m:
+                self._col = _col_letters_to_index(m.group(1))
+                self.max_row = max(self.max_row, int(m.group(2)))
+            else:
+                self._col += 1
+            self.max_col = max(self.max_col, self._col)
+            self._check()
+
+    def end(self, name: str) -> None:
+        if name.rpartition(" ")[2] == "sheetData" and self._in_data:
+            self._in_data -= 1
+
+
+def _scan_sheet_extents(zf: zipfile.ZipFile) -> None:
+    """Run `_SheetExtentScan` over EVERY zip part whose root element is a
+    worksheet (whatever the part is named, since openpyxl follows the
+    workbook's relationships, not a naming convention). Total work is bounded
+    by `MAX_XLSX_UNCOMPRESSED_BYTES`; a part that is not XML, or not a sheet,
+    stops after its first chunk. A sheet whose XML breaks part-way keeps the
+    extent read so far (openpyxl would have read that much too) and is left
+    for the parser to report as corrupt."""
+    import pyexpat
+
+    for info in zf.infolist():
+        if info.is_dir():
+            continue
+        scan = _SheetExtentScan()
+        parser = pyexpat.ParserCreate(namespace_separator=" ")
+        parser.SetParamEntityParsing(pyexpat.XML_PARAM_ENTITY_PARSING_NEVER)
+        parser.StartElementHandler = scan.start
+        parser.EndElementHandler = scan.end
+        try:
+            with zf.open(info) as part:
+                while chunk := part.read(_EXTENT_SCAN_CHUNK):
+                    parser.Parse(chunk, False)
+                parser.Parse(b"", True)
+        except (_NotASheet, pyexpat.ExpatError):
+            continue
+        except UploadRejected:
+            log.warning("rejected an xlsx upload: a sheet's real extent is over the cap")
+            raise
+        except (zipfile.BadZipFile, OSError, EOFError, ValueError) as exc:
+            log.warning("rejected an unreadable xlsx upload: %s", type(exc).__name__)
+            raise UploadRejected(_ERR_CORRUPT_EXCEL, code="corrupt_excel") from exc
+
+
 def _reject_oversized_xlsx_via_openpyxl(raw: bytes) -> None:
     """Fallback guard for the rare sheet with no `<dimension>` tag: open read-only
     with openpyxl and check its computed `max_row` / `max_column` instead.
@@ -232,8 +331,12 @@ def _reject_oversized_xlsx_via_openpyxl(raw: bytes) -> None:
         raise UploadRejected(_ERR_CORRUPT_EXCEL, code="corrupt_excel") from exc
     try:
         for ws in wb.worksheets:
-            cols = ws.max_column or 0
-            rows = ws.max_row or 0
+            if ws.max_column is None or ws.max_row is None:
+                # Unknown extent (no dimension): never read as 0. The streaming
+                # extent scan (`_scan_sheet_extents`) has already bounded it.
+                continue
+            cols = ws.max_column
+            rows = ws.max_row
             if cols > MAX_COLUMNS:
                 raise UploadRejected(_ERR_TOO_MANY_COLUMNS)
             if rows * cols > MAX_XLSX_CELLS:
@@ -290,6 +393,11 @@ def _reject_oversized_xlsx(raw: bytes) -> dict[str, int]:
         if sum(part_sizes.values()) > MAX_XLSX_UNCOMPRESSED_BYTES:
             log.warning("rejected an xlsx upload over the uncompressed-size cap")
             raise UploadRejected(_ERR_TOO_LARGE)
+        # The authoritative extent check: stream every sheet part and refuse
+        # one whose real (not declared) rows x columns pass the caps, before
+        # pandas/openpyxl materialize anything. A declared <dimension> can be
+        # missing or lie; the cells' own coordinates cannot be skipped.
+        _scan_sheet_extents(zf)
         if not sheet_names:
             # Not a recognizable xlsx layout (or a non-xlsx zip) - let openpyxl's
             # own validation produce the generic parse-rejection.

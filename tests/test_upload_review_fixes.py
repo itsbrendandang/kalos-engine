@@ -221,6 +221,89 @@ def test_a_broken_sheet_does_not_block_a_good_one_behind_it():
     assert parsed.sheet_used == "data"
 
 
+# --- re-review B1: sparse sheets are bounded by their REAL extent ---------------- #
+
+
+def _sparse_sheet_xml(rows: int, col: str = "SF", *, dimension: str | None) -> bytes:
+    head = f'<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="{_NS}">'
+    if dimension:
+        head += f'<dimension ref="{dimension}"/>'
+    cells = "".join(f'<row r="{r}"><c r="{col}{r}"><v>1</v></c></row>' for r in range(1, rows + 1))
+    return (head + "<sheetData>" + cells + "</sheetData></worksheet>").encode()
+
+
+def _assert_fast_bounded_rejection(raw: bytes, match: str) -> None:
+    import tracemalloc
+
+    tracemalloc.start()
+    t0 = time.perf_counter()
+    try:
+        with pytest.raises(UploadRejected, match=match):
+            parse_upload(raw)
+        elapsed = time.perf_counter() - t0
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert elapsed < 2.0, elapsed
+    assert peak < 64 * 1024 * 1024, peak  # never the multi-GB expansion
+
+
+@pytest.mark.parametrize("dimension", [None, "A1:B2"])
+def test_sparse_far_column_sheet_is_refused_before_pandas(dimension, monkeypatch):
+    """One cell in column SF on each of 400k rows: a ~2 MB upload that pandas
+    would expand to 400k x 500 cells (GBs of RAM). Refused from the cells' own
+    coordinates, with or without a (lying) <dimension>, before any parse."""
+    raw = _replace_sheets(_workbook(1), {"xl/worksheets/sheet1.xml": _sparse_sheet_xml(400_000, dimension=dimension)})
+    assert len(raw) < 5_000_000
+
+    def _never(*_a, **_k):
+        raise AssertionError("the workbook was handed to pandas")
+
+    monkeypatch.setattr(uploads.pd, "ExcelFile", _never)
+    _assert_fast_bounded_rejection(raw, "too large")
+
+
+def test_a_cell_beyond_the_column_cap_is_refused():
+    raw = _replace_sheets(_workbook(1), {"xl/worksheets/sheet1.xml": _sparse_sheet_xml(3, "XFD", dimension="A1:B3")})
+    _assert_fast_bounded_rejection(raw, "too many columns")
+
+
+def test_sheet_parts_are_found_whatever_they_are_named():
+    """openpyxl follows the workbook's relationships, so a sheet part need not
+    be called sheetN.xml; the extent scan looks at every part's root element."""
+    raw = _replace_sheets(_workbook(1), {"xl/worksheets/sheet1.xml": _sparse_sheet_xml(400_000, dimension=None)})
+    src = zipfile.ZipFile(io.BytesIO(raw))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
+        for info in src.infolist():
+            data = src.read(info.filename).replace(b"worksheets/sheet1.xml", b"worksheets/odd.xml")
+            name = info.filename.replace("worksheets/sheet1.xml", "worksheets/odd.xml")
+            dst.writestr(name, data)
+    renamed = out.getvalue()
+    assert "xl/worksheets/odd.xml" in zipfile.ZipFile(io.BytesIO(renamed)).namelist()
+    _assert_fast_bounded_rejection(renamed, "too large")
+
+
+def test_rows_without_r_attributes_are_counted_like_openpyxl():
+    from kalos.portal.uploads import _SheetExtentScan
+
+    scan = _SheetExtentScan()
+    scan.start("worksheet", {})
+    scan.start(f"{_NS} sheetData", {})
+    for _ in range(3):
+        scan.start(f"{_NS} row", {})
+        scan.start(f"{_NS} c", {})
+        scan.start(f"{_NS} c", {"r": "D7"})
+    assert (scan.max_row, scan.max_col) == (7, 4)
+
+
+def test_a_normal_workbook_still_parses():
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf) as w:
+        _sheet().to_excel(w, sheet_name="data", index=False)
+    assert parse_upload(buf.getvalue()).df.shape == (20, 3)
+
+
 # --- (J) too few rows before "constant"; dates are not numeric ------------------- #
 
 
