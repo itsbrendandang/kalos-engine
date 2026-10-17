@@ -266,3 +266,139 @@ def test_validation_400_is_scoped_to_campaign_routes(client):
     r = client.get("/api/single", params={"rounds": 0})
     assert r.status_code == 422
     assert "detail" in r.json()
+
+
+# --- review fixes: chunked 413 on the real app, huge Content-Length, root_path #
+
+def _chunks(n: int, size: int):
+    for _ in range(n):
+        yield b"x" * size
+
+
+def test_chunked_over_cap_json_body_is_413_on_the_real_app(client, store, monkeypatch):
+    """The real app has a BaseHTTPMiddleware (the open-access guard) and
+    FastAPI body parsing between this middleware and the route; neither may
+    turn the over-cap stream into a generic 400."""
+    store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
+    calls: list = []
+    monkeypatch.setattr(CampaignStore, "start", lambda *a, **k: calls.append(1))
+    r = client.post("/api/campaign/start", content=_chunks(30, 100_000),
+                    headers={"content-type": "application/json"})
+    assert r.status_code == 413
+    assert r.json() == {"error": "The request body is too large."}
+    assert calls == []
+
+
+def test_chunked_over_cap_upload_is_413_on_the_real_app(client):
+    head = (b'--b\r\nContent-Disposition: form-data; name="file"; filename="a.csv"\r\n'
+            b"Content-Type: text/csv\r\n\r\n")
+
+    def body():
+        yield head
+        yield from _chunks(60, 500_000)  # ~30 MB > upload cap
+        yield b"\r\n--b--\r\n"
+
+    r = client.post("/api/run", content=body(),
+                    headers={"content-type": "multipart/form-data; boundary=b"})
+    assert r.status_code == 413
+    assert r.json() == {"error": "The request body is too large."}
+
+
+def test_chunked_under_cap_json_body_still_works_on_the_real_app(client, store):
+    store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
+    import json as _json
+
+    raw = _json.dumps({"recipes": [_proposal()]}).encode()
+    r = client.post("/api/campaign/start", content=iter([raw[:10], raw[10:]]),
+                    headers={"content-type": "application/json"})
+    assert r.status_code == 200
+
+
+@pytest.mark.parametrize("value", [b"9" * 20, b"9" * 5000, b"0" * 30 + b"1" * 20])
+def test_content_length_over_19_digits_is_413_not_a_crash(value):
+    seen: list = []
+
+    async def inner(scope, receive, send):  # pragma: no cover - must not run
+        seen.append(scope)
+
+    mw = RequestSizeLimitMiddleware(inner, default_cap=10, upload_cap=10, upload_paths=())
+    sent: list = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    import asyncio
+
+    asyncio.run(mw({"type": "http", "path": "/x", "headers": [(b"content-length", value)]}, receive, send))
+    assert sent[0]["status"] == 413
+    assert seen == []
+
+
+def test_leading_zero_content_length_under_cap_is_allowed():
+    tc = _mini_app(100)
+    r = tc.post("/echo", content=b"x" * 5, headers={"content-length": "0000000000000000000000005"})
+    assert r.status_code == 200 and r.json() == {"n": 5}
+
+
+def test_upload_paths_match_with_root_path_stripped():
+    mw = RequestSizeLimitMiddleware(lambda *a: None, default_cap=1, upload_cap=99,
+                                    upload_paths={"/api/run"})
+    from kalos.portal.limits import route_path
+
+    assert route_path({"path": "/engine/api/run", "root_path": "/engine"}) == "/api/run"
+    assert route_path({"path": "/api/run/", "root_path": ""}) == "/api/run"
+    assert route_path({"path": "/engine", "root_path": "/engine"}) == "/"
+    assert mw.cap_for(route_path({"path": "/engine/api/run", "root_path": "/engine"})) == 99
+
+
+def test_upload_under_a_root_path_gets_the_upload_cap():
+    """Mounted under a prefix (uvicorn --root-path), the upload route must
+    still get the upload cap, not the 1 MiB JSON cap."""
+    tc = TestClient(app, root_path="/engine")
+    payload = b"a,b,c\n" + b"1,2,3\n" * 400_000  # ~2.4 MB: over 1 MiB, under the upload cap
+    r = tc.post("/engine/api/run", files={"file": ("runs.csv", payload, "text/csv")})
+    assert r.status_code != 413
+
+
+# --- review fixes: an upload with no bearer token is refused before its body - #
+
+def _enforce(monkeypatch):
+    import hashlib
+    import json as _json
+
+    monkeypatch.setenv("KALOS_AUTH_TOKENS", _json.dumps([{
+        "token_sha256": hashlib.sha256(b"tok").hexdigest(),
+        "subject": "s", "tenant": "acme", "scopes": ["read", "write"],
+    }]))
+
+
+@pytest.mark.parametrize("headers", [{}, {"Authorization": "Basic abc"}, {"Authorization": "Bearer "}])
+def test_upload_without_a_bearer_is_401_before_the_body_is_read(monkeypatch, headers):
+    _enforce(monkeypatch)
+    read: list = []
+
+    def body():
+        read.append(1)
+        yield b"--b\r\n"
+
+    r = TestClient(app).post("/api/run", content=body(),
+                             headers={"content-type": "multipart/form-data; boundary=b", **headers})
+    assert r.status_code == 401
+    assert r.json() == {"detail": "authentication required"}
+    assert read == []  # the body generator was never pulled
+
+
+def test_upload_precheck_lets_a_bearer_through_to_real_verification(monkeypatch):
+    _enforce(monkeypatch)
+    r = TestClient(app).post("/api/run", files={"file": ("a.csv", b"a,b\n1,2\n", "text/csv")},
+                             headers={"Authorization": "Bearer wrong"})
+    assert r.status_code == 401
+    assert r.json() == {"detail": "invalid token"}  # the dependency's answer, not the precheck's
+
+
+def test_upload_precheck_is_inert_in_open_mode(client):
+    r = client.post("/api/run", files={"file": ("a.csv", b"a,b\n1,2\n", "text/csv")})
+    assert r.status_code != 401

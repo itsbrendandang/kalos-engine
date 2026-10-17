@@ -33,6 +33,7 @@ from typing import Any
 
 from fastapi import Depends, Header, HTTPException
 
+from kalos.portal.config import is_production
 from kalos.portal.tenancy import (  # noqa: F401 - TENANT_ID_PATTERN/validate_tenant_id re-exported
     TENANT_ID_PATTERN,
     is_valid_tenant_id,
@@ -112,6 +113,13 @@ class Authenticator:
                     f"token entry {i} has an invalid 'tenant' id; tenant ids must match "
                     "^[A-Za-z0-9_-]{1,64}$ (letters, digits, '_' and '-', 1-64 chars)"
                 )
+            if tenant == _ANON_TENANT:
+                # Reserved for open mode: a token on 'default' would inherit
+                # whatever anonymous callers stored there before auth was on.
+                raise AuthConfigError(
+                    f"token entry {i} uses the reserved tenant id '{_ANON_TENANT}' "
+                    "(open/anonymous mode only); provision a named tenant"
+                )
             if not isinstance(scopes_in, list) or not all(s in _VALID_SCOPES for s in scopes_in):
                 raise AuthConfigError(
                     f"token entry {i} has invalid scopes; allowed: {sorted(_VALID_SCOPES)}"
@@ -182,6 +190,12 @@ class Authenticator:
         """
         records = self._load_records()
         if not records:
+            if is_production():
+                # Fail closed: the middleware checked the tokens a moment ago, but
+                # they are re-read here, so a file emptied in between must not
+                # yield the anonymous read+write principal in production.
+                log.error("kalos auth: KALOS_ENV=production but no tokens loaded; refusing")
+                raise HTTPException(status_code=503, detail="authentication is not configured")
             if not self._warned_open:
                 log.warning(
                     "kalos auth: no tokens configured - API is OPEN (anonymous '%s' tenant, "
