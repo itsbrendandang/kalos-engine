@@ -23,7 +23,7 @@ cp .env.example .env        # fill in KALOS_AUTH_TOKENS, KALOS_ENGINE_TOKEN, KAL
 docker compose up -d --build
 ```
 
-Then open http://localhost:3000 - the ONLY published port. Verified numbers
+Then open http://localhost:3000 - the ONLY published port (bound to loopback by default; see "Who can reach the web app" below). Verified numbers
 from the reference run (M-series Mac, Docker VM 11 CPU / 8 GB): engine image
 1.82 GB, web 314 MB; first analyze on the 160-run demo sheet completed through
 the authed proxy in ~19s; a concurrent second upload got the honest 503 busy
@@ -258,7 +258,16 @@ so it stays a pure liveness check. `docker compose ps` shows `healthy` /
       deliberate v0 scope cut, not an oversight - wiring TLS in is the
       first thing to add before this stack sees a network it does not
       fully trust.
-- [x] **Auth between web and engine - CLOSED (wave 2)**: kalos-web now ships
+- [ ] **Who can reach the web app (user -> web is NOT authenticated).** The "web and
+      engine" item below only covers the service-to-service hop. kalos-web itself has no
+      login, and its proxy adds the engine bearer token to every request it forwards, so
+      anyone who can reach the web port can read and write campaign data. The compose
+      file therefore publishes the web port on 127.0.0.1 by default (`KALOS_WEB_BIND`).
+      For shared use put an authenticating reverse proxy (SSO / basic auth / VPN) in front
+      and only then set `KALOS_WEB_BIND=0.0.0.0`. Verify with `docker compose ps`: the
+      PORTS column must read `127.0.0.1:3000->3000/tcp` unless you deliberately changed it.
+      Origin/CORS settings are not authentication.
+- [x] **Auth between web and engine (service-to-service only) - closed in wave 2**: kalos-web now ships
       a server-side proxy (`app/api/engine/[...path]/route.ts`). The browser
       calls same-origin `/api/engine/...`; the Next server forwards to the
       engine over the compose-internal network with `Authorization: Bearer
