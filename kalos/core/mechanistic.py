@@ -5,9 +5,31 @@ formation) predicts the response from process settings using domain knowledge.
 `HybridSurrogate` keeps that prediction as the mean function and lets a GP learn
 only the *residual* `y - mechanistic(X)`, so the GP spends its data on what the
 physics misses. A good mechanistic model helps; a poor one can leave the hybrid
-no better, or WORSE, than a plain GP (a deliberately wrong ODE did worse in the
-simulated benchmark of examples/mechanistic_benchmark.py), because the GP must
-first undo the wrong mean. Judge a mechanistic model on held-out data before use.
+no better, or WORSE, than a plain GP, because the GP must first undo the wrong
+mean (in the simulated benchmark of examples/mechanistic_benchmark.py a badly wrong
+ODE was no better than the plain GP in most seeds and worse in some). Judge a mechanistic model on held-out data before use.
+
+OPT-IN, OFF BY DEFAULT. Nothing in the portal or `propose` uses this module; a
+caller must construct a `HybridSurrogate` explicitly. The evidence for a
+mechanistic prior mean is thin: a single n=23 study (Richelle et al., CSBJ 2026,
+doi 10.34133/csbj.0078; cited from the project's literature notes, not independently
+checked). A simulated check (examples/mechanistic_benchmark.py; Monod fed-batch
+truth with Haldane inhibition, 10 seeds, one fixed held-out split per seed) is saved in
+examples/results/mechanistic_benchmark_10seeds.json: a correct or mildly wrong ODE
+reached 95% of the best response sooner than the plain GP in most seeds (the mild
+8-of-10 result is NOT significant after correcting for the four levels; only the
+oracle level, 9-0, is); a badly wrong or "adversarial" ODE showed no detectable
+difference (counts of better/worse/tied are in the JSON). This is a noise-free,
+2-D simulation whose truth shares the ODE's structure, so it says little about real
+processes, and it is not a validation of the method. Read the exact counts,
+reach rates and spreads from that file (regenerate with the script); judge your own
+ODE on held-out data before turning it on.
+
+Example (Monod fed-batch as the GP prior mean):
+
+    from kalos.bench.mechanistic_benchmark import LEVELS
+    hybrid = HybridSurrogate(LEVELS["mild"]).fit(X, y, bounds=bounds)
+    mean, std = hybrid.predict(X_new)
 
 Scope today: fit + predict (mean/std). Handing a hybrid straight to
 `kalos.core.optimize.propose` is NOT supported yet - `propose` needs a BoTorch
