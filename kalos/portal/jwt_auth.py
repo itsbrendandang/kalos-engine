@@ -33,6 +33,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import math
 import os
 import re
@@ -46,7 +47,10 @@ import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from kalos.portal.auth_errors import JwtConfigError
+from kalos.portal.config import is_production
 from kalos.portal.tenancy import is_valid_tenant_id
+
+log = logging.getLogger("kalos.portal")
 
 # --- configuration ------------------------------------------------------------ #
 
@@ -83,6 +87,21 @@ MAX_TOKEN_CHARS = 8192
 _MAX_ID_CHARS = 256  # sub / sid / jti / kid
 _SAFE_LOG_VALUE = re.compile(r"[A-Za-z0-9._:@-]{1,128}")
 _B64URL = re.compile(r"[A-Za-z0-9_-]+")
+# sub / sid: printable ASCII without space or comma, so every value can be named
+# in the comma-separated KALOS_AUTH_DENY_SUBJECTS list and logged verbatim.
+_SUBJECT_CHARS = re.compile(r"[\x21-\x2b\x2d-\x7e]+")
+# NumericDate bounds: positive and before 2^34 s (year ~2514). Anything else is
+# garbage, and huge ints would overflow float conversion.
+_MAX_NUMERIC_DATE = 2**34
+
+# The kalos-web shared test vectors (tests/vectors/engine-token.json) publish
+# these PUBLIC keys and kids. Their private halves are in the web repo's
+# generator output, valid nowhere: production refuses to trust them.
+TEST_VECTOR_KID_PREFIX = "kalos-test-vectors-"
+TEST_VECTOR_PUBLIC_X = frozenset({
+    "cWkcwK8XARmOnPgLAatvFnSuSS7yT2ITxICY16VmG50",
+    "jcxO2NevUQ-pQlh4IiQsVWz_mUfmIhwxhXEvyEj9YYA",
+})
 
 
 @dataclass(frozen=True)
@@ -132,14 +151,111 @@ def _b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
-def parse_jwks(text: str) -> dict[str, Ed25519PublicKey]:
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+# --- config-error logging, once per change -------------------------------------- #
+
+_log_lock = threading.Lock()
+_last_logged_error: tuple[object, str] | None = None
+
+
+def log_config_error_once(exc: JwtConfigError) -> None:
+    """Log a JWT config error at ERROR, but only when it differs from the last
+    one logged (message, plus the key file's stat signature for file errors).
+    A broken key file otherwise logs on every request."""
+    global _last_logged_error
+    key = (getattr(exc, "change_key", None), str(exc))
+    with _log_lock:
+        if key == _last_logged_error:
+            return
+        _last_logged_error = key
+    log.error("kalos auth: engine-token (JWT) configuration is invalid: %s", exc)
+
+
+def _clear_logged_error() -> None:
+    global _last_logged_error
+    with _log_lock:
+        _last_logged_error = None
+
+
+# --- Ed25519 public-key point validation ---------------------------------------- #
+# OpenSSL (via `cryptography`) loads ANY 32 bytes as an Ed25519 public key and
+# does not reject small-order points at verify time. With the identity point as
+# the "public key", the signature R=identity, S=0 verifies for EVERY message, so
+# a JWKS entry with such an `x` would let anyone mint tokens. Each key is
+# therefore decoded here (RFC 8032 5.1.3) and refused unless it is a canonical
+# encoding of a point of large order. Public data only, so plain Python ints
+# (not constant time) are fine.
+
+_P = 2**255 - 19
+_D = (-121665 * pow(121666, _P - 2, _P)) % _P
+_SQRT_M1 = pow(2, (_P - 1) // 4, _P)
+
+
+def _ed25519_decode(raw: bytes) -> tuple[int, int]:
+    """Decode a 32-byte Ed25519 point to affine (x, y); `ValueError` if it is
+    not on the curve or not canonically encoded."""
+    if len(raw) != 32:
+        raise ValueError("wrong length")
+    n = int.from_bytes(raw, "little")
+    sign = n >> 255
+    y = n & ((1 << 255) - 1)
+    if y >= _P:
+        raise ValueError("non-canonical y")
+    u = (y * y - 1) % _P
+    v = (_D * y * y + 1) % _P
+    x2 = u * pow(v, _P - 2, _P) % _P
+    x = pow(x2, (_P + 3) // 8, _P)
+    if (x * x - x2) % _P != 0:
+        x = x * _SQRT_M1 % _P
+    if (x * x - x2) % _P != 0:
+        raise ValueError("not on the curve")
+    if x == 0 and sign == 1:
+        raise ValueError("non-canonical x sign")
+    if (x & 1) != sign:
+        x = _P - x
+    return x, y
+
+
+def _ed25519_add(a: tuple[int, int], b: tuple[int, int]) -> tuple[int, int]:
+    """Affine twisted-Edwards addition (a=-1; complete since d is a non-square)."""
+    (x1, y1), (x2, y2) = a, b
+    t = _D * x1 * x2 * y1 * y2 % _P
+    x3 = (x1 * y2 + y1 * x2) * pow(1 + t, _P - 2, _P) % _P
+    y3 = (y1 * y2 + x1 * x2) * pow(1 - t, _P - 2, _P) % _P
+    return x3, y3
+
+
+def _ed25519_has_small_order(point: tuple[int, int]) -> bool:
+    """Whether [8]point is the identity (the 8 torsion points, identity included)."""
+    q = point
+    for _ in range(3):
+        q = _ed25519_add(q, q)
+    return q == (0, 1)
+
+
+def validate_ed25519_public_key(raw: bytes) -> Ed25519PublicKey:
+    """`raw` as an `Ed25519PublicKey`, or `ValueError` if it is off-curve,
+    non-canonical, or of small order (identity, all-zero, and the rest of the
+    8-torsion, in any encoding)."""
+    point = _ed25519_decode(raw)
+    if _ed25519_has_small_order(point):
+        raise ValueError("small-order point")
+    return Ed25519PublicKey.from_public_bytes(raw)
+
+
+def parse_jwks(text: str, *, production: bool = False) -> dict[str, Ed25519PublicKey]:
     """Parse a JWKS document into `{kid: Ed25519PublicKey}`.
 
     Strict: every key must be `kty=OKP`, `crv=Ed25519`, carry a unique `kid` and
-    a 32-byte `x`; `alg`/`use`, when present, must be `EdDSA`/`sig`. A key with
-    private material (`d`) rejects the whole file - a private key in the
-    engine's config is an incident, not something to quietly ignore. Error
-    messages name the entry index, never key material.
+    a 32-byte `x` that is a canonical, large-order curve point (see
+    `validate_ed25519_public_key`); `alg`/`use`, when present, must be
+    `EdDSA`/`sig`. A key with private material (`d`) rejects the whole file - a
+    private key in the engine's config is an incident, not something to quietly
+    ignore. With `production`, the published test-vector keys and kids are
+    refused too. Error messages name the entry index, never key material.
     """
     try:
         data = json.loads(text)
@@ -171,44 +287,77 @@ def parse_jwks(text: str) -> dict[str, Ed25519PublicKey]:
             raw = _b64url_decode(x)
             if len(raw) != 32:
                 raise ValueError("wrong length")
-            keys[kid] = Ed25519PublicKey.from_public_bytes(raw)
+            if x != _b64url_encode(raw):
+                raise ValueError("non-canonical base64url")
+            key = validate_ed25519_public_key(raw)
         except (ValueError, binascii.Error):
-            raise JwtConfigError(f"JWKS key {i} has an invalid Ed25519 'x'") from None
+            raise JwtConfigError(
+                f"JWKS key {i} has an invalid Ed25519 'x' (must be a canonical, "
+                "large-order curve point)"
+            ) from None
+        if production and (kid.startswith(TEST_VECTOR_KID_PREFIX) or x in TEST_VECTOR_PUBLIC_X):
+            raise JwtConfigError(
+                f"JWKS key {i} is a published TEST-VECTOR key; KALOS_ENV=production refuses it"
+            )
+        keys[kid] = key
     return keys
+
+
+_Sig = tuple[int, int, int, int, bool] | None
 
 
 class JwksKeyStore:
     """The trusted public keys, re-read whenever the file changes.
 
-    The file's (mtime_ns, size, inode) is checked on every lookup (one `stat`);
-    the JSON is re-parsed only when that changes. Rotate by writing the new file
-    and renaming it over the old one (atomic, new inode). A file that becomes
-    unreadable or malformed raises `JwtConfigError` on every lookup until fixed:
-    the previously loaded keys are dropped, never served stale.
+    The file's (mtime_ns, ctime_ns, size, inode) is checked on every lookup (one
+    `stat`); the JSON is re-parsed only when that changes (or `KALOS_ENV`
+    flips). Rotate by writing the new file and renaming it over the old one
+    (atomic, new inode). A file that becomes unreadable or malformed raises
+    `JwtConfigError` on every lookup until fixed: the previously loaded keys are
+    dropped, never served stale. The error is logged once per change, not once
+    per request.
     """
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = threading.Lock()
-        self._cached: tuple[tuple[int, int, int], dict[str, Ed25519PublicKey]] | None = None
+        self._cached: tuple[_Sig, dict[str, Ed25519PublicKey]] | None = None
+        self._failed: tuple[_Sig, JwtConfigError] | None = None
+
+    def _fail(self, sig: _Sig, exc: JwtConfigError) -> JwtConfigError:
+        exc.change_key = sig  # type: ignore[attr-defined]
+        self._cached = None
+        self._failed = (sig, exc)
+        log_config_error_once(exc)
+        return exc
 
     def keys(self) -> Mapping[str, Ed25519PublicKey]:
+        production = is_production()
         with self._lock:
             try:
                 st = os.stat(self.path)
-                sig = (st.st_mtime_ns, st.st_size, st.st_ino)
-                if self._cached is not None and self._cached[0] == sig:
-                    return self._cached[1]
+            except OSError:
+                sig: _Sig = None
+            else:
+                sig = (st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_ino, production)
+            if sig is not None and self._cached is not None and self._cached[0] == sig:
+                return self._cached[1]
+            if self._failed is not None and self._failed[0] == sig:
+                raise self._failed[1]
+            if sig is None:
+                raise self._fail(sig, JwtConfigError(f"cannot read {KEYS_FILE_VAR}"))
+            try:
                 text = self.path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
-                self._cached = None
-                raise JwtConfigError(f"cannot read {KEYS_FILE_VAR}") from None
+                raise self._fail(sig, JwtConfigError(f"cannot read {KEYS_FILE_VAR}")) from None
             try:
-                keys = parse_jwks(text)
-            except JwtConfigError:
-                self._cached = None
-                raise
+                keys = parse_jwks(text, production=production)
+            except JwtConfigError as exc:
+                raise self._fail(sig, exc) from None
             self._cached = (sig, keys)
+            if self._failed is not None:
+                self._failed = None
+                _clear_logged_error()
             return keys
 
 
@@ -245,14 +394,22 @@ def safe_log_value(value: object) -> str:
 
 def _numeric_date(claims: Mapping[str, Any], name: str) -> float:
     value = claims.get(name)
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(name)
-    return float(value)
+    try:
+        as_float = float(value)
+    except (OverflowError, TypeError):
+        raise ValueError(name) from None
+    if not math.isfinite(as_float) or not 0 < as_float < _MAX_NUMERIC_DATE:
+        raise ValueError(name)
+    return as_float
 
 
-def _identifier(claims: Mapping[str, Any], name: str) -> str:
+def _identifier(claims: Mapping[str, Any], name: str, *, subject_chars: bool = False) -> str:
     value = claims.get(name)
     if not isinstance(value, str) or not value or len(value) > _MAX_ID_CHARS:
+        raise ValueError(name)
+    if subject_chars and not _SUBJECT_CHARS.fullmatch(value):
         raise ValueError(name)
     return value
 
@@ -296,11 +453,12 @@ def verify_engine_token(
             key=key,
             algorithms=[ALGORITHM],
             audience=settings.audience,
-            issuer=settings.issuer,
             options={
                 "verify_signature": True,
                 "verify_aud": True,
-                "verify_iss": True,
+                # iss is compared EXACTLY below, not by PyJWT (2.10.0 matched
+                # substrings of a string iss: CVE-2024-53861).
+                "verify_iss": False,
                 "strict_aud": True,  # aud must be exactly the configured string
                 "verify_exp": False,  # time checks below, against the injected clock
                 "verify_nbf": False,
@@ -314,10 +472,16 @@ def verify_engine_token(
         raise TokenRejected("missing_claim", kid=kid) from None
     except jwt.InvalidAudienceError:
         raise TokenRejected("bad_aud", kid=kid) from None
-    except jwt.InvalidIssuerError:
-        raise TokenRejected("bad_iss", kid=kid) from None
     except jwt.PyJWTError:
         raise TokenRejected("invalid", kid=kid) from None
+    except (TypeError, ValueError):
+        # malformed claim shapes PyJWT does not wrap (e.g. a list where it
+        # expects a string)
+        raise TokenRejected("invalid", kid=kid) from None
+
+    iss = claims.get("iss")
+    if not isinstance(iss, str) or iss != settings.issuer:
+        raise TokenRejected("bad_iss", kid=kid)
 
     # Signature verified from here on, so jti is the issuer's own value.
     raw_jti = claims.get("jti")
@@ -328,7 +492,7 @@ def verify_engine_token(
         nbf = _numeric_date(claims, "nbf")
     except ValueError:
         raise TokenRejected("bad_time_claim", kid=kid, token_id=jti) from None
-    if exp <= iat:
+    if exp <= iat or nbf > exp:
         raise TokenRejected("bad_time_claim", kid=kid, token_id=jti)
     if exp - iat > settings.max_ttl_s:
         raise TokenRejected("ttl_too_long", kid=kid, token_id=jti)
@@ -341,8 +505,8 @@ def verify_engine_token(
         raise TokenRejected("issued_in_future", kid=kid, token_id=jti)
 
     try:
-        subject = _identifier(claims, "sub")
-        session_id = _identifier(claims, "sid")
+        subject = _identifier(claims, "sub", subject_chars=True)
+        session_id = _identifier(claims, "sid", subject_chars=True)
         token_id = _identifier(claims, "jti")
     except ValueError:
         raise TokenRejected("bad_identity_claim", kid=kid, token_id=jti) from None
