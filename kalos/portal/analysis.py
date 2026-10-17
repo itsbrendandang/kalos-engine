@@ -690,6 +690,10 @@ def _refuse_unusable_target(
     verdict = assess_target_variation(df[target])
     if verdict.varies:
         return
+    if verdict.status == "constant" and verdict.n_numeric < MIN_FIT_ROWS:
+        # Too few measured values to fit anything, whether or not they agree:
+        # "add more runs" is the actionable answer, not "the target is constant".
+        raise _too_few_rows(verdict.n_numeric, str(target))
     ctx = _target_error_context(df, target, num, profile, verdict)
     tail = "No model can be fit and no proposals were generated."
     if verdict.status == "constant":
