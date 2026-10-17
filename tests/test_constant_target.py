@@ -183,7 +183,7 @@ def test_upload_with_constant_target_returns_structured_400(client, no_fit):
     assert "Traceback" not in resp.text
     # nothing was published or seeded for a refused sheet
     assert c.get("/api/latest").json() == {"has_data": False}
-    assert store.get() is None
+    assert store.get(tenant="default") is None
 
 
 def test_campaign_reanalyze_refuses_when_every_value_is_identical(client, no_fit):
@@ -193,7 +193,7 @@ def test_campaign_reanalyze_refuses_when_every_value_is_identical(client, no_fit
         "pH": np.linspace(5, 7, 8).round(2),
         "lipase_titer": [5.0] * 8,
     })
-    store.seed(df, "lipase_titer", ["Methanol", "pH"])
+    store.seed(df, "lipase_titer", ["Methanol", "pH"], tenant="default")
     started = c.post("/api/campaign/start", json={"recipes": [
         {"recipe": {"Methanol": 2.0, "pH": 6.0}, "pred": 5.0, "std": 0.1,
          "mode": "explore", "reason": "t"},
@@ -202,4 +202,4 @@ def test_campaign_reanalyze_refuses_when_every_value_is_identical(client, no_fit
     resp = c.post("/api/campaign/reanalyze")
     assert resp.status_code == 400
     assert resp.json()["code"] == "target_constant"
-    assert store.get()["round"] == 0  # nothing committed
+    assert store.get(tenant="default")["round"] == 0  # nothing committed
