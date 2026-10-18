@@ -155,6 +155,22 @@ def _b64url_encode(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
+def _parse_header(token: str) -> dict[str, Any] | None:
+    """The protected header as a JSON object, or None if it is not one.
+
+    Read here rather than with `jwt.get_unverified_header`: PyJWT validates
+    `kid` and `crit` while parsing, and raises a generic error for them. That
+    made a well-formed JWS with a non-string `kid` or an unknown `crit` look
+    `malformed`, which sends a two-dot bearer to the static-token fallback. A
+    parseable JWS must get its own reason code and never fall back.
+    """
+    try:
+        obj = json.loads(_b64url_decode(token.split(".", 1)[0]))
+    except ValueError:  # includes binascii.Error and UnicodeDecodeError
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
 # --- config-error logging, once per change -------------------------------------- #
 
 _log_lock = threading.Lock()
@@ -440,10 +456,9 @@ def verify_engine_token(
     """
     if len(token) > MAX_TOKEN_CHARS:
         raise TokenRejected("too_large")
-    try:
-        header = jwt.get_unverified_header(token)
-    except jwt.PyJWTError:
-        raise TokenRejected("malformed") from None
+    header = _parse_header(token) if token.count(".") == 2 else None
+    if header is None:
+        raise TokenRejected("malformed")
     kid = header.get("kid")
     if header.get("alg") != ALGORITHM:
         raise TokenRejected("bad_alg", kid=kid if isinstance(kid, str) else None)

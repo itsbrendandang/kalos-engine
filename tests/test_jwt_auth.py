@@ -824,6 +824,23 @@ def test_a_parseable_jwt_that_fails_verification_never_falls_back(keys, clean_en
     assert _reason(keys.auth, forged, caplog) == "bad_signature"
 
 
+@pytest.mark.parametrize("header,reason", [
+    ({"alg": "EdDSA", "typ": "JWT", "kid": "k1", "crit": ["exp"]}, "crit_header"),
+    ({"alg": "EdDSA", "typ": "JWT", "kid": ["k1"]}, "missing_kid"),
+    ({"alg": "EdDSA", "typ": "JWT", "kid": "k1", "crit": "exp"}, "crit_header"),
+])
+def test_parseable_jws_with_a_bad_header_is_classified_and_never_falls_back(
+        keys, clean_env, caplog, header, reason):
+    """A well-formed JWS whose header PyJWT would reject (a non-string kid, an
+    unknown crit) must get its own reason code. The token is also stored as a
+    static record: a fallback would authenticate it, so a 401 proves none."""
+    token = _unsigned(header, _claims(), b"x" * 64)
+    clean_env.setenv("KALOS_AUTH_TOKENS", json.dumps([
+        {"token_sha256": _sha(token), "subject": "s", "tenant": "acme", "scopes": [READ]},
+    ]))
+    assert _reason(keys.auth, token, caplog) == reason
+
+
 def test_open_mode_unaffected_in_dev(clean_env):
     auth = Authenticator()
     assert auth.enforces() is False
