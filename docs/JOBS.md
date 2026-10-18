@@ -391,7 +391,14 @@ The rules are those of the campaign routes (docs/CAMPAIGNS_API.md), applied to j
   and a second runner on that state directory refuses with `RunnerLocked`. The
   engine then fails to boot, rather than accepting job submissions no runner
   would ever run. A start with `WEB_CONCURRENCY` above 1 is refused too, with a
-  message naming the variable and exit status `2` (`python -m kalos.portal`). Run one engine process per state directory
+  message naming the variable and exit status `2` (`python -m kalos.portal`).
+  **Direct `uvicorn` is not refused.** Running `uvicorn kalos.portal.app:app`
+  with several workers (`--workers`, or `WEB_CONCURRENCY` > 1, which uvicorn
+  reads itself) still exits `0`: the workers fail their lifespan startup, and
+  uvicorn's supervisor reports that as its own clean stop. The app cannot fix
+  this from inside (the supervisor never imports it). The deployed entrypoint,
+  `python -m kalos.portal` (deploy/engine/Containerfile), refuses with `2`. Run
+  uvicorn directly only with one worker. Run one engine process per state directory
   (docs/HARDENING.md). The lock is POSIX-only (`fcntl`); on a platform without
   it the engine refuses to start only when jobs are enabled, and
   `KALOS_JOBS_ENABLED=0` runs the sync API there.
