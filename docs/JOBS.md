@@ -234,6 +234,33 @@ Queued jobs survive a restart and are admitted as usual. Running ones are not
 resumed: the upload is resubmitted by the client (the analysis is
 deterministic, so a resubmit reproduces the result).
 
+## Logs
+
+Analysis runs on customer data, so the logs are treated as customer-adjacent.
+
+- **Worker analysis failures** (`analysis_failed`, `parse_error`, `fit_failed`)
+  log one line: the code, the exception type and the innermost `file:line in
+  function`. They do not log the exception message or the traceback, because
+  a parser or `KeyError` message quotes customer column names and cell values
+  (`kalos/portal/job_worker.py`, `_log_analysis_failure`). Other codes log the
+  code only. A job's `error` (stored in the database, not logged) carries the
+  same message the sync route returns for that refusal.
+- **Worker stderr** is inherited from the engine process (`job_runner.py`
+  starts workers with no stderr redirect). Anything a worker writes outside
+  `run_job` lands in the engine's log stream.
+- **Runner logs** (`job_runner.py`) cover scheduling and infrastructure
+  failures: spawn, pid, claim, recording an outcome. The runner never parses an
+  upload, so customer text should not reach it. Its `log.exception` calls still
+  record full tracebacks, so the same expectation applies.
+- **The sync route is not stricter.** `/api/run`, the campaign reanalyze and
+  the scale readout log full tracebacks in their catch-alls, which can carry
+  the same text. Jobs add a second place where it can appear, not a new kind
+  of exposure.
+
+Expectation for operators: do not ship engine or worker logs to a third party
+unredacted. If logs leave the host, filter them first, or send them only to
+systems that are inside the same data-handling boundary as the uploads.
+
 ## Isolation
 
 The rules are those of the campaign routes (docs/CAMPAIGNS_API.md), applied to jobs:

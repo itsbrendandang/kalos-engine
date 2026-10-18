@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sqlite3
 import sys
@@ -193,6 +194,28 @@ def test_error_messages_are_fixed_text_not_exception_text(store):
     done = _drive(_runner(store, boom), store, "acme", job["id"])
     assert done["state"] == "failed" and done["error"]["code"] == "analysis_failed"
     assert "ZEUS" not in json.dumps(done)
+
+
+def test_worker_logs_type_code_and_location_not_customer_text(store, caplog):
+    """LOW10: an unexpected analysis failure is logged as type, code and the
+    innermost file:line, never the exception message or the traceback's
+    source lines (a KeyError or ValueError quotes customer column names)."""
+
+    def boom(*_a, **_k):
+        raise KeyError("column 'PROJECT-ZEUS-SECRET' has bad values")
+
+    job = _submit(store)
+    with caplog.at_level("DEBUG"):
+        done = _drive(_runner(store, boom), store, "acme", job["id"])
+    assert done["state"] == "failed" and done["error"]["code"] == "analysis_failed"
+    failures = [r for r in caplog.records if "background job failed during analysis" in r.getMessage()]
+    assert len(failures) == 1
+    rec = failures[0]
+    assert rec.exc_info is None  # no traceback attached
+    assert "code=analysis_failed" in rec.getMessage()
+    assert "type=KeyError" in rec.getMessage()
+    assert re.search(r"at test_jobs\.py:\d+ in boom$", rec.getMessage())  # innermost frame
+    assert "ZEUS" not in caplog.text  # neither the message nor a traceback line
 
 
 # --- queue depth, upload size ---------------------------------------------------- #

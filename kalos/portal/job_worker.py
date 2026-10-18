@@ -29,6 +29,7 @@ import os
 import sys
 import threading
 import time
+import traceback
 from collections.abc import Callable
 from typing import Any
 
@@ -127,13 +128,32 @@ def run_job(
     except Exception as exc:  # noqa: BLE001 - every failure becomes the job's recorded outcome
         code, message = classify(exc)
         if code in {"analysis_failed", "parse_error", "fit_failed"}:
-            log.exception("background job failed during analysis (code=%s)", code)
+            _log_analysis_failure(code, exc)
         else:
             log.warning("background job failed: code=%s", code)
         jobs.finish(store, tenant=tenant, job_id=job_id, state="failed", code=code, message=message)
         return "failed"
     jobs.purge_input(store, row["input_path"])
     return "succeeded"
+
+
+def _log_analysis_failure(code: str, exc: BaseException) -> None:
+    """Log an unexpected analysis failure as its type, code and innermost
+    location only (file:line in function), never the message or the source
+    lines. A parser or KeyError message quotes customer column names and cell
+    values, and worker stderr reaches the engine's log stream (docs/JOBS.md,
+    "Logs"). The traceback is dropped on purpose; the location is what a
+    developer needs to find the line."""
+    frames = traceback.extract_tb(exc.__traceback__)
+    if frames:
+        last = frames[-1]
+        where = f"{os.path.basename(last.filename)}:{last.lineno} in {last.name}"
+    else:
+        where = "unknown location"
+    log.error(
+        "background job failed during analysis: code=%s type=%s at %s",
+        code, type(exc).__qualname__, where,
+    )
 
 
 def _commit(conn: Any, new_generation: str, *, tenant: str, job_id: str) -> None:
