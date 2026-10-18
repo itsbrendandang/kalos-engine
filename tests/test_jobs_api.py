@@ -9,9 +9,11 @@ schedules jobs behind the test's back.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
+import threading
 import time
 import uuid
 
@@ -22,7 +24,7 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from kalos.portal import busy, job_worker, jobs  # noqa: E402
+from kalos.portal import busy, job_worker, jobs, jobs_api  # noqa: E402
 from kalos.portal import app as portal_module  # noqa: E402
 from kalos.portal import campaign as campaign_module  # noqa: E402
 from kalos.portal.app import app  # noqa: E402
@@ -199,6 +201,105 @@ def test_queue_depth_answers_429_with_retry_after(env, monkeypatch):
     assert r.status_code == 429
     assert int(r.headers["retry-after"]) == busy.RETRY_AFTER_SECONDS
     assert "queued or running" in r.json()["error"]
+
+
+def _job_files(store: CampaignStore) -> list[str]:
+    base = store.state_dir / jobs.JOBS_DIRNAME
+    return sorted(str(p) for p in base.glob("*/*")) if base.exists() else []
+
+
+def test_a_full_queue_is_refused_before_the_upload_is_parsed_or_written(env, monkeypatch):
+    """HIGH2: the depth check runs before the preflight parse, and nothing is written."""
+    tc, store = env
+    monkeypatch.setenv("KALOS_JOB_QUEUE_DEPTH", "1")
+    cid = _campaign(tc, "a-write")
+    assert _submit(tc, "a-write", cid).status_code == 202
+    before = _job_files(store)
+    parsed: list[bytes] = []
+    monkeypatch.setattr(jobs_api, "preflight_upload", lambda raw, *a, **k: parsed.append(raw))
+    r = _submit(tc, "a-write", cid)
+    assert r.status_code == 429
+    assert parsed == []
+    assert _job_files(store) == before
+
+
+def test_preflight_runs_under_a_slot_and_a_busy_engine_refuses_the_submit(env, monkeypatch):
+    tc, store = env
+    held = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(jobs_api, "_preflight_slots", held)
+    held.acquire()  # the one preflight slot is in use
+    cid = _campaign(tc, "a-write")
+    before = _job_files(store)
+    r = _submit(tc, "a-write", cid)
+    assert r.status_code == 503
+    assert int(r.headers["retry-after"]) == busy.RETRY_AFTER_SECONDS
+    assert _job_files(store) == before and jobs.list_jobs(store, tenant="acme", campaign_id=cid) == []
+    held.release()
+    assert _submit(tc, "a-write", cid).status_code == 202
+
+
+def test_a_running_job_does_not_stop_the_same_tenant_submitting_another(env):
+    """The preflight is not the tenant's analysis slot: with one slot per tenant
+    and a job running, the next submission is still accepted (202)."""
+    tc, store = env
+    cid = _campaign(tc, "a-write")
+    release = threading.Event()
+
+    def blocked(df, target, **kw):
+        release.wait(10)
+        return _stub_analyze(df, target, **kw)
+
+    first = _submit(tc, "a-write", cid).json()["job"]
+    runner = JobRunner(store, spawn=lambda j, _t, _d: ThreadWorker(
+        lambda stop: job_worker.run_job(store, j, analyze=blocked, should_stop=stop)),
+        timeout_s=60, poll_s=0.01)
+    runner.tick()
+    assert jobs.get_job(store, tenant="acme", job_id=first["id"])["state"] == "running"
+    assert _submit(tc, "a-write", cid).status_code == 202
+    release.set()
+    _drain(runner, store, "acme", first["id"])
+
+
+def test_a_cancelled_preflight_releases_its_slot_only_when_the_work_never_started(monkeypatch):
+    sem = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(jobs_api, "_preflight_slots", sem)
+
+    async def cancelled_before_the_thread_ran(*_a, **_k):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(jobs_api, "run_in_threadpool", cancelled_before_the_thread_ran)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(jobs_api._preflight_gated(lambda: None))
+    assert sem.acquire(blocking=False) is True  # released: nothing ran
+    sem.release()
+
+
+def test_a_cancelled_preflight_keeps_its_slot_until_the_parse_finishes(monkeypatch):
+    sem = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(jobs_api, "_preflight_slots", sem)
+    started, finish = threading.Event(), threading.Event()
+
+    def parse():
+        started.set()
+        finish.wait(10)
+
+    async def scenario():
+        task = asyncio.ensure_future(jobs_api._preflight_gated(parse))
+        await asyncio.to_thread(started.wait, 10)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The request is gone, but the parse still runs: its slot is still held.
+        assert sem.acquire(blocking=False) is False
+        finish.set()
+        for _ in range(500):  # the thread releases the slot when the parse returns
+            if sem.acquire(blocking=False):
+                sem.release()
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("the parse's slot was never released")
+
+    asyncio.run(scenario())
 
 
 def test_upload_over_the_tenant_limit_is_413(env, monkeypatch):

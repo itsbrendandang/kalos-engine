@@ -251,6 +251,26 @@ def _write_input(path: Path, raw: bytes) -> None:
     os.replace(tmp, path)
 
 
+def _active_depth(conn: sqlite3.Connection, tenant: str) -> int:
+    return int(conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE tenant = ? AND state IN ('queued', 'running')",
+        (tenant,),
+    ).fetchone()[0])
+
+
+def check_queue_capacity(store: CampaignStore, *, tenant: str) -> None:
+    """Refuse with `QueueFull` if `tenant` is already at its queue depth. A cheap
+    read, so the submit route can refuse BEFORE it reads the upload or parses it.
+    `enqueue` repeats the check inside its transaction, which is the one that
+    counts (two submissions can both pass this check)."""
+    validate_tenant_id(tenant)
+    settings = job_settings()
+    with store._txn(write=False) as conn:
+        depth = _active_depth(conn, tenant)
+    if depth >= settings.queue_depth:
+        raise QueueFull(settings.queue_depth)
+
+
 def enqueue(
     store: CampaignStore, *, tenant: str, campaign_id: str, raw: bytes, filename: str,
     target: str, anonymize: bool, roles: str, sheet: str | None, requested_by: str | None,
@@ -290,10 +310,7 @@ def enqueue(
                 raise CampaignNotFound()
             if campaign.archived_at is not None:
                 raise CampaignArchived()
-            depth = conn.execute(
-                "SELECT COUNT(*) FROM jobs WHERE tenant = ? AND state IN ('queued', 'running')",
-                (tenant,),
-            ).fetchone()[0]
+            depth = _active_depth(conn, tenant)
             if depth >= settings.queue_depth:
                 raise QueueFull(settings.queue_depth)
             now = time.time()

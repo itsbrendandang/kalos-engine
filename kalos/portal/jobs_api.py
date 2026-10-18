@@ -19,12 +19,15 @@ writes a best-effort audit row (job id, outcome; never the file or its name).
 
 Limits answer honestly: 413 for an upload over the tenant's job size limit,
 429 (with Retry-After) when the tenant's queue is full, 503 when jobs are
-disabled.
+disabled or when no preflight slot is free (Retry-After).
 """
 from __future__ import annotations
 
+import functools
 import logging
 import re
+import threading
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
@@ -49,6 +52,57 @@ from kalos.portal.pipeline import preflight_upload
 log = logging.getLogger("kalos.portal")
 
 router = APIRouter()
+
+# The submit route parses the upload before it is queued (`preflight_upload`, the
+# sync route's refusals). That parse is CPU and memory work, so it runs on a thread
+# under one of these process-wide slots, separate from the analysis slots of
+# busy.py: a tenant's own running job must not stop it from submitting the next one.
+# A submit that finds no free slot is refused (503, Retry-After), never queued.
+PREFLIGHT_CONCURRENCY = 2
+_preflight_slots = threading.BoundedSemaphore(PREFLIGHT_CONCURRENCY)
+
+
+class PreflightBusy(Exception):
+    """Every preflight slot is in use right now."""
+
+
+async def _preflight_gated(call: Callable[[], Any]) -> Any:
+    """Run `call` on a thread under a preflight slot. The slot is taken without
+    blocking, in the event loop, before a thread is spawned. It is released by the
+    thread when the work finishes, so an awaiting request that is cancelled cannot
+    free a slot while the parse still runs. If the cancel lands before the thread
+    has started the work, the work is skipped and the slot is released here."""
+    if not _preflight_slots.acquire(blocking=False):
+        raise PreflightBusy()
+    guard = threading.Lock()
+    state = {"started": False, "abandoned": False, "released": False}
+
+    def release() -> None:
+        with guard:
+            if state["released"]:
+                return
+            state["released"] = True
+        _preflight_slots.release()
+
+    def work() -> Any:
+        with guard:
+            if state["abandoned"]:
+                return None
+            state["started"] = True
+        try:
+            return call()
+        finally:
+            release()
+
+    try:
+        return await run_in_threadpool(work)
+    except BaseException:
+        with guard:
+            abandon = not state["started"]
+            state["abandoned"] = abandon
+        if abandon:
+            release()
+        raise
 
 JOB_UPLOAD_PATH = re.compile(r"/api/campaigns/cmp_[0-9a-f]{32}/jobs/?")
 _JOB_NOT_FOUND = {"error": "job not found"}
@@ -171,6 +225,11 @@ async def _submit(
         return JSONResponse({"error": "background jobs are misconfigured"}, status_code=503), None
     if not settings.enabled:
         return _job_error_response(jobs.JobsDisabled()), None
+    # Refuse a full queue before the body is read or parsed (cheap; re-checked in enqueue).
+    try:
+        jobs.check_queue_capacity(store, tenant=principal.tenant)
+    except CampaignError as exc:
+        return _job_error_response(exc), None
     # One byte past the tenant's limit is enough to refuse; never hold more.
     raw = await file.read(settings.max_upload_bytes + 1)
     if len(raw) > settings.max_upload_bytes:
@@ -185,11 +244,16 @@ async def _submit(
             {"error": "the campaign is archived; it can be read but not changed"}, status_code=409,
         )
         return response, None
-    # The sync route's refusals, before a job is spent on the file.
+    # The sync route's refusals, before a job is spent on the file. Nothing is written yet.
     try:
-        await run_in_threadpool(
+        await _preflight_gated(functools.partial(
             preflight_upload, raw, target or None, anonymize, filename, roles, sheet=sheet,
-        )
+        ))
+    except PreflightBusy:
+        return JSONResponse(
+            {"error": "the engine is checking other uploads; retry shortly"}, status_code=503,
+            headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
+        ), None
     except Exception as exc:  # noqa: BLE001 - mapped to the documented envelopes
         return upload_error(exc), None
     try:

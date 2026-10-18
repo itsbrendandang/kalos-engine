@@ -106,11 +106,15 @@ envelope now, not a failed job later.
 | `409` | The campaign is archived. |
 | `413` | The upload is over the tenant's job size limit, or over the engine's upload cap. |
 | `429` | The tenant already has `KALOS_JOB_QUEUE_DEPTH` queued or running jobs. `Retry-After` is set. |
-| `503` | Jobs are disabled (`KALOS_JOBS_ENABLED=0`) or the job settings are malformed. |
+| `503` | Jobs are disabled (`KALOS_JOBS_ENABLED=0`), the job settings are malformed, or every preflight slot is in use. `Retry-After` is set on the last. |
 
 ## Lifecycle and guarantees
 
-**Submit.** The upload is written under `<KALOS_STATE_DIR>/jobs/<sha256(tenant)[:16]>/<job_id>.bin`
+**Submit.** The queue depth is checked first, from a cheap read, so a full
+tenant is refused before its upload is read or parsed. The upload is then
+checked by the same pre-fit refusals as `/api/run` (parsed on a thread, under
+one of `PREFLIGHT_CONCURRENCY` process-wide slots: see "Scheduling and
+limits"). Only then is the upload written under `<KALOS_STATE_DIR>/jobs/<sha256(tenant)[:16]>/<job_id>.bin`
 and its SHA-256 and size are recorded. The row is inserted in the same
 transaction that checks the queue depth and the campaign, so a refused
 submission leaves no row; the file is removed again.
@@ -150,6 +154,7 @@ process on a modest machine.
 | Analyses running at once (sync and job together) | `KALOS_JOB_WORKERS` | `2` | whole engine |
 | Analyses one tenant may run at once | `KALOS_JOB_PER_TENANT` | `1` | per tenant |
 | Queued + running jobs | `KALOS_JOB_QUEUE_DEPTH` | `8` | per tenant |
+| Uploads being checked (parsed) at once, before they are queued | fixed: `PREFLIGHT_CONCURRENCY` | `2` | whole engine |
 | Upload size for a job (at most the engine's upload cap) | `KALOS_JOB_MAX_UPLOAD_BYTES` | the engine upload cap | per tenant |
 | Wall-clock limit for one job, then its worker is killed | `KALOS_JOB_TIMEOUT_S` | `1800` | per job |
 | Turn the queue off (routes answer 503; status still reads) | `KALOS_JOBS_ENABLED` | `1` | whole engine |
