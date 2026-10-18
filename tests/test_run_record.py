@@ -202,14 +202,19 @@ def test_stored_dataset_label_only_hides_under_anonymize():
 _TYPES = {
     "schema_version": int, "input_sha256": str, "input_bytes": int, "target": str,
     "profile": str, "roles_declared": (dict, type(None)), "anonymize": bool, "seed": int,
-    "torch_threads": int, "build_sha": str, "library_versions": dict,
+    "torch_threads": (int, type(None)), "torch_threads_actual": (int, type(None)),
+    "max_fit_rows": int, "sheet_index": (int, type(None)), "sheet_hash": (str, type(None)),
+    "build_sha": str, "library_versions": dict,
     "validation_mode": str, "n_rows": int, "n_features": int, "kind": str,
     "pending_runs": int, "gates": dict,
 }
 _KEYS_PLAIN = set(_TYPES) | {"filename", "sheet"}
 
 
-def test_key_set_and_types_are_pinned():
+def test_key_set_and_types_are_pinned(monkeypatch):
+    # Independent of the environment: a deployment's validation mode (or thread
+    # pin, build sha) must not change which keys exist or their types.
+    monkeypatch.setenv("KALOS_VALIDATION_MODE", "warn")
     _, plain = compute_upload_analysis(_csv(), "lipase_titer", False, FILENAME,
                                        analyze=_stub_analyze)
     run = plain["run"]
@@ -220,7 +225,7 @@ def test_key_set_and_types_are_pinned():
     assert set(run["library_versions"]) == {"numpy", "pandas", "torch", "botorch"}
     assert all(v is None or isinstance(v, str) for v in run["library_versions"].values())
     assert run["profile"] == "bioprocess" and run["roles_declared"] is None
-    assert run["validation_mode"] == "warn"
+    assert run["validation_mode"] == "warn"  # pinned by the monkeypatch above
 
 
 def test_anonymize_key_set_is_pinned_without_filename_and_sheet():
@@ -247,7 +252,7 @@ def test_old_blob_without_run_still_loads(store):
     store.save_analysis(old, "old.csv", tenant="acme")
     loaded = store.load_analysis(tenant="acme")
     assert loaded is not None and loaded["marker"] == "pre-run-record"
-    assert loaded.get("run") is None
+    assert "run" not in loaded  # absent (no key), not null
     assert loaded["seed"] == 1234 and loaded["engine_version"] == "0.0.0"
 
 
@@ -265,4 +270,4 @@ def test_same_bytes_same_stack_same_proposals():
     assert first["proposal_features"] == second["proposal_features"]
     # the existing audit keys stay at the top level for back-compat
     assert first["seed"] == second["seed"] == first["run"]["seed"]
-    assert first["engine_version"] and first["run"]["torch_threads"] >= 0
+    assert first["engine_version"] and first["run"]["torch_threads_actual"] >= 1

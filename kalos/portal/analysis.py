@@ -2110,6 +2110,7 @@ def anonymize_sheet_rejection(rej: UploadRejected) -> UploadRejected:
 def anonymize_parsed(parsed: ParsedUpload) -> ParsedUpload:
     """The same workbook with its sheet names aliased (see `sheet_alias`), so the
     response context, the error annotations and the stored fields all agree."""
+    # `replace` keeps sheet_index and sheet_hash (computed from the real names).
     return dataclasses.replace(
         parsed,
         sheets=[sheet_alias(n) for n in parsed.sheets],

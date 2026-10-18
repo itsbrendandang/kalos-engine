@@ -16,7 +16,7 @@ it is a timestamp or a process id; that is what makes "same bytes, same stack,
 same thread count -> same record" hold.
 
 Stored inside the existing analyses JSON blob (no migration). Rows written
-before this block existed read as `run: null`.
+before this block existed have no `run` key at all.
 
 PRIVACY: with `anonymize=True` the record omits `filename` and `sheet` entirely
 (keys absent, not null). Only the hash remains. The stored `dataset` label is
@@ -82,7 +82,11 @@ class RunRecord:
     roles_declared: dict[str, Any] | None
     anonymize: bool
     seed: int
-    torch_threads: int
+    torch_threads: int | None
+    torch_threads_actual: int | None
+    max_fit_rows: int
+    sheet_index: int | None
+    sheet_hash: str | None
     build_sha: str
     library_versions: dict[str, str | None]
     validation_mode: str
@@ -106,7 +110,15 @@ class RunRecord:
             ),
             "anonymize": self.anonymize,
             "seed": self.seed,
+            # None = unpinned (KALOS_TORCH_THREADS=0: torch keeps its own default).
             "torch_threads": self.torch_threads,
+            # What torch reported when the fit ran; None if torch was never loaded.
+            "torch_threads_actual": self.torch_threads_actual,
+            "max_fit_rows": self.max_fit_rows,
+            # The analysed sheet: its position in the workbook and a salted hash of
+            # its name (the same hash the alias uses). Both null for a CSV.
+            "sheet_index": self.sheet_index,
+            "sheet_hash": self.sheet_hash,
             "build_sha": self.build_sha,
             "library_versions": dict(self.library_versions),
             "validation_mode": self.validation_mode,
@@ -145,12 +157,16 @@ def build(
     *,
     kind: str = "upload",
     pending_runs: int = 0,
+    sheet_index: int | None = None,
+    sheet_hash: str | None = None,
+    torch_threads_actual: int | None = None,
 ) -> RunRecord:
     """Assemble the record for one analysis. `raw_bytes` is the exact input the
     parser saw (an upload) or `fold_bytes(df)` (a reanalyze); the hash is over
     those bytes, not over a re-serialized frame."""
     if kind not in KINDS:
         raise ValueError(f"unknown run kind {kind!r}")
+    from kalos.portal.uploads import MAX_FIT_ROWS  # deferred, as for validation_mode
     # Deferred: kalos.portal.analysis imports cleanly without torch, but this
     # module should not pull the analysis stack in at import time. Reading the
     # mode through analysis.validation_mode keeps one definition of the rule.
@@ -172,7 +188,12 @@ def build(
         roles_declared=roles,
         anonymize=bool(anonymize),
         seed=int(seed),
-        torch_threads=int(torch_threads),
+        # 0 is the config's "do not pin" value; it is recorded as null, not 0.
+        torch_threads=int(torch_threads) if int(torch_threads) > 0 else None,
+        torch_threads_actual=torch_threads_actual,
+        max_fit_rows=int(MAX_FIT_ROWS),
+        sheet_index=sheet_index,
+        sheet_hash=sheet_hash,
         build_sha=build_sha(),
         library_versions=_library_versions(),
         validation_mode=validation_mode(),

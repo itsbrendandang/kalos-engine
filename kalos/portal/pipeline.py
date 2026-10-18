@@ -74,6 +74,16 @@ def _parse(raw: bytes, filename: str, sheet: str | None, anonymize: bool) -> Par
     return anonymize_parsed(parsed) if anonymize else parsed
 
 
+def torch_threads_actual() -> int | None:
+    """What torch reports as its thread count now, or None when torch has not
+    been loaded (a stub analysis, or a path that never fit). Read at record time,
+    after the fit, so it is the count the fit actually ran with."""
+    import sys
+
+    torch = sys.modules.get("torch")
+    return int(torch.get_num_threads()) if torch is not None else None
+
+
 def _roles_and_profile(roles_json: str) -> tuple[Any, Any]:
     from kalos.domains import BIOPROCESS_PROFILE, GENERIC_PROFILE, ColumnRoles
 
@@ -163,7 +173,8 @@ def compute_upload_analysis(
     record = run_record.build(
         raw, filename, parsed.sheet_used, result.get("target", target), roles_json,
         anonymize, profile_name, TORCH_THREADS, int(result.get("seed", ANALYZE_SEED)),
-        len(parsed.df), int(result["d"]),
+        len(parsed.df), int(result["d"]), sheet_index=parsed.sheet_index,
+        sheet_hash=parsed.sheet_hash, torch_threads_actual=torch_threads_actual(),
     )
     return parsed.df, {**result, **parsed.context(), "run": record.to_dict()}
 
@@ -182,6 +193,7 @@ def attach_reanalyze_run(
         run_record.fold_bytes(df), None, None, result.get("target"), "", anonymize,
         "bioprocess", TORCH_THREADS, int(result.get("seed", ANALYZE_SEED)),
         len(df), int(result["d"]), kind="reanalyze", pending_runs=pending_runs,
+        torch_threads_actual=torch_threads_actual(),
     )
     return {**result, "run": record.to_dict()}
 

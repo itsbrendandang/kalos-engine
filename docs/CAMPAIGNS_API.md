@@ -141,14 +141,18 @@ schema `run.schema_version` = 1). It says what produced the result:
 
 | Field | Meaning |
 |---|---|
-| `schema_version` | `1` today. Bumped when a field is added, renamed or retyped. |
+| `schema_version` | `1`. Bumped when a field is added, renamed or retyped, from the first release of the record. Schema 1 has not shipped: fields added during review (`kind`, `pending_runs`, the fit and sheet fields below) stayed in version 1. |
 | `kind` | `upload` (a run sheet: `/api/run`, `/api/campaigns/{id}/upload`, jobs) or `reanalyze` (`POST /api/campaign/reanalyze`, the campaign's folded base dataset). |
 | `input_sha256`, `input_bytes` | SHA-256 and length of the uploaded bytes exactly as received. For `kind=reanalyze`: of the folded dataset serialized as CSV (`fold_bytes`). |
 | `filename`, `sheet` | The upload's name and the sheet analyzed (Excel). **Absent** when `anonymize` is true. |
 | `target` | The target the analysis used (the resolved one when the request left it blank). |
 | `profile` | `bioprocess` (inferred roles) or `generic` (declared roles). |
 | `roles_declared` | The `roles` object the caller sent, or `null`. |
-| `anonymize`, `seed`, `torch_threads` | The request's anonymize flag, the fit seed, and the torch thread count. |
+| `anonymize`, `seed` | The request's anonymize flag and the fit seed. |
+| `torch_threads` | The configured thread count (`KALOS_TORCH_THREADS`). **`null` = unpinned** (the config said 0: torch keeps its own default). |
+| `torch_threads_actual` | `torch.get_num_threads()` when the fit ran; `null` if torch was never loaded. |
+| `max_fit_rows` | The engine's fit-row cap (`KALOS_MAX_FIT_ROWS`) in force. |
+| `sheet_index`, `sheet_hash` | Position of the analysed sheet in the workbook, and a salted hash of its name (the alias hash). Both `null` for a CSV. Kept under anonymize. |
 | `build_sha` | `KALOS_BUILD_SHA` at image build (CI sets it to the commit), else `unknown`. |
 | `library_versions` | `numpy`, `pandas`, `torch`, `botorch` (`null` if not installed). |
 | `validation_mode` | `warn` or `strict` (`KALOS_VALIDATION_MODE`). |
@@ -160,7 +164,8 @@ Compatibility:
 
 - The top-level `seed` and `engine_version` keys are unchanged.
 - The block is stored inside the existing analyses JSON blob. No migration.
-  Rows written before it existed read back with `run: null`.
+  Rows written before it existed have **no `run` key** at all (absent, not
+  `null`). Test for the key, not for a null value.
 - The sync routes and background jobs attach the same block for the same bytes,
   because both call `kalos.portal.pipeline.compute_upload_analysis`.
 

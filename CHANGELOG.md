@@ -30,8 +30,13 @@ Newest first.
   seed, torch threads, `build_sha`, library versions, validation mode, row and
   feature counts, and the keys of the gate decisions it refers to. Sync routes
   and background jobs attach the same block for the same bytes. Stored inside
-  the existing analyses blob; no migration. Rows written earlier read as
-  `run: null`. `seed` and `engine_version` are unchanged. (docs/CAMPAIGNS_API.md)
+  the existing analyses blob; no migration. Rows written earlier have no `run`
+  key (absent, not null). `seed` and `engine_version` are unchanged.
+  (docs/CAMPAIGNS_API.md)
+- The record also states the fit-row cap (`max_fit_rows`), the thread count
+  torch actually ran with (`torch_threads_actual`; `torch_threads` is `null`
+  when unpinned, not `0`), and the analysed sheet's index and salted hash
+  (`sheet_index`, `sheet_hash`).
 - `KALOS_BUILD_SHA` (set by CI from `github.sha` via the image's build arg) is
   recorded as `run.build_sha`; `unknown` when not provided.
 - `python -m kalos.portal` takes `<KALOS_STATE_DIR>/engine.lock` (flock) and

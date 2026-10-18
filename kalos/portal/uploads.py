@@ -476,6 +476,11 @@ class ParsedUpload:
     sheets: list[str] = field(default_factory=list)
     sheet_used: str | None = None
     sheet_requested: bool = False
+    # Position of `sheet_used` in `sheets`, and its salted hash, both computed
+    # from the REAL name in `parse_upload` (before any anonymize aliasing), so a
+    # run record can say which sheet it read without carrying the name.
+    sheet_index: int | None = None
+    sheet_hash: str | None = None
 
     def context(self) -> dict:
         """The keys the API response carries (Excel uploads only)."""
@@ -687,6 +692,11 @@ def parse_upload(
     # arrives from pandas as the int 1, which would never equal a requested
     # `target="1"` and would mix types in every name list downstream.
     parsed.df.columns = parsed.df.columns.map(str)
+    if parsed.sheet_used is not None:
+        from kalos.data.anonymizer import _hash  # deferred: keep uploads' imports minimal
+
+        parsed.sheet_index = parsed.sheets.index(parsed.sheet_used)
+        parsed.sheet_hash = _hash(parsed.sheet_used)
     return parsed
 
 
