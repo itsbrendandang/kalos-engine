@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -186,17 +187,47 @@ def _kill_group(pid: int | None) -> None:
         pass
 
 
-def _is_job_worker(pid: int, job_id: str) -> bool:
-    """Whether `pid` is alive and its command line names `job_id` (so a reused
-    pid is never signalled)."""
+def _command_line(pid: int) -> str | None:
+    """The command line of the live process `pid`, or None when it cannot be read
+    (it exited, or the platform gives no way to read it). On Linux it comes from
+    /proc, which needs no helper program, so it works in slim images without `ps`.
+    Where /proc does not exist (macOS), it comes from `ps`, if it is installed."""
+    if os.path.isdir("/proc/self"):
+        try:
+            raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        except OSError:
+            return None
+        return raw.replace(b"\0", b" ").decode("utf-8", "replace").strip() or None
+    if shutil.which("ps") is None:
+        return None
     try:
         out = subprocess.run(  # noqa: S603 - fixed argv
             ["ps", "-o", "command=", "-p", str(pid)],
             capture_output=True, text=True, timeout=5, check=False,
         ).stdout
     except (OSError, subprocess.SubprocessError):
-        return False
-    return job_id in out and "job_worker" in out
+        return None
+    return out.strip() or None
+
+
+def _is_job_worker(pid: int, job_id: str) -> bool:
+    """Whether `pid` is alive and its command line names `job_id`. A job id is unique
+    (`job_` + 32 hex), so a reused pid running something else never matches. When the
+    command line cannot be read, the answer is no: an unverified pid is never signalled."""
+    cmd = _command_line(pid)
+    return cmd is not None and job_id in cmd and "job_worker" in cmd
+
+
+def _kill_recorded_group(pid: int) -> None:
+    """Kill the process group the job's worker leads. The worker is a session leader
+    (`ProcessWorker`), so its group id is its pid; a pid that no longer leads a group
+    is not signalled."""
+    try:
+        if os.getpgid(pid) != pid:
+            return
+    except OSError:
+        return
+    _kill_group(pid)
 
 
 def recover(store: CampaignStore) -> int:
@@ -207,7 +238,7 @@ def recover(store: CampaignStore) -> int:
     for row in jobs.running_jobs(store):
         pid = row.get("worker_pid")
         if isinstance(pid, int) and _is_job_worker(pid, str(row["id"])):
-            _kill_group(pid)
+            _kill_recorded_group(pid)
         if jobs.finish(store, tenant=str(row["tenant"]), job_id=str(row["id"]),
                        state="failed", code="interrupted",
                        message=jobs.ERROR_MESSAGES["interrupted"]):

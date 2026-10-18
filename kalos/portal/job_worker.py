@@ -26,6 +26,7 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import signal
 import sys
 import threading
 import time
@@ -167,7 +168,7 @@ def _commit(conn: Any, new_generation: str, *, tenant: str, job_id: str) -> None
 
 def start_lifetime_watchdog(
     deadline_s: float, *, parent_pid: int, interval_s: float = 1.0,
-    exit_fn: Callable[[int], None] = os._exit,
+    exit_fn: Callable[[int], None] = os._exit, kill_group: bool = False,
 ) -> threading.Event:
     """Stop this worker when nobody is left to read its result: when `deadline_s`
     seconds have passed since the watchdog started, or when its parent (the engine
@@ -176,7 +177,13 @@ def start_lifetime_watchdog(
     step neither kills a live worker nor extends one. Runs in a daemon thread.
     Exits with status 3 and writes no job state: the job is recorded by the next
     engine start (`interrupted`). Returns an Event that stops the watchdog (tests;
-    the worker process just exits)."""
+    the worker process just exits).
+
+    `kill_group` (the worker process only, see `main`): before exiting, SIGKILL the
+    worker's own process group, so the children it started die with it. Children
+    are not otherwise stopped when their parent exits. Only pass it when this
+    process leads its group (`ProcessWorker` makes it so): the group id is then
+    this process's own, and no other group is touched."""
     stop = threading.Event()
     end = time.monotonic() + deadline_s
 
@@ -188,11 +195,23 @@ def start_lifetime_watchdog(
                 log.error("job worker: past its deadline; exiting")
             else:
                 continue
+            if kill_group:
+                _kill_own_group()
             exit_fn(3)
             return
 
     threading.Thread(target=_watch, name="kalos-job-watchdog", daemon=True).start()
     return stop
+
+
+def _kill_own_group() -> None:
+    """SIGKILL this process's group. That includes this process, which dies at once
+    (SIGKILL cannot be caught), so the caller's `exit_fn` runs only if the signal
+    fails, and is then the fallback."""
+    try:
+        os.killpg(os.getpid(), signal.SIGKILL)
+    except OSError:
+        log.error("job worker: could not kill its process group")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -212,7 +231,9 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError:
             print("KALOS_JOB_DEADLINE_S must be a number of seconds", file=sys.stderr)
             return 2
-        start_lifetime_watchdog(seconds, parent_pid=os.getppid())
+        # Group leader (the runner's ProcessWorker is a session leader): the group is ours.
+        leads_group = hasattr(os, "getpgid") and os.getpgid(0) == os.getpid()
+        start_lifetime_watchdog(seconds, parent_pid=os.getppid(), kill_group=leads_group)
     from kalos.portal.campaign import CampaignStore
 
     try:

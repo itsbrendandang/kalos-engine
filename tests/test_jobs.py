@@ -477,13 +477,25 @@ def test_a_worker_that_exits_on_its_own_is_failed_and_its_group_is_killed(store)
 
 
 def _gone(pid: int) -> bool:
+    """Exited (or a zombie). Reads /proc where it exists, so it needs no `ps`."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return True
+    if os.path.isdir("/proc/self"):
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text()
+        except OSError:
+            return True
+        return stat.rsplit(")", 1)[-1].split()[0] == "Z"
     state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],  # noqa: S603 - fixed argv
                            capture_output=True, text=True, check=False).stdout.strip()
     return state == "" or state.startswith("Z")
+
+
+_CHILD_IGNORING_TERM = (
+    "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(600)"
+)
 
 
 def test_a_worker_that_exits_leaves_no_process_group_members_behind(store, tmp_path):
@@ -1095,3 +1107,123 @@ def test_the_worker_watchdog_is_not_moved_by_a_wall_clock_jump(monkeypatch):
     time.sleep(0.2)
     stop.set()
     assert fired == []
+
+
+def _wait_for_file(path: Path, timeout: float = 30.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not path.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert path.exists(), f"{path} was never written"
+
+
+def test_an_engine_less_worker_and_its_child_are_killed_together(tmp_path, monkeypatch):
+    """N3, real processes: a worker whose engine is gone, with a child that ignores
+    SIGTERM. The watchdog SIGKILLs the worker's whole process group, so the worker
+    and the child both die. Before, the watchdog ended only the worker."""
+    monkeypatch.setenv("PYTHONPATH", str(Path(job_worker.__file__).resolve().parents[2]))
+    pidfile = tmp_path / "child.pid"
+    script = (
+        "import pathlib, subprocess, sys, time\n"
+        "from kalos.portal.job_worker import start_lifetime_watchdog\n"
+        f"child = subprocess.Popen([sys.executable, '-c', {_CHILD_IGNORING_TERM!r}])\n"
+        f"pathlib.Path({str(pidfile)!r}).write_text(str(child.pid))\n"
+        "start_lifetime_watchdog(600.0, parent_pid=-1, interval_s=0.05, kill_group=True)\n"
+        "time.sleep(600)\n"
+    )
+    worker = job_runner.ProcessWorker("job_" + "a" * 32, tmp_path, argv=[sys.executable, "-c", script])
+    _wait_for_file(pidfile)
+    child_pid = int(pidfile.read_text())
+    deadline = time.monotonic() + 30
+    while worker.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert worker.poll() is not None, "the engine-less worker did not exit"
+    deadline = time.monotonic() + 10
+    while not _gone(child_pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert _gone(child_pid), "the worker's child survived the worker's own exit"
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc/self"), reason="the /proc check is Linux-only")
+def test_recover_kills_a_live_worker_group_without_running_ps(store, tmp_path, monkeypatch):
+    """N3: after an engine crash the next start kills the worker group the job
+    recorded, identifying the worker from /proc, not from `ps` (absent in slim images).
+    Before, the check ran `ps` and never killed anything without it."""
+    monkeypatch.setenv("PYTHONPATH", str(Path(job_worker.__file__).resolve().parents[2]))
+    job = _submit(store)
+    job_id = str(job["id"])
+    jobs.claim(store, tenant="acme", runner_id="crashed-engine")
+    pidfile = tmp_path / "child.pid"
+    script = (
+        "import pathlib, subprocess, sys, time\n"
+        f"child = subprocess.Popen([sys.executable, '-c', {_CHILD_IGNORING_TERM!r}])\n"
+        f"pathlib.Path({str(pidfile)!r}).write_text(str(child.pid))\n"
+        "time.sleep(600)\n"
+    )
+    # The argv names the job, as the real worker's does (`python -m kalos.portal.job_worker <id>`).
+    worker = job_runner.ProcessWorker(job_id, tmp_path,
+                                      argv=[sys.executable, "-c", script, "job_worker", job_id])
+    jobs.attach_worker(store, tenant="acme", job_id=job_id, pid=int(worker.pid))
+    _wait_for_file(pidfile)
+    child_pid = int(pidfile.read_text())
+
+    def no_ps(*_a, **_k):
+        raise AssertionError("recover must not need ps")
+
+    monkeypatch.setattr(job_runner.subprocess, "run", no_ps)
+    assert job_runner.recover(store) == 1
+    deadline = time.monotonic() + 10
+    while worker.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert worker.poll() is not None, "the crashed engine's worker survived recovery"
+    deadline = time.monotonic() + 10
+    while not _gone(child_pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert _gone(child_pid), "the worker's child survived recovery"
+    done = jobs.get_job(store, tenant="acme", job_id=job_id)
+    assert done["state"] == "failed" and done["error"]["code"] == "interrupted"
+
+
+def test_recover_never_signals_a_live_process_that_is_not_the_job_worker(store, tmp_path):
+    """N3 guard: a pid recorded for a job that now belongs to another process (a
+    reused pid) is left alone: its command line does not name the job."""
+    job = _submit(store)
+    job_id = str(job["id"])
+    jobs.claim(store, tenant="acme", runner_id="crashed-engine")
+    bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+    try:
+        jobs.attach_worker(store, tenant="acme", job_id=job_id, pid=bystander.pid)
+        assert job_runner.recover(store) == 1
+        assert bystander.poll() is None, "recovery signalled an unrelated process"
+    finally:
+        bystander.kill()
+        bystander.wait()
+
+
+
+def test_the_worker_main_kills_its_group_when_its_deadline_passes(tmp_path, monkeypatch):
+    """N3, end to end through `job_worker.main`: a worker past its deadline (its job
+    stands in as a long `run_job`) takes its child down with it, the child ignoring
+    SIGTERM. Covers the wiring: the group-leading worker enables the group kill."""
+    monkeypatch.setenv("PYTHONPATH", str(Path(job_worker.__file__).resolve().parents[2]))
+    job_id = "job_" + "b" * 32
+    pidfile = tmp_path / "child.pid"
+    script = (
+        "import pathlib, subprocess, sys, time\n"
+        "from kalos.portal import job_worker\n"
+        f"child = subprocess.Popen([sys.executable, '-c', {_CHILD_IGNORING_TERM!r}])\n"
+        f"pathlib.Path({str(pidfile)!r}).write_text(str(child.pid))\n"
+        "job_worker.run_job = lambda *a, **k: time.sleep(600)\n"
+        f"sys.exit(job_worker.main([{job_id!r}]))\n"
+    )
+    worker = job_runner.ProcessWorker(job_id, tmp_path, argv=[sys.executable, "-c", script],
+                                      deadline_s=1.0)
+    _wait_for_file(pidfile)
+    child_pid = int(pidfile.read_text())
+    deadline = time.monotonic() + 30
+    while worker.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert worker.poll() is not None, "the worker did not stop at its deadline"
+    deadline = time.monotonic() + 10
+    while not _gone(child_pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert _gone(child_pid), "the worker's child survived its deadline"

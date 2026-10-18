@@ -237,24 +237,44 @@ Each worker gets a deadline in `KALOS_JOB_DEADLINE_S`: the seconds left at
 spawn, `KALOS_JOB_TIMEOUT_S` plus a 60 s margin. The worker measures it on its
 own monotonic clock, so a wall-clock step (NTP, a manual change) neither kills
 a live worker nor extends one. The monotonic clock does not advance while the
-machine is suspended, so the time limit counts running time, not sleep time. The runner normally stops it at
-the time limit, but a worker whose engine has gone (killed, or crashed before
-it could kill the worker) would otherwise run on, unsupervised. So a watchdog
-thread in the worker process ends it (exit status 3, no job state written)
-once the deadline has passed, or as soon as its parent is no longer the engine
-that started it. A job still `running` at the next engine start is recorded
-`interrupted` (see below). Until then a publish is still all-or-nothing: it
-commits with the job's `succeeded` state, or not at all.
+machine is suspended, so the time limit counts running time, not sleep time.
+
+The runner normally stops a worker at the time limit. But a worker whose engine
+has gone (killed, or crashed before it could kill the worker) would otherwise
+run on, unsupervised, and so would its children. So a watchdog thread in the
+worker process ends it once the deadline has passed, or as soon as its parent
+is no longer the engine that started it (checked every second). It then
+`SIGKILL`s its own process group, which the worker leads (`ProcessWorker`
+starts it as a session leader), so every child it started dies with it, and
+exits with status 3. No job state is written: the job is recorded
+`interrupted` by the next engine start (see below), and until then a publish is
+still all-or-nothing: it commits with the job's `succeeded` state, or not at all.
+
+Only a worker that leads its group sets the group kill (`start_lifetime_watchdog`,
+`kill_group`), so the watchdog never signals a group it did not create.
 
 ## Restart and crash recovery
 
 On startup the runner, before admitting anything:
 
-1. fails every job left `running` with `interrupted`, killing its worker first
-   if the recorded pid is still alive **and** its command line names that job
-   (so a reused pid is never signalled);
+1. fails every job left `running` with `interrupted`. For each job whose
+   recorded worker pid is still alive, it first checks that the pid's command
+   line names that job (the job id is unique, so a reused pid never matches).
+   On Linux the command line is read from `/proc`, which needs no helper
+   program, so this works in slim images such as `python:3.12-slim`. Where
+   `/proc` does not exist (macOS) it is read with `ps`, if installed. A pid
+   whose command line cannot be read is **not** signalled. A verified worker's
+   process group is then killed (the worker leads it, so the group id is the
+   recorded pid; a pid that no longer leads a group is left alone);
 2. deletes stored inputs that no queued or running job refers to, and any
    half-written upload (`.tmp`).
+
+The worker's watchdog already ends it, and its children, within about a second
+of its engine dying, so step 1 is the backstop for a worker whose watchdog could
+not run. A worker that has already exited leaves no command line to check, so
+any child it left behind is not signalled by recovery; the normal exit paths
+kill the group at once (see "Cancellation and timeouts"), so this is a narrow
+residual window.
 
 Queued jobs survive a restart and are admitted as usual. Running ones are not
 resumed: the upload is resubmitted by the client (the analysis is
