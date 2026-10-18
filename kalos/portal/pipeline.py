@@ -59,6 +59,21 @@ def ensure_torch_threads() -> None:
     _torch_threads_configured = True
 
 
+def _parse(raw: bytes, filename: str, sheet: str | None, anonymize: bool) -> ParsedUpload:
+    """`parse_upload`, with sheet names aliased under `anonymize`: the refusal
+    (`sheet_not_found`, `no_usable_sheet`) and the parsed workbook both carry
+    `sheet_<hash>` names, never the uploader's sheet names (kalos/portal/analysis.py)."""
+    from kalos.portal.analysis import anonymize_parsed, anonymize_sheet_rejection
+
+    try:
+        parsed = parse_upload(raw, filename=filename, sheet=sheet)
+    except UploadRejected as rej:
+        if anonymize:
+            raise anonymize_sheet_rejection(rej) from rej
+        raise
+    return anonymize_parsed(parsed) if anonymize else parsed
+
+
 def _roles_and_profile(roles_json: str) -> tuple[Any, Any]:
     from kalos.domains import BIOPROCESS_PROFILE, GENERIC_PROFILE, ColumnRoles
 
@@ -93,7 +108,7 @@ def preflight_upload(
     sheet context, `ValueError`, parser errors). Returns the parsed upload."""
     from kalos.portal.analysis import _analyze
 
-    parsed = parse_upload(raw, filename=filename, sheet=sheet)
+    parsed = _parse(raw, filename, sheet, anonymize)
     try:
         roles, profile = _roles_and_profile(roles_json)
         _analyze(parsed.df, target, anonymize=anonymize, roles=roles, profile=profile,
@@ -121,7 +136,7 @@ def compute_upload_analysis(
     ensure_torch_threads()
     if progress is not None:
         progress("parsing", 0.05)
-    parsed = parse_upload(raw, filename=filename, sheet=sheet)
+    parsed = _parse(raw, filename, sheet, anonymize)
     kwargs: dict[str, Any] = {"anonymize": anonymize}
     if progress is not None:
         kwargs["progress"] = progress

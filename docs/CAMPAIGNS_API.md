@@ -170,7 +170,11 @@ anonymized upload is anonymized too (before this, it published the real
 identifier names again).
 
 Privacy: with `anonymize=true` the stored `run` has no `filename` and no
-`sheet`, only the hash. A background job keeps no filename under anonymize
+`sheet`, only the hash. Workbook sheet names are aliased too: `sheets` and
+`sheet_used` in the response, the sheet names in refusals (`sheet_not_found`,
+`no_usable_sheet`) and in the analysis-error sentence all read `sheet_<hash>`.
+The alias is a salted hash (`KALOS_ANON_SALT`), so it does not let a client
+choose a sheet by its alias. A background job keeps no filename under anonymize
 either, only its extension, and clears its stored parameters when it reaches a
 terminal state (docs/JOBS.md, "Job parameters"). The stored `dataset` label is then
 `anonymized upload <first 12 hex of input_sha256>`, not the filename. The

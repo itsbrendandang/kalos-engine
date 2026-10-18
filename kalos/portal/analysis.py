@@ -5,6 +5,7 @@ so the model never "predicts" titer from another measured output (leakage).
 """
 from __future__ import annotations
 
+import dataclasses
 import functools
 import gc
 import os
@@ -37,6 +38,7 @@ from kalos.domains import (
 from kalos.portal.uploads import (
     MAX_FIT_ROWS,
     MIN_FIT_ROWS,
+    ParsedUpload,
     UploadRejected,
     _ERR_TOO_MANY_FIT_ROWS,
     clip_name,
@@ -2033,6 +2035,42 @@ def _anonymize_result(result: dict) -> dict:
         _alias_named_row(e, alias) for e in out.get("design_box_exclusions", [])
     ]
     return out
+
+
+def sheet_alias(name: str) -> str:
+    """The `anonymize=True` name of a workbook sheet. Sheet names are not column
+    names, but they are the uploader's words ("Tank 3 raw", "Patient 12"), so
+    under anonymize every response, error and stored field carries this instead.
+    Same salted-hash scheme as column aliases (`col_...`)."""
+    return f"sheet_{_hash(name)[:8]}"
+
+
+def anonymize_sheet_rejection(rej: UploadRejected) -> UploadRejected:
+    """`rej` with every sheet name in its context and message replaced by
+    `sheet_alias`: the requested `sheet`, the `sheets` list and `sheet_used`."""
+    context = dict(rej.context)
+    message = rej.message
+    names: list[str] = []
+    for key in ("sheet", "sheet_used"):
+        if isinstance(context.get(key), str):
+            names.append(context[key])
+            context[key] = sheet_alias(context[key])
+    if isinstance(context.get("sheets"), list):
+        names.extend(n for n in context["sheets"] if isinstance(n, str))
+        context["sheets"] = [sheet_alias(n) if isinstance(n, str) else n for n in context["sheets"]]
+    for name in names:
+        message = message.replace(repr(clip_name(name)), repr(sheet_alias(name)))
+    return UploadRejected(message, code=rej.code, context=context)
+
+
+def anonymize_parsed(parsed: ParsedUpload) -> ParsedUpload:
+    """The same workbook with its sheet names aliased (see `sheet_alias`), so the
+    response context, the error annotations and the stored fields all agree."""
+    return dataclasses.replace(
+        parsed,
+        sheets=[sheet_alias(n) for n in parsed.sheets],
+        sheet_used=sheet_alias(parsed.sheet_used) if parsed.sheet_used is not None else None,
+    )
 
 
 def anonymize_rejection(rej: UploadRejected) -> UploadRejected:
