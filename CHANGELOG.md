@@ -4,6 +4,27 @@ Newest first.
 
 ## Unreleased
 
+### Added - run record and engine lock (`feat/run-record`)
+
+- Every analysis result carries a versioned `run` block (`run.schema_version`
+  1): input SHA-256 and size, sheet, target, profile, declared roles, anonymize,
+  seed, torch threads, `build_sha`, library versions, validation mode, row and
+  feature counts, and the keys of the gate decisions it refers to. Sync routes
+  and background jobs attach the same block for the same bytes. Stored inside
+  the existing analyses blob; no migration. Rows written earlier read as
+  `run: null`. `seed` and `engine_version` are unchanged. (docs/CAMPAIGNS_API.md)
+- `KALOS_BUILD_SHA` (set by CI from `github.sha` via the image's build arg) is
+  recorded as `run.build_sha`; `unknown` when not provided.
+- `python -m kalos.portal` takes `<KALOS_STATE_DIR>/engine.lock` (flock) and
+  refuses to start when another engine holds it (exit 2). (docs/HARDENING.md)
+
+### Changed - anonymized uploads store no filename
+
+- With `anonymize=true` the stored analysis carries no filename: the `run`
+  block omits `filename` and `sheet`, and the stored `dataset` label is
+  `anonymized upload <hash prefix>`. Before, the raw filename was stored as the
+  campaign's dataset label even when anonymize was requested.
+
 ### Added - background analysis jobs (`feat/background-jobs`, docs/JOBS.md)
 
 - `POST /api/campaigns/{id}/jobs` queues an upload analysis and returns `202`;

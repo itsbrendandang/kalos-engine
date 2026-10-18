@@ -134,6 +134,47 @@ campaign id: another tenant's job, a missing one and a malformed one all get
 the same `404 {"error": "job not found"}`. Lifecycle, error codes, limits and
 the restart rules are in docs/JOBS.md.
 
+### Run record (provenance)
+
+Every analysis result carries a `run` block (`kalos/portal/run_record.py`,
+schema `run.schema_version` = 1). It says what produced the result:
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | `1` today. Bumped when a field is added, renamed or retyped. |
+| `input_sha256`, `input_bytes` | SHA-256 and length of the uploaded bytes exactly as received. |
+| `filename`, `sheet` | The upload's name and the sheet analyzed (Excel). **Absent** when `anonymize` is true. |
+| `target` | The target the analysis used (the resolved one when the request left it blank). |
+| `profile` | `bioprocess` (inferred roles) or `generic` (declared roles). |
+| `roles_declared` | The `roles` object the caller sent, or `null`. |
+| `anonymize`, `seed`, `torch_threads` | The request's anonymize flag, the fit seed, and the torch thread count. |
+| `build_sha` | `KALOS_BUILD_SHA` at image build (CI sets it to the commit), else `unknown`. |
+| `library_versions` | `numpy`, `pandas`, `torch`, `botorch` (`null` if not installed). |
+| `validation_mode` | `warn` or `strict` (`KALOS_VALIDATION_MODE`). |
+| `n_rows`, `n_features` | Rows parsed; features the model was fit on. |
+| `gates` | Keys in this result where the gate decisions live: `promotion`, `proposal_gating`, `validation`. The decisions are not copied into `run`. |
+
+Compatibility:
+
+- The top-level `seed` and `engine_version` keys are unchanged.
+- The block is stored inside the existing analyses JSON blob. No migration.
+  Rows written before it existed read back with `run: null`.
+- The sync routes and background jobs attach the same block for the same bytes,
+  because both call `kalos.portal.pipeline.compute_upload_analysis`.
+
+Privacy: with `anonymize=true` the stored `run` has no `filename` and no
+`sheet`, only the hash. The stored `dataset` label is then
+`anonymized upload <first 12 hex of input_sha256>`, not the filename. The
+`target` and any declared `roles` keep their real column names, as the
+existing `target` field already does; anonymize only pseudonymizes the
+identifier-type columns in the analysis body.
+
+Determinism: the same bytes give the same proposals on the same library stack
+and the same torch thread count (`run.torch_threads`, `run.library_versions`).
+That is the only claim. A different torch or botorch version, or a different
+thread count, may legitimately change the numbers. Compare `run` before
+comparing proposals.
+
 ## Not in this slice
 
 - Background jobs for reanalyze (it still runs synchronously; upload has a job route).

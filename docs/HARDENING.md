@@ -67,6 +67,7 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 | `KALOS_JOB_PER_TENANT` | Analyses one tenant may run at once. With the default one tenant can never hold every slot. Must be >= 1. | `1` |
 | `KALOS_JOB_QUEUE_DEPTH` | Queued + running jobs one tenant may hold; more answers 429. Must be >= 1. | `8` |
 | `KALOS_JOB_MAX_UPLOAD_BYTES` | Largest upload a job accepts, per tenant. Must be <= the engine's upload cap. | the upload cap |
+| `KALOS_BUILD_SHA` | Commit the engine was built from, recorded as `run.build_sha` on every analysis. CI passes `github.sha` at image build (`deploy/engine/Containerfile`). | `unknown` |
 | `KALOS_JOB_TIMEOUT_S` | Wall-clock limit for one job; past it the worker is killed and the job is `timed_out`. Must be >= 1. | `1800` |
 
 When neither `KALOS_AUTH_TOKENS_FILE` nor `KALOS_AUTH_TOKENS` is set, the API runs in **open mode** (anonymous `default` tenant, read+write, admin withheld) and logs a warning at startup.
@@ -135,6 +136,16 @@ A review of progress against the readiness scorecard surfaced that campaign + la
 - **P4 - Move `_LATEST` into SQLite: DONE by schema v2** (`feat/campaign-schema-v2`, docs/MIGRATIONS.md): an `analyses` row per campaign, written in the fold's transaction. Original plan: a `latest(tenant, state, updated_at)` row in `portal.db`, retiring the per-tenant file cache; lets the reanalyze latest-write carry a generation stamp in one transaction, closing the documented sub-ms race. Prerequisite for P5 (one DB file = complete tenant state).
 - **P5 - Backups + restore/DR**: scheduled SQLite online `.backup()` into `KALOS_BACKUP_DIR` + a documented restore runbook. Do P4 first so a snapshot captures all state.
 
+### One engine per state directory
+
+`python -m kalos.portal` takes an exclusive, non-blocking `flock` on
+`<KALOS_STATE_DIR>/engine.lock` before it serves. A second engine on the same
+state directory exits with status 2 and a message naming the holder's PID,
+instead of sharing `portal.db` and the latest-analysis cache with the first.
+The kernel drops the lock when the process dies, so a crash leaves nothing
+stale. Job worker processes do not take the lock. Implementation:
+`kalos/portal/engine_lock.py`.
+
 ## Status log
 
 - Phase 1a authentication + authorization: **done** (merged).
@@ -143,5 +154,6 @@ A review of progress against the readiness scorecard surfaced that campaign + la
 - P1 experiments store tenant-scope + auth-gate: **done** on `feat/hardening-experiments-tenancy` - closes the cross-tenant leak the review found; the tenancy guarantee now covers all three stores (campaign, latest, experiments).
 - P0 engine hardening: **done** on `security/p0-engine-hardening` - tenant-id validation + injective latest-cache names, required `tenant` keyword on the stores, `KALOS_ENV=production`, async `/healthz` and generic `/readyz` reason, body-size cap + bounded campaign bodies. Per-tenant concurrency is out of scope (design pending).
 - Background jobs (P3, `feat/background-jobs`, docs/JOBS.md): **in review** - a persistent `jobs` table (schema v3), a worker process per job, a runner that admits jobs through the shared per-tenant and global limiter, status/cancel routes, per-job timeouts, per-tenant queue depth and upload limits, restart recovery, and cross-tenant isolation tests. Per-tenant concurrency, which the P0 entry above left out of scope, is now bounded by `KALOS_JOB_PER_TENANT`.
+- Run record (provenance, `feat/run-record`): **in review** - every analysis carries a versioned `run` block (input hash, sheet, target, roles, seed, thread count, build sha, library versions, validation mode, shape). Anonymized runs keep no filename or sheet. docs/CAMPAIGNS_API.md, "Run record". Engine state-directory lock (`engine.lock`) in the same branch.
 - P2 observability, P4 latest->SQLite, P5 backups: planned, not started (see "Next backbone" above). P4 is done by schema v2; see the entries above.
 - Schema v2 (multi-campaign storage): **in review** on `feat/campaign-schema-v2` - `portal.db` gains `schema_migrations`, multi-campaign `campaigns` (`cmp_` ids, `UNIQUE(id, tenant)`), `analyses` (replacing `_LATEST` and `latest/*.json`), `tenant_defaults` (the legacy routes act on the tenant default) and `audit_log`; WAL, `foreign_keys`, `busy_timeout`; every store write is `BEGIN IMMEDIATE` + generation compare-and-swap; explicit, backed-up, reversible migration (`python -m kalos.portal.migrate up|down|status`). Runbook: docs/MIGRATIONS.md.
