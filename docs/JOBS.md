@@ -266,8 +266,10 @@ check compares with that pid, so an engine that dies while its worker is still
 importing (a window of about a second) is seen, not missed.
 
 Each worker gets a deadline in `KALOS_JOB_DEADLINE_S`: the seconds left at
-spawn, `KALOS_JOB_TIMEOUT_S` plus a 60 s margin. The worker measures it on its
-own monotonic clock, so a wall-clock step (NTP, a manual change) neither kills
+spawn, `KALOS_JOB_TIMEOUT_S` plus a 60 s margin. The worker starts measuring it when its
+`main()` starts the watchdog, which is after the package imports (about a second
+after the spawn), not at spawn; the 60 s margin covers that. It uses its own
+monotonic clock, so a wall-clock step (NTP, a manual change) neither kills
 a live worker nor extends one. The monotonic clock does not advance while the
 machine is suspended, so the time limit counts running time, not sleep time.
 

@@ -1277,6 +1277,12 @@ def test_an_orphaned_worker_never_publishes(store, tmp_path, monkeypatch):
     done = jobs.get_job(store, tenant="acme", job_id=job_id)
     assert done["state"] != "succeeded", "an orphaned worker published"
     assert store.get(tenant="acme", campaign_id=cid) is None  # the campaign was not touched
+    # The job is left running by the dead engine; the next engine start settles it.
+    assert done["state"] == "running"
+    job_runner.recover(store)
+    settled = jobs.get_job(store, tenant="acme", job_id=job_id)
+    assert settled["state"] == "failed" and settled["error"]["code"] == "interrupted"
+    assert store.get(tenant="acme", campaign_id=cid) is None
 
 
 def test_a_worker_whose_engine_is_not_its_parent_publishes_nothing(store, monkeypatch):
