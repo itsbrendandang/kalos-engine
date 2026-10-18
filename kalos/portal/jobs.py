@@ -70,6 +70,9 @@ DEFAULT_GLOBAL_QUEUE_DEPTH = 64
 MAX_ROLES_CHARS = 16 * 1024
 DEFAULT_TIMEOUT_S = 1800.0
 JOBS_DIRNAME = "jobs"
+# The engine's pid, passed to each worker at spawn: a worker whose parent is no longer
+# this pid is an orphan, and must not analyse or publish (docs/JOBS.md, "Worker lifetime").
+ENGINE_PID_ENV = "KALOS_JOB_ENGINE_PID"
 # Shown to the caller for a job that did not finish. The code is the stable
 # part of the contract (docs/JOBS.md, "Error codes"); messages are fixed text.
 ERROR_MESSAGES = {

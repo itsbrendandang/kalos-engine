@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import math
 import os
 import signal
 import sys
@@ -76,6 +77,15 @@ def classify(exc: BaseException) -> tuple[str, str]:
     return "analysis_failed", "could not analyze the uploaded data"
 
 
+def _engine_is_gone() -> bool:
+    """True when the engine that started this worker is no longer its parent. Compares
+    with the engine pid the runner passed in (`ENGINE_PID_ENV`), never with a pid read
+    late in startup: a parent that died while this process was importing is reparented
+    before any such read, and would then look like the parent."""
+    raw = os.environ.get(jobs.ENGINE_PID_ENV, "").strip()
+    return raw.isdigit() and os.getppid() != int(raw)
+
+
 def run_job(
     store: Any,
     job_id: str,
@@ -104,7 +114,7 @@ def run_job(
     stop = should_stop or (lambda: False)
 
     def progress(stage: str, fraction: float) -> None:
-        if stop():
+        if stop() or _engine_is_gone():
             raise jobs.JobStopped()
         if jobs.cancel_requested(store, tenant=tenant, job_id=job_id):
             raise jobs.JobCancelled()
@@ -163,6 +173,11 @@ def _log_analysis_failure(code: str, exc: BaseException) -> None:
 
 
 def _commit(conn: Any, new_generation: str, *, tenant: str, job_id: str) -> None:
+    # Publish guard, inside the publish transaction (a raise rolls it back): an orphan
+    # publishes nothing. mark_succeeded also requires the job to still be `running`,
+    # which recovery changes when it fails a job its engine left behind.
+    if _engine_is_gone():
+        raise jobs.JobStopped()
     jobs.mark_succeeded(conn, tenant=tenant, job_id=job_id, generation=new_generation)
 
 
@@ -224,16 +239,21 @@ def main(argv: list[str] | None = None) -> int:
     if len(args) != 1 or JOB_ID_PATTERN.fullmatch(args[0]) is None:
         print("usage: python -m kalos.portal.job_worker <job_id>", file=sys.stderr)
         return 2
+    if _engine_is_gone():
+        log.error("job worker: the engine that started it is gone before it began; exiting")
+        return 3
     raw_deadline = os.environ.get("KALOS_JOB_DEADLINE_S", "").strip()
-    if raw_deadline:
+    raw_engine = os.environ.get(jobs.ENGINE_PID_ENV, "").strip()
+    if raw_deadline or raw_engine.isdigit():
         try:
-            seconds = float(raw_deadline)
+            seconds = float(raw_deadline) if raw_deadline else math.inf
         except ValueError:
             print("KALOS_JOB_DEADLINE_S must be a number of seconds", file=sys.stderr)
             return 2
         # Group leader (the runner's ProcessWorker is a session leader): the group is ours.
         leads_group = hasattr(os, "getpgid") and os.getpgid(0) == os.getpid()
-        start_lifetime_watchdog(seconds, parent_pid=os.getppid(), kill_group=leads_group)
+        parent = int(raw_engine) if raw_engine.isdigit() else os.getppid()
+        start_lifetime_watchdog(seconds, parent_pid=parent, kill_group=leads_group)
     from kalos.portal.campaign import CampaignStore
 
     try:

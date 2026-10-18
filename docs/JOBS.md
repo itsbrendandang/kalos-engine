@@ -217,6 +217,12 @@ an engine that would accept jobs and never run them.
   point. Either way nothing is published.
 - **Timeout:** the runner kills the worker when `KALOS_JOB_TIMEOUT_S` elapses
   and records `timed_out` (`error.code = timeout`).
+- **Orphaned worker.** A worker whose engine has died (its parent is no longer
+  the engine pid the runner passed in, `KALOS_JOB_ENGINE_PID`) does not analyse
+  or publish. It checks at start, at each progress point and in the publish
+  transaction, and exits (status 3). The publish is refused by the same guard
+  that refuses a job no longer `running`, so a publish from an orphan cannot
+  overwrite a campaign after a restart has recorded the job as `interrupted`.
 - **Engine shutdown:** the scheduler stops starting workers, then running
   workers are killed and their jobs are recorded `failed` with
   `engine_stopped`. A scheduling pass that is under way finishes first (the
@@ -241,6 +247,10 @@ way a worker ends (cancel, timeout, a crash, a clean exit) goes through that
 group kill, so a child process the worker left behind is stopped too.
 
 ## Worker lifetime
+
+Each worker is also given its engine's pid in `KALOS_JOB_ENGINE_PID`. The parent
+check compares with that pid, so an engine that dies while its worker is still
+importing (a window of about a second) is seen, not missed.
 
 Each worker gets a deadline in `KALOS_JOB_DEADLINE_S`: the seconds left at
 spawn, `KALOS_JOB_TIMEOUT_S` plus a 60 s margin. The worker measures it on its

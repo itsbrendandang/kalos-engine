@@ -1227,3 +1227,67 @@ def test_the_worker_main_kills_its_group_when_its_deadline_passes(tmp_path, monk
     while not _gone(child_pid) and time.monotonic() < deadline:
         time.sleep(0.05)
     assert _gone(child_pid), "the worker's child survived its deadline"
+
+
+_ORPHAN_WORKER = """
+import sys, time
+from kalos.portal import job_worker
+
+_real_run_job = job_worker.run_job
+
+def _slow_analyze(df, target, *, profile=None, anonymize=False, progress=None, roles=None, **_):
+    time.sleep(1.0)  # a publish that happens after the engine has died
+    return {"target": target, "proposal_features": ["Methanol", "pH"], "proposals": [],
+            "marker": "orphan"}
+
+job_worker.run_job = lambda store, job_id: _real_run_job(store, job_id, analyze=_slow_analyze)
+sys.exit(job_worker.main(sys.argv[1:]))
+"""
+
+
+def test_an_orphaned_worker_never_publishes(store, tmp_path, monkeypatch):
+    """D1, real processes: the engine that started a worker dies 0.2 s after the spawn,
+    while the worker is still importing. Before, the watchdog took its 'engine' pid
+    after the imports, so the orphan ran to completion and published over the campaign
+    (job succeeded, pending runs gone). Now the worker compares against the engine pid
+    it was given, checks it before any analysis, and refuses to publish."""
+    monkeypatch.setenv("PYTHONPATH", str(Path(job_worker.__file__).resolve().parents[2]))
+    cid = _campaign(store, "acme")
+    job = _submit(store, cid=cid)
+    job_id = str(job["id"])
+    jobs.claim(store, tenant="acme", runner_id="engine-that-dies")  # the job is running
+    pidfile = tmp_path / "worker.pid"
+    engine = (
+        "import os, pathlib, sys, time\n"
+        "from kalos.portal.job_runner import ProcessWorker\n"
+        f"w = ProcessWorker({job_id!r}, pathlib.Path({str(tmp_path)!r}), "
+        f"argv=[sys.executable, '-c', {_ORPHAN_WORKER!r}, {job_id!r}], deadline_s=60)\n"
+        f"pathlib.Path({str(pidfile)!r}).write_text(str(w.pid))\n"
+        "time.sleep(0.2)\n"
+        "os._exit(0)\n"  # the engine dies while its worker is still importing
+    )
+    env = {**os.environ, "KALOS_STATE_DIR": str(tmp_path)}
+    subprocess.run([sys.executable, "-c", engine], env=env, timeout=60, check=True)
+    _wait_for_file(pidfile)
+    worker_pid = int(pidfile.read_text())
+    deadline = time.monotonic() + 30
+    while not _gone(worker_pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert _gone(worker_pid), "the orphaned worker is still running"
+    done = jobs.get_job(store, tenant="acme", job_id=job_id)
+    assert done["state"] != "succeeded", "an orphaned worker published"
+    assert store.get(tenant="acme", campaign_id=cid) is None  # the campaign was not touched
+
+
+def test_a_worker_whose_engine_is_not_its_parent_publishes_nothing(store, monkeypatch):
+    """D1, the publish guard on its own: a worker told its engine is another process
+    (not its parent) stops before publishing. The job stays running and the campaign
+    is untouched. Deterministic, no process."""
+    cid = _campaign(store, "acme")
+    job = _submit(store, cid=cid)
+    job_id = str(job["id"])
+    jobs.claim(store, tenant="acme", runner_id="engine")
+    monkeypatch.setenv(jobs.ENGINE_PID_ENV, str(os.getppid() + 100_000))
+    assert job_worker.run_job(store, job_id, analyze=_stub_analyze) == "stopped"
+    assert jobs.get_job(store, tenant="acme", job_id=job_id)["state"] == "running"
+    assert store.get(tenant="acme", campaign_id=cid) is None

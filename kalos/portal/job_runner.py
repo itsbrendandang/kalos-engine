@@ -163,7 +163,7 @@ class ProcessWorker:
         self, job_id: str, state_dir: Path, *, argv: list[str] | None = None,
         deadline_s: float | None = None,
     ) -> None:
-        env = {**os.environ, "KALOS_STATE_DIR": str(state_dir)}
+        env = {**os.environ, "KALOS_STATE_DIR": str(state_dir), jobs.ENGINE_PID_ENV: str(os.getpid())}
         if deadline_s is not None:  # seconds from now: the worker exits itself past this
             env["KALOS_JOB_DEADLINE_S"] = repr(float(deadline_s))
         # `argv` replaces the worker command (tests only: a fake worker process).
