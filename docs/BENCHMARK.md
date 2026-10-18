@@ -129,3 +129,66 @@ The results JSON records: Python, OS, CPU, torch, botorch, gpytorch, numpy, scip
 - One batch size (q = 1 for synthetic, q = 4 for the bioprocess-like task), one noise level for the bioprocess-like task, and 4 dimensions for the synthetic tasks. Results do not generalise to other dimensions or budgets.
 - Arms are at library defaults, not at each library's best configuration. A tuned Optuna, Ax or BoTorch could do better. Kalos is not tuned either.
 - The `bioprocess_like_mixed` surface was designed by the author. Its difficulty is not calibrated against any real process.
+
+## 14. Results (confirmatory run, 2026-10-18)
+
+Run: `python -m kalos.bench --vs-baselines`, harness at `cc165b9` (the Ax seeding fix is in `d672736`, and no harness file changed after it). 900 runs, 30 seeds, 980 s wall on an Apple M3 Pro (11 cores, 10 workers).
+
+Files, all under `benchmarks/results/`:
+
+- `vs_baselines.json`: environment, seeds, summary per cell and method, paired comparisons with Kalos (mean difference, bootstrap CI, W/T/L, Wilcoxon p, Holm p).
+- `vs_baselines_runs.csv`: one row per run (900 rows), with final regret, reach-90% and reach-75% experiment counts, observed-best regret, timing and error text.
+- `vs_baselines_curves.csv`: normalised progress `p_t` after every measured experiment, for every run.
+- `vs_baselines_stdout.txt`: the printed tables.
+- `reproducibility_check.json`: four runs (three random plus one Ax run) rerun in a fresh process. All matched to 0.0 difference.
+- `superseded/run1_ax_unseeded/`: the first full run, kept unchanged. See section 12.
+
+Normalised regret (0 = optimum, 1 = median random point), mean [95% bootstrap CI], 30 seeds:
+
+| Method | Gaussian 0% | Gaussian 15% | Ackley 0% | Ackley 15% | Bioprocess-like 15% |
+| --- | --- | --- | --- | --- | --- |
+| Kalos | 0.002 [0.001, 0.002] | 0.186 [0.120, 0.257] | 0.246 [0.184, 0.309] | 0.521 [0.471, 0.571] | 0.217 [0.171, 0.264] |
+| Random | 0.333 [0.271, 0.392] | 0.333 [0.273, 0.393] | 0.605 [0.565, 0.644] | 0.605 [0.565, 0.643] | 0.440 [0.380, 0.498] |
+| LHS | 0.355 [0.304, 0.406] | 0.355 [0.301, 0.407] | 0.618 [0.583, 0.653] | 0.618 [0.584, 0.653] | 0.459 [0.404, 0.516] |
+| Optuna TPE | 0.133 [0.107, 0.161] | 0.161 [0.126, 0.202] | 0.450 [0.413, 0.485] | 0.541 [0.495, 0.581] | 0.326 [0.253, 0.401] |
+| Ax (default) | 0.002 [0.001, 0.002] | 0.191 [0.136, 0.253] | 0.284 [0.225, 0.346] | 0.522 [0.462, 0.582] | 0.325 [0.271, 0.379] |
+| Vanilla GP-EI | 0.002 [0.001, 0.003] | 0.206 [0.143, 0.273] | 0.296 [0.238, 0.357] | 0.526 [0.467, 0.583] | 0.276 [0.222, 0.332] |
+
+Paired calls against Kalos (per the rule in section 7; the Holm p-value is exploratory):
+
+| Cell | Comparator | Mean difference (method minus Kalos), 95% CI | W/T/L (Kalos) | Holm p | Call |
+| --- | --- | --- | --- | --- | --- |
+| Gaussian 0% | Optuna TPE | -0.131 [-0.159, -0.105] | 30/0/0 | <0.001 | Kalos better |
+| Gaussian 0% | Ax, GP-EI | ~0 | 0/30/0 (Ax 0/30/0) | 1.0 | unresolved |
+| Gaussian 15% | Optuna TPE | +0.026 [-0.054, 0.109] | 13/5/12 | 1.0 | unresolved |
+| Gaussian 15% | Ax | -0.005 [-0.072, 0.066] | 16/2/12 | 1.0 | unresolved |
+| Gaussian 15% | GP-EI | -0.019 [-0.088, 0.043] | 12/6/12 | 1.0 | unresolved |
+| Ackley 0% | Optuna TPE | -0.205 [-0.279, -0.125] | 25/0/5 | <0.001 | Kalos better |
+| Ackley 0% | Ax | -0.039 [-0.109, 0.034] | 16/5/9 | ~0.2 | unresolved |
+| Ackley 0% | GP-EI | -0.050 [-0.105, 0.003] | 20/1/9 | ~0.12 | unresolved |
+| Ackley 15% | Optuna TPE | -0.020 [-0.091, 0.053] | 16/3/11 | 1.0 | unresolved |
+| Ackley 15% | Ax | -0.001 [-0.079, 0.074] | 14/1/15 | 1.0 | unresolved |
+| Ackley 15% | GP-EI | -0.005 [-0.067, 0.053] | 11/5/14 | 1.0 | unresolved |
+| Bioprocess-like 15% | Optuna TPE | -0.109 [-0.201, -0.017] | 18/1/11 | 0.099 | Kalos better (borderline) |
+| Bioprocess-like 15% | Ax | -0.108 [-0.170, -0.048] | 19/2/9 | 0.019 | Kalos better |
+| Bioprocess-like 15% | GP-EI | -0.059 [-0.120, -0.0005] | 18/3/9 | 0.099 | Kalos better (borderline) |
+
+Random and LHS were compared with Kalos as well (all Kalos better; see `vs_baselines.json`).
+
+Experiments to reach 90% of the optimum (share of seeds reaching it, mean experiments censored at N+1):
+
+| Cell | Kalos | Random | LHS | Optuna TPE | Ax | Vanilla GP-EI |
+| --- | --- | --- | --- | --- | --- | --- |
+| Gaussian 0% (N=23) | 1.00, 12.9 | 0.13, 21.9 | 0.07, 22.6 | 0.40, 20.8 | 1.00, 13.1 | 1.00, 12.9 |
+| Gaussian 15% (N=23) | 0.53, 19.5 | 0.13, 21.9 | 0.07, 22.6 | 0.30, 21.1 | 0.33, 20.6 | 0.40, 20.2 |
+| Ackley 0% (N=23) | 0.27, 22.6 | 0.00, 24.0 | 0.00, 24.0 | 0.00, 24.0 | 0.13, 23.4 | 0.10, 23.7 |
+| Ackley 15% (N=23) | 0.00, 24.0 | 0.00, 24.0 | 0.00, 24.0 | 0.00, 24.0 | 0.00, 24.0 | 0.03, 23.9 |
+| Bioprocess-like 15% (N=28) | 0.27, 27.3 | 0.07, 28.5 | 0.00, 29.0 | 0.17, 27.9 | 0.10, 28.3 | 0.13, 27.1 |
+
+Observed-best regret (noisy-observation recommendation, normalised; 15% cells only): Gaussian 15%: Kalos 0.315, Random 0.398, LHS 0.422, Optuna 0.293, Ax 0.292, GP-EI 0.318. Ackley 15%: Kalos 0.613, Random 0.663, LHS 0.751, Optuna 0.601, Ax 0.650, GP-EI 0.644. Bioprocess-like: Kalos 0.275, Random 0.459, LHS 0.494, Optuna 0.369, Ax 0.387, GP-EI 0.332.
+
+Time (mean seconds of proposal time per run; median of per-run median per proposal in brackets): Kalos 5.8 (0.28) on Gaussian 0%, 9.9 (0.44) on Gaussian 15%, 10.3 (0.44) on Ackley 0%, 10.8 (0.48) on Ackley 15%, 117.7 (18.6) on the bioprocess-like task. Ax 11.3 (0.59), 17.2 (0.83), 17.7 (0.80), 21.9 (1.02), 44.0 (8.2). GP-EI 5.8 (0.29), 9.0 (0.40), 9.7 (0.41), 13.9 (0.58), 16.4 (2.8). Optuna TPE and random/LHS are below 0.1 s per run. Times vary with machine load (run 1 and run 2 differ by about 10-20% on the same arms).
+
+Fallbacks and errors: 0 fallback steps and 0 error messages across all 900 runs.
+
+Deviations after the pilot and the first run are in section 12. Nothing in the protocol (seeds, cells, budgets, endpoints, statistics) was changed after the confirmatory data existed.
