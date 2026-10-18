@@ -63,6 +63,17 @@ and Podman), plus one compose file:
 | `deploy/backup/Containerfile` | `kalos-backup` (SQLite backup sidecar) | `deploy/backup/` |
 | `deploy/compose.yaml` | the whole stack | - |
 
+The backup image is the one that needs the explicit file flag, because its
+Containerfile is not named `Dockerfile` and the build context is its own
+directory (it `COPY`s `backup.sh`):
+
+```bash
+docker build -f deploy/backup/Containerfile -t kalos-backup:local deploy/backup
+```
+
+`docker compose build` does this for you; the manual form is what
+`scripts/restore_drill.sh` needs when you run the drill outside compose.
+
 The repo-root `.containerignore` (with `.dockerignore` as a symlink to it)
 is an allowlist: the engine build context contains only `pyproject.toml`,
 `README.md` and `kalos/`. A local `.env`, `deploy/backups/`, `.venv` and
@@ -194,6 +205,10 @@ docker compose stop engine
 # 2. Pick the backup to restore and copy it into the live volume, under the
 #    live filenames. `docker compose exec` won't work with the engine
 #    stopped, so use `docker run` against the same named volume directly.
+#    The chown must cover the VOLUME ROOT (/state) as well as the two files:
+#    SQLite creates portal.db-wal and portal.db-shm beside portal.db on first
+#    open, and a root-owned directory makes that fail with "unable to open
+#    database file" even though the .db files are owned correctly.
 LATEST_EXP=$(ls -t deploy/backups/experiments/*.db | head -1)
 LATEST_CAMPAIGN=$(ls -t deploy/backups/portal/*.db | head -1)
 docker run --rm \
@@ -202,7 +217,7 @@ docker run --rm \
   alpine:3.20 sh -c "
     cp /backups/experiments/$(basename "$LATEST_EXP") /state/experiments.db &&
     cp /backups/portal/$(basename "$LATEST_CAMPAIGN") /state/portal.db &&
-    chown 10001:10001 /state/experiments.db /state/portal.db
+    chown 10001:10001 /state /state/experiments.db /state/portal.db
   "
 
 # 3. Bring the engine back up and confirm the restored data is visible.
@@ -211,6 +226,25 @@ docker compose logs -f engine
 curl -sf -H "Authorization: Bearer <a real provisioned token>" \
   http://localhost:${KALOS_ENGINE_PORT:-8050}/api/experiments | head -c 300
 ```
+
+**Scripted drill (no secrets, never touches `kalos-state`).** The steps above
+against the live volume are the procedure for a real restore. To rehearse
+one without risk, `scripts/restore_drill.sh` restores the newest
+`experiments` and `portal` snapshots into a brand-new scratch volume, owned
+the way the engine expects (volume root included), and then, as uid 10001,
+runs `PRAGMA quick_check`, switches `portal.db` to WAL and checks that
+`-wal`/`-shm` are created, and reads both back. It leaves the engine
+running and deletes its scratch volume on exit (`KALOS_DRILL_KEEP=1` keeps
+it).
+
+```bash
+docker build -f deploy/backup/Containerfile -t kalos-backup:local deploy/backup   # once
+scripts/restore_drill.sh                          # BACKUP_DIR defaults to deploy/backups
+echo "exit=$?"                                    # 0 = restore verified
+```
+
+A non-zero exit names the failing step. Run it after changing the backup
+image or the volume layout, and at least monthly.
 
 The `latest/*.json` per-tenant analysis cache is intentionally NOT part of
 this drill - it is explicitly best-effort persistence in the source itself
