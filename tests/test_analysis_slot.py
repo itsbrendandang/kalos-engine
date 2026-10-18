@@ -178,3 +178,40 @@ def test_run_in_slot_cancelled_while_waiting_for_a_thread_releases_slot(monkeypa
     assert ran == []
     assert busy.limiter().running() == 0
     busy.reset_limiter()
+
+
+def test_a_native_cancel_keeps_the_slot_until_the_thread_finishes():
+    """N1: `asyncio.wait_for` (native cancellation) returns from `run_in_slot` while
+    its thread is still computing. The thread owns the slot until it returns, so
+    a second request must still be refused while the first one runs."""
+    import asyncio
+
+    busy.reset_limiter(total=1, per_tenant=1)
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+    def slow() -> str:
+        started.set()
+        release.wait(10)
+        finished.set()
+        return "done"
+
+    async def scenario() -> None:
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(busy.run_in_slot(slow, tenant="a"), timeout=1.0)
+        assert started.wait(5)
+        assert not finished.is_set()
+        assert busy.limiter().running() == 1  # the thread still holds the slot
+        assert busy.limiter().try_acquire("b") is None  # a second request is refused
+        release.set()
+        for _ in range(500):
+            if busy.limiter().running() == 0:
+                break
+            await asyncio.sleep(0.01)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        release.set()
+    assert finished.is_set()
+    assert busy.limiter().running() == 0
+    busy.reset_limiter()

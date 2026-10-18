@@ -196,29 +196,46 @@ def reset_limiter(total: int | None = None, per_tenant: int | None = None) -> An
 
 class Exclusive:
     """A wrapped analysis call holding one slot. Calling it runs the work and
-    releases the slot in the worker thread; `abandon()` releases the slot for
-    a call that never ran (see `run_in_slot` and the demo route)."""
+    releases the slot in the worker thread; `abandon()` releases the slot only
+    for a call that never started (see `run_in_slot` and the demo route).
 
-    __slots__ = ("_fn", "_lease")
+    Started and abandoned are decided under one lock, so the two can never both
+    win: once the work has started, `abandon()` is a no-op and the thread alone
+    releases the slot; once `abandon()` has won, the work is skipped."""
+
+    __slots__ = ("_fn", "_lease", "_guard", "_started", "_abandoned")
 
     def __init__(self, fn: Callable[[], Any], lease: Lease) -> None:
         self._fn = fn
         self._lease = lease
+        self._guard = threading.Lock()
+        self._started = False
+        self._abandoned = False
 
     def __call__(self) -> Any:
+        with self._guard:
+            if self._abandoned:
+                return None  # the dispatch gave up before the thread ran: nothing to do
+            self._started = True
         try:
             return self._fn()
         finally:
             self._lease.release()
 
     def abandon(self) -> None:
-        """Release the slot if the call did not run, or has finished. Idempotent.
+        """Release the slot if the call has not started. Idempotent, and a no-op
+        once it has started.
 
-        Only call it once the dispatch that runs this callable has ended, i.e.
-        after the thread has returned or was never started. Starlette's
-        `run_in_threadpool` (anyio, abandon_on_cancel=False) does not return
-        while its thread is still running, even when the awaiting task is
-        cancelled, so that holds for every caller in this package."""
+        A started call releases the slot itself, in its thread, when it returns.
+        Native asyncio cancellation (task.cancel(), asyncio.wait_for) does NOT wait
+        for that thread: `await run_in_threadpool(...)` raises CancelledError at
+        once while the thread still computes. So a dispatcher that is cancelled
+        must not release on the thread's behalf; it calls `abandon()`, which only
+        acts when the thread never got to run."""
+        with self._guard:
+            if self._started:
+                return
+            self._abandoned = True
         self._lease.release()
 
 

@@ -173,6 +173,10 @@ process on a modest machine.
   is refused gets the usual `503` with `Retry-After`.
 - **Slots are held by processes.** A slot is held from worker start until the
   worker process has exited, so the count reflects real CPU and memory use.
+- **Slots are held by threads too.** A sync analysis holds its slot until its
+  thread returns, even if the request was cancelled (for example by
+  `asyncio.wait_for` or a client disconnect). Cancelling the request does not
+  free the slot early; only a call that never started is released at once.
 - Each worker is a separate process: a fit that crashes or runs away cannot
   take the engine's interpreter with it, and a timeout or cancel is a kill.
 - Each worker applies the same torch thread budget as the engine
