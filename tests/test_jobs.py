@@ -224,15 +224,15 @@ def test_worker_logs_type_code_and_location_not_customer_text(store, caplog):
 
 def test_queue_depth_is_per_tenant_and_frees_on_cancel(store, monkeypatch):
     monkeypatch.setenv("KALOS_JOB_QUEUE_DEPTH", "2")
-    cid = _campaign(store)
-    a = _submit(store, cid=cid)
-    _submit(store, cid=cid)
+    # One campaign per upload: a second pending upload to one campaign is refused (UploadPending).
+    a = _submit(store, cid=_campaign(store, name="one"))
+    _submit(store, cid=_campaign(store, name="two"))
     with pytest.raises(jobs.QueueFull):
-        _submit(store, cid=cid)
+        _submit(store, cid=_campaign(store, name="three"))
     # another tenant is not affected by acme's full queue
     _submit(store, tenant="globex", cid=_campaign(store, "globex"))
     jobs.request_cancel(store, tenant="acme", job_id=a["id"])
-    _submit(store, cid=cid)  # room again
+    _submit(store, cid=_campaign(store, name="four"))  # room again
     # refused submissions leave no file behind
     assert len(list(store.state_dir.glob("jobs/*/*.bin"))) == 3
 
@@ -1291,3 +1291,52 @@ def test_a_worker_whose_engine_is_not_its_parent_publishes_nothing(store, monkey
     assert job_worker.run_job(store, job_id, analyze=_stub_analyze) == "stopped"
     assert jobs.get_job(store, tenant="acme", job_id=job_id)["state"] == "running"
     assert store.get(tenant="acme", campaign_id=cid) is None
+
+
+def _campaign_with_a_pending_run(store, tenant: str = "acme") -> str:
+    """A seeded campaign with one awaiting run (what the audit's lost measurement was)."""
+    cid = _campaign(store, tenant)
+    store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant=tenant, campaign_id=cid)
+    store.start([{"recipe": {"Methanol": 1.0, "pH": 6.0}}], tenant=tenant, campaign_id=cid)
+    return cid
+
+
+def test_a_job_refuses_to_replace_a_campaign_that_gained_runs_after_submission(store):
+    """D3: an upload job seeds the campaign, which discards its pending runs. Runs
+    added after the submit must stop the job (campaign_has_runs), not be discarded:
+    nothing is published and the campaign is unchanged."""
+    cid = _campaign(store)
+    job = _submit(store, cid=cid)
+    job_id = str(job["id"])
+    jobs.claim(store, tenant="acme", runner_id="engine")
+    store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant="acme", campaign_id=cid)
+    store.start([{"recipe": {"Methanol": 1.0, "pH": 6.0}}], tenant="acme", campaign_id=cid)
+    before = store.get(tenant="acme", campaign_id=cid)
+    assert job_worker.run_job(store, job_id, analyze=_stub_analyze) == "failed"
+    done = jobs.get_job(store, tenant="acme", job_id=job_id)
+    assert done["state"] == "failed" and done["error"]["code"] == "campaign_has_runs"
+    assert store.get(tenant="acme", campaign_id=cid) == before
+
+
+def test_a_confirmed_replacement_publishes_over_the_runs(store):
+    """D3: with replace=true the job is the explicit confirmation and publishes."""
+    cid = _campaign_with_a_pending_run(store)
+    job = jobs.enqueue(
+        store, tenant="acme", campaign_id=cid, raw=_csv(), filename="runs.csv",
+        target="lipase_titer", anonymize=False, roles="", sheet=None, requested_by="tester",
+        replace=True,
+    )
+    jobs.claim(store, tenant="acme", runner_id="engine")
+    assert job_worker.run_job(store, str(job["id"]), analyze=_stub_analyze) == "succeeded"
+    assert store.get(tenant="acme", campaign_id=cid)["pending"] == []
+
+
+def test_a_second_pending_upload_to_the_same_campaign_is_refused(store):
+    """D15: a second queued (or running) upload to one campaign would fail campaign_changed
+    after its full fit, once the first publishes. It is refused at submit instead."""
+    cid = _campaign(store)
+    _submit(store, cid=cid)  # queued
+    with pytest.raises(jobs.UploadPending):
+        _submit(store, cid=cid)
+    other = _campaign(store, name="other")
+    _submit(store, cid=other)  # another campaign is unaffected

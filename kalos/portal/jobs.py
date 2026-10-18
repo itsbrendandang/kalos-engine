@@ -85,6 +85,10 @@ ERROR_MESSAGES = {
     "campaign_changed": (
         "the campaign changed while this job ran, so nothing was published; resubmit the upload"
     ),
+    "campaign_has_runs": (
+        "the campaign has awaiting or measured runs that this upload would replace, and the "
+        "upload was not confirmed with replace=true; nothing was changed"
+    ),
 }
 
 
@@ -117,6 +121,32 @@ class EngineQueueFull(JobError):
     def __init__(self, depth: int) -> None:
         super().__init__(
             f"this engine already has {depth} queued or running jobs; wait for some to finish"
+        )
+
+
+class UploadPending(JobError):
+    """The campaign already has a queued or running upload: a second one would fail
+    `campaign_changed` after its full fit, once the first publishes."""
+
+    code = "upload_pending"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "an upload for this campaign is already queued or running; wait for it to finish"
+        )
+
+
+class CampaignHasRuns(JobError):
+    """The upload would replace the campaign's awaiting and measured runs, and the caller
+    did not confirm it with `replace=true`. Refused at submit (409) and, if runs appear
+    after the submit, the job fails with this code and changes nothing."""
+
+    code = "campaign_has_runs"
+
+    def __init__(self, awaiting: int, measured: int) -> None:
+        super().__init__(
+            f"the campaign has {awaiting} awaiting and {measured} measured run(s); an upload "
+            "replaces them, so resubmit with replace=true to confirm"
         )
 
 
@@ -294,6 +324,31 @@ def _active_total(conn: sqlite3.Connection) -> int:
     ).fetchone()[0])
 
 
+def run_counts(store: CampaignStore, *, tenant: str, campaign_id: str) -> tuple[int, int]:
+    """(awaiting, measured) pending runs of the campaign: what an upload would replace."""
+    state = store.get(tenant=tenant, campaign_id=campaign_id)
+    if not state:
+        return 0, 0
+    pending = state.get("pending") or []
+    awaiting = sum(1 for run in pending if run.get("result") is None)
+    return awaiting, len(pending) - awaiting
+
+
+def _has_pending_upload(conn: sqlite3.Connection, tenant: str, campaign_id: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM jobs WHERE tenant = ? AND campaign_id = ? AND state IN ('queued', 'running') LIMIT 1",
+        (tenant, campaign_id),
+    ).fetchone() is not None
+
+
+def check_no_pending_upload(store: CampaignStore, *, tenant: str, campaign_id: str) -> None:
+    """Refuse with `UploadPending` if the campaign has a queued or running upload. A cheap
+    read run before the upload is read; `enqueue` repeats it inside its transaction."""
+    with store._txn(write=False) as conn:
+        if _has_pending_upload(conn, tenant, campaign_id):
+            raise UploadPending()
+
+
 def check_queue_capacity(store: CampaignStore, *, tenant: str) -> None:
     """Refuse with `QueueFull` if `tenant` is already at its queue depth. A cheap
     read, so the submit route can refuse BEFORE it reads the upload or parses it.
@@ -313,6 +368,7 @@ def check_queue_capacity(store: CampaignStore, *, tenant: str) -> None:
 def enqueue(
     store: CampaignStore, *, tenant: str, campaign_id: str, raw: bytes, filename: str,
     target: str, anonymize: bool, roles: str, sheet: str | None, requested_by: str | None,
+    replace: bool = False,
 ) -> dict[str, Any]:
     """Queue one upload analysis for `campaign_id` (which must be `tenant`'s and
     not archived). The upload is written to the state directory first, then the
@@ -345,6 +401,7 @@ def enqueue(
         "anonymize": bool(anonymize),
         "roles": roles,
         "sheet": sheet[:256] if sheet else None,
+        "replace": bool(replace),
     }
     try:
         with store._txn(write=True) as conn:
@@ -353,6 +410,8 @@ def enqueue(
                 raise CampaignNotFound()
             if campaign.archived_at is not None:
                 raise CampaignArchived()
+            if _has_pending_upload(conn, tenant, campaign_id):
+                raise UploadPending()
             depth = _active_depth(conn, tenant)
             if depth >= settings.queue_depth:
                 raise QueueFull(settings.queue_depth)

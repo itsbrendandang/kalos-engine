@@ -221,6 +221,8 @@ def _job_error_response(exc: CampaignError) -> JSONResponse:
         return _job_not_found()
     if isinstance(exc, jobs.JobsDisabled):
         return JSONResponse({"error": str(exc)}, status_code=503)
+    if isinstance(exc, (jobs.UploadPending, jobs.CampaignHasRuns)):
+        return JSONResponse({"error": str(exc), "code": exc.code}, status_code=409)
     if isinstance(exc, (jobs.QueueFull, jobs.EngineQueueFull)):
         return JSONResponse(
             {"error": str(exc)}, status_code=429,
@@ -240,6 +242,7 @@ async def submit_job(
     roles: str = Form(default=""),
     sheet: str = Form(default=""),
     sheet_query: str | None = Query(default=None, alias="sheet"),
+    replace: bool = Form(default=False),
     principal: Principal = Depends(require_scope(WRITE)),
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
@@ -252,7 +255,7 @@ async def submit_job(
     else:
         response, job_id = await _submit(
             campaign_id, file, target, anonymize, roles, sheet or sheet_query or None,
-            principal, store, upload_error_response,
+            principal, store, upload_error_response, replace=replace,
         )
     _audit(store, principal, "job.submit", response.status_code,
            campaign_id=campaign_id, job_id=job_id)
@@ -262,6 +265,7 @@ async def submit_job(
 async def _submit(
     campaign_id: str, file: UploadFile, target: str, anonymize: bool, roles: str,
     sheet: str | None, principal: Principal, store: CampaignStore, upload_error: Any,
+    *, replace: bool = False,
 ) -> tuple[JSONResponse, str | None]:
     """The submit steps in order; returns the response and the new job id (if any)."""
     try:
@@ -278,6 +282,7 @@ async def _submit(
         return _job_error_response(exc), None
     try:
         jobs.check_roles(roles)
+        jobs.check_no_pending_upload(store, tenant=principal.tenant, campaign_id=campaign_id)
     except CampaignError as exc:
         return _job_error_response(exc), None
     # The upload is about to be held in memory: take a submission slot first.
@@ -294,7 +299,7 @@ async def _submit(
     try:
         return await _read_and_queue(
             settings, campaign_id, file, target, anonymize, roles, sheet, principal, store,
-            upload_error,
+            upload_error, replace=replace,
         )
     finally:
         _submit_gate.leave(principal.tenant)
@@ -303,7 +308,7 @@ async def _submit(
 async def _read_and_queue(
     settings: jobs.JobSettings, campaign_id: str, file: UploadFile, target: str,
     anonymize: bool, roles: str, sheet: str | None, principal: Principal, store: CampaignStore,
-    upload_error: Any,
+    upload_error: Any, *, replace: bool = False,
 ) -> tuple[JSONResponse, str | None]:
     # One byte past the tenant's limit is enough to refuse; never hold more.
     raw = await file.read(settings.max_upload_bytes + 1)
@@ -319,6 +324,11 @@ async def _read_and_queue(
             {"error": "the campaign is archived; it can be read but not changed"}, status_code=409,
         )
         return response, None
+    if not replace:
+        # The publish would replace the campaign's runs: only a confirmed upload does that.
+        awaiting, measured = jobs.run_counts(store, tenant=principal.tenant, campaign_id=campaign_id)
+        if awaiting or measured:
+            return _job_error_response(jobs.CampaignHasRuns(awaiting, measured)), None
     # The sync route's refusals, before a job is spent on the file. Nothing is written yet.
     try:
         await _preflight_gated(functools.partial(
@@ -335,7 +345,7 @@ async def _read_and_queue(
         job = jobs.enqueue(
             store, tenant=principal.tenant, campaign_id=campaign_id, raw=raw, filename=filename,
             target=target, anonymize=anonymize, roles=roles, sheet=sheet,
-            requested_by=principal.subject,
+            requested_by=principal.subject, replace=replace,
         )
     except CampaignError as exc:
         return _job_error_response(exc), None

@@ -165,7 +165,11 @@ def test_submit_202_then_poll_status_until_published(env):
 def test_job_list_is_newest_first_and_limited(env):
     tc, _store = env
     cid = _campaign(tc, "a-write")
-    ids = [_submit(tc, "a-write", cid).json()["job"]["id"] for _ in range(3)]
+    ids = []
+    for _ in range(3):
+        # A pending upload blocks the next one to the same campaign, so each is cancelled first.
+        ids.append(_submit(tc, "a-write", cid).json()["job"]["id"])
+        tc.post(f"/api/jobs/{ids[-1]}/cancel", headers=H("a-write"))
     listed = tc.get(f"/api/campaigns/{cid}/jobs?limit=2", headers=H("a-read")).json()["jobs"]
     assert [j["id"] for j in listed] == list(reversed(ids))[:2]
     assert tc.get(f"/api/campaigns/{cid}/jobs?limit=0", headers=H("a-read")).status_code == 400
@@ -270,12 +274,13 @@ def test_a_running_job_does_not_stop_the_same_tenant_submitting_another(env):
         return _stub_analyze(df, target, **kw)
 
     first = _submit(tc, "a-write", cid).json()["job"]
+    other_campaign = _campaign(tc, "a-write", "second campaign")
     runner = JobRunner(store, spawn=lambda j, _t, _d: ThreadWorker(
         lambda stop: job_worker.run_job(store, j, analyze=blocked, should_stop=stop)),
         timeout_s=60, poll_s=0.01)
     runner.tick()
     assert jobs.get_job(store, tenant="acme", job_id=first["id"])["state"] == "running"
-    assert _submit(tc, "a-write", cid).status_code == 202
+    assert _submit(tc, "a-write", other_campaign).status_code == 202
     release.set()
     _drain(runner, store, "acme", first["id"])
 
@@ -562,15 +567,15 @@ def test_concurrent_submits_are_capped_before_any_upload_is_read(env, monkeypatc
     # The parses that follow the reads share the preflight slots: widen them so the only
     # refusals in this test are the submit gate's.
     monkeypatch.setattr(jobs_api, "_preflight_slots", threading.BoundedSemaphore(8))
-    tenants = ["acme", "globex", "initech"]
-    cids = {t: store.create_campaign(tenant=t, name="c")["id"] for t in tenants}
     gate = asyncio.Event()
 
     def start(tenant: str):
+        # A fresh campaign per submission: a second pending upload to one campaign is refused.
+        cid = store.create_campaign(tenant=tenant, name=f"c{uuid.uuid4().hex[:6]}")["id"]
         upload = _GatedUpload(gate, _csv())
         principal = Principal(subject=f"s@{tenant}", tenant=tenant, scopes=frozenset({"write"}))
         task = asyncio.ensure_future(jobs_api._submit(
-            cids[tenant], upload, "lipase_titer", False, "", None, principal, store,
+            cid, upload, "lipase_titer", False, "", None, principal, store,
             portal_module.upload_error_response,
         ))
         return upload, task
@@ -679,3 +684,39 @@ def test_the_lifespan_refuses_a_malformed_limit_even_with_jobs_disabled(env, mon
         with pytest.raises(ValueError, match="KALOS_JOB_WORKERS"):
             with TestClient(app):
                 pass
+
+
+def test_a_plain_upload_to_a_campaign_with_runs_is_refused_until_replace_is_confirmed(env):
+    """D3 at submit: an upload would discard the campaign's awaiting and measured runs,
+    so it is refused (409 campaign_has_runs) unless the caller confirms replace=true."""
+    tc, store = env
+    cid = _campaign(tc, "a-write")
+    store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant="acme", campaign_id=cid)
+    store.start([{"recipe": {"Methanol": 1.0, "pH": 6.0}}], tenant="acme", campaign_id=cid)
+    before = store.get(tenant="acme", campaign_id=cid)
+
+    refused = _submit(tc, "a-write", cid)
+    assert refused.status_code == 409
+    assert refused.json()["code"] == "campaign_has_runs"
+    assert store.get(tenant="acme", campaign_id=cid) == before  # not mutated
+
+    confirmed = tc.post(
+        f"/api/campaigns/{cid}/jobs",
+        files={"file": ("runs.csv", _csv(), "text/csv")},
+        data={"target": "lipase_titer", "replace": "true"},
+        headers=H("a-write"),
+    )
+    assert confirmed.status_code == 202, confirmed.text
+
+
+def test_a_second_upload_to_a_campaign_with_a_pending_one_is_a_409_at_submit(env):
+    """D15 over HTTP: the second submit is refused before its upload is read, and the
+    first job is untouched."""
+    tc, _store = env
+    cid = _campaign(tc, "a-write")
+    first = _submit(tc, "a-write", cid)
+    assert first.status_code == 202
+    second = _submit(tc, "a-write", cid)
+    assert second.status_code == 409
+    assert second.json()["code"] == "upload_pending"
+    assert tc.get(first.headers["Location"], headers=H("a-write")).json()["job"]["state"] == "queued"

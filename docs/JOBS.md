@@ -33,7 +33,7 @@ or headers.
 
 | Method and path | Scope | Result |
 |---|---|---|
-| `POST /api/campaigns/{id}/jobs` | `write` | `202` + `{"job": ...}`, `Location: /api/jobs/<id>`. Multipart: `file`, `target`, `anonymize`, `roles`, `sheet` (same fields as `/api/run`). |
+| `POST /api/campaigns/{id}/jobs` | `write` | `202` + `{"job": ...}`, `Location: /api/jobs/<id>`. Multipart: `file`, `target`, `anonymize`, `roles`, `sheet` (same fields as `/api/run`), and `replace` (`true` to confirm that the upload replaces the campaign's runs; see below). |
 | `GET /api/campaigns/{id}/jobs?limit=N` | `read` | `{"jobs": [...]}`, newest first, `N` 1-200 (default 50). |
 | `GET /api/jobs/{id}` | `read` | `{"job": ...}`. |
 | `POST /api/jobs/{id}/cancel` | `write` | `200` + `{"job": ...}`. Idempotent; a finished job is returned unchanged. |
@@ -82,6 +82,7 @@ or headers.
 | `parse_error`, `fit_failed` | As `/api/run`. |
 | `analysis_failed` | Any other error during the analysis. |
 | `campaign_changed` | The campaign changed (a result, a start, another upload) between submission and publish. Nothing was published; the upload must be resubmitted. |
+| `campaign_has_runs` | The campaign has awaiting or measured runs and the upload was not confirmed with `replace=true`. Nothing was changed; resubmit with `replace=true` to replace them. |
 | `campaign_not_found`, `campaign_archived` | The campaign was removed or archived while the job waited. |
 | `input_unavailable` | The stored upload is missing or does not match its recorded checksum. |
 | `timeout` | Past `KALOS_JOB_TIMEOUT_S`; the worker was stopped. |
@@ -107,6 +108,7 @@ envelope now, not a failed job later.
 | `400` | Also: `roles` is over 16 KiB (`MAX_ROLES_CHARS`); refused, not truncated. |
 | `413` | The upload is over the tenant's job size limit, or over the engine's upload cap. |
 | `429` | The tenant already has `KALOS_JOB_QUEUE_DEPTH` queued or running jobs, or the engine already has `KALOS_JOB_GLOBAL_QUEUE_DEPTH` (all tenants). Or the tenant already has `SUBMIT_PER_TENANT` (2) uploads being received. `Retry-After` is set. |
+| `409` | `code: upload_pending`: the campaign already has a queued or running upload (one pending upload per campaign). `code: campaign_has_runs`: the campaign has awaiting or measured runs and `replace=true` was not sent. Nothing is queued or written. |
 | `503` | Jobs are disabled (`KALOS_JOBS_ENABLED=0`), the job settings are malformed, every preflight slot is in use, or the engine already has `SUBMIT_TOTAL` (4) uploads being received. `Retry-After` is set on the last two. |
 
 ## Lifecycle and guarantees
@@ -162,6 +164,16 @@ process on a modest machine.
 | Wall-clock limit for one job, then its worker is killed | `KALOS_JOB_TIMEOUT_S` | `1800` | per job |
 | Turn the queue off (routes answer 503; status still reads) | `KALOS_JOBS_ENABLED` | `1` | whole engine |
 
+- **Replacing runs needs confirmation.** A successful publish replaces the
+  campaign's state, so it discards any awaiting or measured runs. An upload
+  that would do that is refused at submit (`409`, `campaign_has_runs`) unless
+  the form carries `replace=true`. If runs appear after the submit, the job
+  is `failed` with `campaign_has_runs` before any analysis, and nothing is
+  changed. A confirmed replacement is recorded in the job's `params`.
+- **One pending upload per campaign.** A second queued or running upload to a
+  campaign is refused at submit (`409`, `upload_pending`). Two of them would
+  each run a full fit and the second would fail `campaign_changed` once the
+  first published. The check is repeated inside the enqueue transaction.
 - **Refused before any write.** A submit over the upload cap, over the queue
   depth, or with an over-long `roles` value is refused before its bytes are
   written to the state directory. Only a race between two submits (both pass

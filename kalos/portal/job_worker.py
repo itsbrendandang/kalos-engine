@@ -58,6 +58,8 @@ def classify(exc: BaseException) -> tuple[str, str]:
     `kalos.portal.app.upload_error_response`, without importing FastAPI."""
     if isinstance(exc, CampaignConflict):
         return "campaign_changed", jobs.ERROR_MESSAGES["campaign_changed"]
+    if isinstance(exc, jobs.CampaignHasRuns):
+        return "campaign_has_runs", jobs.ERROR_MESSAGES["campaign_has_runs"]
     if isinstance(exc, CampaignNotFound):
         return "campaign_not_found", "campaign not found"
     if isinstance(exc, CampaignArchived):
@@ -122,6 +124,12 @@ def run_job(
 
     try:
         params = jobs.job_params(row)
+        if not params.get("replace"):
+            # The publish replaces the campaign's runs: refuse before any work, unless the
+            # submit confirmed it (replace=true). Nothing is changed on refusal.
+            awaiting, measured = jobs.run_counts(store, tenant=tenant, campaign_id=campaign_id)
+            if awaiting or measured:
+                raise jobs.CampaignHasRuns(awaiting, measured)
         raw = jobs.read_input(store, row)
         df, result = compute_upload_analysis(
             raw, params.get("target") or None, bool(params.get("anonymize")),
