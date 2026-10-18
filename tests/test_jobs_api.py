@@ -223,6 +223,23 @@ def test_a_full_queue_is_refused_before_the_upload_is_parsed_or_written(env, mon
     assert _job_files(store) == before
 
 
+def test_the_engine_wide_cap_answers_429_before_the_upload_is_parsed(env, monkeypatch):
+    tc, store = env
+    monkeypatch.setenv("KALOS_JOB_GLOBAL_QUEUE_DEPTH", "1")
+    cid = _campaign(tc, "a-write")
+    assert _submit(tc, "a-write", cid).status_code == 202
+    parsed: list[bytes] = []
+    monkeypatch.setattr(jobs_api, "preflight_upload", lambda raw, *a, **k: parsed.append(raw))
+    before = _job_files(store)
+    other = _campaign(tc, "b-write", "other")
+    r = tc.post(f"/api/campaigns/{other}/jobs", files={"file": ("runs.csv", _csv(), "text/csv")},
+                data={"target": "lipase_titer"}, headers=H("b-write"))
+    assert r.status_code == 429
+    assert "this engine already has 1" in r.json()["error"]
+    assert int(r.headers["retry-after"]) == busy.RETRY_AFTER_SECONDS
+    assert parsed == [] and _job_files(store) == before
+
+
 def test_preflight_runs_under_a_slot_and_a_busy_engine_refuses_the_submit(env, monkeypatch):
     tc, store = env
     held = threading.BoundedSemaphore(1)

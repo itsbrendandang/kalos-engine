@@ -175,7 +175,7 @@ def _job_error_response(exc: CampaignError) -> JSONResponse:
         return _job_not_found()
     if isinstance(exc, jobs.JobsDisabled):
         return JSONResponse({"error": str(exc)}, status_code=503)
-    if isinstance(exc, jobs.QueueFull):
+    if isinstance(exc, (jobs.QueueFull, jobs.EngineQueueFull)):
         return JSONResponse(
             {"error": str(exc)}, status_code=429,
             headers={"Retry-After": str(RETRY_AFTER_SECONDS)},

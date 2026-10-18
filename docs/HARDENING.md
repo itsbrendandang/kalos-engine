@@ -66,6 +66,7 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 | `KALOS_JOB_WORKERS` | Analyses running at once in this engine, sync and background together. Must be >= 1. (docs/JOBS.md) | `2` |
 | `KALOS_JOB_PER_TENANT` | Analyses one tenant may run at once. With the default one tenant can never hold every slot. Must be >= 1. | `1` |
 | `KALOS_JOB_QUEUE_DEPTH` | Queued + running jobs one tenant may hold; more answers 429. Must be >= 1. | `8` |
+| `KALOS_JOB_GLOBAL_QUEUE_DEPTH` | Queued + running jobs all tenants may hold together; more answers 429. Must be >= 1. (docs/JOBS.md) | `64` |
 | `KALOS_JOB_MAX_UPLOAD_BYTES` | Largest upload a job accepts, per tenant. Must be <= the engine's upload cap. | the upload cap |
 | `KALOS_JOB_TIMEOUT_S` | Wall-clock limit for one job; past it the worker is killed and the job is `timed_out`. Must be >= 1. | `1800` |
 
@@ -148,5 +149,6 @@ A review of progress against the readiness scorecard surfaced that campaign + la
 - Background jobs review (PR #91), MED4: each worker gets a wall-clock deadline (time limit + 60 s) and a watchdog ends it when the deadline passes or its engine is gone (docs/JOBS.md, "Worker lifetime").
 - Background jobs review (PR #91): real-process test that a time-limit kill reaches a worker and its child that ignore SIGTERM (docs/JOBS.md, "Release-gate tests").
 - Background jobs review (PR #91), HIGH2: a full tenant queue is refused before the upload is read or parsed; the submit-time parse runs under a process-wide preflight slot (`PREFLIGHT_CONCURRENCY`, 503 + Retry-After when none is free) and nothing is written before it passes (docs/JOBS.md, "Submit").
+- Background jobs review (PR #91), MED3: an engine-wide queue cap across tenants, `KALOS_JOB_GLOBAL_QUEUE_DEPTH` (docs/JOBS.md, "Scheduling and limits").
 - P2 observability, P4 latest->SQLite, P5 backups: planned, not started (see "Next backbone" above). P4 is done by schema v2; see the entries above.
 - Schema v2 (multi-campaign storage): **in review** on `feat/campaign-schema-v2` - `portal.db` gains `schema_migrations`, multi-campaign `campaigns` (`cmp_` ids, `UNIQUE(id, tenant)`), `analyses` (replacing `_LATEST` and `latest/*.json`), `tenant_defaults` (the legacy routes act on the tenant default) and `audit_log`; WAL, `foreign_keys`, `busy_timeout`; every store write is `BEGIN IMMEDIATE` + generation compare-and-swap; explicit, backed-up, reversible migration (`python -m kalos.portal.migrate up|down|status`). Runbook: docs/MIGRATIONS.md.

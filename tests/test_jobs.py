@@ -213,6 +213,33 @@ def test_queue_depth_is_per_tenant_and_frees_on_cancel(store, monkeypatch):
     assert len(list(store.state_dir.glob("jobs/*/*.bin"))) == 3
 
 
+def test_the_engine_wide_queue_cap_applies_across_tenants(store, monkeypatch):
+    """MED3: a global cap on queued + running jobs, whichever tenants hold them."""
+    monkeypatch.setenv("KALOS_JOB_GLOBAL_QUEUE_DEPTH", "2")
+    monkeypatch.setenv("KALOS_JOB_QUEUE_DEPTH", "8")
+    _submit(store, tenant="acme", cid=_campaign(store, "acme", "a"))
+    _submit(store, tenant="globex", cid=_campaign(store, "globex", "g"))
+    before = sorted(store.state_dir.glob("jobs/*/*"))
+    with pytest.raises(jobs.EngineQueueFull):
+        _submit(store, tenant="initech", cid=_campaign(store, "initech", "i"))
+    assert sorted(store.state_dir.glob("jobs/*/*")) == before  # refused, nothing left behind
+
+
+def test_the_capacity_precheck_sees_the_engine_wide_cap(store, monkeypatch):
+    monkeypatch.setenv("KALOS_JOB_GLOBAL_QUEUE_DEPTH", "1")
+    _submit(store, tenant="acme", cid=_campaign(store, "acme", "a"))
+    with pytest.raises(jobs.EngineQueueFull):
+        jobs.check_queue_capacity(store, tenant="globex")
+
+
+def test_the_global_queue_depth_is_validated_like_the_others(monkeypatch):
+    monkeypatch.setenv("KALOS_JOB_GLOBAL_QUEUE_DEPTH", "0")
+    with pytest.raises(ValueError, match="KALOS_JOB_GLOBAL_QUEUE_DEPTH"):
+        jobs.job_settings()
+    monkeypatch.delenv("KALOS_JOB_GLOBAL_QUEUE_DEPTH")
+    assert jobs.job_settings().global_queue_depth == jobs.DEFAULT_GLOBAL_QUEUE_DEPTH
+
+
 def test_upload_over_the_tenant_limit_is_refused_before_anything_is_written(store, monkeypatch):
     monkeypatch.setenv("KALOS_JOB_MAX_UPLOAD_BYTES", "100")
     cid = _campaign(store)

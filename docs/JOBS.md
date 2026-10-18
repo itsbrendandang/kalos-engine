@@ -105,7 +105,7 @@ envelope now, not a failed job later.
 | `404` | The campaign (or, for `GET`/cancel, the job) is not visible to the caller. See "Isolation". |
 | `409` | The campaign is archived. |
 | `413` | The upload is over the tenant's job size limit, or over the engine's upload cap. |
-| `429` | The tenant already has `KALOS_JOB_QUEUE_DEPTH` queued or running jobs. `Retry-After` is set. |
+| `429` | The tenant already has `KALOS_JOB_QUEUE_DEPTH` queued or running jobs, or the engine already has `KALOS_JOB_GLOBAL_QUEUE_DEPTH` (all tenants). `Retry-After` is set. |
 | `503` | Jobs are disabled (`KALOS_JOBS_ENABLED=0`), the job settings are malformed, or every preflight slot is in use. `Retry-After` is set on the last. |
 
 ## Lifecycle and guarantees
@@ -154,11 +154,16 @@ process on a modest machine.
 | Analyses running at once (sync and job together) | `KALOS_JOB_WORKERS` | `2` | whole engine |
 | Analyses one tenant may run at once | `KALOS_JOB_PER_TENANT` | `1` | per tenant |
 | Queued + running jobs | `KALOS_JOB_QUEUE_DEPTH` | `8` | per tenant |
+| Queued + running jobs, all tenants together | `KALOS_JOB_GLOBAL_QUEUE_DEPTH` | `64` | whole engine |
 | Uploads being checked (parsed) at once, before they are queued | fixed: `PREFLIGHT_CONCURRENCY` | `2` | whole engine |
 | Upload size for a job (at most the engine's upload cap) | `KALOS_JOB_MAX_UPLOAD_BYTES` | the engine upload cap | per tenant |
 | Wall-clock limit for one job, then its worker is killed | `KALOS_JOB_TIMEOUT_S` | `1800` | per job |
 | Turn the queue off (routes answer 503; status still reads) | `KALOS_JOBS_ENABLED` | `1` | whole engine |
 
+- **Engine-wide queue.** `KALOS_JOB_GLOBAL_QUEUE_DEPTH` bounds the jobs held
+  by all tenants together, so the number of pending uploads on disk is bounded
+  too: at most that many times the upload cap. Total bytes are not capped
+  separately; size the state directory for the product of the two.
 - **Fairness.** The runner visits tenants oldest-queued-job first and skips a
   tenant at its per-tenant cap, so one tenant's backlog cannot hold every slot.
 - **Sync routes yield to the queue.** A synchronous analysis is admitted only

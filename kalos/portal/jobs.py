@@ -64,6 +64,7 @@ TERMINAL_STATES = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
 assert set(JOB_STATES) == set(ACTIVE_STATES) | TERMINAL_STATES
 
 DEFAULT_QUEUE_DEPTH = 8
+DEFAULT_GLOBAL_QUEUE_DEPTH = 64
 DEFAULT_TIMEOUT_S = 1800.0
 JOBS_DIRNAME = "jobs"
 # Shown to the caller for a job that did not finish. The code is the stable
@@ -104,6 +105,15 @@ class QueueFull(JobError):
         )
 
 
+class EngineQueueFull(JobError):
+    """The engine as a whole holds its maximum of queued + running jobs (all tenants)."""
+
+    def __init__(self, depth: int) -> None:
+        super().__init__(
+            f"this engine already has {depth} queued or running jobs; wait for some to finish"
+        )
+
+
 class JobTooLarge(JobError):
     def __init__(self, limit: int) -> None:
         super().__init__(f"the upload is larger than this tenant's job upload limit ({limit} bytes)")
@@ -128,6 +138,7 @@ class JobInputError(Exception):
 class JobSettings:
     enabled: bool
     queue_depth: int
+    global_queue_depth: int
     max_upload_bytes: int
     timeout_s: float
 
@@ -155,6 +166,8 @@ def job_settings() -> JobSettings:
     return JobSettings(
         enabled=enabled,
         queue_depth=int(_env_number("KALOS_JOB_QUEUE_DEPTH", str(DEFAULT_QUEUE_DEPTH), int, 1)),
+        global_queue_depth=int(_env_number(
+            "KALOS_JOB_GLOBAL_QUEUE_DEPTH", str(DEFAULT_GLOBAL_QUEUE_DEPTH), int, 1)),
         max_upload_bytes=max_upload,
         timeout_s=float(_env_number("KALOS_JOB_TIMEOUT_S", str(DEFAULT_TIMEOUT_S), float, 1)),
     )
@@ -258,6 +271,12 @@ def _active_depth(conn: sqlite3.Connection, tenant: str) -> int:
     ).fetchone()[0])
 
 
+def _active_total(conn: sqlite3.Connection) -> int:
+    return int(conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE state IN ('queued', 'running')",
+    ).fetchone()[0])
+
+
 def check_queue_capacity(store: CampaignStore, *, tenant: str) -> None:
     """Refuse with `QueueFull` if `tenant` is already at its queue depth. A cheap
     read, so the submit route can refuse BEFORE it reads the upload or parses it.
@@ -267,8 +286,11 @@ def check_queue_capacity(store: CampaignStore, *, tenant: str) -> None:
     settings = job_settings()
     with store._txn(write=False) as conn:
         depth = _active_depth(conn, tenant)
+        total = _active_total(conn)
     if depth >= settings.queue_depth:
         raise QueueFull(settings.queue_depth)
+    if total >= settings.global_queue_depth:
+        raise EngineQueueFull(settings.global_queue_depth)
 
 
 def enqueue(
@@ -313,6 +335,8 @@ def enqueue(
             depth = _active_depth(conn, tenant)
             if depth >= settings.queue_depth:
                 raise QueueFull(settings.queue_depth)
+            if _active_total(conn) >= settings.global_queue_depth:
+                raise EngineQueueFull(settings.global_queue_depth)
             now = time.time()
             conn.execute(
                 "INSERT INTO jobs (id, tenant, campaign_id, kind, state, created_at, updated_at, "
