@@ -33,6 +33,10 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+import pandas as pd
+
+from kalos.portal.cells import BLANK, CENSORED, MISSING, classify_value
+
 NUMERIC = "numeric"
 CATEGORICAL = "categorical"
 EMPTY = "empty"
@@ -56,17 +60,21 @@ class ColumnKind:
 def column_kinds(
     base_rows: Iterable[Mapping[str, Any]], columns: Iterable[str]
 ) -> dict[str, ColumnKind]:
-    """The kind and observed levels of each of `columns` over `base_rows`."""
+    """The kind and observed levels of each of `columns` over `base_rows`.
+
+    A null token (`n/a`, `NA`) or a censored value (`<LOD`, `>100`) is a written
+    note about a measurement, not a level, so it does not make a numeric column
+    categorical. A numeric column with a missing cell is still numeric."""
     wanted = set(columns)
     seen_str: set[str] = set()
     levels: dict[str, dict[str, Any]] = {c: {} for c in wanted}
     for row in base_rows:
         for col in wanted:
             value = row.get(col)
-            if value is None or (isinstance(value, float) and math.isnan(value)):
+            if value is None or value is pd.NA or (isinstance(value, float) and math.isnan(value)):
                 continue
             if isinstance(value, str):
-                if not value.strip():
+                if classify_value(value) in (BLANK, MISSING, CENSORED):
                     continue
                 seen_str.add(col)
             levels[col].setdefault(_label(value), value)

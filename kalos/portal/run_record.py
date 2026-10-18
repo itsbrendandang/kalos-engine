@@ -95,6 +95,10 @@ class RunRecord:
     kind: str = "upload"
     pending_runs: int = 0
     gates: dict[str, str] = field(default_factory=lambda: dict(GATE_KEYS))
+    # Aggregate counts of what the fit excluded (see `drops_summary`). Counts only:
+    # no column names, so the block is safe under `anonymize`.
+    data_drops: dict[str, Any] | None = None
+    header_row: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """The JSON-ready block. Under `anonymize`, `filename` and `sheet` are
@@ -129,6 +133,9 @@ class RunRecord:
             # which starts a campaign with none in flight).
             "pending_runs": self.pending_runs,
             "gates": dict(self.gates),
+            "data_drops": dict(self.data_drops) if self.data_drops is not None else None,
+            # Which sheet row held the column names (0 = the first row).
+            "header_row": self.header_row,
         }
         if not self.anonymize:
             out["filename"] = self.filename
@@ -160,6 +167,8 @@ def build(
     sheet_index: int | None = None,
     sheet_hash: str | None = None,
     torch_threads_actual: int | None = None,
+    data_drops: dict[str, Any] | None = None,
+    header_row: int | None = None,
 ) -> RunRecord:
     """Assemble the record for one analysis. `raw_bytes` is the exact input the
     parser saw (an upload) or `fold_bytes(df)` (a reanalyze); the hash is over
@@ -201,4 +210,22 @@ def build(
         n_features=int(n_features),
         kind=kind,
         pending_runs=int(pending_runs),
+        data_drops=data_drops,
+        header_row=header_row,
     )
+
+
+def drops_summary(result: dict[str, Any]) -> dict[str, Any]:
+    """The `data_drops` block of the run record, taken from an analysis result:
+    the runs excluded from the fit, censored runs excluded, and cells by reason.
+    Per-column detail stays in the result and its findings (it carries column
+    names, which the record never does)."""
+    drops = result.get("data_drops") or {}
+    return {
+        "rows_dropped": int(drops.get("rows_dropped", result.get("n_dropped_incomplete", 0)) or 0),
+        "censored_rows_excluded": int(
+            drops.get("censored_rows_excluded", result.get("n_censored_excluded", 0)) or 0
+        ),
+        "cells_by_reason": dict(drops.get("cells_by_reason") or {}),
+        "auto_categorical_count": len(result.get("auto_categorical") or []),
+    }
