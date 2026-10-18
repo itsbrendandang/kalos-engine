@@ -35,7 +35,8 @@ jobs:
     # silent side effect of a CI hardening pass.
     steps:
       - uses: actions/checkout@v7
-      - run: docker build -f deploy/engine/Containerfile -t kalos-engine:ci .
+      - run: docker build -f deploy/engine/Containerfile -t kalos-engine:ci \
+          --build-arg KALOS_BUILD_SHA=${{ github.sha }} .
       # Default image config binds loopback-only and needs no auth (see
       # deploy/engine/Containerfile's KALOS_HOST comment) - that bind is unreachable
       # from outside the container, so publishing a port would just hang.

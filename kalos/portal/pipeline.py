@@ -129,6 +129,7 @@ def compute_upload_analysis(
         roles, profile = _roles_and_profile(roles_json)
         if roles is not None:
             kwargs["roles"] = roles
+        profile_name = profile.name
         result = analyze(parsed.df, target, profile=profile, **kwargs)
     except Exception as exc:
         annotated = _annotated(parsed, exc, anonymize)
@@ -137,7 +138,17 @@ def compute_upload_analysis(
         raise annotated from exc
     # Excel uploads only: `sheets` (every sheet, workbook order) and
     # `sheet_used` (the one analyzed), so a client can offer a sheet selector.
-    return parsed.df, {**result, **parsed.context()}
+    # `run` (kalos/portal/run_record.py) is attached here, after the parse and
+    # the analysis, so the sync routes and the job worker record the same thing.
+    from kalos.portal import run_record
+    from kalos.portal.analysis import ANALYZE_SEED
+
+    record = run_record.build(
+        raw, filename, parsed.sheet_used, result.get("target", target), roles_json,
+        anonymize, profile_name, TORCH_THREADS, int(result.get("seed", ANALYZE_SEED)),
+        len(parsed.df), len(result.get("proposal_features") or []),
+    )
+    return parsed.df, {**result, **parsed.context(), "run": record.to_dict()}
 
 
 _ANY = object()
@@ -167,6 +178,10 @@ def publish_upload_analysis(
     """
     from kalos.portal.campaign import CampaignError
 
+    # The label the campaign and /api/latest store for this upload. Under
+    # anonymize the filename is never stored (the run record has no filename
+    # either), only a label derived from the input hash.
+    filename = stored_dataset_label(result, filename)
     seed_kwargs: dict[str, Any] = {}
     if expected_generation is not _ANY:
         seed_kwargs["expected_generation"] = expected_generation
@@ -190,6 +205,17 @@ def publish_upload_analysis(
         log.exception("failed to seed the campaign from an uploaded run sheet")
         _publish_unstamped(store, result, filename, tenant=tenant, campaign_id=campaign_id)
     return None
+
+
+def stored_dataset_label(result: dict, filename: str) -> str:
+    """The `dataset` label an analysis is stored under. The raw filename, except
+    when the result's run record says `anonymize`: then a label built from the
+    input hash, so a stored analysis never carries the uploader's filename."""
+    run = result.get("run")
+    if isinstance(run, dict) and run.get("anonymize"):
+        digest = str(run.get("input_sha256") or "")[:12]
+        return f"anonymized upload {digest}" if digest else "anonymized upload"
+    return filename
 
 
 def _publish_unstamped(
