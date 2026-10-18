@@ -208,8 +208,9 @@ process on a modest machine.
   therefore about `KALOS_JOB_WORKERS` times that budget: on a shared machine,
   lower one or the other.
 
-Invalid values for any `KALOS_JOB*` variable (non-numeric, out of range, a
-job upload limit above the engine cap, `KALOS_JOB_WORKERS=0`) fail the engine's
+Invalid values for any `KALOS_JOB*` variable (non-numeric, non-finite such as
+`nan` or `inf`, out of range, a job upload limit above the engine cap,
+`KALOS_JOB_WORKERS=0`) fail the engine's
 startup, with the variable named. `python -m kalos.portal` checks them before
 it serves and exits `2` with one line on stderr and no traceback (the same for a
 refused runner, below). They are not silently replaced by defaults. The app

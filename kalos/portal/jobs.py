@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import sqlite3
 import time
@@ -196,6 +197,8 @@ def _env_number(name: str, default: str, cast: type, minimum: float) -> Any:
         value = cast(raw)
     except ValueError:
         raise ValueError(f"{name} must be a number; got {raw!r}") from None
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number; got {raw!r}")
     if value < minimum:
         raise ValueError(f"{name} must be >= {minimum}; got {raw!r}")
     return value

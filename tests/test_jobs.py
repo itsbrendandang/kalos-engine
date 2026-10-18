@@ -1340,3 +1340,26 @@ def test_a_second_pending_upload_to_the_same_campaign_is_refused(store):
         _submit(store, cid=cid)
     other = _campaign(store, name="other")
     _submit(store, cid=other)  # another campaign is unaffected
+
+
+@pytest.mark.parametrize("name", ["KALOS_JOB_TIMEOUT_S", "KALOS_JOB_QUEUE_DEPTH",
+                                  "KALOS_JOB_GLOBAL_QUEUE_DEPTH", "KALOS_JOB_MAX_UPLOAD_BYTES"])
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "1e400", "NaN"])
+def test_a_non_finite_job_setting_is_refused_not_ignored(monkeypatch, name, value):
+    """Round 3, 1: `nan` passed the minimum check (nan < 1 is False), so a NaN time limit
+    never fired and no job ever timed out. Non-finite numbers are refused for every
+    numeric KALOS_JOB* variable, and for the limiter's."""
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match=name):
+        jobs.job_settings()
+
+
+@pytest.mark.parametrize("name", ["KALOS_JOB_WORKERS", "KALOS_JOB_PER_TENANT"])
+def test_a_non_finite_limiter_setting_is_refused_at_startup(monkeypatch, name):
+    from kalos.portal import busy
+
+    # Scoped: the autouse fixture resets the limiter from the environment on teardown.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv(name, "1e400")
+        with pytest.raises(ValueError, match=name):
+            busy.validate_env()
