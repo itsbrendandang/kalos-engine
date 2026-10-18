@@ -49,6 +49,9 @@ if TYPE_CHECKING:
 log = logging.getLogger("kalos.portal")
 
 KILL_WAIT_S = 5.0
+# How long stop() waits for a scheduling pass that is under way. A pass is bounded (a
+# few database statements, a spawn, at most KILL_WAIT_S per kill), so this is a backstop.
+PASS_WAIT_S = 30.0
 RUNNER_LOCK_NAME = "jobs.runner.lock"
 
 
@@ -254,6 +257,7 @@ class JobRunner:
         limit: AnalysisLimiter | None = None,
         timeout_s: float | None = None,
         poll_s: float = 0.5,
+        pass_wait_s: float = PASS_WAIT_S,
     ) -> None:
         self.store = store
         self.runner_id = uuid.uuid4().hex
@@ -266,6 +270,12 @@ class JobRunner:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock_fd: int | None = None
+        # One scheduling pass at a time. stop() takes it before it kills the children and
+        # sets `_closed`, so a pass that was under way finishes first and no worker can be
+        # started after the children were recorded.
+        self._pass = threading.Lock()
+        self._pass_wait_s = pass_wait_s
+        self._closed = False
 
     # --- wiring -------------------------------------------------------------- #
 
@@ -301,15 +311,26 @@ class JobRunner:
         self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout)
+            if self._thread.is_alive():
+                log.error("the job scheduler is still in a pass; it starts no more workers")
         self.limit.remove_listener(self._wake.set)
-        for child in list(self._children.values()):
-            try:
-                if child.worker is not None:
-                    child.worker.kill()
-                self._finish(child, "failed", "engine_stopped")
-            except Exception:  # noqa: BLE001 - shutting down: recovery fails it at the next start
-                log.exception("could not record that background job %s was stopped", child.job_id)
-            self._drop(child)
+        if not self._pass.acquire(timeout=self._pass_wait_s):
+            # A pass is still running and may start a worker. Keep the lock: the process
+            # releases it when it exits, and no second runner may recover these jobs.
+            log.error("background jobs could not be stopped cleanly; the runner lock is kept")
+            return
+        try:
+            self._closed = True
+            for child in list(self._children.values()):
+                try:
+                    if child.worker is not None:
+                        child.worker.kill()
+                    self._finish(child, "failed", "engine_stopped")
+                except Exception:  # noqa: BLE001 - shutting down: recovery fails it at the next start
+                    log.exception("could not record that background job %s was stopped", child.job_id)
+                self._drop(child)
+        finally:
+            self._pass.release()
         # Last: until every running job is recorded, another runner must not recover them.
         self._release_lock()
 
@@ -330,8 +351,11 @@ class JobRunner:
     # --- one pass ------------------------------------------------------------ #
 
     def tick(self) -> None:
-        self._supervise()
-        self._admit()
+        with self._pass:
+            if self._closed:
+                return
+            self._supervise()
+            self._admit()
 
     def running_count(self) -> int:
         return len(self._children)

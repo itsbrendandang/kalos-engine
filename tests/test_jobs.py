@@ -957,3 +957,76 @@ def test_the_runner_module_imports_without_fcntl_and_refuses_only_when_enabled(t
     assert out.returncode == 0, out.stderr
     assert "disabled: None" in out.stdout
     assert "enabled: refused:" in out.stdout and "POSIX" in out.stdout, out.stdout
+
+
+class _ProcesslessWorker:
+    """A worker that runs until it is killed (the runner's contract, no process)."""
+
+    pid = None
+
+    def __init__(self, killed: list[str], job_id: str) -> None:
+        self._alive = True
+        self._killed = killed
+        self._job_id = job_id
+
+    def poll(self) -> int | None:
+        return None if self._alive else -9
+
+    def kill(self) -> None:
+        self._alive = False
+        self._killed.append(self._job_id)
+
+
+def test_a_claim_that_races_a_stop_is_never_started_unsupervised(store, monkeypatch):
+    """N6: stop() ran between the scheduler's stop check and its claim. It killed the
+    children it knew about and released the runner lock; the claim then succeeded
+    and a worker started after the lock was gone, with nothing left to stop it. A
+    pass that is under way now holds the pass lock, and stop() waits for it, so the
+    claimed job is stopped and recorded as engine_stopped like any other."""
+    job = _submit(store)
+    killed: list[str] = []
+    runner = JobRunner(store, spawn=lambda j, _t, _d: _ProcesslessWorker(killed, j), timeout_s=60, poll_s=0.01)
+    real_claim = jobs.claim
+    helper = threading.Thread(target=lambda: None)
+
+    def claim_while_stop_starts(*args, **kwargs):
+        nonlocal helper
+        helper = threading.Thread(target=runner.stop, kwargs={"timeout": 0.05})
+        helper.start()
+        helper.join(timeout=0.5)  # old code: stop finishes here; new code: it waits for this pass
+        return real_claim(*args, **kwargs)
+
+    monkeypatch.setattr(jobs, "claim", claim_while_stop_starts)
+    runner.tick()
+    helper.join(timeout=10)
+    assert not helper.is_alive()
+    assert killed == [job["id"]]
+    assert runner.running_count() == 0 and runner.limit.running() == 0
+    done = jobs.get_job(store, tenant="acme", job_id=job["id"])
+    assert done["state"] == "failed" and done["error"]["code"] == "engine_stopped"
+
+
+def test_stop_keeps_the_runner_lock_while_a_pass_is_still_running(store, monkeypatch):
+    """N6: when the scheduler cannot be stopped in time, the lock is kept (the OS
+    releases it at exit), so a second runner still cannot start on this directory."""
+    _submit(store)
+    runner = JobRunner(store, spawn=lambda j, _t, _d: _ProcesslessWorker([], j), timeout_s=60,
+                       poll_s=0.01, pass_wait_s=0.1)
+    runner.start()
+    entered, let_go = threading.Event(), threading.Event()
+    real_claim = jobs.claim
+
+    def slow_claim(*args, **kwargs):
+        entered.set()
+        let_go.wait(10)
+        return real_claim(*args, **kwargs)
+
+    monkeypatch.setattr(jobs, "claim", slow_claim)
+    assert entered.wait(10)  # the scheduler thread is inside a pass
+    runner.stop(timeout=0.1)
+    try:
+        assert runner._lock_fd is not None
+        with pytest.raises(job_runner.RunnerLocked):
+            job_runner._acquire_runner_lock(store.state_dir)
+    finally:
+        let_go.set()

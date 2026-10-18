@@ -203,9 +203,14 @@ variable named. They are not silently replaced by defaults.
   point. Either way nothing is published.
 - **Timeout:** the runner kills the worker when `KALOS_JOB_TIMEOUT_S` elapses
   and records `timed_out` (`error.code = timeout`).
-- **Engine shutdown:** running workers are killed and their jobs are recorded
-  `failed` with `engine_stopped`. The runner lock (below) is released last, after
-  those jobs are recorded, so another runner cannot recover them mid-shutdown.
+- **Engine shutdown:** the scheduler stops starting workers, then running
+  workers are killed and their jobs are recorded `failed` with
+  `engine_stopped`. A scheduling pass that is under way finishes first (the
+  shutdown waits for it, up to 30 s), so a job claimed just before shutdown is
+  stopped like any other. If a pass cannot finish in that time, the runner
+  lock is kept until the process exits rather than released under a live
+  scheduler. The runner lock (below) is released last, after those jobs are
+  recorded, so another runner cannot recover them mid-shutdown.
 
 - **Start failure:** if the worker cannot be started, or its pid cannot be
   recorded, the worker (if one was started) is killed and the job is recorded
