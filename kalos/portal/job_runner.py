@@ -28,7 +28,6 @@ tests run the same worker code in a thread (`ThreadWorker`) with a stop flag.
 """
 from __future__ import annotations
 
-import fcntl
 import logging
 import os
 import signal
@@ -63,7 +62,18 @@ class RunnerLocked(RuntimeError):
 def _acquire_runner_lock(state_dir: Path) -> int:
     """Take the state directory's runner lock (an exclusive, non-blocking flock)
     and return its file descriptor. The OS releases it when the process exits,
-    however it exits, so a crashed engine never leaves it held."""
+    however it exits, so a crashed engine never leaves it held.
+
+    POSIX only (`fcntl`). The import is here, not at module level, so the module
+    loads everywhere and only an engine that runs jobs needs the lock. Not
+    reliable on network filesystems (NFS, SMB): see docs/JOBS.md."""
+    try:
+        import fcntl
+    except ImportError:
+        raise RunnerLocked(
+            "background jobs need a POSIX host: the runner lock uses flock, which this "
+            "platform does not have; set KALOS_JOBS_ENABLED=0"
+        ) from None
     raw_workers = os.environ.get("WEB_CONCURRENCY", "").strip()
     if raw_workers.isdigit() and int(raw_workers) > 1:
         raise RunnerLocked(

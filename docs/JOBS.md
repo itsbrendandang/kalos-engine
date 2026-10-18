@@ -307,4 +307,10 @@ The rules are those of the campaign routes (docs/CAMPAIGNS_API.md), applied to j
   engine then fails to boot, rather than accepting job submissions no runner
   would ever run. A start with `WEB_CONCURRENCY` above 1 is refused too, with a
   message naming the variable. Run one engine process per state directory
-  (docs/HARDENING.md). The lock is POSIX-only (`fcntl`).
+  (docs/HARDENING.md). The lock is POSIX-only (`fcntl`); on a platform without
+  it the engine refuses to start only when jobs are enabled, and
+  `KALOS_JOBS_ENABLED=0` runs the sync API there.
+  **Keep the state directory on a local filesystem.** `flock` on NFS and SMB
+  mounts is emulated or unsupported on many clients: two engines on one share
+  can both take the lock, and then both schedule the same jobs. The check
+  protects one host with a local state directory, not a shared mount.

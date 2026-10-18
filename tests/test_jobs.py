@@ -929,3 +929,31 @@ def test_a_failed_start_cannot_leak_the_claimed_job_or_its_slot(store, failure):
     assert runner.limit.running() == 0
     done = jobs.get_job(store, tenant="acme", job_id=job["id"])
     assert done["state"] == "failed" and done["error"]["code"] == "worker_unavailable"
+
+
+def test_the_runner_module_imports_without_fcntl_and_refuses_only_when_enabled(tmp_path):
+    """N5: `fcntl` (POSIX only) is imported where the lock is taken, not at import time.
+    With jobs disabled the runner module loads and starts nothing on a platform
+    without fcntl; with jobs enabled the boot fails with a message that says why."""
+    code = (
+        "import os, sys\n"
+        "sys.modules['fcntl'] = None  # what a non-POSIX platform looks like to the import\n"
+        "from kalos.portal import job_runner\n"
+        "from kalos.portal.campaign import CampaignStore\n"
+        "store = CampaignStore(sys.argv[1])\n"
+        "os.environ['KALOS_JOBS_ENABLED'] = '0'\n"
+        "print('disabled:', job_runner.start_job_runner(store))\n"
+        "os.environ['KALOS_JOBS_ENABLED'] = '1'\n"
+        "try:\n"
+        "    job_runner.start_job_runner(store)\n"
+        "except job_runner.RunnerLocked as exc:\n"
+        "    print('enabled: refused:', exc)\n"
+        "store.close()\n"
+    )
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(job_runner.__file__)))
+    env = {**os.environ, "PYTHONPATH": repo}
+    out = subprocess.run([sys.executable, "-c", code, str(tmp_path / "state")],
+                         capture_output=True, text=True, timeout=60, env=env)
+    assert out.returncode == 0, out.stderr
+    assert "disabled: None" in out.stdout
+    assert "enabled: refused:" in out.stdout and "POSIX" in out.stdout, out.stdout
