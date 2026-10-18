@@ -226,7 +226,7 @@ The last part of each baseline cell is the paired call against Kalos: "Kalos bet
 
 What the table says, and what it does not:
 
-- **Every model-based method has lower mean regret than random and LHS in every cell**, Kalos included. The point estimates are what this shows; the paired intervals against random and LHS were not computed.
+- **Random and LHS are the weakest rows in every cell.** Kalos's paired interval against each of them excludes zero in all five cells. Every other model-based method also has a lower mean than both, in every cell.
 - **Clean synthetic (Gaussian 0%):** Kalos, Ax and vanilla GP-EI are not separated. All three reach 90% of the optimum in every seed, at about 13 experiments on average. Random, LHS and Optuna TPE reach it in 7-40% of seeds.
 - **Noisy synthetic (15%):** Kalos is not separated from Optuna, Ax or GP-EI. Its point estimate is the lowest on Ackley 0% and on Ackley 15% (where all methods are within the same interval). On Gaussian 15% Optuna TPE has a lower point estimate (0.161 against 0.186), and Ax's is essentially level (0.191). Kalos also reaches 90% of the optimum in 53% of seeds on Gaussian 15%, against 30-40% for the baselines.
 - **Using only measurements** (regret of the best *noisy* observation, which needs no oracle; in the table file, not the headline), Kalos is not ahead on Gaussian 15% (0.315, against Optuna 0.293 and Ax 0.292) or on Ackley 15% (0.613, against Optuna 0.601).

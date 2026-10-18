@@ -154,26 +154,35 @@ Normalised regret (0 = optimum, 1 = median random point), mean [95% bootstrap CI
 | Ax (default) | 0.002 [0.001, 0.002] | 0.191 [0.136, 0.253] | 0.284 [0.225, 0.346] | 0.522 [0.462, 0.582] | 0.325 [0.271, 0.379] |
 | Vanilla GP-EI | 0.002 [0.001, 0.003] | 0.206 [0.143, 0.273] | 0.296 [0.238, 0.357] | 0.526 [0.467, 0.583] | 0.276 [0.222, 0.332] |
 
-Paired calls against Kalos (per the rule in section 7; the Holm p-value is exploratory):
+Paired calls against Kalos (per the rule in section 7: "Kalos better" when the 95% paired bootstrap CI excludes zero in Kalos's favour, "baseline better" when it excludes zero the other way, otherwise "unresolved"; Holm p is the exploratory Wilcoxon p-value across the five comparators in each cell):
 
-| Cell | Comparator | Mean difference (method minus Kalos), 95% CI | W/T/L (Kalos) | Holm p | Call |
+| Cell | Comparator | Mean difference (method minus Kalos), 95% CI | W/T/L (Kalos wins/ties/losses) | Holm p (exploratory) | Call |
 | --- | --- | --- | --- | --- | --- |
+| Gaussian 0% | Random | -0.331 [-0.390, -0.270] | 30/0/0 | <0.001 | Kalos better |
+| Gaussian 0% | LHS | -0.353 [-0.405, -0.300] | 30/0/0 | <0.001 | Kalos better |
 | Gaussian 0% | Optuna TPE | -0.131 [-0.159, -0.105] | 30/0/0 | <0.001 | Kalos better |
-| Gaussian 0% | Ax, GP-EI | ~0 | 0/30/0 (Ax 0/30/0) | 1.0 | unresolved |
-| Gaussian 15% | Optuna TPE | +0.026 [-0.054, 0.109] | 13/5/12 | 1.0 | unresolved |
-| Gaussian 15% | Ax | -0.005 [-0.072, 0.066] | 16/2/12 | 1.0 | unresolved |
-| Gaussian 15% | GP-EI | -0.019 [-0.088, 0.043] | 12/6/12 | 1.0 | unresolved |
+| Gaussian 0% | Ax | +0.000 [-0.000, +0.001] | 0/30/0 | 1.000 | unresolved (CI includes 0) |
+| Gaussian 0% | Vanilla GP-EI | -0.000 [-0.001, +0.001] | 0/30/0 | 1.000 | unresolved (CI includes 0) |
+| Gaussian 15% | Random | -0.147 [-0.243, -0.042] | 22/3/5 | 0.034 | Kalos better |
+| Gaussian 15% | LHS | -0.169 [-0.246, -0.086] | 22/2/6 | 0.005 | Kalos better |
+| Gaussian 15% | Optuna TPE | +0.026 [-0.054, +0.109] | 13/5/12 | 1.000 | unresolved (CI includes 0) |
+| Gaussian 15% | Ax | -0.005 [-0.072, +0.066] | 16/2/12 | 1.000 | unresolved (CI includes 0) |
+| Gaussian 15% | Vanilla GP-EI | -0.019 [-0.088, +0.043] | 12/6/12 | 1.000 | unresolved (CI includes 0) |
+| Ackley 0% | Random | -0.360 [-0.430, -0.285] | 29/0/1 | <0.001 | Kalos better |
+| Ackley 0% | LHS | -0.372 [-0.445, -0.296] | 27/3/0 | <0.001 | Kalos better |
 | Ackley 0% | Optuna TPE | -0.205 [-0.279, -0.125] | 25/0/5 | <0.001 | Kalos better |
-| Ackley 0% | Ax | -0.039 [-0.109, 0.034] | 16/5/9 | ~0.2 | unresolved |
-| Ackley 0% | GP-EI | -0.050 [-0.105, 0.003] | 20/1/9 | ~0.12 | unresolved |
-| Ackley 15% | Optuna TPE | -0.020 [-0.091, 0.053] | 16/3/11 | 1.0 | unresolved |
-| Ackley 15% | Ax | -0.001 [-0.079, 0.074] | 14/1/15 | 1.0 | unresolved |
-| Ackley 15% | GP-EI | -0.005 [-0.067, 0.053] | 11/5/14 | 1.0 | unresolved |
-| Bioprocess-like 15% | Optuna TPE | -0.109 [-0.201, -0.017] | 18/1/11 | 0.099 | Kalos better (borderline) |
+| Ackley 0% | Ax | -0.039 [-0.109, +0.034] | 16/5/9 | 0.210 | unresolved (CI includes 0) |
+| Ackley 0% | Vanilla GP-EI | -0.050 [-0.105, +0.003] | 20/1/9 | 0.121 | unresolved (CI includes 0) |
+| Ackley 15% | Random | -0.084 [-0.144, -0.022] | 21/3/6 | 0.043 | Kalos better |
+| Ackley 15% | LHS | -0.097 [-0.157, -0.036] | 21/3/6 | 0.035 | Kalos better |
+| Ackley 15% | Optuna TPE | -0.020 [-0.091, +0.053] | 16/3/11 | 1.000 | unresolved (CI includes 0) |
+| Ackley 15% | Ax | -0.001 [-0.079, +0.074] | 14/1/15 | 1.000 | unresolved (CI includes 0) |
+| Ackley 15% | Vanilla GP-EI | -0.005 [-0.067, +0.053] | 11/5/14 | 1.000 | unresolved (CI includes 0) |
+| Bioprocess-like 15% | Random | -0.223 [-0.304, -0.144] | 25/1/4 | <0.001 | Kalos better |
+| Bioprocess-like 15% | LHS | -0.242 [-0.314, -0.175] | 28/1/1 | <0.001 | Kalos better |
+| Bioprocess-like 15% | Optuna TPE | -0.109 [-0.201, -0.017] | 18/1/11 | 0.099 | Kalos better |
 | Bioprocess-like 15% | Ax | -0.108 [-0.170, -0.048] | 19/2/9 | 0.019 | Kalos better |
-| Bioprocess-like 15% | GP-EI | -0.059 [-0.120, -0.0005] | 18/3/9 | 0.099 | Kalos better (borderline) |
-
-Random and LHS were compared with Kalos as well (all Kalos better; see `vs_baselines.json`).
+| Bioprocess-like 15% | Vanilla GP-EI | -0.059 [-0.120, -0.000] | 18/3/9 | 0.099 | Kalos better |
 
 Experiments to reach 90% of the optimum (share of seeds reaching it, mean experiments censored at N+1):
 
