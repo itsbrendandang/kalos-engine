@@ -14,6 +14,7 @@ import sqlite3
 import sys
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -1030,3 +1031,23 @@ def test_stop_keeps_the_runner_lock_while_a_pass_is_still_running(store, monkeyp
             job_runner._acquire_runner_lock(store.state_dir)
     finally:
         let_go.set()
+
+
+def test_a_refused_submit_writes_no_upload_to_disk(store, monkeypatch):
+    """N7: a submit refused for depth (or size) never writes its bytes to the state
+    directory; the depth check runs before the write, and the in-transaction check
+    stays authoritative for races."""
+    monkeypatch.setenv("KALOS_JOB_QUEUE_DEPTH", "1")
+    _submit(store, tenant="acme")  # the tenant is now at its depth
+    writes: list[Path] = []
+    real_write = jobs._write_input
+
+    def spy(path, raw):
+        writes.append(path)
+        return real_write(path, raw)
+
+    monkeypatch.setattr(jobs, "_write_input", spy)
+    with pytest.raises(jobs.QueueFull):
+        _submit(store, tenant="acme")
+    assert writes == []
+    assert not list((store.state_dir / jobs.JOBS_DIRNAME).glob("*/*"))

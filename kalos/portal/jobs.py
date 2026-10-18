@@ -329,6 +329,9 @@ def enqueue(
     if len(raw) > settings.max_upload_bytes:
         raise JobTooLarge(settings.max_upload_bytes)
     check_roles(roles)
+    # A cheap depth check before anything is written: a refused submit leaves no file.
+    # The check inside the transaction below is the one that counts under races.
+    check_queue_capacity(store, tenant=tenant)
     job_id = "job_" + uuid.uuid4().hex
     rel = _relative_input_path(tenant, job_id)
     path = store.state_dir / rel

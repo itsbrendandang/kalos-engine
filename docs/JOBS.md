@@ -162,6 +162,11 @@ process on a modest machine.
 | Wall-clock limit for one job, then its worker is killed | `KALOS_JOB_TIMEOUT_S` | `1800` | per job |
 | Turn the queue off (routes answer 503; status still reads) | `KALOS_JOBS_ENABLED` | `1` | whole engine |
 
+- **Refused before any write.** A submit over the upload cap, over the queue
+  depth, or with an over-long `roles` value is refused before its bytes are
+  written to the state directory. Only a race between two submits (both pass
+  the cheap check) can write a file that the transaction then refuses, and that
+  file is removed again.
 - **Engine-wide queue.** `KALOS_JOB_GLOBAL_QUEUE_DEPTH` bounds the jobs held
   by all tenants together, so the number of pending uploads on disk is bounded
   too: at most that many times the upload cap. Total bytes are not capped
