@@ -104,6 +104,7 @@ envelope now, not a failed job later.
 | `403` | Missing scope. |
 | `404` | The campaign (or, for `GET`/cancel, the job) is not visible to the caller. See "Isolation". |
 | `409` | The campaign is archived. |
+| `400` | Also: `roles` is over 16 KiB (`MAX_ROLES_CHARS`); refused, not truncated. |
 | `413` | The upload is over the tenant's job size limit, or over the engine's upload cap. |
 | `429` | The tenant already has `KALOS_JOB_QUEUE_DEPTH` queued or running jobs, or the engine already has `KALOS_JOB_GLOBAL_QUEUE_DEPTH` (all tenants). `Retry-After` is set. |
 | `503` | Jobs are disabled (`KALOS_JOBS_ENABLED=0`), the job settings are malformed, or every preflight slot is in use. `Retry-After` is set on the last. |
@@ -225,7 +226,8 @@ On startup the runner, before admitting anything:
 1. fails every job left `running` with `interrupted`, killing its worker first
    if the recorded pid is still alive **and** its command line names that job
    (so a reused pid is never signalled);
-2. deletes stored inputs that no queued or running job refers to.
+2. deletes stored inputs that no queued or running job refers to, and any
+   half-written upload (`.tmp`).
 
 Queued jobs survive a restart and are admitted as usual. Running ones are not
 resumed: the upload is resubmitted by the client (the analysis is

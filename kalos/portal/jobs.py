@@ -65,6 +65,9 @@ assert set(JOB_STATES) == set(ACTIVE_STATES) | TERMINAL_STATES
 
 DEFAULT_QUEUE_DEPTH = 8
 DEFAULT_GLOBAL_QUEUE_DEPTH = 64
+# The column-roles JSON is a few hundred characters for a real sheet. It is refused above
+# this (not truncated: a clipped JSON document is not a roles document).
+MAX_ROLES_CHARS = 16 * 1024
 DEFAULT_TIMEOUT_S = 1800.0
 JOBS_DIRNAME = "jobs"
 # Shown to the caller for a job that did not finish. The code is the stable
@@ -112,6 +115,17 @@ class EngineQueueFull(JobError):
         super().__init__(
             f"this engine already has {depth} queued or running jobs; wait for some to finish"
         )
+
+
+class JobRolesTooLarge(JobError):
+    def __init__(self) -> None:
+        super().__init__(f"roles is larger than the {MAX_ROLES_CHARS}-character limit")
+
+
+def check_roles(roles: str) -> None:
+    """Refuse an over-long `roles` value (JobRolesTooLarge). Run before the upload is parsed."""
+    if len(roles) > MAX_ROLES_CHARS:
+        raise JobRolesTooLarge()
 
 
 class JobTooLarge(JobError):
@@ -314,6 +328,7 @@ def enqueue(
     validate_campaign_id(campaign_id)
     if len(raw) > settings.max_upload_bytes:
         raise JobTooLarge(settings.max_upload_bytes)
+    check_roles(roles)
     job_id = "job_" + uuid.uuid4().hex
     rel = _relative_input_path(tenant, job_id)
     path = store.state_dir / rel

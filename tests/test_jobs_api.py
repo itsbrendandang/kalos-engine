@@ -321,6 +321,21 @@ def test_a_cancelled_preflight_keeps_its_slot_until_the_parse_finishes(monkeypat
     asyncio.run(scenario())
 
 
+def test_an_over_long_roles_value_is_a_400_before_anything_is_parsed_or_written(env, monkeypatch):
+    """LOW8: `roles` is bounded (refused, not clipped: clipped JSON is not roles)."""
+    tc, store = env
+    cid = _campaign(tc, "a-write")
+    parsed: list[bytes] = []
+    monkeypatch.setattr(jobs_api, "preflight_upload", lambda raw, *a, **k: parsed.append(raw))
+    before = _job_files(store)
+    r = tc.post(f"/api/campaigns/{cid}/jobs", files={"file": ("runs.csv", _csv(), "text/csv")},
+                data={"target": "lipase_titer", "roles": "x" * (jobs.MAX_ROLES_CHARS + 1)},
+                headers=H("a-write"))
+    assert r.status_code == 400
+    assert "roles is larger than" in r.json()["error"]
+    assert parsed == [] and _job_files(store) == before
+
+
 def test_upload_over_the_tenant_limit_is_413(env, monkeypatch):
     tc, store = env
     monkeypatch.setenv("KALOS_JOB_MAX_UPLOAD_BYTES", "1000")

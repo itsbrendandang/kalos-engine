@@ -240,6 +240,15 @@ def test_the_global_queue_depth_is_validated_like_the_others(monkeypatch):
     assert jobs.job_settings().global_queue_depth == jobs.DEFAULT_GLOBAL_QUEUE_DEPTH
 
 
+def test_the_store_refuses_an_over_long_roles_value_too(store):
+    cid = _campaign(store)
+    with pytest.raises(jobs.JobRolesTooLarge):
+        jobs.enqueue(store, tenant="acme", campaign_id=cid, raw=_csv(), filename="runs.csv",
+                     target="lipase_titer", anonymize=False, roles="x" * (jobs.MAX_ROLES_CHARS + 1),
+                     sheet=None, requested_by=None)
+    assert not list(store.state_dir.glob("jobs/*/*"))
+
+
 def test_upload_over_the_tenant_limit_is_refused_before_anything_is_written(store, monkeypatch):
     monkeypatch.setenv("KALOS_JOB_MAX_UPLOAD_BYTES", "100")
     cid = _campaign(store)
@@ -748,6 +757,17 @@ def test_recovery_sweeps_input_files_no_live_job_refers_to(store):
     assert orphan.exists() is False
     live = store.state_dir / jobs._relative_input_path("acme", job["id"])
     assert live.exists()  # still queued, so its input is kept
+
+
+def test_recovery_sweeps_half_written_uploads_too(store):
+    """LOW7: a crash between writing an upload and renaming it leaves a `.tmp`."""
+    job = _submit(store)
+    stale = store.state_dir / "jobs" / "deadbeefdeadbeef" / "job_stale.tmp"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_bytes(b"half a file")
+    job_runner.recover(store)
+    assert not stale.exists()
+    assert (store.state_dir / jobs._relative_input_path("acme", job["id"])).exists()
 
 
 def test_input_that_no_longer_matches_its_checksum_is_refused(store):

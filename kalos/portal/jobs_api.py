@@ -230,6 +230,10 @@ async def _submit(
         jobs.check_queue_capacity(store, tenant=principal.tenant)
     except CampaignError as exc:
         return _job_error_response(exc), None
+    try:
+        jobs.check_roles(roles)
+    except CampaignError as exc:
+        return _job_error_response(exc), None
     # One byte past the tenant's limit is enough to refuse; never hold more.
     raw = await file.read(settings.max_upload_bytes + 1)
     if len(raw) > settings.max_upload_bytes:

@@ -210,7 +210,8 @@ def _sweep_orphan_inputs(store: CampaignStore) -> None:
     if not base.is_dir():
         return
     live = jobs.live_input_paths(store)
-    for path in base.glob("*/*.bin"):
+    # `.tmp` is a half-written upload (a crash between write and rename): never live.
+    for path in [*base.glob("*/*.bin"), *base.glob("*/*.tmp")]:
         rel = f"{jobs.JOBS_DIRNAME}/{path.parent.name}/{path.name}"
         if rel not in live:
             path.unlink(missing_ok=True)
