@@ -21,7 +21,9 @@ Implementation:
 | `kalos/portal/busy.py` | The admission limiter (global and per-tenant slots) that jobs and sync routes share. |
 
 Release-gate tests: `tests/test_jobs_api.py` (HTTP contract and cross-tenant
-isolation), `tests/test_jobs.py` (queue, worker, runner, crash recovery).
+isolation), `tests/test_jobs.py` (queue, worker, runner, crash recovery). The
+runner's process handling is tested with real processes: a time-limit kill of a
+worker and its child that both ignore SIGTERM, and the exit-path group kill.
 
 ## Routes
 

@@ -618,6 +618,38 @@ def test_the_worker_watchdog_stays_quiet_while_the_engine_is_alive_and_on_time()
     assert fired == []
 
 
+def test_a_worker_that_ignores_sigterm_is_killed_with_its_group_at_its_time_limit(store, tmp_path):
+    """Real processes: a worker and a child it started both ignore SIGTERM and
+    sleep forever. At the time limit the runner kills the whole group (SIGKILL),
+    so neither survives and the job is recorded as timed out."""
+    job = _submit(store)
+    pidfile = tmp_path / "child.pid"
+    child_code = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(600)"
+    script = (
+        "import pathlib, signal, subprocess, sys, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+        f"pathlib.Path({str(pidfile)!r}).write_text(str(child.pid))\n"
+        "time.sleep(600)\n"
+    )
+    workers: list[job_runner.ProcessWorker] = []
+
+    def spawn(job_id, _tenant, state_dir):
+        workers.append(job_runner.ProcessWorker(job_id, state_dir, argv=[sys.executable, "-c", script]))
+        return workers[-1]
+
+    runner = JobRunner(store, spawn=spawn, timeout_s=4, poll_s=0.01)
+    runner.tick()
+    wait_until = time.monotonic() + 2.5
+    while not pidfile.exists() and time.monotonic() < wait_until:
+        time.sleep(0.02)
+    assert pidfile.exists(), "the worker never started its child"
+    done = _drive(runner, store, "acme", job["id"], timeout=30)
+    assert done["state"] == "timed_out" and done["error"]["code"] == "timeout"
+    assert _gone(workers[0].pid) and _gone(int(pidfile.read_text()))
+    assert runner.running_count() == 0 and runner.limit.running() == 0
+
+
 # --- crash recovery ------------------------------------------------------------------- #
 
 
