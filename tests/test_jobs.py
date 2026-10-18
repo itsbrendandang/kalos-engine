@@ -554,6 +554,70 @@ def test_a_sync_request_yields_to_a_queued_job_of_another_tenant(store):
     assert busy.limiter().try_acquire("acme") is not None
 
 
+# --- worker lifetime (MED4) -------------------------------------------------------------- #
+
+
+def test_the_runner_gives_each_worker_its_time_limit_plus_a_margin(store, monkeypatch):
+    seen: dict = {}
+
+    class Recorder(_FakeWorker):
+        def __init__(self, job_id, state_dir, **kwargs):
+            seen.update(kwargs)
+            super().__init__(exit_code=0)
+
+    monkeypatch.setattr(job_runner, "ProcessWorker", Recorder)
+    _submit(store)
+    JobRunner(store, timeout_s=100, poll_s=0.01).tick()
+    expected = time.time() + 100 + job_runner.WORKER_DEADLINE_MARGIN_S
+    assert abs(seen["deadline"] - expected) < 5
+
+
+def test_a_worker_process_receives_its_deadline_in_its_environment(tmp_path):
+    out = tmp_path / "deadline.txt"
+    argv = [sys.executable, "-c",
+            f"import os, pathlib; pathlib.Path({str(out)!r}).write_text(os.environ['KALOS_JOB_DEADLINE'])"]
+    worker = job_runner.ProcessWorker("job_" + "a" * 32, tmp_path, argv=argv, deadline=1234.5)
+    deadline = time.monotonic() + 30
+    while worker.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert out.read_text() == "1234.5"
+
+
+def test_the_worker_watchdog_exits_once_its_deadline_has_passed():
+    fired: list[int] = []
+    stop = job_worker.start_lifetime_watchdog(
+        time.time() - 1, parent_pid=os.getppid(), interval_s=0.01, exit_fn=fired.append)
+    try:
+        deadline = time.monotonic() + 5
+        while not fired and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert fired == [3]
+    finally:
+        stop.set()
+
+
+def test_the_worker_watchdog_exits_when_its_engine_is_gone():
+    fired: list[int] = []
+    stop = job_worker.start_lifetime_watchdog(
+        time.time() + 3600, parent_pid=os.getppid() + 100_000, interval_s=0.01, exit_fn=fired.append)
+    try:
+        deadline = time.monotonic() + 5
+        while not fired and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert fired == [3]
+    finally:
+        stop.set()
+
+
+def test_the_worker_watchdog_stays_quiet_while_the_engine_is_alive_and_on_time():
+    fired: list[int] = []
+    stop = job_worker.start_lifetime_watchdog(
+        time.time() + 3600, parent_pid=os.getppid(), interval_s=0.01, exit_fn=fired.append)
+    time.sleep(0.2)
+    stop.set()
+    assert fired == []
+
+
 # --- crash recovery ------------------------------------------------------------------- #
 
 

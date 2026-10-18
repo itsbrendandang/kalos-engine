@@ -25,7 +25,10 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
 import sys
+import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -137,14 +140,51 @@ def _commit(conn: Any, new_generation: str, *, tenant: str, job_id: str) -> None
     jobs.mark_succeeded(conn, tenant=tenant, job_id=job_id, generation=new_generation)
 
 
+def start_lifetime_watchdog(
+    deadline: float, *, parent_pid: int, interval_s: float = 1.0,
+    exit_fn: Callable[[int], None] = os._exit,
+) -> threading.Event:
+    """Stop this worker when nobody is left to read its result: when its wall-clock
+    `deadline` (epoch seconds) has passed, or when its parent (the engine that
+    started it) is no longer `parent_pid`, i.e. it died and the worker was
+    re-parented. Runs in a daemon thread. Exits with status 3 and writes no job
+    state: the job is recorded by the next engine start (`interrupted`). Returns
+    an Event that stops the watchdog (tests; the worker process just exits)."""
+    stop = threading.Event()
+
+    def _watch() -> None:
+        while not stop.wait(interval_s):
+            if os.getppid() != parent_pid:
+                log.error("job worker: the engine that started it is gone; exiting")
+            elif time.time() > deadline:
+                log.error("job worker: past its deadline; exiting")
+            else:
+                continue
+            exit_fn(3)
+            return
+
+    threading.Thread(target=_watch, name="kalos-job-watchdog", daemon=True).start()
+    return stop
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point of the worker process: `python -m kalos.portal.job_worker <job_id>`.
-    The state directory is `KALOS_STATE_DIR`, as for the engine."""
+    The state directory is `KALOS_STATE_DIR`, as for the engine. When the runner
+    sets `KALOS_JOB_DEADLINE`, a watchdog ends the process once it passes, or
+    if the engine is gone (see `start_lifetime_watchdog`)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = sys.argv[1:] if argv is None else argv
     if len(args) != 1 or JOB_ID_PATTERN.fullmatch(args[0]) is None:
         print("usage: python -m kalos.portal.job_worker <job_id>", file=sys.stderr)
         return 2
+    raw_deadline = os.environ.get("KALOS_JOB_DEADLINE", "").strip()
+    if raw_deadline:
+        try:
+            deadline = float(raw_deadline)
+        except ValueError:
+            print("KALOS_JOB_DEADLINE must be a number of epoch seconds", file=sys.stderr)
+            return 2
+        start_lifetime_watchdog(deadline, parent_pid=os.getppid())
     from kalos.portal.campaign import CampaignStore
 
     store = CampaignStore()

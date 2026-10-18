@@ -49,6 +49,10 @@ if TYPE_CHECKING:
 log = logging.getLogger("kalos.portal")
 
 KILL_WAIT_S = 5.0
+# A worker gets its job time limit plus this margin as a wall-clock deadline. The
+# runner normally kills it at the limit; the deadline is for the case where the
+# runner is gone (the worker then exits by itself, see job_worker).
+WORKER_DEADLINE_MARGIN_S = 60.0
 
 
 class Worker(Protocol):
@@ -66,8 +70,13 @@ Spawn = Callable[[str, str, Path], Worker]
 class ProcessWorker:
     """A worker in its own session, so a kill takes its whole process group."""
 
-    def __init__(self, job_id: str, state_dir: Path, *, argv: list[str] | None = None) -> None:
+    def __init__(
+        self, job_id: str, state_dir: Path, *, argv: list[str] | None = None,
+        deadline: float | None = None,
+    ) -> None:
         env = {**os.environ, "KALOS_STATE_DIR": str(state_dir)}
+        if deadline is not None:  # epoch seconds: the worker exits itself past this
+            env["KALOS_JOB_DEADLINE"] = repr(float(deadline))
         # `argv` replaces the worker command (tests only: a fake worker process).
         command = argv if argv is not None else [sys.executable, "-m", "kalos.portal.job_worker", job_id]
         self._proc = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
@@ -203,7 +212,7 @@ class JobRunner:
     ) -> None:
         self.store = store
         self.runner_id = uuid.uuid4().hex
-        self._spawn = spawn or (lambda job_id, _tenant, state_dir: ProcessWorker(job_id, state_dir))
+        self._spawn = spawn or self._default_spawn
         self._limit = limit
         self._timeout_s = timeout_s
         self._poll_s = poll_s
@@ -221,6 +230,10 @@ class JobRunner:
     @property
     def timeout_s(self) -> float:
         return self._timeout_s if self._timeout_s is not None else jobs.job_settings().timeout_s
+
+    def _default_spawn(self, job_id: str, _tenant: str, state_dir: Path) -> Worker:
+        return ProcessWorker(job_id, state_dir,
+                             deadline=time.time() + self.timeout_s + WORKER_DEADLINE_MARGIN_S)
 
     def start(self) -> None:
         recover(self.store)

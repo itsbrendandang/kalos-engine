@@ -194,6 +194,18 @@ inside a single BLAS call, so the kill is the bound, not a checkpoint. Every
 way a worker ends (cancel, timeout, a crash, a clean exit) goes through that
 group kill, so a child process the worker left behind is stopped too.
 
+## Worker lifetime
+
+Each worker gets a wall-clock deadline in `KALOS_JOB_DEADLINE`: its start time
+plus `KALOS_JOB_TIMEOUT_S` plus a 60 s margin. The runner normally stops it at
+the time limit, but a worker whose engine has gone (killed, or crashed before
+it could kill the worker) would otherwise run on, unsupervised. So a watchdog
+thread in the worker process ends it (exit status 3, no job state written)
+once the deadline has passed, or as soon as its parent is no longer the engine
+that started it. A job still `running` at the next engine start is recorded
+`interrupted` (see below). Until then a publish is still all-or-nothing: it
+commits with the job's `succeeded` state, or not at all.
+
 ## Restart and crash recovery
 
 On startup the runner, before admitting anything:
