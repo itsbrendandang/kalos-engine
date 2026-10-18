@@ -14,11 +14,63 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import math
 import os
+from collections.abc import Callable
+from typing import TypeVar
 
 from kalos.data.anonymizer import salt_configured
 
 log = logging.getLogger("kalos.portal")
+
+_N = TypeVar("_N", int, float)
+
+
+class ConfigError(ValueError):
+    """A `KALOS_*` sizing or timing setting is malformed or out of range.
+
+    A ValueError subclass so existing `except ValueError` callers keep working.
+    `python -m kalos.portal` catches it at startup and prints the one-line
+    message with exit status 2 (a refusal, not a traceback). The message names
+    the variable and the rule; it echoes the offending value only clipped to 40
+    characters, so a mistyped secret pasted into a numeric knob is not logged
+    in full.
+    """
+
+
+def read_number(name: str, default: str, cast: Callable[[str], _N], *, minimum: _N) -> _N:
+    """Read a numeric `KALOS_*` setting. Empty/unset means `default`.
+
+    Refuses (ConfigError) a value that does not parse, is not finite, or is
+    below `minimum`. Replaces the bare `int(os.environ...)` reads that failed at
+    import with a traceback and no variable name.
+    """
+    raw = os.environ.get(name, "").strip() or default
+    shown = raw[:40]
+    try:
+        value = cast(raw)
+    except ValueError:
+        raise ConfigError(f"{name} must be a number; got {shown!r}") from None
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ConfigError(f"{name} must be a finite number; got {shown!r}")
+    if value < minimum:
+        raise ConfigError(f"{name} must be >= {minimum}; got {shown!r}")
+    return value
+
+
+_READY_MIN_FREE_VAR = "KALOS_READY_MIN_FREE_MB"
+
+
+def ready_min_free_bytes() -> int:
+    """The free space the state volume must keep for `/readyz` to answer 200,
+    from `KALOS_READY_MIN_FREE_MB` (default 256 MiB; 0 disables the check).
+
+    With less than this free, SQLite writes and the backup snapshots start to
+    fail; reporting not-ready early lets an operator act before a failed
+    analysis write. The threshold is not echoed on the probe.
+    """
+    mb = read_number(_READY_MIN_FREE_VAR, "256", float, minimum=0.0)
+    return int(mb * 1024 * 1024)
 
 # Dev/pilot default: any loopback origin on any port (matches the pre-1c behavior).
 _DEV_ORIGIN_REGEX = r"http://(localhost|127\.0\.0\.1)(:\d+)?"

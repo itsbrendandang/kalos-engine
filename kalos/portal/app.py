@@ -54,6 +54,7 @@ from kalos.portal.config import (
     is_local_client,
     log_security_posture,
     open_access_explicitly_allowed,
+    ready_min_free_bytes,
 )
 from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_store
 from kalos.portal.limits import (
@@ -406,20 +407,44 @@ def readyz() -> JSONResponse:
     is server detail an anonymous caller must not see; the full exception is
     logged server-side instead.
 
+    Three checks, each a generic 503 reason on failure (see below):
+      1. the store opens and answers a read (`ping`);
+      2. the store accepts a WRITE (`check_writable`: takes the write lock and
+         commits an empty transaction). A read-only or unwritable volume passes
+         the read and fails here, which is the failure a read-only probe missed;
+      3. the state volume keeps at least `KALOS_READY_MIN_FREE_MB` free (default
+         256 MiB, 0 disables). Writes and backups fail once it is full.
+
     The store is obtained INSIDE the try (not as a `Depends`), so a failure
     to even construct it (unwritable state dir, corrupt file at open) is the
     same generic 503 rather than an unhandled 500. Resolved through
     `app.dependency_overrides` so tests can still point it at a temp store.
+
+    The Containerfile and compose HEALTHCHECK poll this route, not `/healthz`:
+    liveness alone reported a container with a broken store as `healthy`.
     """
     try:
         store = app.dependency_overrides.get(get_campaign_store, get_campaign_store)()
         store.ping()
+        store.check_writable()
     except Exception:  # noqa: BLE001 - any store failure means "not ready", not a 500
         log.exception("readiness check failed: campaign store unavailable")
-        return JSONResponse(
-            {"status": "unavailable", "reason": "campaign store unavailable"}, status_code=503
-        )
+        return _not_ready("campaign store unavailable")
+    try:
+        free = store.free_bytes()
+    except OSError:
+        log.exception("readiness check failed: cannot read free space on the state volume")
+        return _not_ready("state volume unavailable")
+    if free < ready_min_free_bytes():
+        # Logged with the numbers; the probe body is generic (no path, no sizes).
+        log.error("readiness check failed: %d bytes free on the state volume", free)
+        return _not_ready("state volume is low on space")
     return JSONResponse({"status": "ok"})
+
+
+def _not_ready(reason: str) -> JSONResponse:
+    """The unauthenticated 503 body: a fixed reason, never exception text."""
+    return JSONResponse({"status": "unavailable", "reason": reason}, status_code=503)
 
 
 # The demo routes take their work size from the URL, so it is capped: each round

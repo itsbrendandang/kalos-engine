@@ -57,7 +57,7 @@ jobs:
           # peer" during the ~15-20s torch import on boot - curl's own
           # --retry-connrefused does not cover a mid-boot reset, only a
           # refused connection, so it is not a safe substitute here.
-          for _ in $(seq 1 30); do
+          for _ in $(seq 1 45); do
             health="$(docker inspect --format '{{.State.Health.Status}}' kalos-engine-ci)"
             [ "$health" = "healthy" ] && exit 0
             [ "$health" = "unhealthy" ] && { echo "container reported unhealthy"; exit 1; }

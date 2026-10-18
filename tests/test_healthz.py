@@ -165,3 +165,75 @@ def test_readyz_is_a_generic_503_when_the_store_cannot_even_be_built(monkeypatch
     assert resp.json() == {"status": "unavailable", "reason": "campaign store unavailable"}
     assert "/srv/secret" not in resp.text
     assert "/srv/secret" in caplog.text
+
+
+# --- /readyz checks writability and free space (D4) ----------------------- #
+
+
+def test_readyz_503_when_the_store_accepts_reads_but_not_writes(client):
+    """A store that passes the read `ping` but cannot write must NOT be ready.
+    `query_only` makes the connection refuse writes, the same SQLITE_READONLY
+    a read-only or full volume produces."""
+    store = app.dependency_overrides[get_campaign_store]()
+    store.ping()  # reads still work
+    store._conn.execute("PRAGMA query_only = 1")
+    try:
+        resp = client.get("/readyz")
+    finally:
+        store._conn.execute("PRAGMA query_only = 0")
+    assert resp.status_code == 503
+    assert resp.json() == {"status": "unavailable", "reason": "campaign store unavailable"}
+    assert "readonly" not in resp.text and "read-only" not in resp.text
+
+
+def test_check_writable_does_not_change_data(tmp_path):
+    """The write probe takes the lock and commits nothing: a row count and the
+    schema version are the same before and after."""
+    from kalos.portal.campaign import CampaignStore
+
+    store = CampaignStore(tmp_path)
+    before = store._conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()
+    store.check_writable()
+    store.check_writable()
+    assert store._conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone() == before
+    assert not store._conn.in_transaction
+    store.close()
+
+
+def test_readyz_503_when_the_state_volume_is_below_the_free_space_floor(client, monkeypatch, caplog):
+    monkeypatch.setenv("KALOS_READY_MIN_FREE_MB", str(10**9))  # ~1 PB: never satisfied
+    with caplog.at_level("ERROR", logger="kalos.portal"):
+        resp = client.get("/readyz")
+    assert resp.status_code == 503
+    assert resp.json() == {"status": "unavailable", "reason": "state volume is low on space"}
+    # the body names no byte counts and no path ...
+    assert not any(ch.isdigit() for ch in resp.text)
+    assert str(client.app.dependency_overrides[get_campaign_store]().state_dir) not in resp.text
+    # ... but the operator sees the number server-side
+    assert "bytes free on the state volume" in caplog.text
+
+
+def test_readyz_free_space_floor_of_zero_disables_the_check(client, monkeypatch):
+    monkeypatch.setenv("KALOS_READY_MIN_FREE_MB", "0")
+    assert client.get("/readyz").status_code == 200
+
+
+def test_readyz_503_when_free_space_cannot_be_read(client, monkeypatch):
+    from kalos.portal.campaign import CampaignStore
+
+    def _no_stat(self):
+        raise OSError("statvfs failed on /srv/secret")
+
+    monkeypatch.setattr(CampaignStore, "free_bytes", _no_stat)
+    resp = client.get("/readyz")
+    assert resp.status_code == 503
+    assert resp.json() == {"status": "unavailable", "reason": "state volume unavailable"}
+    assert "/srv/secret" not in resp.text
+
+
+def test_bad_free_space_setting_is_a_config_error(monkeypatch):
+    from kalos.portal.config import ConfigError, ready_min_free_bytes
+
+    monkeypatch.setenv("KALOS_READY_MIN_FREE_MB", "lots")
+    with pytest.raises(ConfigError, match="KALOS_READY_MIN_FREE_MB must be a number"):
+        ready_min_free_bytes()

@@ -113,9 +113,19 @@ services:
     # front door instead of two. To restore the direct-browser escape hatch
     # (dev only), re-add "${KALOS_ENGINE_PORT:-8050}:8050" here and set
     # NEXT_PUBLIC_API_URL.
-    # HEALTHCHECK is baked into the image (deploy/engine/Containerfile) - no override
-    # needed here; compose reads the image-level healthcheck for
-    # `condition: service_healthy` below.
+    # Readiness, not liveness: /readyz also proves the store accepts writes and
+    # the state volume has free space (kalos/portal/app.py). A 503 here makes
+    # the engine `unhealthy`, which holds back `web` (depends_on below).
+    # start_period gives a cold torch import and any migration time before a
+    # failed probe counts. Mirrors the image HEALTHCHECK in
+    # deploy/engine/Containerfile; stated here so the compose file is the
+    # reviewable source of what the stack actually runs.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u, sys; sys.exit(0 if u.urlopen('http://127.0.0.1:8050/readyz', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
 
   web:
     build:

@@ -42,6 +42,7 @@ import json
 import logging
 import math
 import os
+import shutil
 import sqlite3
 import threading
 import time
@@ -558,6 +559,24 @@ class CampaignStore:
         sqlite3 raises when the database is missing, corrupt or locked."""
         with self._lock:
             self._conn.execute("SELECT MAX(version) FROM schema_migrations").fetchall()
+
+    def check_writable(self) -> None:
+        """Readiness check that the store accepts WRITES, without changing data.
+
+        `ping` only reads, so a store that has gone read-only (a full or
+        read-only volume, a file whose permissions changed under the process)
+        would pass it while every real write fails. This takes the write lock
+        with `BEGIN IMMEDIATE` and commits an empty transaction: nothing is
+        written, but SQLite must be able to acquire the lock and write its
+        journal/WAL, which is what a write needs. Raises sqlite3's error when it
+        cannot.
+        """
+        with self._txn(write=True):
+            pass
+
+    def free_bytes(self) -> int:
+        """Free bytes on the volume that holds the store (the state directory)."""
+        return shutil.disk_usage(self._dir).free
 
     def get(self, *, tenant: str, campaign_id: str | None = None) -> dict[str, Any] | None:
         """The raw campaign state, or None if none seeded yet."""

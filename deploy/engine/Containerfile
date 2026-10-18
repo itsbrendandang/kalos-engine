@@ -130,21 +130,21 @@ WORKDIR /home/kalos
 
 EXPOSE 8050
 
-# kalos/portal/app.py now has a dedicated GET /healthz route (wave-2 fix; a
-# previous pass of this deploy pack flagged its absence and used `GET /` as a
-# stand-in - see git history for that reasoning if it is ever needed again).
-# It carries no `Depends(require_scope(...))`, the same pattern `/` already
-# used, so it returns 200 whether or not KALOS_AUTH_TOKENS is configured - the
-# healthcheck does not need a token and does not depend on this compose's auth
-# posture to pass. Unlike `/`, it does not render the full portal page: the
-# response is a fixed, tiny `{"status": "ok"}`, and the route never touches
-# the database, so a briefly locked/slow SQLite file cannot fail liveness and
-# trigger a restart loop that would not actually fix anything. It still proves
-# uvicorn is actually accepting and completing HTTP requests, which a bare
-# TCP-connect check would not (a connect can succeed while the event loop is
-# wedged). Plain stdlib urllib, not curl, so the runtime image does not need
-# an extra apt package just to answer its own healthcheck.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request as u, sys; sys.exit(0 if u.urlopen('http://127.0.0.1:8050/healthz', timeout=3).status == 200 else 1)"
+# The HEALTHCHECK polls /readyz, not /healthz. /healthz is pure liveness (the
+# process answers HTTP) and never touches the store, so a container whose
+# portal.db had gone read-only or whose volume was full still reported
+# `healthy` while every write failed. /readyz checks that the store opens,
+# accepts a write, and that the state volume has free space (kalos/portal/app.py
+# `readyz`); it answers 503 with a generic reason when any of those fail, which
+# makes the container `unhealthy`. urlopen raises on a 503, so the probe exits
+# non-zero. Unauthenticated, and its body is a fixed `{"status", "reason"}`.
+#
+# --start-period=60s: the first probe is not counted as a failure until the
+# engine has had time to import torch/botorch (~15-20s cold) and run any
+# schema migration (backup first). Without it the first minute reads
+# `unhealthy` on a healthy but slow boot. Plain stdlib urllib, not curl, so the
+# runtime image needs no extra apt package.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request as u, sys; sys.exit(0 if u.urlopen('http://127.0.0.1:8050/readyz', timeout=3).status == 200 else 1)"
 
 CMD ["python", "-m", "kalos.portal"]
