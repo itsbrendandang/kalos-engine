@@ -116,6 +116,10 @@ The results JSON records: Python, OS, CPU, torch, botorch, gpytorch, numpy, scip
 | Date (UTC) | Section | Change | Reason | Before seeing confirmatory data? |
 | --- | --- | --- | --- | --- |
 | 2026-10-18 | all | Protocol committed before any harness code or run. | Pre-registration. | Yes |
+| 2026-10-18 | 3 | Reference median `f_med` for `bioprocess_like_mixed` is over 2^16 scrambled Sobol points on the numeric factors, with uniform categorical levels. Section 3 only said "Sobol" and "uniform" for this task. | Clarification of an omitted detail, written before any run. | Yes |
+| 2026-10-18 | 2 | The Ax arm sets `objective="y"` (maximise). In the Ax version pinned by the `bench` extra, a bare metric name is maximised; `"-y"` minimises. The sign was found wrong during a pilot on seed 9001 (the arm proposed the corners) and was corrected before the confirmatory run. The fix was decided from Ax's own best point, not from a regret comparison. Pilot numbers were printed; they are not reported. | Implementation bug, found by a direction check before confirmatory data existed. | Yes (pilot printed; not used for any decision except this bug fix) |
+| 2026-10-18 | 5 | `--quick` smoke seeds are 9002-9003 (not 1000-1001), so no confirmatory seed is used in any smoke test. Quick output is never written. | Keeps the confirmatory seeds untouched. | Yes |
+| 2026-10-18 | 2 | Pilot seed 9001 gave a runtime of about 57 s wall for one seed across all arms, on 10 workers. That projects to roughly 12 min for 30 seeds, within the section 10 target, so the seed count stays at 30. | Timing check. | Yes |
 
 ## 13. Limitations (fixed in advance)
 
