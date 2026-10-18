@@ -36,6 +36,8 @@ import threading
 from collections import Counter
 from typing import Any, Callable
 
+from starlette.concurrency import run_in_threadpool
+
 _ERR_BUSY = (
     "An analysis is already running. This engine runs a limited number of analyses "
     "at a time; retry after the current one finishes, or submit a background job "
@@ -192,7 +194,35 @@ def reset_limiter(total: int | None = None, per_tenant: int | None = None) -> An
         return _limiter
 
 
-def run_exclusively(fn: Callable[[], Any], *, tenant: str = UNSCOPED_TENANT) -> Callable[[], Any]:
+class Exclusive:
+    """A wrapped analysis call holding one slot. Calling it runs the work and
+    releases the slot in the worker thread; `abandon()` releases the slot for
+    a call that never ran (see `run_in_slot` and the demo route)."""
+
+    __slots__ = ("_fn", "_lease")
+
+    def __init__(self, fn: Callable[[], Any], lease: Lease) -> None:
+        self._fn = fn
+        self._lease = lease
+
+    def __call__(self) -> Any:
+        try:
+            return self._fn()
+        finally:
+            self._lease.release()
+
+    def abandon(self) -> None:
+        """Release the slot if the call did not run, or has finished. Idempotent.
+
+        Only call it once the dispatch that runs this callable has ended, i.e.
+        after the thread has returned or was never started. Starlette's
+        `run_in_threadpool` (anyio, abandon_on_cancel=False) does not return
+        while its thread is still running, even when the awaiting task is
+        cancelled, so that holds for every caller in this package."""
+        self._lease.release()
+
+
+def run_exclusively(fn: Callable[[], Any], *, tenant: str = UNSCOPED_TENANT) -> Exclusive:
     """Wrap `fn` for threadpool dispatch under one of `tenant`'s analysis slots.
 
     Acquires non-blocking HERE (in the event loop, before any thread is
@@ -200,16 +230,22 @@ def run_exclusively(fn: Callable[[], Any], *, tenant: str = UNSCOPED_TENANT) -> 
     slot is available for this tenant. The returned callable releases the
     slot in ITS OWN finally - inside the worker thread - so cancellation of
     the awaiting request cannot free the slot while the computation is still
-    running.
+    running. Cancellation BEFORE the thread runs never reaches that finally, so
+    every dispatcher must also call `abandon()` (run_in_slot does this).
     """
     lease = limiter().try_acquire(tenant)
     if lease is None:
         raise AnalysisBusy()
+    return Exclusive(fn, lease)
 
-    def _locked() -> Any:
-        try:
-            return fn()
-        finally:
-            lease.release()
 
-    return _locked
+async def run_in_slot(fn: Callable[[], Any], *, tenant: str = UNSCOPED_TENANT) -> Any:
+    """Run `fn` in the threadpool under one of `tenant`'s slots, releasing the
+    slot on every path: normal return, exception, and cancellation whether it
+    lands before the thread starts or while it runs. Raises `AnalysisBusy`
+    when no slot is free."""
+    locked = run_exclusively(fn, tenant=tenant)
+    try:
+        return await run_in_threadpool(locked)
+    finally:
+        locked.abandon()

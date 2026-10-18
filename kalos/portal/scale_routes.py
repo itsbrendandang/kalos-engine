@@ -28,7 +28,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from kalos.portal.auth import WRITE, Principal, require_scope
-from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
+from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_in_slot
 from kalos.portal.uploads import (
     _ERR_PARSE,
     MAX_UPLOAD_BYTES,
@@ -491,19 +491,17 @@ async def scale_readout(
         return JSONResponse({"error": _ERR_PARSE}, status_code=400)
 
     try:
-        readout = await run_in_threadpool(
-            run_exclusively(
-                functools.partial(
-                    build_readout,
-                    df,
-                    target_column,
-                    process_columns,
-                    target_spec,
-                    physics_overrides=physics_overrides,
-                    raw_bytes=raw,
-                ),
-                tenant=principal.tenant,
-            )
+        readout = await run_in_slot(
+            functools.partial(
+                build_readout,
+                df,
+                target_column,
+                process_columns,
+                target_spec,
+                physics_overrides=physics_overrides,
+                raw_bytes=raw,
+            ),
+            tenant=principal.tenant,
         )
     except AnalysisBusy as busy:
         return JSONResponse(

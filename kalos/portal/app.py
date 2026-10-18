@@ -36,7 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
+from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively, run_in_slot
 
 from kalos.portal.analysis import _analyze, _annotate
 from kalos.portal.auth import (
@@ -527,7 +527,15 @@ async def _run_demo(fn, principal: Principal, *args) -> JSONResponse:
             {"error": str(busy)}, status_code=503,
             headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
         )
-    task = asyncio.ensure_future(run_in_threadpool(locked))
+    try:
+        task = asyncio.ensure_future(run_in_threadpool(locked))
+    except BaseException:
+        locked.abandon()
+        raise
+    # The task can be cancelled before its first step, in which case the
+    # coroutine never runs and the thread never releases the slot. A finished
+    # task (cancelled or not) has no thread left, so release here too.
+    task.add_done_callback(lambda _t: locked.abandon())
     try:
         result = await asyncio.wait_for(asyncio.shield(task), timeout=DEMO_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
@@ -643,15 +651,13 @@ async def _run_uploaded(
         # single analysis slot (kalos/portal/busy.py): a second upload while
         # one is fitting gets an honest 503, and a disconnected client's
         # orphaned fit keeps the slot until it truly finishes.
-        result = await run_in_threadpool(
-            run_exclusively(
-                functools.partial(
-                    _run_uploaded_sync, raw, target or None, anonymize, filename, roles,
-                    tenant=tenant, sheet=(sheet or sheet_query or None), store=store,
-                    campaign_id=campaign_id,
-                ),
-                tenant=tenant,
-            )
+        result = await run_in_slot(
+            functools.partial(
+                _run_uploaded_sync, raw, target or None, anonymize, filename, roles,
+                tenant=tenant, sheet=(sheet or sheet_query or None), store=store,
+                campaign_id=campaign_id,
+            ),
+            tenant=tenant,
         )
         return JSONResponse(result)
     except Exception as exc:  # noqa: BLE001 - mapped to the documented envelopes
