@@ -19,7 +19,14 @@ BIOPROCESS_PROFILE = DomainProfile(
     ),
     target_pref=re.compile(r"titer|titre|lipase|yield", re.I),
     id_hint=re.compile(
-        r"^(id|name|sample.*|well|index|run|experiment|round|date|time|medium|strain|recipe|batch|campaign|group|lot|notes?)$",
+        # `sample` is an identifier only as a bare name or as a sample ID/code/name
+        # (`sample_id`, `Sample Code`). The old `sample.*` glob also swallowed
+        # measured quantities such as `sample_volume_L`, which were then silently
+        # dropped from the model. Compound forms are caught by the word rule in
+        # `kalos.portal.analysis.is_identifier_name` either way.
+        r"^(id|name|sample(?:[ _.-]?(?:ids?|codes?|names?|no|num|number|ref|label|uuid))?"
+        r"|well|index|run|experiment|round|date|time|medium|strain|recipe|batch|campaign|group|lot"
+        r"|notes?)$",
         re.I,
     ),
     group_hint=re.compile(r"medium|strain|recipe|batch|campaign|group|lot", re.I),

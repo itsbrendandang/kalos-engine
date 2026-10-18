@@ -89,26 +89,42 @@ def test_real_measurements_are_not_mistaken_for_identifiers(name):
     assert not identifier_pattern(BIOPROCESS_PROFILE.id_hint.pattern).match(name)
 
 
-def test_known_preexisting_overmatch_sample_glob_is_recorded_not_hidden():
-    """`BIOPROCESS_PROFILE.id_hint` contains a `sample.*` glob, so a genuine
-    measurement called `sample_volume_L` is classified as an identifier and
-    dropped from modeling.
+# Quantities that begin with the word "sample" are measurements, not identifiers.
+_SAMPLE_QUANTITIES = ["sample_volume_L", "sample_mass_g", "sample_weight", "sample_size_mL"]
 
-    This is PRE-EXISTING upstream behavior, not a consequence of the union added
-    for compound identifiers - `sample_volume_L` is matched by `sample.*` in the
-    profile's own hint and is rejected by the compound pattern. It is asserted
-    here so the over-match is a recorded, deliberate known issue rather than a
-    silent surprise, and so that anyone tightening `id_hint` later sees this test
-    turn red and knows to reconsider it on purpose.
+# Genuine sample identifiers keep being identifiers, in every spelling a sheet uses.
+_SAMPLE_IDS = ["sample_id", "sample code", "Sample Code", "SampleID", "sample_name", "Sample Name", "sample"]
 
-    It was left unchanged rather than fixed here because `id_hint` also drives
-    which columns are dropped from the model, so narrowing it is a scientific
-    behavior change that deserves its own decision, not a drive-by edit inside a
-    privacy fix.
-    """
-    union = identifier_pattern(BIOPROCESS_PROFILE.id_hint.pattern)
-    assert BIOPROCESS_PROFILE.id_hint.match("sample_volume_L")
-    assert union.match("sample_volume_L")
+
+@pytest.mark.parametrize("name", _SAMPLE_QUANTITIES)
+def test_sample_quantities_are_not_identifiers(name):
+    """Regression: the profile's old `sample.*` glob classed `sample_volume_L` as
+    an identifier, so a real measurement was silently dropped from the model.
+    The glob is narrowed to sample ID/code/name forms; this test failed before."""
+    assert not BIOPROCESS_PROFILE.id_hint.match(name)
+    assert not identifier_pattern(BIOPROCESS_PROFILE.id_hint.pattern).match(name)
+    from kalos.portal.analysis import is_identifier_name
+
+    assert not is_identifier_name(name)
+
+
+@pytest.mark.parametrize("name", _SAMPLE_IDS)
+def test_sample_identifiers_are_still_identifiers(name):
+    from kalos.portal.analysis import is_identifier_name
+
+    assert is_identifier_name(name)
+
+
+def test_sample_volume_is_modeled_as_a_feature_and_sample_id_is_not():
+    df = _sheet_with({
+        "sample_volume_L": [1.0 + 0.1 * (i % 5) for i in range(12)],
+        "sample_id": [f"S-{i:03d}" for i in range(12)],
+    })
+    out = _analyze(df, target="lipase_titer")
+    statuses = {row["name"]: row["status"] for row in out["provenance"]}
+    assert statuses["sample_volume_L"] == "kept_feature"
+    assert "sample_volume_L" in out["features"]
+    assert statuses["sample_id"] == "dropped_id"
 
 
 def test_union_can_only_widen_never_narrow():
