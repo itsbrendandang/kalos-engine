@@ -268,6 +268,10 @@ Analysis runs on customer data, so the logs are treated as customer-adjacent.
   (`kalos/portal/job_worker.py`, `_log_analysis_failure`). Other codes log the
   code only. A job's `error` (stored in the database, not logged) carries the
   same message the sync route returns for that refusal.
+- **Worker startup failures** (the job cannot be loaded, the campaign store
+  cannot be opened) log the exception type only, and the worker exits without a
+  traceback. A `ValueError` or `OSError` message can quote a customer column or
+  a path, so it is never logged.
 - **Worker stderr** is inherited from the engine process (`job_runner.py`
   starts workers with no stderr redirect). Anything a worker writes outside
   `run_job` lands in the engine's log stream.

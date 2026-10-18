@@ -83,12 +83,17 @@ def run_job(
     should_stop: Callable[[], bool] | None = None,
 ) -> str:
     """Run job `job_id` to a terminal state and return it (`succeeded`,
-    `failed`, `cancelled`), or the current state if the job was not runnable.
+    `failed`, `cancelled`), or the current state if the job was not runnable,
+    `missing` for an unknown id, `unavailable` if the job could not be loaded.
 
     `analyze` is the engine's `_analyze` (tests pass a stub); `should_stop` lets
     an in-process runner (tests) ask the worker to stop without a process kill.
     """
-    row = jobs.load_for_worker(store, job_id)
+    try:
+        row = jobs.load_for_worker(store, job_id)
+    except Exception as exc:  # noqa: BLE001 - reported as a code; the message may quote customer data
+        log.error("background job could not be loaded: type=%s", type(exc).__qualname__)
+        return "unavailable"
     if row is None or JOB_ID_PATTERN.fullmatch(job_id) is None:
         return "missing"
     if row["state"] != "running" or row["cancel_requested"]:
@@ -207,7 +212,11 @@ def main(argv: list[str] | None = None) -> int:
         start_lifetime_watchdog(deadline, parent_pid=os.getppid())
     from kalos.portal.campaign import CampaignStore
 
-    store = CampaignStore()
+    try:
+        store = CampaignStore()
+    except Exception as exc:  # noqa: BLE001 - logged by type: the message can name a path or a column
+        log.error("job worker could not open the campaign store: type=%s", type(exc).__qualname__)
+        return 1
     run_job(store, args[0])
     return 0
 

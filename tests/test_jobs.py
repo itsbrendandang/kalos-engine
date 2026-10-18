@@ -1052,3 +1052,34 @@ def test_a_refused_submit_writes_no_upload_to_disk(store, monkeypatch):
         _submit(store, tenant="acme")
     assert writes == []
     assert sorted((store.state_dir / jobs.JOBS_DIRNAME).glob("*/*")) == files_before
+
+
+def test_a_job_that_cannot_be_loaded_is_reported_without_a_traceback(store, monkeypatch, caplog):
+    """N8: a failure to load the job (the database, say) must not escape run_job as a
+    traceback on the worker's stderr. Its message can quote a customer column; only
+    the exception type is logged."""
+    def broken_load(_store, _job_id):
+        raise ValueError("column 'SSN-4411' is not numeric")
+
+    monkeypatch.setattr(jobs, "load_for_worker", broken_load)
+    with caplog.at_level("DEBUG", logger="kalos.portal"):
+        result = job_worker.run_job(store, "job_" + "a" * 32)
+    assert result == "unavailable"
+    assert "SSN-4411" not in caplog.text
+    assert "ValueError" in caplog.text
+
+
+def test_the_worker_reports_a_store_it_cannot_open_without_a_traceback(monkeypatch, caplog):
+    """N8: `main` opens the store inside the process; a failure there exits 1 with
+    the exception type logged, not a traceback that carries its message."""
+    from kalos.portal import campaign as campaign_module
+
+    class Unopenable:
+        def __init__(self, *_a, **_k):
+            raise OSError("cannot open /customers/acme/portal.db")
+
+    monkeypatch.setattr(campaign_module, "CampaignStore", Unopenable)
+    with caplog.at_level("DEBUG", logger="kalos.portal"):
+        assert job_worker.main(["job_" + "a" * 32]) == 1
+    assert "/customers/acme" not in caplog.text
+    assert "OSError" in caplog.text
