@@ -163,7 +163,9 @@ Compatibility:
   because both call `kalos.portal.pipeline.compute_upload_analysis`.
 
 Privacy: with `anonymize=true` the stored `run` has no `filename` and no
-`sheet`, only the hash. The stored `dataset` label is then
+`sheet`, only the hash. A background job keeps no filename under anonymize
+either, only its extension, and clears its stored parameters when it reaches a
+terminal state (docs/JOBS.md, "Job parameters"). The stored `dataset` label is then
 `anonymized upload <first 12 hex of input_sha256>`, not the filename. The
 `target` and any declared `roles` keep their real column names, as the
 existing `target` field already does; anonymize only pseudonymizes the

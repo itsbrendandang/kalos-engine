@@ -26,6 +26,12 @@ Newest first.
   block omits `filename` and `sheet`, and the stored `dataset` label is
   `anonymized upload <hash prefix>`. Before, the raw filename was stored as the
   campaign's dataset label even when anonymize was requested.
+- Background jobs (`jobs.params`): under `anonymize=true` the job row stores
+  the file extension, not the filename, and every terminal state clears the
+  stored parameters (target, roles, sheet, filename). While a job is queued or
+  running, its row still holds target, roles and sheet names in the clear, and
+  SQLite may keep cleared values in free pages until vacuum. (docs/JOBS.md,
+  "Job parameters")
 
 ### Added - background analysis jobs (`feat/background-jobs`, docs/JOBS.md)
 

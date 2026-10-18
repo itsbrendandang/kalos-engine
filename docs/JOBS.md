@@ -137,6 +137,21 @@ finishes after its job timed out changes nothing.
 **Input files** are deleted when the job reaches a terminal state, and any
 input file no live job refers to is swept at startup.
 
+**Job parameters (`jobs.params`) and privacy.** The row keeps the form fields
+the worker needs to run the job: target, declared roles, sheet, the anonymize
+flag, and the filename. Under `anonymize=true` the filename is not stored at
+all; only its extension is (the parser uses it for format detection), so the
+worker sees a placeholder `upload<ext>`. The rule is the same for both modes:
+every terminal state (`succeeded`, `failed`, `cancelled`, `timed_out`) sets
+`params` to `{}` in the same transaction that sets the state, so the finished
+row no longer holds target, roles, sheet or filename.
+
+What this does NOT cover: while a job is queued or running, its row holds the
+target, roles and sheet names in the clear (the worker needs them), and the
+input file holds the whole upload until the job ends. SQLite may keep the old
+value in free pages or the WAL until the database is vacuumed or checkpointed;
+the clearing is not a secure erase.
+
 ## Scheduling and limits
 
 Concurrency, queue depth, upload size and time are all per tenant, and

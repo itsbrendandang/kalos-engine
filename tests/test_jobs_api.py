@@ -74,7 +74,7 @@ def _stub_analyze(df, target, *, profile=None, anonymize=False, progress=None, r
     if progress is not None:
         progress("fitting", 0.15)
         progress("proposing", 0.8)
-    return {"target": target, "proposal_features": ["Methanol", "pH"], "proposals": [],
+    return {"target": target, "proposal_features": ["Methanol", "pH"], "d": 2, "proposals": [],
             "marker": "api-stub"}
 
 

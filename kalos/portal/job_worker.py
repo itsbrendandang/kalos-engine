@@ -103,14 +103,15 @@ def run_job(
     try:
         params = jobs.job_params(row)
         raw = jobs.read_input(store, row)
+        filename = jobs.job_filename(params)
         df, result = compute_upload_analysis(
             raw, params.get("target") or None, bool(params.get("anonymize")),
-            str(params.get("filename") or "uploaded dataset"), str(params.get("roles") or ""),
+            filename, str(params.get("roles") or ""),
             sheet=params.get("sheet"), progress=progress, analyze=analyze,
         )
         progress("publishing", 0.95)
         publish_upload_analysis(
-            store, result, str(params.get("filename") or "uploaded dataset"),
+            store, result, filename,
             tenant=tenant, campaign_id=campaign_id, df=df,
             expected_generation=row["base_generation"],
             on_commit=functools.partial(_commit, tenant=tenant, job_id=job_id),
