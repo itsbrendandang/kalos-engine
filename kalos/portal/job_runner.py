@@ -41,7 +41,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from kalos.portal import jobs
+from kalos.portal import busy, jobs
 from kalos.portal.busy import AnalysisLimiter, Lease, limiter
 
 if TYPE_CHECKING:
@@ -63,6 +63,52 @@ class RunnerLocked(RuntimeError):
     each admit and recover the same jobs."""
 
 
+def _refuse_several_processes() -> None:
+    raw_workers = os.environ.get("WEB_CONCURRENCY", "").strip()
+    if raw_workers.isdigit() and int(raw_workers) > 1:
+        raise RunnerLocked(
+            "background jobs need a single engine process, and WEB_CONCURRENCY is "
+            f"{raw_workers}; run one worker, or set KALOS_JOBS_ENABLED=0"
+        )
+
+
+def check_startup_config() -> None:
+    """Refuse, before the engine serves a request, a configuration that cannot run:
+    a malformed `KALOS_JOB*` value (ValueError naming the variable), always; and,
+    when jobs are enabled, a platform or process layout that cannot take the runner
+    lock (RunnerLocked). `python -m kalos.portal` calls it before uvicorn starts,
+    and the app lifespan calls it too."""
+    settings = jobs.job_settings()  # ValueError, naming the variable
+    busy.validate_env()
+    if not settings.enabled:
+        return
+    try:
+        import fcntl  # noqa: F401 - availability only; the lock is taken at start
+    except ImportError:
+        raise RunnerLocked(
+            "background jobs need a POSIX host: the runner lock uses flock, which this "
+            "platform does not have; set KALOS_JOBS_ENABLED=0"
+        ) from None
+    _refuse_several_processes()
+
+
+_expected = False  # set by the app lifespan: this process serves jobs, so it must run the scheduler
+
+
+def expect_runner(flag: bool) -> None:
+    global _expected
+    _expected = flag
+
+
+def runner_down() -> bool:
+    """True when this process should run the job scheduler (its lifespan declared
+    it) but no scheduler thread is alive. `/readyz` answers 503 then."""
+    if not _expected:
+        return False
+    runner = _runner
+    return runner is None or runner._thread is None or not runner._thread.is_alive()
+
+
 def _acquire_runner_lock(state_dir: Path) -> int:
     """Take the state directory's runner lock (an exclusive, non-blocking flock)
     and return its file descriptor. The OS releases it when the process exits,
@@ -78,12 +124,7 @@ def _acquire_runner_lock(state_dir: Path) -> int:
             "background jobs need a POSIX host: the runner lock uses flock, which this "
             "platform does not have; set KALOS_JOBS_ENABLED=0"
         ) from None
-    raw_workers = os.environ.get("WEB_CONCURRENCY", "").strip()
-    if raw_workers.isdigit() and int(raw_workers) > 1:
-        raise RunnerLocked(
-            "background jobs need a single engine process, and WEB_CONCURRENCY is "
-            f"{raw_workers}; run one worker, or set KALOS_JOBS_ENABLED=0"
-        )
+    _refuse_several_processes()
     state_dir.mkdir(parents=True, exist_ok=True)
     fd = os.open(state_dir / RUNNER_LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o600)
     try:

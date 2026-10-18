@@ -613,3 +613,69 @@ def test_concurrent_submits_are_capped_before_any_upload_is_read(env, monkeypatc
         assert jobs_api._submit_gate.in_flight() == 0
 
     asyncio.run(scenario())
+
+
+def _portal_entrypoint(tmp_path, extra_env: dict[str, str]):
+    """`python -m kalos.portal` in a subprocess, on a free port, with the given env."""
+    import socket
+    import subprocess
+    import sys
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("KALOS_JOB", "WEB_CONCURRENCY"))}
+    env.update({"KALOS_STATE_DIR": str(tmp_path), "KALOS_PORT": str(port), **extra_env})
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(jobs_api.__file__)))
+    env["PYTHONPATH"] = repo
+    return subprocess.run([sys.executable, "-m", "kalos.portal"], env=env, capture_output=True,
+                          text=True, timeout=60)
+
+
+def test_a_malformed_job_setting_stops_the_portal_at_startup_with_a_message(tmp_path):
+    """D2: `KALOS_JOB_WORKERS=0` used to boot a 'healthy' engine with no runner, and
+    the job routes accepted uploads that never ran. The entrypoint now refuses to
+    serve: exit 2, the variable named, no traceback."""
+    out = _portal_entrypoint(tmp_path, {"KALOS_JOB_WORKERS": "0"})
+    assert out.returncode == 2, out.stderr
+    assert "KALOS_JOB_WORKERS must be >= 1" in out.stderr
+    assert "Traceback" not in out.stderr
+
+
+def test_several_worker_processes_stop_the_portal_at_startup_with_a_nonzero_exit(tmp_path):
+    """D12: WEB_CONCURRENCY above 1 is refused with a message and exit 2. The uvicorn
+    supervisor used to report the failed child as a clean exit (0)."""
+    out = _portal_entrypoint(tmp_path, {"WEB_CONCURRENCY": "4"})
+    assert out.returncode == 2, out.stderr
+    assert "WEB_CONCURRENCY" in out.stderr
+    assert "Traceback" not in out.stderr
+
+
+def test_readyz_is_503_when_jobs_are_expected_but_the_runner_did_not_start(env, monkeypatch):
+    """D2: a server (the lifespan ran) with jobs enabled and no running scheduler is not
+    ready: its job submissions would never run. The reason is fixed text."""
+    from kalos.portal import job_runner
+
+    tc, _store = env
+
+    def broken_start(_store):
+        raise RuntimeError("scheduler exploded")
+
+    monkeypatch.setattr(job_runner, "start_job_runner", broken_start)
+    with TestClient(app) as live:
+        resp = live.get("/readyz")
+    assert resp.status_code == 503
+    assert resp.json() == {"status": "unavailable", "reason": "background jobs are not running"}
+
+
+def test_the_lifespan_refuses_a_malformed_limit_even_with_jobs_disabled(env, monkeypatch):
+    """D2: KALOS_JOB_WORKERS also sizes the sync analysis limiter, so a bad value fails the
+    boot whether or not the queue is enabled."""
+    tc, _store = env
+    # Scoped, so the value is gone before the fixture resets the limiter from the environment.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("KALOS_JOBS_ENABLED", "0")
+        mp.setenv("KALOS_JOB_WORKERS", "0")
+        with pytest.raises(ValueError, match="KALOS_JOB_WORKERS"):
+            with TestClient(app):
+                pass

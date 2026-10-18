@@ -137,11 +137,18 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     the store (e.g. an unwritable state dir) is logged and the process starts
     anyway, so `/readyz` reports it as a generic 503, as it did before.
     """
-    from kalos.portal.job_runner import RunnerLocked, start_job_runner, stop_job_runner
+    from kalos.portal.job_runner import (
+        RunnerLocked,
+        check_startup_config,
+        expect_runner,
+        start_job_runner,
+        stop_job_runner,
+    )
     from kalos.portal.jobs import job_settings
     from kalos.portal.migrate import MigrationError, SchemaError
 
-    job_settings()  # a malformed KALOS_JOB_* value fails the boot, not the first job
+    check_startup_config()  # a malformed KALOS_JOB* value fails the boot, not the first job
+    expect_runner(job_settings().enabled)  # /readyz is 503 while an expected runner is down
 
     store = None
     try:
@@ -169,6 +176,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     finally:
         if runner is not None:
             stop_job_runner(runner)
+        expect_runner(False)
 
 
 app = FastAPI(
@@ -423,6 +431,14 @@ def readyz() -> JSONResponse:
         log.exception("readiness check failed: campaign store unavailable")
         return JSONResponse(
             {"status": "unavailable", "reason": "campaign store unavailable"}, status_code=503
+        )
+    from kalos.portal.job_runner import runner_down
+
+    if runner_down():
+        # Jobs are accepted only while the scheduler runs; a dead one means they would queue forever.
+        log.error("readiness check failed: the background job runner is not running")
+        return JSONResponse(
+            {"status": "unavailable", "reason": "background jobs are not running"}, status_code=503
         )
     return JSONResponse({"status": "ok"})
 

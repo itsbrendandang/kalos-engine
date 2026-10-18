@@ -197,8 +197,17 @@ process on a modest machine.
   lower one or the other.
 
 Invalid values for any `KALOS_JOB*` variable (non-numeric, out of range, a
-job upload limit above the engine cap) fail the engine's startup, with the
-variable named. They are not silently replaced by defaults.
+job upload limit above the engine cap, `KALOS_JOB_WORKERS=0`) fail the engine's
+startup, with the variable named. `python -m kalos.portal` checks them before
+it serves and exits `2` with one line on stderr and no traceback (the same for a
+refused runner, below). They are not silently replaced by defaults. The app
+lifespan repeats the check, so serving the app directly (`uvicorn`) fails its
+boot too, with the traceback that uvicorn prints.
+
+If the engine boots with jobs enabled but its scheduler is not running (its
+start failed and was logged), `/readyz` answers `503` with the fixed reason
+`background jobs are not running`, so an orchestrator does not route work to
+an engine that would accept jobs and never run them.
 
 ## Cancellation and timeouts
 
@@ -343,7 +352,7 @@ The rules are those of the campaign routes (docs/CAMPAIGNS_API.md), applied to j
   and a second runner on that state directory refuses with `RunnerLocked`. The
   engine then fails to boot, rather than accepting job submissions no runner
   would ever run. A start with `WEB_CONCURRENCY` above 1 is refused too, with a
-  message naming the variable. Run one engine process per state directory
+  message naming the variable and exit status `2` (`python -m kalos.portal`). Run one engine process per state directory
   (docs/HARDENING.md). The lock is POSIX-only (`fcntl`); on a platform without
   it the engine refuses to start only when jobs are enabled, and
   `KALOS_JOBS_ENABLED=0` runs the sync API there.

@@ -181,6 +181,14 @@ def limiter() -> AnalysisLimiter:
         return _limiter
 
 
+def validate_env() -> None:
+    """Raise ValueError (naming the variable) for a malformed `KALOS_JOB_WORKERS` or
+    `KALOS_JOB_PER_TENANT`. Called at startup: the limiter reads them lazily, so
+    without this a bad value would only surface on the first analysis request."""
+    _env_int("KALOS_JOB_WORKERS", DEFAULT_WORKERS)
+    _env_int("KALOS_JOB_PER_TENANT", DEFAULT_PER_TENANT)
+
+
 def reset_limiter(total: int | None = None, per_tenant: int | None = None) -> AnalysisLimiter:
     """Replace the process-wide limiter (tests, or a config reload). Leases on
     the old limiter release into the old one and do not affect the new one."""
