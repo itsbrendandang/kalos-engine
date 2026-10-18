@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import IO
 
 import uvicorn
 
+from kalos.portal import engine_lock
 from kalos.portal.auth import get_authenticator
 from kalos.portal.config import (
     InsecureBindError,
@@ -29,6 +31,10 @@ from kalos.portal.config import (
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8050
+
+# The state-directory lock (kalos/portal/engine_lock.py). Module-level so the
+# file object, and with it the flock, lives as long as the server process.
+_ENGINE_LOCK: IO[str] | None = None
 
 
 def main() -> None:
@@ -52,6 +58,15 @@ def main() -> None:
     except (InsecureBindError, ProductionConfigError) as exc:
         # Exit non-zero with the reason on stderr: this is a misconfiguration an
         # operator has to fix, not a crash, so it should read like a refusal.
+        print(f"kalos portal: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+
+    # One engine per state directory: a second one refuses to start rather than
+    # share portal.db and the latest-analysis cache with the first.
+    global _ENGINE_LOCK
+    try:
+        _ENGINE_LOCK = engine_lock.acquire_engine_lock()
+    except engine_lock.EngineLockHeld as exc:
         print(f"kalos portal: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
 
