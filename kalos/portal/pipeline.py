@@ -153,6 +153,24 @@ def compute_upload_analysis(
     return parsed.df, {**result, **parsed.context(), "run": record.to_dict()}
 
 
+def attach_reanalyze_run(
+    df: pd.DataFrame, result: dict, *, anonymize: bool, pending_runs: int,
+) -> dict:
+    """The `run` block for a campaign re-analysis (`kind="reanalyze"`): the same
+    fields an upload gets, with the input hashed over the folded dataset `df`
+    and the number of in-flight runs the batch was told about. Returns a new
+    dict; `result` is not mutated."""
+    from kalos.portal import run_record
+    from kalos.portal.analysis import ANALYZE_SEED
+
+    record = run_record.build(
+        run_record.fold_bytes(df), None, None, result.get("target"), "", anonymize,
+        "bioprocess", TORCH_THREADS, int(result.get("seed", ANALYZE_SEED)),
+        len(df), int(result["d"]), kind="reanalyze", pending_runs=pending_runs,
+    )
+    return {**result, "run": record.to_dict()}
+
+
 _ANY = object()
 
 

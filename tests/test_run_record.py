@@ -203,7 +203,8 @@ _TYPES = {
     "schema_version": int, "input_sha256": str, "input_bytes": int, "target": str,
     "profile": str, "roles_declared": (dict, type(None)), "anonymize": bool, "seed": int,
     "torch_threads": int, "build_sha": str, "library_versions": dict,
-    "validation_mode": str, "n_rows": int, "n_features": int, "gates": dict,
+    "validation_mode": str, "n_rows": int, "n_features": int, "kind": str,
+    "pending_runs": int, "gates": dict,
 }
 _KEYS_PLAIN = set(_TYPES) | {"filename", "sheet"}
 

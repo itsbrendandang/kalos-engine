@@ -142,7 +142,8 @@ schema `run.schema_version` = 1). It says what produced the result:
 | Field | Meaning |
 |---|---|
 | `schema_version` | `1` today. Bumped when a field is added, renamed or retyped. |
-| `input_sha256`, `input_bytes` | SHA-256 and length of the uploaded bytes exactly as received. |
+| `kind` | `upload` (a run sheet: `/api/run`, `/api/campaigns/{id}/upload`, jobs) or `reanalyze` (`POST /api/campaign/reanalyze`, the campaign's folded base dataset). |
+| `input_sha256`, `input_bytes` | SHA-256 and length of the uploaded bytes exactly as received. For `kind=reanalyze`: of the folded dataset serialized as CSV (`fold_bytes`). |
 | `filename`, `sheet` | The upload's name and the sheet analyzed (Excel). **Absent** when `anonymize` is true. |
 | `target` | The target the analysis used (the resolved one when the request left it blank). |
 | `profile` | `bioprocess` (inferred roles) or `generic` (declared roles). |
@@ -151,6 +152,7 @@ schema `run.schema_version` = 1). It says what produced the result:
 | `build_sha` | `KALOS_BUILD_SHA` at image build (CI sets it to the commit), else `unknown`. |
 | `library_versions` | `numpy`, `pandas`, `torch`, `botorch` (`null` if not installed). |
 | `validation_mode` | `warn` or `strict` (`KALOS_VALIDATION_MODE`). |
+| `pending_runs` | Runs in the incubator the batch was told about (`reanalyze`); `0` for an upload. |
 | `n_rows`, `n_features` | Rows parsed; input features the model was fit on (`d` in the result, the kept feature columns; a categorical is one column here, not its one-hot width). Not the top drivers in `proposal_features`. |
 | `gates` | Keys in this result where the gate decisions live: `promotion`, `proposal_gating`, `validation`. The decisions are not copied into `run`. |
 
@@ -161,6 +163,11 @@ Compatibility:
   Rows written before it existed read back with `run: null`.
 - The sync routes and background jobs attach the same block for the same bytes,
   because both call `kalos.portal.pipeline.compute_upload_analysis`.
+
+Re-analysis (`kind=reanalyze`) keeps the anonymize setting of the analysis it
+replaces: the campaign does not store the flag, so a re-analysis of an
+anonymized upload is anonymized too (before this, it published the real
+identifier names again).
 
 Privacy: with `anonymize=true` the stored `run` has no `filename` and no
 `sheet`, only the hash. A background job keeps no filename under anonymize

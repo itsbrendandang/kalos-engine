@@ -8,6 +8,11 @@ Newest first.
 
 - Fix (same unreleased branch): `run.n_features` is the fitted feature count
   (`d`), not the number of top drivers in `proposal_features` (at most 4).
+- Campaign re-analysis (`POST /api/campaign/reanalyze`) attaches a `run` block
+  with `kind: "reanalyze"`, the folded dataset's hash as input, and
+  `pending_runs`. It also keeps the anonymize setting of the analysis it
+  replaces: before, a re-analysis of an anonymized upload published the real
+  identifier column names again.
 - Every analysis result carries a versioned `run` block (`run.schema_version`
   1): input SHA-256 and size, sheet, target, profile, declared roles, anonymize,
   seed, torch threads, `build_sha`, library versions, validation mode, row and

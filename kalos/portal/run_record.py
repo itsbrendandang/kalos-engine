@@ -36,6 +36,12 @@ from typing import Any
 
 RUN_SCHEMA_VERSION = 1
 
+# What produced the analysis: an uploaded run sheet (`upload`, both the sync
+# route and the job worker), or a re-analysis of a campaign's folded base
+# dataset (`reanalyze`, kalos/portal/campaign_routes.py). For `reanalyze` the
+# input is the folded dataset serialized as CSV (`fold_bytes`), not an upload.
+KINDS = ("upload", "reanalyze")
+
 # The reference gate decisions the record points at, by key in the analysis
 # result. The values are key names, not decisions: a consumer follows the key.
 GATE_KEYS: dict[str, str] = {
@@ -82,6 +88,8 @@ class RunRecord:
     validation_mode: str
     n_rows: int
     n_features: int
+    kind: str = "upload"
+    pending_runs: int = 0
     gates: dict[str, str] = field(default_factory=lambda: dict(GATE_KEYS))
 
     def to_dict(self) -> dict[str, Any]:
@@ -104,6 +112,10 @@ class RunRecord:
             "validation_mode": self.validation_mode,
             "n_rows": self.n_rows,
             "n_features": self.n_features,
+            "kind": self.kind,
+            # Runs in the incubator the batch was told about (0 for an upload,
+            # which starts a campaign with none in flight).
+            "pending_runs": self.pending_runs,
             "gates": dict(self.gates),
         }
         if not self.anonymize:
@@ -112,9 +124,15 @@ class RunRecord:
         return out
 
 
+def fold_bytes(df: Any) -> bytes:
+    """The input of a `reanalyze` record: the folded base dataset as CSV. Two
+    campaigns with the same folded rows give the same bytes, hence the same hash."""
+    return df.to_csv(index=False).encode("utf-8")
+
+
 def build(
     raw_bytes: bytes,
-    filename: str,
+    filename: str | None,
     sheet: str | None,
     target: str | None,
     roles_json: str,
@@ -124,9 +142,15 @@ def build(
     seed: int,
     n_rows: int,
     n_features: int,
+    *,
+    kind: str = "upload",
+    pending_runs: int = 0,
 ) -> RunRecord:
-    """Assemble the record for one upload. `raw_bytes` is the exact input the
-    parser saw; the hash is over those bytes, not over a re-serialized frame."""
+    """Assemble the record for one analysis. `raw_bytes` is the exact input the
+    parser saw (an upload) or `fold_bytes(df)` (a reanalyze); the hash is over
+    those bytes, not over a re-serialized frame."""
+    if kind not in KINDS:
+        raise ValueError(f"unknown run kind {kind!r}")
     # Deferred: kalos.portal.analysis imports cleanly without torch, but this
     # module should not pull the analysis stack in at import time. Reading the
     # mode through analysis.validation_mode keeps one definition of the rule.
@@ -154,4 +178,6 @@ def build(
         validation_mode=validation_mode(),
         n_rows=int(n_rows),
         n_features=int(n_features),
+        kind=kind,
+        pending_runs=int(pending_runs),
     )
