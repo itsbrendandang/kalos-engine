@@ -97,7 +97,7 @@ def _acquire_runner_lock(state_dir: Path) -> int:
     os.ftruncate(fd, 0)
     os.write(fd, f"{os.getpid()}\n".encode())
     return fd
-# A worker gets its job time limit plus this margin as a wall-clock deadline. The
+# A worker gets its job time limit plus this margin as a deadline (seconds). The
 # runner normally kills it at the limit; the deadline is for the case where the
 # runner is gone (the worker then exits by itself, see job_worker).
 WORKER_DEADLINE_MARGIN_S = 60.0
