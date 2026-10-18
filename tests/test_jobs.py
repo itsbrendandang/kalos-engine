@@ -1363,3 +1363,25 @@ def test_a_non_finite_limiter_setting_is_refused_at_startup(monkeypatch, name):
         mp.setenv(name, "1e400")
         with pytest.raises(ValueError, match=name):
             busy.validate_env()
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("", True), ("1", True), ("true", True), ("YES", True), ("on", True),
+    ("0", False), ("false", False), ("No", False), ("OFF", False),
+])
+def test_known_jobs_enabled_values_parse(monkeypatch, value, expected):
+    monkeypatch.setenv("KALOS_JOBS_ENABLED", value)
+    assert jobs.job_settings().enabled is expected
+
+
+@pytest.mark.parametrize("value", ["flase", "disabled", "2", "y", "enabled"])
+def test_an_unrecognised_jobs_enabled_value_is_refused_at_startup(monkeypatch, value):
+    """Round 3, 4: `KALOS_JOBS_ENABLED=flase` used to mean ENABLED (anything not in the
+    'off' list). A typo in an on/off switch must fail startup, naming the variable."""
+    monkeypatch.setenv("KALOS_JOBS_ENABLED", value)
+    with pytest.raises(ValueError, match="KALOS_JOBS_ENABLED"):
+        jobs.job_settings()
+    from kalos.portal import job_runner
+
+    with pytest.raises(ValueError, match="KALOS_JOBS_ENABLED"):
+        job_runner.check_startup_config()

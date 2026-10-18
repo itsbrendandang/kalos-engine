@@ -204,10 +204,27 @@ def _env_number(name: str, default: str, cast: type, minimum: float) -> Any:
     return value
 
 
+_ON = frozenset({"1", "true", "yes", "on"})
+_OFF = frozenset({"0", "false", "no", "off"})
+
+
+def _env_switch(name: str, *, default: bool) -> bool:
+    """An on/off variable. Only the listed spellings are accepted: a typo such as
+    `flase` must fail startup, not quietly mean the other state."""
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in _ON:
+        return True
+    if raw in _OFF:
+        return False
+    raise ValueError(f"{name} must be one of 1, 0, true, false, yes, no, on, off; got {raw!r}")
+
+
 def job_settings() -> JobSettings:
     """The job limits from the environment. Raises ValueError on a malformed or
     out-of-range value; the engine calls this at startup so that fails loudly."""
-    enabled = os.environ.get("KALOS_JOBS_ENABLED", "").strip().lower() not in {"0", "false", "no", "off"}
+    enabled = _env_switch("KALOS_JOBS_ENABLED", default=True)
     max_upload = int(_env_number("KALOS_JOB_MAX_UPLOAD_BYTES", str(MAX_UPLOAD_BYTES), int, 1))
     if max_upload > MAX_UPLOAD_BYTES:
         raise ValueError(

@@ -162,7 +162,7 @@ process on a modest machine.
 | Uploads being checked (parsed) at once, before they are queued | fixed: `PREFLIGHT_CONCURRENCY` | `2` | whole engine |
 | Upload size for a job (at most the engine's upload cap) | `KALOS_JOB_MAX_UPLOAD_BYTES` | the engine upload cap | per tenant |
 | Wall-clock limit for one job, then its worker is killed | `KALOS_JOB_TIMEOUT_S` | `1800` | per job |
-| Turn the queue off (routes answer 503; status still reads) | `KALOS_JOBS_ENABLED` | `1` | whole engine |
+| Turn the queue off (routes answer 503; status still reads). Accepts `1/0`, `true/false`, `yes/no`, `on/off`; anything else fails startup | `KALOS_JOBS_ENABLED` | `1` | whole engine |
 
 - **Replacing runs needs confirmation.** A successful publish replaces the
   campaign's state, so it discards any awaiting or measured runs. An upload
