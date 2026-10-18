@@ -485,6 +485,10 @@ def verify_engine_token(
                 # substrings of a string iss: CVE-2024-53861).
                 "verify_iss": False,
                 "strict_aud": True,  # aud must be exactly the configured string
+                # sub/jti types are checked below (`_identifier`), so a non-string
+                # value is reported as bad_identity_claim, not PyJWT's generic error.
+                "verify_sub": False,
+                "verify_jti": False,
                 "verify_exp": False,  # time checks below, against the injected clock
                 "verify_nbf": False,
                 "verify_iat": False,

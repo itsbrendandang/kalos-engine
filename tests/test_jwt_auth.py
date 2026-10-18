@@ -374,6 +374,15 @@ def test_identity_claims_must_be_bounded_strings(keys, claim, bad):
     assert _status(keys.auth, _sign(keys.k1, _claims(**{claim: bad}))) == 401
 
 
+@pytest.mark.parametrize("claim", ["sub", "sid", "jti"])
+@pytest.mark.parametrize("bad", [123, ["x"], {"a": 1}, True])
+def test_non_string_identity_claims_are_bad_identity_not_invalid(keys, caplog, claim, bad):
+    """A non-string sub/sid/jti is reported with the documented reason code
+    (bad_identity_claim), not as PyJWT's generic `invalid`."""
+    token = _sign(keys.k1, _claims(**{claim: bad}))
+    assert _reason(keys.auth, token, caplog) == "bad_identity_claim"
+
+
 @pytest.mark.parametrize("claim", ["sub", "sid"])
 @pytest.mark.parametrize("bad", ["user 1", "a,b", "ü", "tab\there", "nl\n", "\x7f"])
 def test_sub_and_sid_are_printable_ascii_without_comma(keys, caplog, claim, bad):
