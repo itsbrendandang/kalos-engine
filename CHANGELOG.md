@@ -6,6 +6,8 @@ Newest first.
 
 ### Added - run record and engine lock (`feat/run-record`)
 
+- Fix (same unreleased branch): `run.n_features` is the fitted feature count
+  (`d`), not the number of top drivers in `proposal_features` (at most 4).
 - Every analysis result carries a versioned `run` block (`run.schema_version`
   1): input SHA-256 and size, sheet, target, profile, declared roles, anonymize,
   seed, torch threads, `build_sha`, library versions, validation mode, row and

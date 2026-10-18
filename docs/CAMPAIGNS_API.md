@@ -151,7 +151,7 @@ schema `run.schema_version` = 1). It says what produced the result:
 | `build_sha` | `KALOS_BUILD_SHA` at image build (CI sets it to the commit), else `unknown`. |
 | `library_versions` | `numpy`, `pandas`, `torch`, `botorch` (`null` if not installed). |
 | `validation_mode` | `warn` or `strict` (`KALOS_VALIDATION_MODE`). |
-| `n_rows`, `n_features` | Rows parsed; features the model was fit on. |
+| `n_rows`, `n_features` | Rows parsed; input features the model was fit on (`d` in the result, the kept feature columns; a categorical is one column here, not its one-hot width). Not the top drivers in `proposal_features`. |
 | `gates` | Keys in this result where the gate decisions live: `promotion`, `proposal_gating`, `validation`. The decisions are not copied into `run`. |
 
 Compatibility:

@@ -40,8 +40,10 @@ def _csv(df: pd.DataFrame | None = None) -> bytes:
 
 def _stub_analyze(df, target, *, profile=None, anonymize=False, progress=None, roles=None, **_):
     """Stands in for the GP fit (the same stub the job tests use): the result
-    keys the publish path reads, plus the ones the run record reads."""
+    keys the publish path reads, plus the ones the run record reads. `d` is the
+    fitted feature count; `proposal_features` is only the top-4 drivers."""
     return {"target": target or "lipase_titer", "proposal_features": ["Methanol", "pH"],
+            "d": 2, "n": len(df),
             "proposals": [], "marker": "stub-result", "seed": 1234,
             "promotion": {"status": "stub"}, "proposal_gating": {"gated": False},
             "validation": {"status": "pass"}}
@@ -96,6 +98,32 @@ def test_input_sha256_is_hashlib_over_the_raw_bytes():
     assert run["target"] == "lipase_titer"
     assert run["seed"] == 1234
     assert run["schema_version"] == run_record.RUN_SCHEMA_VERSION == 1
+
+
+def test_n_features_is_the_fitted_feature_count_not_the_top_drivers():
+    """Regression: `n_features` used to be len(proposal_features), which is the
+    top-4 drivers (analysis.py drv[:4]), so a 6-feature fit reported 4. This stub
+    fits 7 features and names only 4 drivers; the record must say 7."""
+    def stub(df, target, **kwargs):
+        out = _stub_analyze(df, target, **kwargs)
+        out.update(d=7, proposal_features=["a", "b", "c", "d"])
+        return out
+
+    _, result = compute_upload_analysis(_csv(), "lipase_titer", False, FILENAME, analyze=stub)
+    assert result["run"]["n_features"] == 7
+
+
+def test_n_features_matches_a_real_six_feature_fit():
+    """The same claim against the real fit: six inputs, four drivers shown."""
+    rng = np.random.default_rng(3)
+    n = 40
+    cols = {f"x{i}": rng.uniform(0, 1, n).round(4) for i in range(6)}
+    cols["lipase_titer"] = (2 * cols["x0"] - cols["x1"] + rng.normal(0, 0.05, n)).round(4)
+    _, result = compute_upload_analysis(
+        pd.DataFrame(cols).to_csv(index=False).encode(), "lipase_titer", False, FILENAME,
+    )
+    assert result["d"] == 6 and len(result["proposal_features"]) == 4
+    assert result["run"]["n_features"] == result["d"] == 6
 
 
 def test_build_sha_comes_from_env_and_defaults_to_unknown(monkeypatch):

@@ -140,13 +140,15 @@ def compute_upload_analysis(
     # `sheet_used` (the one analyzed), so a client can offer a sheet selector.
     # `run` (kalos/portal/run_record.py) is attached here, after the parse and
     # the analysis, so the sync routes and the job worker record the same thing.
+    # `n_features` is the fitted feature count (`result["d"]`), NOT
+    # `proposal_features`, which is only the top drivers the proposals vary.
     from kalos.portal import run_record
     from kalos.portal.analysis import ANALYZE_SEED
 
     record = run_record.build(
         raw, filename, parsed.sheet_used, result.get("target", target), roles_json,
         anonymize, profile_name, TORCH_THREADS, int(result.get("seed", ANALYZE_SEED)),
-        len(parsed.df), len(result.get("proposal_features") or []),
+        len(parsed.df), int(result["d"]),
     )
     return parsed.df, {**result, **parsed.context(), "run": record.to_dict()}
 
