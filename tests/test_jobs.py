@@ -1039,6 +1039,7 @@ def test_a_refused_submit_writes_no_upload_to_disk(store, monkeypatch):
     stays authoritative for races."""
     monkeypatch.setenv("KALOS_JOB_QUEUE_DEPTH", "1")
     _submit(store, tenant="acme")  # the tenant is now at its depth
+    files_before = sorted((store.state_dir / jobs.JOBS_DIRNAME).glob("*/*"))
     writes: list[Path] = []
     real_write = jobs._write_input
 
@@ -1050,4 +1051,4 @@ def test_a_refused_submit_writes_no_upload_to_disk(store, monkeypatch):
     with pytest.raises(jobs.QueueFull):
         _submit(store, tenant="acme")
     assert writes == []
-    assert not list((store.state_dir / jobs.JOBS_DIRNAME).glob("*/*"))
+    assert sorted((store.state_dir / jobs.JOBS_DIRNAME).glob("*/*")) == files_before
