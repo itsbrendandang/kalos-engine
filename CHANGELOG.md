@@ -35,7 +35,10 @@ Newest first.
 - `KALOS_BUILD_SHA` (set by CI from `github.sha` via the image's build arg) is
   recorded as `run.build_sha`; `unknown` when not provided.
 - `python -m kalos.portal` takes `<KALOS_STATE_DIR>/engine.lock` (flock) and
-  refuses to start when another engine holds it (exit 2). (docs/HARDENING.md)
+  refuses to start when another engine holds it (exit 2). A flock failure that
+  is not contention (a filesystem without flock) is reported as such, not as
+  "another engine". `uvicorn --workers N` bypasses the lock: use
+  `python -m kalos.portal`. (docs/HARDENING.md, "One engine per state directory")
 
 ### Changed - anonymized uploads store no filename
 

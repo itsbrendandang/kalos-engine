@@ -15,10 +15,20 @@ The PID written into the file is informational only, for the error message.
 
 The job worker processes (kalos/portal/job_worker.py) do NOT take this lock:
 they are children of the one engine and never start a second server.
+
+Only `EWOULDBLOCK`/`EAGAIN` mean "held by another process". Any other failure
+to lock (a filesystem that does not support flock, an unexpected errno) is
+reported as `EngineLockUnsupported`, because "another engine holds it" would be
+a false and misleading message. `fcntl` is POSIX-only and is imported when the
+lock is taken, so importing this module never fails on another platform.
+
+Limits: the lock is per host. `uvicorn kalos.portal.app:app --workers N` starts
+N processes that do not take it; start the engine with `python -m kalos.portal`
+(one process), or give each engine its own state directory.
 """
 from __future__ import annotations
 
-import fcntl
+import errno
 import os
 from pathlib import Path
 from typing import IO
@@ -26,8 +36,21 @@ from typing import IO
 LOCK_FILENAME = "engine.lock"
 
 
-class EngineLockHeld(RuntimeError):
+class EngineLockError(RuntimeError):
+    """The state-directory lock could not be taken. See the subclasses."""
+
+
+class EngineLockHeld(EngineLockError):
     """Another engine process already owns this state directory."""
+
+
+class EngineLockUnsupported(EngineLockError):
+    """The lock could not be taken for a reason other than another holder: no
+    POSIX `fcntl` on this platform, or a filesystem that refuses flock."""
+
+
+# errno values that mean "another process holds the lock" (non-blocking flock).
+_HELD_ERRNOS = frozenset({errno.EWOULDBLOCK, errno.EAGAIN})
 
 
 def default_state_dir() -> Path:
@@ -37,17 +60,34 @@ def default_state_dir() -> Path:
 
 
 def acquire_engine_lock(state_dir: Path | None = None) -> IO[str]:
-    """Take the exclusive engine lock for `state_dir` or raise `EngineLockHeld`.
+    """Take the exclusive engine lock for `state_dir`.
 
-    Keep the returned file open for the life of the process. Closing it, or
-    letting it be garbage-collected, releases the lock."""
+    Raises `EngineLockHeld` when another process holds it, and
+    `EngineLockUnsupported` for any other failure to lock. Keep the returned file
+    open for the life of the process. Closing it, or letting it be
+    garbage-collected, releases the lock."""
+    try:
+        import fcntl  # POSIX only; deferred so importing this module never fails
+    except ImportError:
+        raise EngineLockUnsupported(
+            "the engine state-directory lock needs POSIX fcntl, which this platform "
+            "does not have. Run the engine on Linux or macOS."
+        ) from None
+
     directory = Path(state_dir) if state_dir is not None else default_state_dir()
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / LOCK_FILENAME
     handle = open(path, "a+", encoding="utf-8")
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except OSError as exc:
+        if exc.errno not in _HELD_ERRNOS:
+            handle.close()
+            raise EngineLockUnsupported(
+                f"could not lock {path}: {exc.strerror or 'error'} (errno {exc.errno}). "
+                "The filesystem of KALOS_STATE_DIR may not support flock (some network "
+                "filesystems do not). Use a local directory for the state."
+            ) from None
         holder = ""
         try:
             handle.seek(0)

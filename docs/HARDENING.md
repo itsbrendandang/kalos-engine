@@ -143,8 +143,28 @@ A review of progress against the readiness scorecard surfaced that campaign + la
 state directory exits with status 2 and a message naming the holder's PID,
 instead of sharing `portal.db` and the latest-analysis cache with the first.
 The kernel drops the lock when the process dies, so a crash leaves nothing
-stale. Job worker processes do not take the lock. Implementation:
-`kalos/portal/engine_lock.py`.
+stale: a SIGKILLed engine leaves `engine.lock` on disk with its dead pid in it,
+and the next engine takes the lock anyway (`tests/test_engine_lock.py`).
+
+Exit status 2 has two reasons, and the message says which:
+
+- **held**: another engine process owns the directory (`already holds`).
+- **unsupported**: the lock could not be taken for any other reason. A
+  filesystem that refuses flock (some network mounts) reports `could not lock
+  ... flock`; a platform without POSIX `fcntl` says so. Neither means another
+  engine is running. Use a local directory for `KALOS_STATE_DIR`.
+
+Limits, stated plainly:
+
+- **Use `python -m kalos.portal`.** It is the one entry point that takes the
+  lock. `uvicorn kalos.portal.app:app --workers N` (N > 1) starts N processes
+  that do not take it, so they share `portal.db` without the guard. Run one
+  process per state directory, or give each engine its own directory.
+- The lock is per host. A state directory on a network filesystem shared by two
+  hosts is not protected by flock; do not share one.
+- Job worker processes do not take the lock (they are children of the engine).
+
+Implementation: `kalos/portal/engine_lock.py`.
 
 ### What `anonymize=true` covers, and what it does not
 

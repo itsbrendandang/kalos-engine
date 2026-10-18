@@ -66,7 +66,9 @@ def main() -> None:
     global _ENGINE_LOCK
     try:
         _ENGINE_LOCK = engine_lock.acquire_engine_lock()
-    except engine_lock.EngineLockHeld as exc:
+    except engine_lock.EngineLockError as exc:
+        # Held by another engine, or not lockable on this filesystem: either way
+        # this engine must not start on the directory.
         print(f"kalos portal: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
 
