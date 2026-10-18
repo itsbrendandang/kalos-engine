@@ -399,26 +399,27 @@ class JobRunner:
                 return
 
     def _start(self, job: dict[str, Any], lease: Lease) -> None:
-        """Start the worker for a claimed job. The child is registered BEFORE the
-        fallible steps (spawn's result, the pid write), so from here on the
-        scheduler owns the worker and the slot whatever fails: a failed start or
-        pid write kills the worker and records the job as `worker_unavailable`."""
+        """Start the worker for a claimed job. The child is registered before ANY
+        fallible step: from here on the scheduler owns the job and the slot whatever
+        fails. A failed start, a failed pid write, or any BaseException kills the
+        worker (if one exists) and records the job as `worker_unavailable`; the slot
+        is released once that outcome is recorded (`_reconcile`)."""
         tenant, job_id = str(job["tenant"]), str(job["id"])
-        child = _Child(job_id, tenant, None, lease, time.monotonic() + self.timeout_s)
+        child = _Child(job_id, tenant, None, lease, deadline=0.0)  # nothing here can raise
         self._children[job_id] = child
         try:
+            child.deadline = time.monotonic() + self.timeout_s
             child.worker = self._spawn(job_id, tenant, self.store.state_dir)
-        except Exception:  # noqa: BLE001 - reported on the job, never raised to the scheduler
-            log.exception("could not start a job worker")
+            if child.worker.pid:
+                jobs.attach_worker(self.store, tenant=tenant, job_id=job_id, pid=int(child.worker.pid))
+        except BaseException:  # noqa: BLE001 - reported on the job; a worker must never outlive us
+            log.exception("could not start a job worker, or record its pid; stopping it")
             child.outcome = ("failed", "worker_unavailable")
-        else:
-            try:
-                if child.worker.pid:
-                    jobs.attach_worker(self.store, tenant=tenant, job_id=job_id, pid=int(child.worker.pid))
-            except Exception:  # noqa: BLE001 - a worker without a recorded pid must not outlive us
-                log.exception("could not record a job worker's pid; stopping the worker")
-                child.outcome = ("failed", "worker_unavailable")
-                child.worker.kill()
+            if child.worker is not None:
+                try:
+                    child.worker.kill()
+                except Exception:  # noqa: BLE001 - the reconcile below kills it again
+                    log.exception("could not stop a job worker that failed to start")
         self._reconcile(child, time.monotonic())
 
 

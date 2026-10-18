@@ -899,3 +899,33 @@ def test_input_paths_are_server_built_and_tenant_hashed():
     assert hashlib.sha256(b"acme").hexdigest().startswith(key)
     rel = jobs._relative_input_path("acme", "job_" + "a" * 32)
     assert rel == f"jobs/{key}/job_{'a' * 32}.bin"
+
+
+@pytest.mark.parametrize("failure", ["timeout_setting", "keyboard_interrupt"])
+def test_a_failed_start_cannot_leak_the_claimed_job_or_its_slot(store, failure):
+    """N4: the child was built from the runner's timeout setting before the start's
+    try block, so a setting that raises left the job `running` with its slot held
+    forever. Any failure of the start (even a BaseException) now releases the slot
+    and records the job `worker_unavailable`."""
+    job = _submit(store)
+    spawned: list[str] = []
+
+    if failure == "timeout_setting":
+        class Runner(JobRunner):
+            @property
+            def timeout_s(self) -> float:
+                raise ValueError("KALOS_JOB_TIMEOUT_S must be a number")
+
+        runner = Runner(store, spawn=lambda *a: spawned.append("spawned"), timeout_s=None, poll_s=0.01)
+    else:
+        def spawn(*_a):
+            raise KeyboardInterrupt()
+
+        runner = JobRunner(store, spawn=spawn, timeout_s=60, poll_s=0.01)
+
+    runner.tick()  # must not raise: the failure is the job's outcome, not the scheduler's
+    assert spawned == []  # the worker is never started when the setup fails
+    assert runner.running_count() == 0
+    assert runner.limit.running() == 0
+    done = jobs.get_job(store, tenant="acme", job_id=job["id"])
+    assert done["state"] == "failed" and done["error"]["code"] == "worker_unavailable"

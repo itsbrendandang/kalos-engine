@@ -209,7 +209,9 @@ variable named. They are not silently replaced by defaults.
 
 - **Start failure:** if the worker cannot be started, or its pid cannot be
   recorded, the worker (if one was started) is killed and the job is recorded
-  `failed` with `worker_unavailable`. A slot is released only once the worker
+  `failed` with `worker_unavailable`. Any exception, and any `BaseException`
+  such as `KeyboardInterrupt`, takes this path; nothing before the child is
+  registered can leak the claimed job or its slot. A slot is released only once the worker
   is gone and its outcome is recorded; if recording fails, the next pass retries.
 - **Failed claim:** the claim is one transaction, so a claim that raises leaves
   the job `queued`; the scheduler logs it and tries again on the next pass.
