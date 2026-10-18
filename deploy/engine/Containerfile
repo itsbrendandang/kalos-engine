@@ -25,9 +25,10 @@ WORKDIR /build
 # Only the inputs `pip install -e .` (well, a real install, not editable -
 # see below) actually needs: package metadata + the package itself. Not
 # uv.lock - pip does not read it, and kalos does not vendor a requirements
-# lock for pip today; this Containerfile pins nothing beyond what pyproject.toml
-# pins, which is the same story a fresh `pip install kalos[ml,portal]` tells
-# an operator outside Docker.
+# lock for pip today; apart from torch (pinned below, to the uv.lock version),
+# this Containerfile pins nothing beyond what pyproject.toml pins, which is the
+# same story a fresh `pip install kalos[ml,portal]` tells an operator outside
+# Docker.
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
@@ -46,8 +47,13 @@ ENV PATH="/opt/venv/bin:$PATH"
 # and re-downloaded the wheel - found the first time the image was rebuilt for
 # a real fix. Now a source change only reruns the (much smaller) package
 # install below.
+# torch is pinned to the version uv.lock resolves (2.13.0). Unpinned, this
+# layer resolved whatever the CPU index had newest (2.14.1+cpu) - a different
+# build than the one CI and the lock were tested against. Bump it here and in
+# uv.lock together (`uv lock --upgrade-package torch`).
+ARG TORCH_VERSION=2.13.0
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+    && pip install --no-cache-dir "torch==${TORCH_VERSION}" --index-url https://download.pytorch.org/whl/cpu
 
 COPY pyproject.toml README.md ./
 COPY kalos ./kalos
