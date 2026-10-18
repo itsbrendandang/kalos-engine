@@ -401,3 +401,79 @@ def test_upload_precheck_lets_a_bearer_through_to_real_verification(monkeypatch)
 def test_upload_precheck_is_inert_in_open_mode(client):
     r = client.post("/api/run", files={"file": ("a.csv", b"a,b\n1,2\n", "text/csv")})
     assert r.status_code != 401
+
+
+def test_a_trickled_upload_body_is_answered_408_at_the_read_deadline():
+    """Round 3, 3: an upload whose body trickles in is cut off at an overall read deadline
+    (408), instead of holding its request (and any slot it has) indefinitely. The gate
+    in the submit route runs after the form is parsed, so the deadline has to live here,
+    where the body is read."""
+    import asyncio
+    import time
+
+    from kalos.portal.limits import RequestSizeLimitMiddleware
+
+    async def inner(scope, receive, send):
+        # Reads the whole body, as FastAPI's form parser does, then answers.
+        while True:
+            message = await receive()
+            if message["type"] != "http.request" or not message.get("more_body"):
+                break
+        await send({"type": "http.response.start", "status": 202, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    async def trickle():
+        yield {"type": "http.request", "body": b"x", "more_body": True}
+        await asyncio.sleep(30)  # the client stalls; the body never completes
+        yield {"type": "http.request", "body": b"", "more_body": False}
+
+    async def run(middleware, chunks):
+        gen = chunks()
+        sent: list[dict] = []
+
+        async def receive():
+            try:
+                return await gen.__anext__()
+            except StopAsyncIteration:
+                return {"type": "http.disconnect"}
+
+        async def send(message):
+            sent.append(message)
+
+        scope = {"type": "http", "method": "POST", "path": "/api/run", "headers": [],
+                 "root_path": ""}
+        await middleware(scope, receive, send)
+        return sent
+
+    async def scenario():
+        middleware = RequestSizeLimitMiddleware(
+            inner, default_cap=1024, upload_cap=1 << 20, upload_paths=["/api/run"],
+            read_timeout_s=0.3,
+        )
+        started = time.monotonic()
+        sent = await run(middleware, trickle)
+        assert time.monotonic() - started < 5
+        assert sent[0]["status"] == 408
+
+        async def complete():
+            yield {"type": "http.request", "body": b"x", "more_body": False}
+
+        ok = await run(middleware, complete)
+        assert ok[0]["status"] == 202  # a body that arrives in time is untouched
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "0.5", "soon"])
+def test_a_malformed_upload_read_timeout_fails_startup(monkeypatch, value):
+    """Round 3, 3: KALOS_UPLOAD_READ_TIMEOUT_S is validated like the other settings."""
+    from kalos.portal import job_runner
+    from kalos.portal.limits import upload_read_timeout_s
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("KALOS_UPLOAD_READ_TIMEOUT_S", value)
+        with pytest.raises(ValueError, match="KALOS_UPLOAD_READ_TIMEOUT_S"):
+            upload_read_timeout_s()
+        with pytest.raises(ValueError, match="KALOS_UPLOAD_READ_TIMEOUT_S"):
+            job_runner.check_startup_config()
+    assert upload_read_timeout_s() == 60.0

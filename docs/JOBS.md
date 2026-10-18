@@ -107,6 +107,7 @@ envelope now, not a failed job later.
 | `409` | The campaign is archived. |
 | `400` | Also: `roles` is over 16 KiB (`MAX_ROLES_CHARS`); refused, not truncated. |
 | `413` | The upload is over the tenant's job size limit, or over the engine's upload cap. |
+| `408` | The upload body was not received within `KALOS_UPLOAD_READ_TIMEOUT_S` (default 60 s, overall, from the first byte the request sent). Nothing is queued. |
 | `429` | The tenant already has `KALOS_JOB_QUEUE_DEPTH` queued or running jobs, or the engine already has `KALOS_JOB_GLOBAL_QUEUE_DEPTH` (all tenants). Or the tenant already has `SUBMIT_PER_TENANT` (2) uploads being received. `Retry-After` is set. |
 | `409` | `code: upload_pending`: the campaign already has a queued or running upload (one pending upload per campaign). `code: campaign_has_runs`: the campaign has awaiting or measured runs and `replace=true` was not sent. Nothing is queued or written. |
 | `503` | Jobs are disabled (`KALOS_JOBS_ENABLED=0`), the job settings are malformed, every preflight slot is in use, or the engine already has `SUBMIT_TOTAL` (4) uploads being received. `Retry-After` is set on the last two. |
@@ -183,6 +184,11 @@ process on a modest machine.
   by all tenants together, so the number of pending uploads on disk is bounded
   too: at most that many times the upload cap. Total bytes are not capped
   separately; size the state directory for the product of the two.
+- **Trickled uploads.** The multipart form is parsed by the framework before the
+  route runs, so the submit gate cannot bound a client that sends its body slowly.
+  The body is instead held to an overall deadline (`KALOS_UPLOAD_READ_TIMEOUT_S`,
+  default 60 s, validated at startup): past it the request is answered `408` and
+  its work is released. The same deadline applies to every upload route.
 - **Uploads in memory.** A submission holds its whole upload in memory from the
   read until it is queued or refused. The number of submissions being received
   is therefore capped before the read, per tenant and engine-wide (`429` or

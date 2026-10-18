@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from kalos.portal import busy, jobs
+from kalos.portal.limits import upload_read_timeout_s
 from kalos.portal.busy import AnalysisLimiter, Lease, limiter
 
 if TYPE_CHECKING:
@@ -80,6 +81,7 @@ def check_startup_config() -> None:
     and the app lifespan calls it too."""
     settings = jobs.job_settings()  # ValueError, naming the variable
     busy.validate_env()
+    upload_read_timeout_s()  # ValueError, naming KALOS_UPLOAD_READ_TIMEOUT_S
     if not settings.enabled:
         return
     try:

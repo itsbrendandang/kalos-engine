@@ -59,6 +59,7 @@ from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_sto
 from kalos.portal.limits import (
     MULTIPART_OVERHEAD_BYTES,
     max_request_bytes,
+    upload_read_timeout_s,
 )
 from kalos.portal.migrate import legacy_latest_filename
 from kalos.portal.tenancy import validate_tenant_id
@@ -260,6 +261,7 @@ app.add_middleware(
     default_cap=max_request_bytes(),
     upload_cap=MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES,
     upload_paths=UPLOAD_PATHS,
+    read_timeout_s=upload_read_timeout_s(),  # 408 when an upload body is not received in time
 )
 # With auth enforced, an upload carrying no bearer token is a 401 before its
 # (up to ~25 MB) multipart body is read. Presence check only; the token is

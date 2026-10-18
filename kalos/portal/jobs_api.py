@@ -168,6 +168,9 @@ class JobUploadSizeLimit(RequestSizeLimitMiddleware):
     upload cap: `POST /api/campaigns/{id}/upload` and `POST /api/campaigns/{id}/jobs`.
     (The per-tenant job limit is applied in the route, after the body is read.)"""
 
+    def is_upload(self, path: str) -> bool:
+        return _is_campaign_upload(path) or super().is_upload(path)
+
     def cap_for(self, path: str) -> int:
         if _is_campaign_upload(path):
             return self.upload_cap
