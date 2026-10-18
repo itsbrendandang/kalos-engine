@@ -106,8 +106,8 @@ envelope now, not a failed job later.
 | `409` | The campaign is archived. |
 | `400` | Also: `roles` is over 16 KiB (`MAX_ROLES_CHARS`); refused, not truncated. |
 | `413` | The upload is over the tenant's job size limit, or over the engine's upload cap. |
-| `429` | The tenant already has `KALOS_JOB_QUEUE_DEPTH` queued or running jobs, or the engine already has `KALOS_JOB_GLOBAL_QUEUE_DEPTH` (all tenants). `Retry-After` is set. |
-| `503` | Jobs are disabled (`KALOS_JOBS_ENABLED=0`), the job settings are malformed, or every preflight slot is in use. `Retry-After` is set on the last. |
+| `429` | The tenant already has `KALOS_JOB_QUEUE_DEPTH` queued or running jobs, or the engine already has `KALOS_JOB_GLOBAL_QUEUE_DEPTH` (all tenants). Or the tenant already has `SUBMIT_PER_TENANT` (2) uploads being received. `Retry-After` is set. |
+| `503` | Jobs are disabled (`KALOS_JOBS_ENABLED=0`), the job settings are malformed, every preflight slot is in use, or the engine already has `SUBMIT_TOTAL` (4) uploads being received. `Retry-After` is set on the last two. |
 
 ## Lifecycle and guarantees
 
@@ -156,6 +156,7 @@ process on a modest machine.
 | Analyses one tenant may run at once | `KALOS_JOB_PER_TENANT` | `1` | per tenant |
 | Queued + running jobs | `KALOS_JOB_QUEUE_DEPTH` | `8` | per tenant |
 | Queued + running jobs, all tenants together | `KALOS_JOB_GLOBAL_QUEUE_DEPTH` | `64` | whole engine |
+| Uploads being received at once (from the body read until the submit answers) | fixed: `SUBMIT_PER_TENANT` / `SUBMIT_TOTAL` | `2` / `4` | per tenant / whole engine |
 | Uploads being checked (parsed) at once, before they are queued | fixed: `PREFLIGHT_CONCURRENCY` | `2` | whole engine |
 | Upload size for a job (at most the engine's upload cap) | `KALOS_JOB_MAX_UPLOAD_BYTES` | the engine upload cap | per tenant |
 | Wall-clock limit for one job, then its worker is killed | `KALOS_JOB_TIMEOUT_S` | `1800` | per job |
@@ -165,6 +166,12 @@ process on a modest machine.
   by all tenants together, so the number of pending uploads on disk is bounded
   too: at most that many times the upload cap. Total bytes are not capped
   separately; size the state directory for the product of the two.
+- **Uploads in memory.** A submission holds its whole upload in memory from the
+  read until it is queued or refused. The number of submissions being received
+  is therefore capped before the read, per tenant and engine-wide (`429` or
+  `503`, `Retry-After`), so N concurrent submits cannot each hold up to the
+  upload cap at once. The multipart body itself is spooled to disk by the
+  framework above 1 MiB; the cap bounds what the route reads into memory.
 - **Fairness.** The runner visits tenants oldest-queued-job first and skips a
   tenant at its per-tenant cap, so one tenant's backlog cannot hold every slot.
 - **Sync routes yield to the queue.** A synchronous analysis is admitted only

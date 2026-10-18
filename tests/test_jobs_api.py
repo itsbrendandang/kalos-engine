@@ -30,6 +30,7 @@ from kalos.portal import busy, job_worker, jobs, jobs_api  # noqa: E402
 from kalos.portal import app as portal_module  # noqa: E402
 from kalos.portal import campaign as campaign_module  # noqa: E402
 from kalos.portal.app import app  # noqa: E402
+from kalos.portal.auth import Principal  # noqa: E402
 from kalos.portal.campaign import CampaignStore, get_campaign_store  # noqa: E402
 from kalos.portal.job_runner import JobRunner, ThreadWorker  # noqa: E402
 from kalos.portal.uploads import MAX_UPLOAD_BYTES  # noqa: E402
@@ -532,3 +533,83 @@ def test_lifespan_refuses_to_boot_on_a_malformed_job_setting(env, monkeypatch):
     with pytest.raises(ValueError, match="KALOS_JOB_QUEUE_DEPTH"):
         with TestClient(app):
             pass
+
+
+class _GatedUpload:
+    """An UploadFile whose read() waits until the test opens the gate, so the
+    test can hold submissions in flight and count how many reached the read."""
+
+    filename = "runs.csv"
+
+    def __init__(self, gate: asyncio.Event, data: bytes) -> None:
+        self.reads = 0
+        self._gate = gate
+        self._data = data
+
+    async def read(self, size: int = -1) -> bytes:
+        self.reads += 1
+        await self._gate.wait()
+        return self._data if size < 0 else self._data[:size]
+
+
+def test_concurrent_submits_are_capped_before_any_upload_is_read(env, monkeypatch):
+    """N2: each in-flight submission can hold a whole upload in memory, so the
+    submissions being received are counted per tenant and engine-wide BEFORE the
+    read. Beyond the cap the caller gets 429 (tenant) or 503 (engine) with
+    Retry-After, and the refused upload is never read. A cancelled submission
+    gives its count back."""
+    _tc, store = env
+    # The parses that follow the reads share the preflight slots: widen them so the only
+    # refusals in this test are the submit gate's.
+    monkeypatch.setattr(jobs_api, "_preflight_slots", threading.BoundedSemaphore(8))
+    tenants = ["acme", "globex", "initech"]
+    cids = {t: store.create_campaign(tenant=t, name="c")["id"] for t in tenants}
+    gate = asyncio.Event()
+
+    def start(tenant: str):
+        upload = _GatedUpload(gate, _csv())
+        principal = Principal(subject=f"s@{tenant}", tenant=tenant, scopes=frozenset({"write"}))
+        task = asyncio.ensure_future(jobs_api._submit(
+            cids[tenant], upload, "lipase_titer", False, "", None, principal, store,
+            portal_module.upload_error_response,
+        ))
+        return upload, task
+
+    async def scenario():
+        per, total = jobs_api.SUBMIT_PER_TENANT, jobs_api.SUBMIT_TOTAL
+        acme = [start("acme") for _ in range(per)]
+        await asyncio.sleep(0.05)
+        assert all(u.reads == 1 for u, _ in acme)
+
+        # the tenant is at its cap: refused with 429 and never read
+        upload, task = start("acme")
+        response, job_id = await task
+        assert response.status_code == 429 and response.headers["Retry-After"]
+        assert upload.reads == 0 and job_id is None
+
+        # other tenants fill the engine up to its cap; the next one is refused with 503
+        assert total - per <= per  # the second tenant can fill the rest without hitting its own cap
+        others = [start("globex") for _ in range(total - per)]
+        await asyncio.sleep(0.05)
+        assert sum(u.reads for u, _ in others) == total - per
+        upload, task = start("initech")
+        response, _ = await task
+        assert response.status_code == 503 and response.headers["Retry-After"]
+        assert upload.reads == 0
+
+        # a cancelled submission gives its count back, so the tenant can submit again
+        _, cancelled = acme[0]
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        assert jobs_api._submit_gate.in_flight() == total - 1
+        upload, task = start("acme")
+        await asyncio.sleep(0.05)
+        assert upload.reads == 1  # admitted: it is being read
+
+        gate.set()
+        results = await asyncio.gather(*[t for _, t in acme[1:]], task, *[t for _, t in others])
+        assert [r[0].status_code for r in results] == [202] * len(results)
+        assert jobs_api._submit_gate.in_flight() == 0
+
+    asyncio.run(scenario())

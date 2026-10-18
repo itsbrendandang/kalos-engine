@@ -27,6 +27,7 @@ import functools
 import logging
 import re
 import threading
+from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
@@ -64,6 +65,50 @@ _preflight_slots = threading.BoundedSemaphore(PREFLIGHT_CONCURRENCY)
 
 class PreflightBusy(Exception):
     """Every preflight slot is in use right now."""
+
+
+# An upload being received holds its whole body in memory (`file.read` below), so the
+# number of submissions in flight is capped BEFORE the read: per tenant, and engine-wide.
+# A submission counts from the gate to its answer, cancelled or not.
+SUBMIT_PER_TENANT = 2
+SUBMIT_TOTAL = 4
+
+
+class SubmitGate:
+    """Counts the submissions in flight. `enter` never blocks: it returns the scope that
+    is full (`"tenant"` or `"engine"`), or None when the caller is admitted."""
+
+    def __init__(self, per_tenant: int, total: int) -> None:
+        self._per_tenant = per_tenant
+        self._total = total
+        self._lock = threading.Lock()
+        self._by_tenant: Counter[str] = Counter()
+        self._n = 0
+
+    def enter(self, tenant: str) -> str | None:
+        with self._lock:
+            if self._by_tenant[tenant] >= self._per_tenant:
+                return "tenant"
+            if self._n >= self._total:
+                return "engine"
+            self._by_tenant[tenant] += 1
+            self._n += 1
+            return None
+
+    def leave(self, tenant: str) -> None:
+        with self._lock:
+            if self._by_tenant[tenant] > 0:
+                self._by_tenant[tenant] -= 1
+                self._n -= 1
+            if self._by_tenant[tenant] == 0:
+                del self._by_tenant[tenant]
+
+    def in_flight(self) -> int:
+        with self._lock:
+            return self._n
+
+
+_submit_gate = SubmitGate(SUBMIT_PER_TENANT, SUBMIT_TOTAL)
 
 
 async def _preflight_gated(call: Callable[[], Any]) -> Any:
@@ -235,6 +280,31 @@ async def _submit(
         jobs.check_roles(roles)
     except CampaignError as exc:
         return _job_error_response(exc), None
+    # The upload is about to be held in memory: take a submission slot first.
+    refused = _submit_gate.enter(principal.tenant)
+    if refused is not None:
+        if refused == "tenant":
+            message = "too many uploads are being received for this tenant; retry shortly"
+            status = 429
+        else:
+            message = "the engine is receiving too many uploads; retry shortly"
+            status = 503
+        return JSONResponse({"error": message}, status_code=status,
+                            headers={"Retry-After": str(RETRY_AFTER_SECONDS)}), None
+    try:
+        return await _read_and_queue(
+            settings, campaign_id, file, target, anonymize, roles, sheet, principal, store,
+            upload_error,
+        )
+    finally:
+        _submit_gate.leave(principal.tenant)
+
+
+async def _read_and_queue(
+    settings: jobs.JobSettings, campaign_id: str, file: UploadFile, target: str,
+    anonymize: bool, roles: str, sheet: str | None, principal: Principal, store: CampaignStore,
+    upload_error: Any,
+) -> tuple[JSONResponse, str | None]:
     # One byte past the tenant's limit is enough to refuse; never hold more.
     raw = await file.read(settings.max_upload_bytes + 1)
     if len(raw) > settings.max_upload_bytes:
