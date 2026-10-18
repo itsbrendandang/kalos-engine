@@ -553,7 +553,10 @@ def _parse_excel(raw: bytes, sheet: str | None) -> ParsedUpload:
 
     def _read(name: str) -> pd.DataFrame:
         try:
-            df = book.parse(name)
+            # pd.read_excel(ExcelFile, sheet_name=...) is exactly ExcelFile.parse
+            # with the same defaults; spelled this way because pandas-stubs (3.x)
+            # does not declare ExcelFile.parse, which failed mypy on newer stubs.
+            df = pd.read_excel(book, sheet_name=name)
         except Exception as exc:  # noqa: BLE001 - e.g. a chart sheet, a damaged part
             log.warning("could not read an xlsx sheet: %s", type(exc).__name__)
             raise UploadRejected(
