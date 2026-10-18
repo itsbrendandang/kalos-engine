@@ -180,7 +180,9 @@ terminal state (docs/JOBS.md, "Job parameters"). The stored `dataset` label is t
 `anonymized upload <first 12 hex of input_sha256>`, not the filename. The
 `target` and any declared `roles` keep their real column names, as the
 existing `target` field already does; anonymize only pseudonymizes the
-identifier-type columns in the analysis body.
+identifier-type columns in the analysis body. Full scope, including the raw
+sheet stored at rest in `campaigns.base_rows`: docs/HARDENING.md, "What
+`anonymize=true` covers".
 
 Determinism: the same bytes give the same proposals on the same library stack
 and the same torch thread count (`run.torch_threads`, `run.library_versions`).

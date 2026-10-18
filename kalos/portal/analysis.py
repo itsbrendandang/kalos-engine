@@ -412,7 +412,7 @@ def _resolve_columns(
             cont_feats = [
                 c for c in num
                 if c != target and c not in cat_set and c not in ids
-                and not identifier_pattern(profile.id_hint.pattern).match(str(c).strip())
+                and not is_identifier_name(c, profile.id_hint)
                 and not profile.outcome_hint.search(str(c))
             ]
         gcol = roles.groups if (roles.groups and roles.groups in df.columns) else None
@@ -433,7 +433,7 @@ def _resolve_columns(
     cont_feats = [
         c for c in num
         if c != target
-        and not identifier_pattern(profile.id_hint.pattern).match(str(c).strip())
+        and not is_identifier_name(c, profile.id_hint)
         and not profile.outcome_hint.search(str(c))
     ]
     gcol = next((c for c in df.columns if profile.group_hint.search(str(c))), None)
@@ -1753,7 +1753,7 @@ def _analyze(
             target=str(target),
             features=kept_features,
             numeric_cols=[str(c) for c in num],
-            id_hint=identifier_pattern(profile.id_hint.pattern),
+            is_identifier=lambda name: is_identifier_name(name, profile.id_hint),
             outcome_hint=profile.outcome_hint,
             constant_on_fitted_rows=[str(c) for c in constant_on_fitted]
             + [str(c) for c in constant_cats],
@@ -1993,9 +1993,53 @@ def identifier_pattern(id_hint_pattern: str) -> re.Pattern[str]:
     )
 
 
+# Token rule for compound identifier names (see `is_identifier_name`). The last
+# word of the name must be an identifier noun ("ID", "Name", "number"); a
+# preceding word must name the thing being identified ("Tank", "Patient",
+# "run"). So "Tank ID" and "Customer Name" are identifiers, while "batch_titer"
+# (last word "titer") and "run_duration_days" (last word "days") are not.
+_ID_NOUNS = frozenset({
+    "id", "ids", "uuid", "guid", "name", "number", "num", "no", "code", "label",
+    "key", "ref", "barcode", "identifier",
+})
+_ID_SUBJECTS = frozenset({
+    "run", "batch", "lot", "campaign", "experiment", "expt", "sample", "culture",
+    "vessel", "reactor", "bioreactor", "patient", "customer", "tank", "subject",
+    "donor", "animal", "plate", "well",
+})
+_ID_ALONE = frozenset({"id", "ids", "uuid", "guid", "name", "index", "barcode", "identifier", "well", "mrn"})
+
+
+def _token_identifier(name: str) -> bool:
+    """The compound-name rule. Words are split on any non-alphanumeric run and
+    at camelCase boundaries ("TankID" -> "tank id"); trailing numbers are
+    ignored ("Sample ID 2"). This is a search over the whole name, not a match
+    from its start, so a leading word like "Tank" or "Patient" is no obstacle."""
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name.strip())
+    words = [w for w in re.split(r"[^a-z0-9]+", spaced.lower()) if w]
+    while words and words[-1].isdigit():
+        words.pop()
+    if not words:
+        return False
+    *rest, last = words
+    if not rest:
+        return last in _ID_ALONE
+    return last in _ID_NOUNS and any(w in _ID_SUBJECTS for w in rest)
+
+
+def is_identifier_name(name: object, id_hint: re.Pattern[str] | None = None) -> bool:
+    """Whether a column NAME is an identifier: the profile's anchored `id_hint`
+    (plus the run-id pattern, `identifier_pattern`), or the word-level compound
+    rule above. Used for feature selection, provenance and anonymization alike,
+    so the three cannot disagree."""
+    text = str(name).strip()
+    hint = _ID_HINT.pattern if id_hint is None else id_hint.pattern
+    return bool(identifier_pattern(hint).match(text)) or _token_identifier(text)
+
+
 def _is_identifier_name(name: str) -> bool:
     """Whether a column NAME should be pseudonymized when `anonymize=True`."""
-    return bool(identifier_pattern(_ID_HINT.pattern).match(str(name).strip()))
+    return is_identifier_name(name)
 
 
 def _anonymize_result(result: dict) -> dict:

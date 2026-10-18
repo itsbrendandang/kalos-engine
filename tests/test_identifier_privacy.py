@@ -212,3 +212,57 @@ def test_no_anonymize_keeps_real_names():
     df = _sheet_with({"batch_id": list(range(100, 112))})
     out = _analyze(df, target="lipase_titer", anonymize=False)
     assert "batch_id" in {row["name"] for row in out["provenance"]}
+
+
+# --- 3. the prefix-anchored pattern let these escape ------------------------ #
+#
+# `identifier_pattern` is anchored at the start of the name (`.match`), so a
+# leading subject word ("Tank", "Patient", "Customer") made the name miss. These
+# are the names that escaped anonymization before the word-level rule
+# (`analysis.is_identifier_name`), and they are modeled as features too.
+
+_ESCAPED_IDS = ["Tank ID", "Patient ID", "Customer Name", "TankID", "Sample ID 2", "Well ID"]
+
+
+@pytest.mark.parametrize("name", _ESCAPED_IDS)
+def test_leading_subject_words_do_not_hide_an_identifier(name):
+    from kalos.portal.analysis import is_identifier_name
+
+    assert is_identifier_name(name)
+
+
+@pytest.mark.parametrize("name", ["Tank ID", "Patient ID", "Customer Name"])
+def test_the_anchored_pattern_alone_missed_these(name):
+    """Pins the defect the word rule fixes: the start-anchored pattern does not
+    see these names as identifiers."""
+    assert not identifier_pattern(BIOPROCESS_PROFILE.id_hint.pattern).match(name)
+
+
+@pytest.mark.parametrize("name", _REAL_COLUMNS)
+def test_word_rule_keeps_real_measurements_out(name):
+    from kalos.portal.analysis import is_identifier_name
+
+    assert not is_identifier_name(name)
+
+
+def test_escaped_identifier_names_are_anonymized_and_not_modeled():
+    df = _sheet_with({
+        "Tank ID": list(range(1, 13)),
+        "Patient ID": [f"P-{i:03d}" for i in range(12)],
+        "Customer Name": [f"Acme {i}" for i in range(12)],
+    })
+    out = _analyze(df, target="lipase_titer", anonymize=True)
+    blob = json.dumps(out)
+
+    for identifier in ("Tank ID", "Patient ID", "Customer Name"):
+        assert identifier not in blob, f"{identifier} escaped anonymization"
+        assert identifier not in out["features"]
+    statuses = {row["name"]: row["status"] for row in out["provenance"]}
+    assert "Methanol" in blob and "Methanol" in out["features"]
+    assert sorted(statuses.values()).count("dropped_id") == 3
+
+
+def test_a_single_escaped_name_is_pseudonymized():
+    df = _sheet_with({"Tank ID": list(range(1, 13))})
+    out = _analyze(df, target="lipase_titer", anonymize=True)
+    assert "Tank ID" not in json.dumps(out)

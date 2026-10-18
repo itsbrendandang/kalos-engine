@@ -146,6 +146,45 @@ The kernel drops the lock when the process dies, so a crash leaves nothing
 stale. Job worker processes do not take the lock. Implementation:
 `kalos/portal/engine_lock.py`.
 
+### What `anonymize=true` covers, and what it does not
+
+`anonymize` is a presentation control on the analysis, not an at-rest
+protection. Exactly this is covered:
+
+- **Identifier column names** (`is_identifier_name` in
+  `kalos/portal/analysis.py`: the profile's `id_hint`, the run-id pattern, and a
+  word-level rule, so `Tank ID`, `Patient ID`, `Customer Name` and `run_number`
+  all count) are replaced by `col_<hash>` in the response: `provenance`,
+  `group_col`, validation findings and their prose, `design_box_exclusions`,
+  refusal context and message. Identifier columns are not model features.
+- **Sheet names** are replaced by `sheet_<hash>` in `sheets`, `sheet_used`, the
+  refusals (`sheet_not_found`, `no_usable_sheet`) and the analysis-error text.
+- **The filename** is not stored: not in `run`, not as the campaign's `dataset`
+  label (which becomes `anonymized upload <hash>`), and not in a background
+  job's row beyond its extension while the job runs (docs/JOBS.md).
+- A campaign **re-analysis** keeps the anonymize setting of the analysis it
+  replaces.
+
+Not covered (the response or the store still carries these):
+
+- **`target`** (top-level and `run.target`) and **`run.roles_declared`** keep
+  the caller's own column names. A target or declared role that is an
+  identifier is shown as sent.
+- **Feature names** (`features`, `proposal_features`, drivers, recipe keys) keep
+  their real names. Features are the process inputs the owner reads.
+- **`campaigns.base_rows` at rest.** The campaign stores the full uploaded sheet
+  (every column, including identifier columns and the raw values) in
+  `portal.db`, unencrypted and unaltered, so that the loop can fold results into
+  it. `anonymize` does not change what is stored there. Treat `portal.db` and
+  the state directory as holding the raw data. Deleting or pseudonymizing
+  `base_rows` is a separate decision (it would break re-analysis of existing
+  campaigns).
+- **Background job rows while queued or running**: target, roles and sheet are
+  stored in the clear until the job reaches a terminal state (docs/JOBS.md).
+- **The alias hash** is salted with `KALOS_ANON_SALT`. Without it the dev salt
+  applies, and a common name (`Patient ID`) can be recognised by hashing a list
+  of candidates. Production must set the salt.
+
 ## Status log
 
 - Phase 1a authentication + authorization: **done** (merged).

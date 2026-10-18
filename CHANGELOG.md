@@ -8,6 +8,15 @@ Newest first.
 
 - Fix (same unreleased branch): `run.n_features` is the fitted feature count
   (`d`), not the number of top drivers in `proposal_features` (at most 4).
+- Identifier detection is no longer start-anchored. `Tank ID`, `Patient ID`,
+  `Customer Name` (and `TankID`, `Sample ID 2`) were not recognised as
+  identifiers: they were modeled as features and, under `anonymize=true`,
+  published by name. A word-level rule (`is_identifier_name`) now catches them;
+  real measurements (`Methanol`, `batch_titer`, `run_duration_days`) are still
+  not identifiers. Note: this changes the feature set for sheets with such
+  columns. (docs/HARDENING.md, "What `anonymize=true` covers")
+- Documented, not changed: the campaign stores the full raw sheet in
+  `campaigns.base_rows`, and `anonymize` does not cover it. (docs/HARDENING.md)
 - With `anonymize=true`, workbook sheet names are aliased (`sheet_<hash>`) in
   responses, refusals (`sheet_not_found`, `no_usable_sheet`) and analysis-error
   sentences. Before, `sheet_not_found` listed the uploader's real sheet names.
