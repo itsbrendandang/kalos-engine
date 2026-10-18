@@ -74,6 +74,9 @@ JOBS_DIRNAME = "jobs"
 # The engine's pid, passed to each worker at spawn: a worker whose parent is no longer
 # this pid is an orphan, and must not analyse or publish (docs/JOBS.md, "Worker lifetime").
 ENGINE_PID_ENV = "KALOS_JOB_ENGINE_PID"
+# Set by ProcessWorker on the worker it starts (a session leader). Only a process that
+# carries it, and is its own session and group leader, may SIGKILL its own group.
+WORKER_SESSION_ENV = "KALOS_JOB_WORKER_SESSION"
 # Shown to the caller for a job that did not finish. The code is the stable
 # part of the contract (docs/JOBS.md, "Error codes"); messages are fixed text.
 ERROR_MESSAGES = {

@@ -163,7 +163,8 @@ class ProcessWorker:
         self, job_id: str, state_dir: Path, *, argv: list[str] | None = None,
         deadline_s: float | None = None,
     ) -> None:
-        env = {**os.environ, "KALOS_STATE_DIR": str(state_dir), jobs.ENGINE_PID_ENV: str(os.getpid())}
+        env = {**os.environ, "KALOS_STATE_DIR": str(state_dir), jobs.ENGINE_PID_ENV: str(os.getpid()),
+               jobs.WORKER_SESSION_ENV: "1"}
         if deadline_s is not None:  # seconds from now: the worker exits itself past this
             env["KALOS_JOB_DEADLINE_S"] = repr(float(deadline_s))
         # `argv` replaces the worker command (tests only: a fake worker process).
@@ -178,10 +179,19 @@ class ProcessWorker:
         return self._pid
 
     def poll(self) -> int | None:
-        return self._proc.poll()
+        """The worker's exit status, or None while it runs. On Linux the exit is observed
+        WITHOUT reaping (waitid WNOWAIT): an unreaped leader keeps its pid, and so its
+        process-group id, reserved until `kill()` has signalled the group. (macOS has no
+        waitid; there poll reaps, and the group kill after it is best-effort.)"""
+        if self._proc.returncode is not None or not hasattr(os, "waitid"):
+            return self._proc.poll()
+        info = os.waitid(os.P_PID, self._pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        if info is None:
+            return None
+        return int(info.si_status) if info.si_code == os.CLD_EXITED else -int(info.si_status)
 
     def kill(self) -> None:
-        _kill_group(self._pid)
+        _kill_group(self._pid)  # before reaping: the leader's pid still names the group
         try:
             self._proc.wait(timeout=KILL_WAIT_S)
         except subprocess.TimeoutExpired:  # pragma: no cover - SIGKILL is not ignorable

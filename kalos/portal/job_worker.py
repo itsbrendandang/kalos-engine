@@ -227,10 +227,25 @@ def start_lifetime_watchdog(
     return stop
 
 
+def _may_kill_own_group() -> bool:
+    """Only a worker process started by ProcessWorker, and still its own session and
+    group leader, may SIGKILL its group. Anything else (an in-process caller, a process
+    inheriting the variable) would hit a group it does not own."""
+    return (
+        os.environ.get(jobs.WORKER_SESSION_ENV) == "1"
+        and hasattr(os, "getsid")
+        and os.getsid(0) == os.getpid()
+        and os.getpgid(0) == os.getpid()
+    )
+
+
 def _kill_own_group() -> None:
     """SIGKILL this process's group. That includes this process, which dies at once
     (SIGKILL cannot be caught), so the caller's `exit_fn` runs only if the signal
     fails, and is then the fallback."""
+    if not _may_kill_own_group():
+        log.error("job worker: not a session leader of its own; not killing a process group")
+        return
     try:
         os.killpg(os.getpid(), signal.SIGKILL)
     except OSError:
@@ -258,8 +273,8 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError:
             print("KALOS_JOB_DEADLINE_S must be a number of seconds", file=sys.stderr)
             return 2
-        # Group leader (the runner's ProcessWorker is a session leader): the group is ours.
-        leads_group = hasattr(os, "getpgid") and os.getpgid(0) == os.getpid()
+        # Only a ProcessWorker-started session leader gets the group kill (see _may_kill_own_group).
+        leads_group = _may_kill_own_group()
         parent = int(raw_engine) if raw_engine.isdigit() else os.getppid()
         start_lifetime_watchdog(seconds, parent_pid=parent, kill_group=leads_group)
     from kalos.portal.campaign import CampaignStore

@@ -254,7 +254,14 @@ an engine that would accept jobs and never run them.
 - **Failed claim:** the claim is one transaction, so a claim that raises leaves
   the job `queued`; the scheduler logs it and tries again on the next pass.
 
-A kill is `SIGKILL` to the worker's process group. A fit cannot be interrupted
+A kill is `SIGKILL` to the worker's process group. The runner observes a worker's
+exit without reaping it (Linux, `waitid` with `WNOWAIT`), so the group id is still
+reserved when the group is signalled; the worker is reaped only after that. On
+macOS, which has no `waitid`, the exit is reaped first and the group kill is
+best-effort: a process group whose leader was reaped could in principle be
+reused. A process may SIGKILL its own group only if it was started as a session
+and group leader by `ProcessWorker` (`KALOS_JOB_WORKER_SESSION`); any other caller
+is refused and nothing is signalled. A fit cannot be interrupted
 inside a single BLAS call, so the kill is the bound, not a checkpoint. Every
 way a worker ends (cancel, timeout, a crash, a clean exit) goes through that
 group kill, so a child process the worker left behind is stopped too.

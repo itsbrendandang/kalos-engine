@@ -1391,3 +1391,40 @@ def test_an_unrecognised_jobs_enabled_value_is_refused_at_startup(monkeypatch, v
 
     with pytest.raises(ValueError, match="KALOS_JOBS_ENABLED"):
         job_runner.check_startup_config()
+
+
+@pytest.mark.skipif(not hasattr(os, "waitid"), reason="needs waitid(WNOWAIT) to observe without reaping")
+def test_polling_a_finished_worker_does_not_reap_it_before_its_group_is_killed(tmp_path):
+    """Round 3, 5: `poll()` reaped the worker, and only then was its process group
+    signalled. The reaped pid can be reused, so the group id is not safe to use. The
+    exit is now observed without reaping (waitid WNOWAIT): the pid stays reserved until
+    `kill()` has signalled the group and reaped it."""
+    worker = job_runner.ProcessWorker("job_" + "c" * 32, tmp_path,
+                                      argv=[sys.executable, "-c", "pass"])
+    deadline = time.monotonic() + 30
+    while worker.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert worker.poll() == 0
+    assert worker.poll() == 0  # still observable: nothing reaped it
+    # a zombie still holds its pid, so the group id cannot have been handed to anyone else
+    os.kill(worker.pid, 0)  # raises ProcessLookupError if it had been reaped
+    worker.kill()  # signals the group, then reaps
+    assert worker.poll() == 0
+
+
+def test_an_in_process_worker_never_enables_or_sends_the_group_kill(tmp_path, monkeypatch):
+    """Round 3, 5: a caller that is not a ProcessWorker-started session leader must never
+    SIGKILL its own process group (it could be a shell's or a test runner's). The
+    spy records what would have been signalled; nothing real is sent."""
+    signalled: list[tuple[int, int]] = []
+    monkeypatch.setattr(job_worker.os, "killpg", lambda pgid, sig: signalled.append((pgid, sig)))
+    monkeypatch.delenv(jobs.WORKER_SESSION_ENV, raising=False)
+    job_worker._kill_own_group()
+    assert signalled == []
+    started: list[bool] = []
+    monkeypatch.setattr(job_worker, "start_lifetime_watchdog",
+                        lambda seconds, **kw: started.append(kw["kill_group"]) or None)
+    monkeypatch.setenv("KALOS_JOB_DEADLINE_S", "1")
+    monkeypatch.setenv("KALOS_STATE_DIR", str(tmp_path))
+    job_worker.main(["job_" + "d" * 32])
+    assert started == [False]
