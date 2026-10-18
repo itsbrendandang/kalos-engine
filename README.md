@@ -178,16 +178,18 @@ Report vulnerabilities privately; a `SECURITY.md` is proposed in open PR #83.
 - **Mechanistic prior benchmark (open PR [#81](https://github.com/itsbrendandang/kalos-engine/pull/81)).** Monod ODE prior mean in simulation, 10 seeds. Only the oracle (correct-model) prior result survives multiple-comparison correction. The mild-prior 8/10 result is not significant once corrected over the four levels. Severe and adversarial priors show no benefit. Remaining caveats: no observation noise, no calibration check, and the 95%-of-best metric normalises over held-out rows. The prior is opt-in and off by default.
 - **Scale-up readout.** Evidence is from a synthetic simulator (`docs/SCALE_EVIDENCE.md`); the refusal rule is the safeguard, not a validation of predictions.
 
-Synthetic benchmark from [`BENCHMARK.md`](BENCHMARK.md), simple regret after 18 experiments, 10 seeds (lower is better):
+Synthetic benchmark from [`BENCHMARK.md`](BENCHMARK.md), simple regret after 18 experiments, 10 seeds (lower is better). Reproduced with `python -m kalos.bench` on the locked stack (torch 2.13.0, BoTorch 0.18.1):
 
 | Surface (synthetic) | Noise | BO regret | LHS regret | Random regret |
 | --- | --- | --- | --- | --- |
-| Gaussian bump (4d, smooth) | 0% | 0.014 | 2.247 | 3.171 |
-| Gaussian bump (4d, smooth) | 15% | 1.676 | 2.247 | 2.592 |
-| Ackley (4d, rugged) | 0% | 1.489 | 3.625 | 3.696 |
-| Ackley (4d, rugged) | 15% | 3.572 | 3.625 | 3.850 |
+| Gaussian bump (4d, smooth) | 0% | 0.013 | 2.247 | 3.171 |
+| Gaussian bump (4d, smooth) | 15% | 1.873 | 2.247 | 2.592 |
+| Ackley (4d, rugged) | 0% | 1.560 | 3.625 | 3.696 |
+| Ackley (4d, rugged) | 15% | 3.014 | 3.625 | 3.850 |
 
-Reproduce with `python -m kalos.bench` (needs the `ml` extra). The gap closes as noise rises.
+BO's margin over LHS shrinks as noise rises (Gaussian 2.23 to 0.37; Ackley 2.07 to 0.61) but stays positive in these four cells, for 10 seeds.
+The BO rows depend on the torch build: torch 2.14.1 gives different BO regrets on the same seeds (Gaussian 15% 2.030, Ackley 15% 2.974). LHS and random do not change.
+These numbers are not a comparison against other optimizers; see [Benchmark vs other optimizers](#benchmark-vs-other-optimizers).
 
 ### Built-in safeguards
 
