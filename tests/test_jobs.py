@@ -677,6 +677,56 @@ def test_a_worker_that_ignores_sigterm_is_killed_with_its_group_at_its_time_limi
     assert runner.running_count() == 0 and runner.limit.running() == 0
 
 
+# --- one scheduler per state directory (MED6) --------------------------------------------- #
+
+
+def test_a_second_runner_on_the_same_state_dir_is_refused_until_the_first_stops(store):
+    first = JobRunner(store, poll_s=0.01)
+    first.start()
+    try:
+        with pytest.raises(job_runner.RunnerLocked):
+            JobRunner(store, poll_s=0.01).start()
+    finally:
+        first.stop(timeout=1)
+    second = JobRunner(store, poll_s=0.01)
+    second.start()  # the lock was released with the first runner
+    second.stop(timeout=1)
+
+
+def test_a_runner_refused_for_web_concurrency_takes_no_lock(store, monkeypatch):
+    monkeypatch.setenv("WEB_CONCURRENCY", "2")
+    with pytest.raises(job_runner.RunnerLocked, match="single engine process"):
+        JobRunner(store).start()
+    monkeypatch.setenv("WEB_CONCURRENCY", "1")  # one worker is fine
+    runner = JobRunner(store, poll_s=0.01)
+    runner.start()
+    runner.stop(timeout=1)
+
+
+def test_another_process_holding_the_runner_lock_refuses_this_runner(store, tmp_path):
+    """Real processes: a second engine process holds the state directory's lock."""
+    lock = store.state_dir / job_runner.RUNNER_LOCK_NAME
+    holder = subprocess.Popen(
+        [sys.executable, "-c",
+         "import fcntl, os, sys, time\n"
+         f"fd = os.open({str(lock)!r}, os.O_RDWR | os.O_CREAT, 0o600)\n"
+         "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+         "print('locked', flush=True)\n"
+         "time.sleep(600)\n"],
+        stdout=subprocess.PIPE, text=True,
+    )
+    try:
+        assert holder.stdout.readline().strip() == "locked"
+        with pytest.raises(job_runner.RunnerLocked, match="another engine process"):
+            JobRunner(store, poll_s=0.01).start()
+    finally:
+        holder.kill()
+        holder.wait(timeout=10)
+    runner = JobRunner(store, poll_s=0.01)
+    runner.start()  # the other process is gone: the lock is free
+    runner.stop(timeout=1)
+
+
 # --- crash recovery ------------------------------------------------------------------- #
 
 

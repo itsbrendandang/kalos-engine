@@ -137,7 +137,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     the store (e.g. an unwritable state dir) is logged and the process starts
     anyway, so `/readyz` reports it as a generic 503, as it did before.
     """
-    from kalos.portal.job_runner import start_job_runner, stop_job_runner
+    from kalos.portal.job_runner import RunnerLocked, start_job_runner, stop_job_runner
     from kalos.portal.jobs import job_settings
     from kalos.portal.migrate import MigrationError, SchemaError
 
@@ -157,6 +157,11 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if store is not None:
         try:
             runner = start_job_runner(store)
+        except RunnerLocked:
+            # Refused on purpose: a second scheduler on this state dir would double-run
+            # jobs. Boot fails loudly, because job submissions would otherwise be accepted
+            # and never run.
+            raise
         except Exception:  # noqa: BLE001 - jobs are optional; the sync routes still work
             log.exception("background job runner could not be started")
     try:

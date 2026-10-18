@@ -257,7 +257,11 @@ The rules are those of the campaign routes (docs/CAMPAIGNS_API.md), applied to j
   container deployment is the place to cap memory; the engine does not.
 - **Reanalyze as a job.** `/api/campaigns/{id}/reanalyze` still runs
   synchronously under the slot limiter.
-- **Multiple engine processes.** The limiter and the runner are per process
-  (the engine runs one uvicorn worker, docs/HARDENING.md). Two engine
-  processes sharing one `portal.db` would each run a runner; that is not
-  supported yet.
+- **Multiple engine processes are refused.** The limiter and the runner are per
+  process. So the runner takes an exclusive lock on `<KALOS_STATE_DIR>/jobs.runner.lock`
+  when it starts (`flock`, released when the process exits, however it exits),
+  and a second runner on that state directory refuses with `RunnerLocked`. The
+  engine then fails to boot, rather than accepting job submissions no runner
+  would ever run. A start with `WEB_CONCURRENCY` above 1 is refused too, with a
+  message naming the variable. Run one engine process per state directory
+  (docs/HARDENING.md). The lock is POSIX-only (`fcntl`).

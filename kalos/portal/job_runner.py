@@ -28,6 +28,7 @@ tests run the same worker code in a thread (`ThreadWorker`) with a stop flag.
 """
 from __future__ import annotations
 
+import fcntl
 import logging
 import os
 import signal
@@ -49,6 +50,39 @@ if TYPE_CHECKING:
 log = logging.getLogger("kalos.portal")
 
 KILL_WAIT_S = 5.0
+RUNNER_LOCK_NAME = "jobs.runner.lock"
+
+
+class RunnerLocked(RuntimeError):
+    """This engine cannot run the job scheduler: another process (or another
+    runner) already schedules the jobs in this state directory, or the engine is
+    configured to run several processes. Two schedulers on one `portal.db` would
+    each admit and recover the same jobs."""
+
+
+def _acquire_runner_lock(state_dir: Path) -> int:
+    """Take the state directory's runner lock (an exclusive, non-blocking flock)
+    and return its file descriptor. The OS releases it when the process exits,
+    however it exits, so a crashed engine never leaves it held."""
+    raw_workers = os.environ.get("WEB_CONCURRENCY", "").strip()
+    if raw_workers.isdigit() and int(raw_workers) > 1:
+        raise RunnerLocked(
+            "background jobs need a single engine process, and WEB_CONCURRENCY is "
+            f"{raw_workers}; run one worker, or set KALOS_JOBS_ENABLED=0"
+        )
+    state_dir.mkdir(parents=True, exist_ok=True)
+    fd = os.open(state_dir / RUNNER_LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        raise RunnerLocked(
+            f"another engine process already runs the background jobs in {state_dir}; "
+            "run one engine per state directory, or set KALOS_JOBS_ENABLED=0"
+        ) from None
+    os.ftruncate(fd, 0)
+    os.write(fd, f"{os.getpid()}\n".encode())
+    return fd
 # A worker gets its job time limit plus this margin as a wall-clock deadline. The
 # runner normally kills it at the limit; the deadline is for the case where the
 # runner is gone (the worker then exits by itself, see job_worker).
@@ -220,6 +254,7 @@ class JobRunner:
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._lock_fd: int | None = None
 
     # --- wiring -------------------------------------------------------------- #
 
@@ -236,7 +271,14 @@ class JobRunner:
                              deadline=time.time() + self.timeout_s + WORKER_DEADLINE_MARGIN_S)
 
     def start(self) -> None:
-        recover(self.store)
+        """Take the state directory's runner lock (RunnerLocked if another process
+        holds it), recover orphaned jobs, and start the scheduler thread."""
+        self._lock_fd = _acquire_runner_lock(self.store.state_dir)
+        try:
+            recover(self.store)
+        except BaseException:
+            self._release_lock()
+            raise
         self.limit.add_listener(self._wake.set)
         self._thread = threading.Thread(target=self._loop, name="kalos-job-runner", daemon=True)
         self._thread.start()
@@ -249,6 +291,7 @@ class JobRunner:
         if self._thread is not None:
             self._thread.join(timeout=timeout)
         self.limit.remove_listener(self._wake.set)
+        self._release_lock()
         for child in list(self._children.values()):
             try:
                 if child.worker is not None:
@@ -257,6 +300,11 @@ class JobRunner:
             except Exception:  # noqa: BLE001 - shutting down: recovery fails it at the next start
                 log.exception("could not record that background job %s was stopped", child.job_id)
             self._drop(child)
+
+    def _release_lock(self) -> None:
+        if self._lock_fd is not None:
+            os.close(self._lock_fd)  # closing the descriptor releases the flock
+            self._lock_fd = None
 
     def _loop(self) -> None:
         while not self._stop.is_set():

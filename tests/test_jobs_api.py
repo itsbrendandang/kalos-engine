@@ -10,8 +10,10 @@ schedules jobs behind the test's back.
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import hashlib
 import json
+import os
 import re
 import threading
 import time
@@ -489,6 +491,24 @@ def test_lifespan_starts_and_stops_the_runner_unless_disabled(env, monkeypatch):
     monkeypatch.setenv("KALOS_JOBS_ENABLED", "0")
     with TestClient(app):
         assert job_runner._runner is None
+
+
+def test_lifespan_refuses_to_boot_when_another_process_runs_the_jobs(env):
+    """A refused runner fails the boot: job submissions would otherwise be accepted
+    by this engine and never be run."""
+    from kalos.portal import job_runner
+
+    tc, store = env
+    lock = store.state_dir / job_runner.RUNNER_LOCK_NAME
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)  # held by "another engine process" (this one, another fd)
+    try:
+        with pytest.raises(job_runner.RunnerLocked):
+            with TestClient(app):
+                pass
+    finally:
+        os.close(fd)
+    assert job_runner._runner is None
 
 
 def test_lifespan_refuses_to_boot_on_a_malformed_job_setting(env, monkeypatch):
