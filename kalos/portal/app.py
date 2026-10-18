@@ -23,6 +23,7 @@ from __future__ import annotations
 import functools
 import logging
 import os
+from typing import Any
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -584,10 +585,28 @@ if not _PRODUCTION:
     app.get("/api/multi")(run_multi)
 
 
+_NO_GUARD: Any = object()  # publish without a compare-and-swap (a confirmed replacement)
+
+
+def _upload_target(store: CampaignStore, *, tenant: str, campaign_id: str | None) -> tuple[
+    str | None, str | None, int, int,
+]:
+    """What an upload would publish over: (campaign id or None, its generation, awaiting
+    runs, measured runs). The campaign is the explicit one, else the tenant's default; a
+    tenant with no campaign yet has nothing to overwrite."""
+    from kalos.portal import jobs  # deferred: jobs_api imports this module
+
+    cid = campaign_id or store.default_campaign_id(tenant=tenant)
+    if cid is None:
+        return None, None, 0, 0
+    awaiting, measured = jobs.run_counts(store, tenant=tenant, campaign_id=cid)
+    return cid, store.generation_of(tenant=tenant, campaign_id=cid), awaiting, measured
+
+
 def _run_uploaded_sync(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
     *, tenant: str, sheet: str | None = None, store: CampaignStore | None = None,
-    campaign_id: str | None = None,
+    campaign_id: str | None = None, expected_generation: Any = _NO_GUARD,
 ) -> dict:
     """The CPU-bound body of an upload: parse -> analyze -> persist -> result.
 
@@ -616,9 +635,16 @@ def _run_uploaded_sync(
     # stamped with the generation it was seeded with. Best-effort for the
     # default campaign; an explicit campaign that vanished or was archived
     # mid-analysis raises (404/409) instead of returning an unstored analysis.
+    # A guarded publish is a compare-and-swap on the generation the caller checked: a run
+    # added during the fit makes it a `campaign_changed` 409 for an explicit campaign (the
+    # default campaign keeps its state and the analysis is published out of sync, the
+    # sync contract). Either way the runs are not overwritten.
+    publish_kwargs: dict[str, Any] = (
+        {} if expected_generation is _NO_GUARD else {"expected_generation": expected_generation}
+    )
     publish_upload_analysis(
         store if store is not None else get_campaign_store(), result, filename,
-        tenant=tenant, campaign_id=campaign_id, df=df,
+        tenant=tenant, campaign_id=campaign_id, df=df, **publish_kwargs,
     )
     return result
 
@@ -631,10 +657,12 @@ async def run_uploaded(
     roles: str = Form(default=""),
     sheet: str = Form(default=""),
     sheet_query: str | None = Query(default=None, alias="sheet"),
+    replace: bool = Form(default=False),
     _principal: Principal = Depends(require_scope(WRITE)),
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
-    """Upload a run sheet and analyze it.
+    """Upload a run sheet and analyze it. A campaign that has awaiting or measured runs
+    is refused (409 `campaign_has_runs`) unless `replace=true` confirms the replacement.
 
     `sheet` (multipart form field, or `?sheet=` query parameter; the form field
     wins) picks a workbook sheet by name. Omitted, the first sheet in workbook
@@ -646,7 +674,7 @@ async def run_uploaded(
     file, its name, or its contents).
     """
     response = await _run_uploaded(
-        file, target, anonymize, roles, sheet, sheet_query, _principal, store
+        file, target, anonymize, roles, sheet, sheet_query, _principal, store, replace=replace,
     )
     _audit(store, _principal, "run.upload", response.status_code)
     return response
@@ -655,13 +683,29 @@ async def run_uploaded(
 async def _run_uploaded(
     file: UploadFile, target: str, anonymize: bool, roles: str, sheet: str,
     sheet_query: str | None, _principal: Principal, store: CampaignStore,
-    *, campaign_id: str | None = None,
+    *, campaign_id: str | None = None, replace: bool = False,
 ) -> JSONResponse:
+    tenant = _principal.tenant
+    # The publish replaces the campaign's runs: refuse before the upload is read or fitted,
+    # unless the caller confirmed it. The generation seen here guards the publish below.
+    expected_generation: Any = _NO_GUARD
+    try:
+        target_id, generation, awaiting, measured = _upload_target(
+            store, tenant=tenant, campaign_id=campaign_id,
+        )
+    except CampaignError as exc:
+        return campaign_error_response(exc)
+    if (awaiting or measured) and not replace:
+        from kalos.portal import jobs  # deferred: jobs_api imports this module
+
+        refusal = jobs.CampaignHasRuns(awaiting, measured)
+        return JSONResponse({"error": str(refusal), "code": refusal.code}, status_code=409)
+    if not replace:
+        expected_generation = generation
     # One byte past the cap is enough for `_parse_upload` to reject it; never
     # load a multi-GB body into this single process just to measure it.
     raw = await file.read(MAX_UPLOAD_BYTES + 1)
     filename = file.filename or "uploaded dataset"
-    tenant = _principal.tenant
     try:
         # Offload the CPU-bound parse + fit + save to a worker thread so this
         # single-worker service does not block the event loop (and every other
@@ -673,7 +717,7 @@ async def _run_uploaded(
             functools.partial(
                 _run_uploaded_sync, raw, target or None, anonymize, filename, roles,
                 tenant=tenant, sheet=(sheet or sheet_query or None), store=store,
-                campaign_id=campaign_id,
+                campaign_id=campaign_id, expected_generation=expected_generation,
             ),
             tenant=tenant,
         )

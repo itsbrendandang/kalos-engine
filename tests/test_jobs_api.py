@@ -720,3 +720,72 @@ def test_a_second_upload_to_a_campaign_with_a_pending_one_is_a_409_at_submit(env
     assert second.status_code == 409
     assert second.json()["code"] == "upload_pending"
     assert tc.get(first.headers["Location"], headers=H("a-write")).json()["job"]["state"] == "queued"
+
+
+# --- the sync upload routes (round 3, 2) ---------------------------------------- #
+
+
+def _stub_sync_analysis(**_k):
+    def analyze(df, target, *, profile=None, anonymize=False, progress=None, roles=None, **_):
+        return {"target": target, "proposal_features": ["Methanol", "pH"], "proposals": [],
+                "marker": "sync-stub"}
+    return analyze
+
+
+def _seed_with_runs(store, tenant: str = "acme", campaign_id: str | None = None) -> str:
+    """Seed a campaign (the tenant default when `campaign_id` is None) with one pending run."""
+    store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant=tenant, campaign_id=campaign_id)
+    store.start([{"recipe": {"Methanol": 1.0, "pH": 6.0}}], tenant=tenant, campaign_id=campaign_id)
+    return store.default_campaign_id(tenant=tenant) if campaign_id is None else campaign_id
+
+
+def test_api_run_refuses_to_replace_the_default_campaigns_runs_unless_confirmed(env, monkeypatch):
+    """Round 3, 2: the sync /api/run seeded the default campaign and discarded its runs
+    with no confirmation. It is refused (409 campaign_has_runs) unless replace=true, and
+    the campaign is unchanged."""
+    tc, store = env
+    monkeypatch.setattr(portal_module, "_analyze", _stub_sync_analysis())
+    _seed_with_runs(store)
+    before = store.get(tenant="acme", campaign_id=store.default_campaign_id(tenant="acme"))
+    refused = tc.post("/api/run", files={"file": ("runs.csv", _csv(), "text/csv")},
+                      data={"target": "lipase_titer"}, headers=H("a-write"))
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["code"] == "campaign_has_runs"
+    assert store.get(tenant="acme", campaign_id=store.default_campaign_id(tenant="acme")) == before
+    confirmed = tc.post("/api/run", files={"file": ("runs.csv", _csv(), "text/csv")},
+                        data={"target": "lipase_titer", "replace": "true"}, headers=H("a-write"))
+    assert confirmed.status_code == 200, confirmed.text
+
+
+def test_campaign_upload_refuses_to_replace_runs_unless_confirmed(env, monkeypatch):
+    tc, store = env
+    monkeypatch.setattr(portal_module, "_analyze", _stub_sync_analysis())
+    cid = _campaign(tc, "a-write")
+    _seed_with_runs(store, campaign_id=cid)
+    refused = tc.post(f"/api/campaigns/{cid}/upload", files={"file": ("runs.csv", _csv(), "text/csv")},
+                      data={"target": "lipase_titer"}, headers=H("a-write"))
+    assert refused.status_code == 409 and refused.json()["code"] == "campaign_has_runs"
+    assert store.get(tenant="acme", campaign_id=cid)["pending"]  # the runs are still there
+    confirmed = tc.post(f"/api/campaigns/{cid}/upload", files={"file": ("runs.csv", _csv(), "text/csv")},
+                        data={"target": "lipase_titer", "replace": "true"}, headers=H("a-write"))
+    assert confirmed.status_code == 200, confirmed.text
+
+
+def test_a_run_added_during_a_sync_fit_is_not_silently_discarded(env, monkeypatch):
+    """Round 3, 2: the check happens before the fit, so a run added WHILE the fit runs
+    must not be wiped by the publish. The publish is a compare-and-swap on the generation
+    the check saw; the caller is told to retry (409 campaign_changed)."""
+    tc, store = env
+    cid = _campaign(tc, "a-write")  # an empty campaign: the check passes
+    base_stub = _stub_sync_analysis()
+
+    def analyze_while_a_measurement_lands(df, target, **kwargs):
+        store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant="acme", campaign_id=cid)
+        store.start([{"recipe": {"Methanol": 2.0, "pH": 6.5}}], tenant="acme", campaign_id=cid)
+        return base_stub(df, target, **kwargs)
+
+    monkeypatch.setattr(portal_module, "_analyze", analyze_while_a_measurement_lands)
+    resp = tc.post(f"/api/campaigns/{cid}/upload", files={"file": ("runs.csv", _csv(), "text/csv")},
+                   data={"target": "lipase_titer"}, headers=H("a-write"))
+    assert resp.status_code == 409, resp.text
+    assert store.get(tenant="acme", campaign_id=cid)["pending"], "the run added mid-fit was discarded"

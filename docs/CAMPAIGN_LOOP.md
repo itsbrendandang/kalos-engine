@@ -88,7 +88,10 @@ stateDiagram-v2
 
 ## Seeding
 
-The campaign base is seeded/replaced whenever `/api/run` succeeds.
+The campaign base is seeded/replaced whenever `/api/run` succeeds, and only when
+the campaign has no awaiting or measured runs or the caller sent `replace=true`
+(otherwise `409 campaign_has_runs`; round 3 of PR #91). The publish is a
+compare-and-swap on the generation the check saw.
 `_run_uploaded_sync` (`kalos/portal/app.py`) already holds the parsed `df` and calls `_analyze` then `_save_latest`; it also seeds the campaign from `(df, result["target"], result["proposal_features"])`.
 A fresh upload starts a fresh campaign (new base, empty pending, round 0).
 

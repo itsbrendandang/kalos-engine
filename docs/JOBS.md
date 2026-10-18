@@ -109,6 +109,7 @@ envelope now, not a failed job later.
 | `413` | The upload is over the tenant's job size limit, or over the engine's upload cap. |
 | `408` | The upload body was not received within `KALOS_UPLOAD_READ_TIMEOUT_S` (default 60 s, overall, from the first byte the request sent). Nothing is queued. |
 | `429` | The tenant already has `KALOS_JOB_QUEUE_DEPTH` queued or running jobs, or the engine already has `KALOS_JOB_GLOBAL_QUEUE_DEPTH` (all tenants). Or the tenant already has `SUBMIT_PER_TENANT` (2) uploads being received. `Retry-After` is set. |
+| `409` | Also `/api/run` and `/api/campaigns/{id}/upload` (sync): `code: campaign_has_runs` when the campaign has awaiting or measured runs and `replace=true` was not sent. Nothing is changed. |
 | `409` | `code: upload_pending`: the campaign already has a queued or running upload (one pending upload per campaign). `code: campaign_has_runs`: the campaign has awaiting or measured runs and `replace=true` was not sent. Nothing is queued or written. |
 | `503` | Jobs are disabled (`KALOS_JOBS_ENABLED=0`), the job settings are malformed, every preflight slot is in use, or the engine already has `SUBMIT_TOTAL` (4) uploads being received. `Retry-After` is set on the last two. |
 

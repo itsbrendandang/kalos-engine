@@ -399,6 +399,15 @@ class CampaignStore:
             return [_Row(r).info(is_default=r[0] == default)
                     for r in conn.execute(sql, (tenant,)).fetchall()]
 
+    def generation_of(self, *, tenant: str, campaign_id: str) -> str | None:
+        """The campaign's current generation token (None before its first write).
+        CampaignNotFound for a missing campaign."""
+        self._check(tenant, campaign_id)
+        with self._txn(write=False) as conn:
+            row = self._resolve(conn, tenant, campaign_id, create=False)
+            assert row is not None
+            return row.generation
+
     def default_campaign_id(self, *, tenant: str) -> str | None:
         """The campaign the legacy single-campaign routes act on, if any."""
         validate_tenant_id(tenant)

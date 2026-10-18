@@ -639,8 +639,10 @@ def test_size_limits_and_the_analysis_slot_still_apply(env):
     lease = busy.limiter().try_acquire("acme")  # acme's one slot is busy
     assert lease is not None
     try:
+        # replace=true: the campaign holds a measured run, which an unconfirmed upload would refuse first.
         r1 = tc.post(f"/api/campaigns/{cid}/upload",
-                     files={"file": ("r.csv", _csv(_df(20)), "text/csv")}, headers=H("a-write"))
+                     files={"file": ("r.csv", _csv(_df(20)), "text/csv")},
+                     data={"replace": "true"}, headers=H("a-write"))
         r2 = tc.post(f"/api/campaigns/{cid}/reanalyze", headers=H("a-write"))
     finally:
         lease.release()
