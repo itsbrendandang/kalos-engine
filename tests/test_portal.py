@@ -86,7 +86,7 @@ def test_latest_reflects_last_upload(tmp_path, monkeypatch):
     assert portal.latest(princ) == {"has_data": False}
 
     result = portal._analyze(_sheet())
-    portal._save_latest(result, "runs.csv")
+    portal._save_latest(result, "runs.csv", tenant="default")
 
     got = portal.latest(princ)
     assert got["has_data"] is True

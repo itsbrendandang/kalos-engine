@@ -108,8 +108,8 @@ def test_legacy_table_is_migrated_and_writes_succeed(tmp_path, caplog):
     assert any("campaigns table was incompatible" in r.getMessage() for r in caplog.records)
 
     # The write that used to raise OperationalError now works.
-    store.seed(_sheet(), target="titer_g_L", features=["feed_mL_h"])
-    state = store.get()
+    store.seed(_sheet(), target="titer_g_L", features=["feed_mL_h"], tenant="default")
+    state = store.get(tenant="default")
     assert state is not None
 
 
@@ -202,8 +202,8 @@ def test_unsalvageable_table_still_yields_a_working_store(tmp_path, caplog):
         store = CampaignStore(state_dir=tmp_path)
     assert any("no state carried over" in r.getMessage() for r in caplog.records)
 
-    store.seed(_sheet(), target="titer_g_L", features=["feed_mL_h"])
-    assert store.get() is not None
+    store.seed(_sheet(), target="titer_g_L", features=["feed_mL_h"], tenant="default")
+    assert store.get(tenant="default") is not None
     assert "campaigns_backup_1" in _tables(db)
 
 
@@ -214,8 +214,8 @@ def test_fresh_database_needs_no_migration(tmp_path, caplog):
     with caplog.at_level("WARNING"):
         store = CampaignStore(state_dir=tmp_path)
     assert not any("incompatible" in r.getMessage() for r in caplog.records)
-    store.seed(_sheet(), target="titer_g_L", features=["feed_mL_h"])
-    assert store.get() is not None
+    store.seed(_sheet(), target="titer_g_L", features=["feed_mL_h"], tenant="default")
+    assert store.get(tenant="default") is not None
     assert "campaigns_backup_1" not in _tables(tmp_path / "portal.db")
 
 
@@ -223,12 +223,12 @@ def test_reopening_a_correct_database_is_a_no_op(tmp_path, caplog):
     """Opening the store twice must not migrate anything the second time, or a
     long-lived process would churn backups on every restart."""
     first = CampaignStore(state_dir=tmp_path)
-    first.seed(_sheet(), target="titer_g_L", features=["feed_mL_h"])
+    first.seed(_sheet(), target="titer_g_L", features=["feed_mL_h"], tenant="default")
 
     with caplog.at_level("WARNING"):
         second = CampaignStore(state_dir=tmp_path)
     assert not any("incompatible" in r.getMessage() for r in caplog.records)
-    assert second.get() is not None
+    assert second.get(tenant="default") is not None
     assert "campaigns_backup_1" not in _tables(tmp_path / "portal.db")
 
 

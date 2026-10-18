@@ -13,36 +13,75 @@ from __future__ import annotations
 
 import functools
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import AllowInfNan, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import Strict as _Strict
 from starlette.concurrency import run_in_threadpool
 
 from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
 
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
 from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_store
+from kalos.portal.uploads import MAX_COLUMNS
 
 log = logging.getLogger("kalos.portal")
 
 router = APIRouter()
 
 
+# --- request-body bounds (P0 hardening) ------------------------------------- #
+# These bodies are untrusted and land in the tenant's persisted campaign, so
+# their size and shape are bounded here, before the store sees them. The total
+# body size is bounded separately (kalos/portal/limits.py). Validation failures
+# on these routes answer 400 with the usual `{"error": ...}` envelope (see the
+# RequestValidationError handler in kalos/portal/app.py), not FastAPI's 422.
+MAX_RECIPES_PER_START = 64
+MAX_STRING_CHARS = 512
+
+_BoundedStr = Annotated[str, StringConstraints(max_length=MAX_STRING_CHARS)]
+_FeatureName = Annotated[str, StringConstraints(min_length=1, max_length=MAX_STRING_CHARS)]
+# Strict: a JSON number only - no bools, no numeric strings. Ints are accepted.
+_FiniteNumber = Annotated[float, _Strict(), AllowInfNan(False)]
+# A recipe value is a finite number, or a string for a categorical level (the
+# engine's own proposals decode categorical dimensions back to their labels,
+# see `DesignSpace.decode_row`), or null for a categorical with no levels.
+_RecipeValue = _FiniteNumber | _BoundedStr | None
+
+
+class _Proposal(BaseModel):
+    """One proposed experiment, as `_annotate` emits it. Unknown extra fields
+    (`vals`, `p_feasible`, `pred_<constraint>`) are ignored, not stored."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    # Keys are further restricted to the campaign's own dataset columns by
+    # `CampaignStore.start`, which is the only place that knows them.
+    recipe: dict[_FeatureName, _RecipeValue] = Field(min_length=1, max_length=MAX_COLUMNS)
+    pred: _FiniteNumber | None = None
+    std: _FiniteNumber | None = None
+    mode: _BoundedStr | None = None
+    reason: _BoundedStr | None = None
+
+
 class _StartBody(BaseModel):
     """Body for `POST /api/campaign/start` — the proposed batch the caller
     wants to start running, one entry per `{recipe, pred, std, mode, reason}`
-    (the shape `_annotate`'s proposals already carry)."""
+    (the shape `_annotate`'s proposals already carry), at most
+    `MAX_RECIPES_PER_START` per call."""
 
-    recipes: list[dict[str, Any]]
+    recipes: list[_Proposal] = Field(max_length=MAX_RECIPES_PER_START)
 
 
 class _ResultBody(BaseModel):
-    """Body for `POST /api/campaign/result`."""
+    """Body for `POST /api/campaign/result`. `value` is a JSON number (bools
+    and numeric strings are refused); a non-finite value is refused by the
+    store with its own message."""
 
-    id: str
-    value: float
+    id: Annotated[str, StringConstraints(min_length=1, max_length=MAX_STRING_CHARS)]
+    value: Annotated[float, _Strict()]
 
 
 @router.get("/api/campaign")
@@ -77,7 +116,9 @@ def start_campaign(
 ) -> JSONResponse:
     """Append each proposed recipe as a pending, awaiting run. Requires `write`."""
     try:
-        started = store.start(body.recipes, tenant=principal.tenant)
+        started = store.start(
+            [p.model_dump() for p in body.recipes], tenant=principal.tenant
+        )
     except CampaignError as exc:
         # Authored by CampaignStore, not a raw library error — safe to echo.
         log.warning("campaign start rejected: %s", exc)

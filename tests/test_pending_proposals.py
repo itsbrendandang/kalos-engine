@@ -260,7 +260,7 @@ def _seeded_store(tmp_path, tenant: str = "default") -> CampaignStore:
 
 
 def test_awaiting_recipes_is_empty_without_a_campaign(tmp_path):
-    assert CampaignStore(tmp_path).awaiting_recipes() == []
+    assert CampaignStore(tmp_path).awaiting_recipes(tenant="default") == []
 
 
 def test_only_the_unmeasured_runs_are_awaiting(tmp_path):
@@ -269,11 +269,11 @@ def test_only_the_unmeasured_runs_are_awaiting(tmp_path):
         [
             {"recipe": {"Methanol": 3.0, "pH": 6.5}},
             {"recipe": {"Methanol": 4.0, "pH": 6.0}},
-        ]
+        ], tenant="default"
     )
-    assert len(store.awaiting_recipes()) == 2
-    store.set_result(runs[0]["id"], 6.0)
-    assert store.awaiting_recipes() == [{"Methanol": 4.0, "pH": 6.0}], (
+    assert len(store.awaiting_recipes(tenant="default")) == 2
+    store.set_result(runs[0]["id"], 6.0, tenant="default")
+    assert store.awaiting_recipes(tenant="default") == [{"Methanol": 4.0, "pH": 6.0}], (
         "a measured run is folded into the fit, not still in flight"
     )
 
@@ -290,6 +290,6 @@ def test_the_awaiting_recipes_are_encodable_by_the_engine(tmp_path):
     Asserted end-to-end because the store speaks feature->value dicts and the
     engine speaks a coordinate matrix, and nothing else checks that seam."""
     store = _seeded_store(tmp_path)
-    store.start([{"recipe": {"Methanol": 3.0, "pH": 6.5}}])
-    out = _analyze(_sheet(), target="lipase_titer", pending=store.awaiting_recipes())
+    store.start([{"recipe": {"Methanol": 3.0, "pH": 6.5}}], tenant="default")
+    out = _analyze(_sheet(), target="lipase_titer", pending=store.awaiting_recipes(tenant="default"))
     assert out["n_pending_considered"] == 1
