@@ -190,7 +190,9 @@ variable named. They are not silently replaced by defaults.
   the job `queued`; the scheduler logs it and tries again on the next pass.
 
 A kill is `SIGKILL` to the worker's process group. A fit cannot be interrupted
-inside a single BLAS call, so the kill is the bound, not a checkpoint.
+inside a single BLAS call, so the kill is the bound, not a checkpoint. Every
+way a worker ends (cancel, timeout, a crash, a clean exit) goes through that
+group kill, so a child process the worker left behind is stopped too.
 
 ## Restart and crash recovery
 

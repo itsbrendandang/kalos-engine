@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sqlite3
 import sys
@@ -403,6 +404,50 @@ def test_a_worker_whose_pid_cannot_be_recorded_is_killed_and_its_slot_freed(stor
     done = jobs.get_job(store, tenant="acme", job_id=job["id"])
     assert done["state"] == "failed" and done["error"]["code"] == "worker_unavailable"
     assert runner.running_count() == 0 and runner.limit.running() == 0
+
+
+def test_a_worker_that_exits_on_its_own_is_failed_and_its_group_is_killed(store):
+    """MED5: a worker that exits without recording an outcome is a crash; the
+    runner still kills its process group, so a child it left running is stopped."""
+    job = _submit(store)
+    runner = JobRunner(store, spawn=lambda *_a: _FakeWorker(exit_code=0), timeout_s=60, poll_s=0.01)
+    done = _drive(runner, store, "acme", job["id"])
+    assert done["state"] == "failed" and done["error"]["code"] == "worker_exited"
+    assert runner.running_count() == 0 and runner.limit.running() == 0
+
+
+def _gone(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],  # noqa: S603 - fixed argv
+                           capture_output=True, text=True, check=False).stdout.strip()
+    return state == "" or state.startswith("Z")
+
+
+def test_a_worker_that_exits_leaves_no_process_group_members_behind(store, tmp_path):
+    """Real processes: the worker starts a child in its own group, then exits
+    without publishing. The runner's group kill must stop that child too."""
+    job = _submit(store)
+    pidfile = tmp_path / "child.pid"
+    script = (
+        "import pathlib, subprocess, sys\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])\n"
+        f"pathlib.Path({str(pidfile)!r}).write_text(str(child.pid))\n"
+    )
+    runner = JobRunner(
+        store,
+        spawn=lambda j, _t, d: job_runner.ProcessWorker(j, d, argv=[sys.executable, "-c", script]),
+        timeout_s=60, poll_s=0.01,
+    )
+    done = _drive(runner, store, "acme", job["id"])
+    assert done["state"] == "failed" and done["error"]["code"] == "worker_exited"
+    child_pid = int(pidfile.read_text())
+    deadline = time.monotonic() + 10
+    while not _gone(child_pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert _gone(child_pid), "the worker's child survived the runner's group kill"
 
 
 def test_a_failed_claim_leaves_the_job_queued_and_leaks_no_slot(store, monkeypatch):

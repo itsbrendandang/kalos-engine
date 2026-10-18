@@ -66,11 +66,12 @@ Spawn = Callable[[str, str, Path], Worker]
 class ProcessWorker:
     """A worker in its own session, so a kill takes its whole process group."""
 
-    def __init__(self, job_id: str, state_dir: Path) -> None:
+    def __init__(self, job_id: str, state_dir: Path, *, argv: list[str] | None = None) -> None:
         env = {**os.environ, "KALOS_STATE_DIR": str(state_dir)}
+        # `argv` replaces the worker command (tests only: a fake worker process).
+        command = argv if argv is not None else [sys.executable, "-m", "kalos.portal.job_worker", job_id]
         self._proc = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
-            [sys.executable, "-m", "kalos.portal.job_worker", job_id],
-            env=env, stdin=subprocess.DEVNULL, start_new_session=True,
+            command, env=env, stdin=subprocess.DEVNULL, start_new_session=True,
         )
         self._pid = self._proc.pid
 
