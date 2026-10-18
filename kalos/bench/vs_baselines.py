@@ -353,6 +353,10 @@ class _AxArm(_Arm):
         # A bare metric name is maximised in Ax 1.3.1. "-y" was tried first and
         # made Ax minimise y (checked on the pilot seed; it proposed the corners).
         self.client.configure_optimization(objective="y")
+        # Same as the default strategy ("fast", what Client uses when unconfigured),
+        # with its Sobol initialisation seeded. Without this the Ax arm was not
+        # reproducible (see the deviation log, 2026-10-18).
+        self.client.configure_generation_strategy(method="fast", initialization_random_seed=seed)
         self.open: List[Tuple[np.ndarray, int]] = []
 
     def _vec(self, p: Dict[str, Any]) -> np.ndarray:
@@ -370,6 +374,10 @@ class _AxArm(_Arm):
             self.client.complete_trial(trial_index=idx, raw_data={"y": float(yi)})
 
     def ask(self, q: int, pending: np.ndarray) -> np.ndarray:
+        import torch  # core ml extra
+
+        self.round += 1
+        torch.manual_seed(self.seed * 100 + self.round)  # BoTorch's acquisition restarts
         rows: List[np.ndarray] = []
         guard = 0
         while len(rows) < q:
