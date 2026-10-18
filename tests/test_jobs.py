@@ -628,15 +628,14 @@ def test_the_runner_gives_each_worker_its_time_limit_plus_a_margin(store, monkey
     monkeypatch.setattr(job_runner, "ProcessWorker", Recorder)
     _submit(store)
     JobRunner(store, timeout_s=100, poll_s=0.01).tick()
-    expected = time.time() + 100 + job_runner.WORKER_DEADLINE_MARGIN_S
-    assert abs(seen["deadline"] - expected) < 5
+    assert seen["deadline_s"] == 100 + job_runner.WORKER_DEADLINE_MARGIN_S
 
 
 def test_a_worker_process_receives_its_deadline_in_its_environment(tmp_path):
     out = tmp_path / "deadline.txt"
     argv = [sys.executable, "-c",
-            f"import os, pathlib; pathlib.Path({str(out)!r}).write_text(os.environ['KALOS_JOB_DEADLINE'])"]
-    worker = job_runner.ProcessWorker("job_" + "a" * 32, tmp_path, argv=argv, deadline=1234.5)
+            f"import os, pathlib; pathlib.Path({str(out)!r}).write_text(os.environ['KALOS_JOB_DEADLINE_S'])"]
+    worker = job_runner.ProcessWorker("job_" + "a" * 32, tmp_path, argv=argv, deadline_s=1234.5)
     deadline = time.monotonic() + 30
     while worker.poll() is None and time.monotonic() < deadline:
         time.sleep(0.02)
@@ -646,7 +645,7 @@ def test_a_worker_process_receives_its_deadline_in_its_environment(tmp_path):
 def test_the_worker_watchdog_exits_once_its_deadline_has_passed():
     fired: list[int] = []
     stop = job_worker.start_lifetime_watchdog(
-        time.time() - 1, parent_pid=os.getppid(), interval_s=0.01, exit_fn=fired.append)
+        -1.0, parent_pid=os.getppid(), interval_s=0.01, exit_fn=fired.append)
     try:
         deadline = time.monotonic() + 5
         while not fired and time.monotonic() < deadline:
@@ -659,7 +658,7 @@ def test_the_worker_watchdog_exits_once_its_deadline_has_passed():
 def test_the_worker_watchdog_exits_when_its_engine_is_gone():
     fired: list[int] = []
     stop = job_worker.start_lifetime_watchdog(
-        time.time() + 3600, parent_pid=os.getppid() + 100_000, interval_s=0.01, exit_fn=fired.append)
+        3600.0, parent_pid=os.getppid() + 100_000, interval_s=0.01, exit_fn=fired.append)
     try:
         deadline = time.monotonic() + 5
         while not fired and time.monotonic() < deadline:
@@ -672,7 +671,7 @@ def test_the_worker_watchdog_exits_when_its_engine_is_gone():
 def test_the_worker_watchdog_stays_quiet_while_the_engine_is_alive_and_on_time():
     fired: list[int] = []
     stop = job_worker.start_lifetime_watchdog(
-        time.time() + 3600, parent_pid=os.getppid(), interval_s=0.01, exit_fn=fired.append)
+        3600.0, parent_pid=os.getppid(), interval_s=0.01, exit_fn=fired.append)
     time.sleep(0.2)
     stop.set()
     assert fired == []
@@ -1083,3 +1082,16 @@ def test_the_worker_reports_a_store_it_cannot_open_without_a_traceback(monkeypat
         assert job_worker.main(["job_" + "a" * 32]) == 1
     assert "/customers/acme" not in caplog.text
     assert "OSError" in caplog.text
+
+
+def test_the_worker_watchdog_is_not_moved_by_a_wall_clock_jump(monkeypatch):
+    """The worker deadline is a monotonic duration, so a wall-clock step (NTP, a manual
+    change) neither kills a live worker nor extends one. A 3600 s deadline must not
+    fire when the wall clock reads year 2096."""
+    fired: list[int] = []
+    monkeypatch.setattr(job_worker.time, "time", lambda: 4_000_000_000.0)
+    stop = job_worker.start_lifetime_watchdog(
+        3600.0, parent_pid=os.getppid(), interval_s=0.01, exit_fn=fired.append)
+    time.sleep(0.2)
+    stop.set()
+    assert fired == []

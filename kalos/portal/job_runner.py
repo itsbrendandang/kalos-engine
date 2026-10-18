@@ -119,11 +119,11 @@ class ProcessWorker:
 
     def __init__(
         self, job_id: str, state_dir: Path, *, argv: list[str] | None = None,
-        deadline: float | None = None,
+        deadline_s: float | None = None,
     ) -> None:
         env = {**os.environ, "KALOS_STATE_DIR": str(state_dir)}
-        if deadline is not None:  # epoch seconds: the worker exits itself past this
-            env["KALOS_JOB_DEADLINE"] = repr(float(deadline))
+        if deadline_s is not None:  # seconds from now: the worker exits itself past this
+            env["KALOS_JOB_DEADLINE_S"] = repr(float(deadline_s))
         # `argv` replaces the worker command (tests only: a fake worker process).
         command = argv if argv is not None else [sys.executable, "-m", "kalos.portal.job_worker", job_id]
         self._proc = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
@@ -289,7 +289,7 @@ class JobRunner:
 
     def _default_spawn(self, job_id: str, _tenant: str, state_dir: Path) -> Worker:
         return ProcessWorker(job_id, state_dir,
-                             deadline=time.time() + self.timeout_s + WORKER_DEADLINE_MARGIN_S)
+                             deadline_s=self.timeout_s + WORKER_DEADLINE_MARGIN_S)
 
     def start(self) -> None:
         """Take the state directory's runner lock (RunnerLocked if another process

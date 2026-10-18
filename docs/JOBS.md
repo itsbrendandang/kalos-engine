@@ -233,8 +233,11 @@ group kill, so a child process the worker left behind is stopped too.
 
 ## Worker lifetime
 
-Each worker gets a wall-clock deadline in `KALOS_JOB_DEADLINE`: its start time
-plus `KALOS_JOB_TIMEOUT_S` plus a 60 s margin. The runner normally stops it at
+Each worker gets a deadline in `KALOS_JOB_DEADLINE_S`: the seconds left at
+spawn, `KALOS_JOB_TIMEOUT_S` plus a 60 s margin. The worker measures it on its
+own monotonic clock, so a wall-clock step (NTP, a manual change) neither kills
+a live worker nor extends one. The monotonic clock does not advance while the
+machine is suspended, so the time limit counts running time, not sleep time. The runner normally stops it at
 the time limit, but a worker whose engine has gone (killed, or crashed before
 it could kill the worker) would otherwise run on, unsupervised. So a watchdog
 thread in the worker process ends it (exit status 3, no job state written)
