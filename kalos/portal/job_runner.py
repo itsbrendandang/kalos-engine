@@ -292,7 +292,6 @@ class JobRunner:
         if self._thread is not None:
             self._thread.join(timeout=timeout)
         self.limit.remove_listener(self._wake.set)
-        self._release_lock()
         for child in list(self._children.values()):
             try:
                 if child.worker is not None:
@@ -301,6 +300,8 @@ class JobRunner:
             except Exception:  # noqa: BLE001 - shutting down: recovery fails it at the next start
                 log.exception("could not record that background job %s was stopped", child.job_id)
             self._drop(child)
+        # Last: until every running job is recorded, another runner must not recover them.
+        self._release_lock()
 
     def _release_lock(self) -> None:
         if self._lock_fd is not None:

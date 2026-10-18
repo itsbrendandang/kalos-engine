@@ -712,6 +712,35 @@ def test_a_runner_refused_for_web_concurrency_takes_no_lock(store, monkeypatch):
     runner.stop(timeout=1)
 
 
+def test_the_runner_lock_is_released_after_its_stopped_jobs_are_recorded(store):
+    """Another runner's recovery must not see this runner's jobs still `running`."""
+    job = _submit(store)
+    runner = JobRunner(store, spawn=lambda *_a: _FakeWorker(), timeout_s=60, poll_s=0.01)
+    runner._lock_fd = job_runner._acquire_runner_lock(store.state_dir)  # as start() does
+    runner.tick()  # the job is running, its worker alive
+    held_while_recording: list[bool] = []
+    real_finish = jobs.finish
+
+    def probing_finish(*args, **kwargs):
+        try:
+            os.close(job_runner._acquire_runner_lock(store.state_dir))
+            held_while_recording.append(False)
+        except job_runner.RunnerLocked:
+            held_while_recording.append(True)
+        return real_finish(*args, **kwargs)
+
+    jobs_module = jobs
+    original = jobs_module.finish
+    jobs_module.finish = probing_finish
+    try:
+        runner.stop(timeout=1)
+    finally:
+        jobs_module.finish = original
+    assert held_while_recording == [True]
+    assert jobs.get_job(store, tenant="acme", job_id=job["id"])["state"] == "failed"
+    assert runner._lock_fd is None
+
+
 def test_another_process_holding_the_runner_lock_refuses_this_runner(store, tmp_path):
     """Real processes: a second engine process holds the state directory's lock."""
     lock = store.state_dir / job_runner.RUNNER_LOCK_NAME
