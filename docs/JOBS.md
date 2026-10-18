@@ -182,6 +182,13 @@ variable named. They are not silently replaced by defaults.
 - **Engine shutdown:** running workers are killed and their jobs are recorded
   `failed` with `engine_stopped`.
 
+- **Start failure:** if the worker cannot be started, or its pid cannot be
+  recorded, the worker (if one was started) is killed and the job is recorded
+  `failed` with `worker_unavailable`. A slot is released only once the worker
+  is gone and its outcome is recorded; if recording fails, the next pass retries.
+- **Failed claim:** the claim is one transaction, so a claim that raises leaves
+  the job `queued`; the scheduler logs it and tries again on the next pass.
+
 A kill is `SIGKILL` to the worker's process group. A fit cannot be interrupted
 inside a single BLAS call, so the kill is the bound, not a checkpoint.
 

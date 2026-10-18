@@ -173,14 +173,21 @@ def _sweep_orphan_inputs(store: CampaignStore) -> None:
 
 
 class _Child:
-    __slots__ = ("job_id", "tenant", "worker", "lease", "deadline")
+    """A job the runner owns: its worker (None if the worker never started), the
+    slot it holds, and the outcome to record once the worker is gone. The child
+    stays registered, and keeps its slot, until that outcome is recorded."""
 
-    def __init__(self, job_id: str, tenant: str, worker: Worker, lease: Lease, deadline: float) -> None:
+    __slots__ = ("job_id", "tenant", "worker", "lease", "deadline", "outcome")
+
+    def __init__(self, job_id: str, tenant: str, worker: Worker | None, lease: Lease, deadline: float) -> None:
         self.job_id = job_id
         self.tenant = tenant
         self.worker = worker
         self.lease = lease
         self.deadline = deadline
+        # (state, error code) decided by the runner (cancel, timeout, a failed start).
+        # None means not decided yet: a worker that exits on its own is a crash.
+        self.outcome: tuple[str, str | None] | None = None
 
 
 class JobRunner:
@@ -229,8 +236,12 @@ class JobRunner:
             self._thread.join(timeout=timeout)
         self.limit.remove_listener(self._wake.set)
         for child in list(self._children.values()):
-            child.worker.kill()
-            self._finish(child, "failed", "engine_stopped")
+            try:
+                if child.worker is not None:
+                    child.worker.kill()
+                self._finish(child, "failed", "engine_stopped")
+            except Exception:  # noqa: BLE001 - shutting down: recovery fails it at the next start
+                log.exception("could not record that background job %s was stopped", child.job_id)
             self._drop(child)
 
     def _loop(self) -> None:
@@ -260,24 +271,45 @@ class JobRunner:
         self._children.pop(child.job_id, None)
         child.lease.release()
 
+    def _reconcile(self, child: _Child, now: float) -> None:
+        """Bring one child to its recorded outcome. Any failure (the database,
+        say) leaves it registered with its slot, and the next pass retries."""
+        try:
+            self._supervise_one(child, now)
+        except Exception:  # noqa: BLE001 - one child must not stall the others
+            log.exception("could not record the outcome of background job %s; retrying", child.job_id)
+
     def _supervise(self) -> None:
         now = time.monotonic()
         for child in list(self._children.values()):
-            if child.worker.poll() is None:
+            self._reconcile(child, now)
+
+    def _supervise_one(self, child: _Child, now: float) -> None:
+        worker = child.worker
+        if worker is not None and worker.poll() is None:
+            # Still running: decide whether it must be stopped, or leave it be.
+            if child.outcome is None:
                 if jobs.cancel_requested(self.store, tenant=child.tenant, job_id=child.job_id):
-                    child.worker.kill()
-                    self._finish(child, "cancelled", None)
+                    child.outcome = ("cancelled", None)
                 elif now > child.deadline:
                     log.warning("background job exceeded its time limit; stopping it")
-                    child.worker.kill()
-                    self._finish(child, "timed_out", "timeout")
+                    child.outcome = ("timed_out", "timeout")
                 else:
-                    continue
-            else:
-                # Exited. A clean exit has already reached a terminal state (the
-                # worker wrote it); anything still active is a crash.
-                self._finish(child, "failed", "worker_exited")
-            self._drop(child)
+                    return
+        elif child.outcome is None:
+            # Exited. A clean exit has already reached a terminal state (the worker
+            # wrote it); anything still active is a crash.
+            child.outcome = ("failed", "worker_exited")
+        # Every exit path ends here: stop the worker's whole process group, which
+        # also catches children it left behind (a no-op if it is already gone),
+        # then record the outcome. The first terminal writer wins (jobs.finish).
+        if worker is not None:
+            worker.kill()
+        outcome = child.outcome
+        assert outcome is not None  # every path above decides one
+        state, code = outcome
+        self._finish(child, state, code)
+        self._drop(child)
 
     def _admit(self) -> None:
         self.limit.set_waiting(set(jobs.queued_tenants(self.store)))
@@ -287,7 +319,12 @@ class JobRunner:
                 lease = self.limit.try_acquire(tenant, yield_to_queue=False)
                 if lease is None:
                     continue
-                job = jobs.claim(self.store, tenant=tenant, runner_id=self.runner_id)
+                try:
+                    job = jobs.claim(self.store, tenant=tenant, runner_id=self.runner_id)
+                except Exception:  # noqa: BLE001 - the claim is one transaction: the job stays queued
+                    lease.release()
+                    log.exception("could not claim a queued background job; retrying next pass")
+                    return
                 if job is None:
                     lease.release()
                     continue
@@ -298,19 +335,27 @@ class JobRunner:
                 return
 
     def _start(self, job: dict[str, Any], lease: Lease) -> None:
+        """Start the worker for a claimed job. The child is registered BEFORE the
+        fallible steps (spawn's result, the pid write), so from here on the
+        scheduler owns the worker and the slot whatever fails: a failed start or
+        pid write kills the worker and records the job as `worker_unavailable`."""
         tenant, job_id = str(job["tenant"]), str(job["id"])
-        deadline = time.monotonic() + self.timeout_s
+        child = _Child(job_id, tenant, None, lease, time.monotonic() + self.timeout_s)
+        self._children[job_id] = child
         try:
-            worker = self._spawn(job_id, tenant, self.store.state_dir)
+            child.worker = self._spawn(job_id, tenant, self.store.state_dir)
         except Exception:  # noqa: BLE001 - reported on the job, never raised to the scheduler
             log.exception("could not start a job worker")
-            jobs.finish(self.store, tenant=tenant, job_id=job_id, state="failed",
-                        code="worker_unavailable", message=jobs.ERROR_MESSAGES["worker_unavailable"])
-            lease.release()
-            return
-        if worker.pid:
-            jobs.attach_worker(self.store, tenant=tenant, job_id=job_id, pid=int(worker.pid))
-        self._children[job_id] = _Child(job_id, tenant, worker, lease, deadline)
+            child.outcome = ("failed", "worker_unavailable")
+        else:
+            try:
+                if child.worker.pid:
+                    jobs.attach_worker(self.store, tenant=tenant, job_id=job_id, pid=int(child.worker.pid))
+            except Exception:  # noqa: BLE001 - a worker without a recorded pid must not outlive us
+                log.exception("could not record a job worker's pid; stopping the worker")
+                child.outcome = ("failed", "worker_unavailable")
+                child.worker.kill()
+        self._reconcile(child, time.monotonic())
 
 
 # --- module-level lifecycle (app lifespan) -------------------------------------- #

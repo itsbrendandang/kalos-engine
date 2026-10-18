@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import sqlite3
 import sys
 import threading
 import time
@@ -362,6 +363,86 @@ def test_a_failed_worker_start_fails_the_job_and_frees_the_slot(store):
     done = jobs.get_job(store, tenant="acme", job_id=job["id"])
     assert done["state"] == "failed" and done["error"]["code"] == "worker_unavailable"
     assert runner.limit.running() == 0
+
+
+class _FakeWorker:
+    """A worker that runs until it is killed (or exits with `exit_code`). Its pid
+    is a stand-in: nothing is ever signalled."""
+
+    def __init__(self, exit_code: int | None = None) -> None:
+        self.pid = 424242
+        self.kills = 0
+        self._exit_code = exit_code
+
+    def poll(self) -> int | None:
+        if self._exit_code is not None:
+            return self._exit_code
+        return 0 if self.kills else None
+
+    def kill(self) -> None:
+        self.kills += 1
+
+
+def test_a_worker_whose_pid_cannot_be_recorded_is_killed_and_its_slot_freed(store, monkeypatch):
+    """The regression from the review (HIGH1): a DB write that fails after the
+    spawn must not orphan the worker or leak its slot."""
+    job = _submit(store)
+    workers: list[_FakeWorker] = []
+
+    def spawn(_job_id, _tenant, _state_dir):
+        workers.append(_FakeWorker())
+        return workers[-1]
+
+    def locked(*_a, **_k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(jobs, "attach_worker", locked)
+    runner = JobRunner(store, spawn=spawn, timeout_s=60, poll_s=0.01)
+    runner.tick()  # must not raise
+    assert workers and workers[0].kills >= 1
+    done = jobs.get_job(store, tenant="acme", job_id=job["id"])
+    assert done["state"] == "failed" and done["error"]["code"] == "worker_unavailable"
+    assert runner.running_count() == 0 and runner.limit.running() == 0
+
+
+def test_a_failed_claim_leaves_the_job_queued_and_leaks_no_slot(store, monkeypatch):
+    job = _submit(store)
+    spawned: list[str] = []
+    real_claim = jobs.claim
+
+    def locked(*_a, **_k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(jobs, "claim", locked)
+    runner = JobRunner(store, spawn=lambda j, _t, _d: spawned.append(j) or _FakeWorker(),
+                       timeout_s=60, poll_s=0.01)
+    runner.tick()  # must not raise
+    assert spawned == [] and runner.running_count() == 0 and runner.limit.running() == 0
+    assert jobs.get_job(store, tenant="acme", job_id=job["id"])["state"] == "queued"
+    monkeypatch.setattr(jobs, "claim", real_claim)  # the next pass admits it
+    runner.tick()
+    assert spawned == [job["id"]]
+
+
+def test_an_outcome_that_cannot_be_recorded_is_retried_and_keeps_its_slot(store, monkeypatch):
+    job = _submit(store)
+    real_finish = jobs.finish
+    failures = {"left": 1}
+
+    def flaky_finish(*args, **kwargs):
+        if failures["left"]:
+            failures["left"] -= 1
+            raise sqlite3.OperationalError("database is locked")
+        return real_finish(*args, **kwargs)
+
+    monkeypatch.setattr(jobs, "finish", flaky_finish)
+    runner = JobRunner(store, spawn=lambda *_a: _FakeWorker(exit_code=1), timeout_s=60, poll_s=0.01)
+    runner.tick()  # the worker exited; recording that failed, so the child stays
+    assert runner.running_count() == 1 and runner.limit.running() == 1
+    runner.tick()  # the retry records it and frees the slot
+    assert runner.running_count() == 0 and runner.limit.running() == 0
+    done = jobs.get_job(store, tenant="acme", job_id=job["id"])
+    assert done["state"] == "failed" and done["error"]["code"] == "worker_exited"
 
 
 # --- concurrency and fairness -------------------------------------------------------- #
