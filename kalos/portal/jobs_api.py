@@ -104,6 +104,7 @@ async def _preflight_gated(call: Callable[[], Any]) -> Any:
             release()
         raise
 
+
 JOB_UPLOAD_PATH = re.compile(r"/api/campaigns/cmp_[0-9a-f]{32}/jobs/?")
 _JOB_NOT_FOUND = {"error": "job not found"}
 
