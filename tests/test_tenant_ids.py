@@ -104,6 +104,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from kalos.portal import app as portal  # noqa: E402
+from kalos.portal import campaign as campaign_module  # noqa: E402
 
 
 def test_invalid_tenant_config_is_a_500_over_http_never_a_login(monkeypatch):
@@ -119,8 +120,15 @@ def test_invalid_tenant_config_is_a_500_over_http_never_a_login(monkeypatch):
 def latest_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(portal, "_STATE_DIR", tmp_path)
     monkeypatch.setattr(portal, "_LATEST_DIR", tmp_path / "latest")
-    monkeypatch.setattr(portal, "_LATEST", {})
+    # Since schema v2 the analysis lives in portal.db, not in latest/ files.
+    monkeypatch.setattr(campaign_module, "_STORE", CampaignStore(tmp_path))
     return tmp_path / "latest"
+
+
+def _reopen_store(latest_dir):
+    """Simulate a restart: a fresh store on the same portal.db. (The
+    fixture's monkeypatch restores the original `_STORE` at teardown.)"""
+    campaign_module._STORE = CampaignStore(latest_dir.parent)
 
 
 def test_latest_path_is_injective_over_ids_the_old_sanitiser_merged(latest_dir):
@@ -143,16 +151,25 @@ def test_latest_helpers_reject_ids_the_old_sanitiser_would_have_collided(latest_
         portal._load_latest("acme/bio")
     with pytest.raises(ValueError):
         portal._latest_path("acme/bio")
-    portal._LATEST.clear()  # force a disk reload
+    _reopen_store(latest_dir)  # force a reload from disk
     assert portal._load_latest("acme_bio")["dataset"] == "acme_bio.csv"
 
 
 def test_similar_tenants_get_separate_cache_files_on_disk(latest_dir):
+    """Since schema v2: separate `analyses` rows (one per tenant default
+    campaign) in portal.db, instead of separate files."""
+    import sqlite3
+
     portal._save_latest({"target": "a"}, "a.csv", tenant="acme_bio")
     portal._save_latest({"target": "b"}, "b.csv", tenant="acme-bio")
     portal._save_latest({"target": "c"}, "c.csv", tenant="Acme_bio")
-    assert len(list(latest_dir.iterdir())) == 3
-    portal._LATEST.clear()
+    conn = sqlite3.connect(str(latest_dir.parent / "portal.db"))
+    try:
+        tenants = sorted(r[0] for r in conn.execute("SELECT tenant FROM analyses"))
+    finally:
+        conn.close()
+    assert tenants == ["Acme_bio", "acme-bio", "acme_bio"]
+    _reopen_store(latest_dir)
     assert portal._load_latest("acme_bio")["dataset"] == "a.csv"
     assert portal._load_latest("acme-bio")["dataset"] == "b.csv"
     assert portal._load_latest("Acme_bio")["dataset"] == "c.csv"

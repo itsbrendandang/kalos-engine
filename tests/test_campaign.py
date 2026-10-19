@@ -51,7 +51,6 @@ def client(store, tmp_path, monkeypatch):
     # tests/test_m2_portal.py::test_existing_run_and_latest_endpoints_still_work.
     monkeypatch.setattr(portal_module, "_STATE_DIR", tmp_path)
     monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
-    monkeypatch.setattr(portal_module, "_LATEST", {})
     # The upload path calls `get_campaign_store()` directly rather than through
     # DI, and that singleton is cached for the whole process — so overriding the
     # dependency alone leaves `/api/run` seeding whichever store was built
@@ -501,6 +500,15 @@ def test_an_unstamped_legacy_analysis_reads_as_out_of_sync(store, client):
     latest = portal_module._load_latest("default")
     assert latest is not None
     latest.pop("campaign_generation")
+    # Since schema v2 the analysis is a portal.db row, not a shared in-memory
+    # dict, so the unstamped legacy analysis is written back explicitly.
+    import json as _json
+
+    with store._conn:
+        store._conn.execute(
+            "UPDATE analyses SET state = ?, campaign_generation = NULL WHERE tenant = ?",
+            (_json.dumps(latest), "default"),
+        )
 
     assert client.get("/api/campaign").json()["analysis_in_sync"] is False
 

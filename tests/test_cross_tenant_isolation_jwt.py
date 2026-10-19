@@ -938,7 +938,6 @@ def test_web_vector_valid_token_is_accepted_over_http(tmp_path, monkeypatch, vec
     monkeypatch.setenv("KALOS_JWT_LEEWAY_S", str(spec["recommended_clock_leeway_seconds"]))
     monkeypatch.setenv("KALOS_JWT_MAX_TTL_S", str(spec["max_ttl_seconds"]))
     monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
-    monkeypatch.setattr(portal_module, "_LATEST", {})
     auth = Authenticator(clock=lambda: float(vec["verify_at"]))
     app.dependency_overrides[get_authenticator] = lambda: auth
     try:
@@ -966,7 +965,6 @@ def test_web_vector_invalid_token_is_refused_over_http(tmp_path, monkeypatch, ve
     monkeypatch.setenv("KALOS_JWT_ISSUER", spec["iss"])
     monkeypatch.setenv("KALOS_JWT_AUDIENCE", spec["aud"])
     monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
-    monkeypatch.setattr(portal_module, "_LATEST", {})
     auth = Authenticator(clock=lambda: float(vec["verify_at"]))
     app.dependency_overrides[get_authenticator] = lambda: auth
     try:
