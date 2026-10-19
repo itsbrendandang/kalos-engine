@@ -4,6 +4,15 @@ Newest first.
 
 ## Unreleased
 
+### Docs - review: known limitations (M5, M6)
+
+- docs/HARDENING.md, "Known limitations", records two judgement calls with evidence and
+  no code change: M5 (`class_weight="balanced"` understates P(feasible) on a
+  mostly-feasible sheet) and M6 (the promotion gate reads the pooled Spearman, not
+  `producer_spearman`; a sheet with producer Spearman 0.02 still passes). Also: the
+  concurrency serialization (C3), the concentration naming gap (C1), and the
+  replicate-aware fit still weighting exact copies (M1).
+
 ### Fixed - review: anonymize hides person names and their level values (H4)
 
 - `is_identifier_name` treats `operator`, `analyst`, `technician`, `tech` and `email`

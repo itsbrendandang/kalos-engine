@@ -220,6 +220,77 @@ Not covered (the response or the store still carries these):
   applies, and a common name (`Patient ID`) can be recognised by hashing a list
   of candidates. Production must set the salt.
 
+## Known limitations
+
+Each item states what the engine does, the evidence, and why it is not changed here.
+These are judgement calls for the science owner; the code is unchanged.
+
+### M5. Feasibility classifier uses `class_weight="balanced"`, which miscalibrates P(feasible)
+
+- **What it does.** `FeasibilityClassifier` (`kalos/core/feasibility.py`) is a
+  `StandardScaler` + `LogisticRegression(class_weight="balanced")`. Balanced weighting
+  makes the classifier rank well and gives it the minority class equal total weight. It
+  does not make its probabilities calibrated to the base rate.
+- **Evidence** (synthetic, `/tmp` experiment, 5-fold stratified CV, n=400, the
+  feasible class at 90% and 70%): with balanced weights the mean predicted
+  P(feasible) is 0.554 against an actual 0.848 (Brier 0.215), and 0.530 against 0.660
+  (Brier 0.203). Unweighted gives 0.847 against 0.848 (Brier 0.119), and 0.659 against
+  0.660 (Brier 0.186). Balanced weighting therefore understates P(feasible) by
+  roughly 30 points on a mostly-feasible sheet.
+- **Where it matters.** The gated acquisition multiplies EI by this probability
+  (`proposal_gating`), and the per-proposal `p_feasible` is reported to the client.
+  Both are biased low when the base rate is high, which makes the optimizer
+  over-avoid recipes that are usually fine. The AUC used by the gate is unaffected
+  (it is rank-based), so the gate can pass while the probabilities are wrong.
+- **Not changed** because the fix (drop balancing, or recalibrate with a held-out
+  isotonic/Platt step) changes which recipes are proposed on every zero-inflated
+  sheet, and that is a product decision. Tracked as a follow-up.
+
+### M6. The promotion gate reads the POOLED Spearman, not `producer_spearman`
+
+- **What it does.** `_analyze` passes `surrogate_spearman` = the pooled out-of-fold
+  Spearman (`rho`, over producers and non-producers together) to `check_gates`. The
+  producer-only Spearman (`reliability.producer_spearman`) is reported beside it but
+  is not an input to the verdict.
+- **Evidence** (synthetic, `/tmp` experiment, n=60, 33 producers, zeros
+  for the non-producing half, producer titer pure noise on the features): pooled
+  Spearman 0.781, `producer_spearman` 0.021 (`producer_clears_floor: false`), and
+  `promotion.passed: true`, with no failures listed. The separation of zeros from
+  non-zeros, which is a feasibility signal, carries the verdict. The engine cannot
+  rank its producing recipes at all on this sheet.
+- **Why it matters.** `promotion.passed` reads as "fit to promote". Under this
+  sheet the producer ranking is at chance.
+- **Not changed** because switching the input to `producer_spearman` changes the
+  verdict on existing uploads, and the choice of which Spearman a promotion must
+  clear is a product and validation decision (the same line as `clears_floor`).
+  The `promotion.meaning` text does not say this; it should if the gate is kept.
+
+### C3 follow-on: the seeded analysis section is serialized
+
+- `_analyze` holds `_RNG_LOCK` for its whole run, so two admitted analyses (busy.py
+  `KALOS_JOB_WORKERS=2`) run their seeded sections one after the other. The result is
+  deterministic and identical to sequential, but the parallelism between two
+  analyses is lost. A per-call `torch.Generator` through BoTorch would remove the lock;
+  that is a larger refactor and is not done.
+- Scale readout (`kalos/scale/readout.py`) uses torch outside `_analyze` and does not
+  take the lock. Its output is not covered by the determinism guarantee.
+
+### Concentration naming gap (C1 follow-on)
+
+- A blank cell is read as 0 only for a column declared in `roles.sparse`, or whose
+  name matches the concentration pattern (`kalos/validation/bounds.py`:
+  `titer`, `conc`, `g/L`, `mg/mL`, `glucose`, `methanol`, a salt name, ...).
+  `Supplement_g_L` does not match (`g_L` with an underscore is not `g/L`), so its blanks
+  drop their runs. This is the safe direction, but a sheet with many such columns will
+  lose rows. Declare them in `roles.sparse`, or extend the pattern deliberately.
+
+### Replicate-aware fit still counts exact copies (M1 follow-on)
+
+- Exact copies are removed from `noise_report`, the ICC and the heteroscedasticity
+  report. The replicate-aware GP fit (`aggregate_replicates`) still sees them, so a
+  pasted-twice row still weights its recipe's mean and `n_reps`. The reported noise is
+  correct; the fit weighting is not yet.
+
 ## Status log
 
 - Phase 1a authentication + authorization: **done** (merged).
