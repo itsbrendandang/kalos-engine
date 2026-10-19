@@ -21,7 +21,8 @@ from typing import IO
 import uvicorn
 
 from kalos.portal import engine_lock
-from kalos.portal.auth import get_authenticator
+from kalos.portal.auth import AuthConfigError, get_authenticator
+from kalos.portal.job_runner import RunnerLocked, check_startup_config
 from kalos.portal.config import (
     InsecureBindError,
     ProductionConfigError,
@@ -50,11 +51,18 @@ def main() -> None:
         raise SystemExit(2) from None
 
     try:
-        auth_enforced = get_authenticator().enforces()
+        auth = get_authenticator()
+        auth_enforced = auth.enforces()
         # KALOS_ENV=production: tokenless open access is refused on ANY bind,
         # loopback included, and KALOS_ALLOW_OPEN_ACCESS does not override it.
-        assert_production_posture(auth_enforced=auth_enforced)
+        # It needs a usable source: a JWT public key or a service-account token.
+        assert_production_posture(auth_enforced=auth.has_auth_source())
         assert_safe_exposure(host, auth_configured=auth_enforced)
+    except AuthConfigError as exc:
+        # A malformed token list or an unreadable/malformed JWT key file: fail
+        # closed at startup. Messages never carry token or key material.
+        print(f"kalos portal: authentication configuration is invalid: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
     except (InsecureBindError, ProductionConfigError) as exc:
         # Exit non-zero with the reason on stderr: this is a misconfiguration an
         # operator has to fix, not a crash, so it should read like a refusal.
@@ -69,6 +77,14 @@ def main() -> None:
     except engine_lock.EngineLockError as exc:
         # Held by another engine, or not lockable on this filesystem: either way
         # this engine must not start on the directory.
+        print(f"kalos portal: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+
+    try:
+        check_startup_config()
+    except (ValueError, RunnerLocked) as exc:
+        # A background-job setting that cannot run: refuse to serve, rather than come up
+        # with jobs accepted and never run. Same shape as the refusals above.
         print(f"kalos portal: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
 

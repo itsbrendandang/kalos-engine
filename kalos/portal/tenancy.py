@@ -12,6 +12,11 @@ import re
 # tenants' data.
 TENANT_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
+# The tenant open (anonymous) mode writes to. No credential - static token or
+# engine token - may name it: it would inherit whatever anonymous callers stored
+# there before auth was turned on.
+RESERVED_ANON_TENANT = "default"
+
 
 def is_valid_tenant_id(tenant: object) -> bool:
     """Whether `tenant` is a well-formed tenant id (`^[A-Za-z0-9_-]{1,64}$`)."""

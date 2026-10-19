@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -65,8 +66,18 @@ TERMINAL_STATES = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
 assert set(JOB_STATES) == set(ACTIVE_STATES) | TERMINAL_STATES
 
 DEFAULT_QUEUE_DEPTH = 8
+DEFAULT_GLOBAL_QUEUE_DEPTH = 64
+# The column-roles JSON is a few hundred characters for a real sheet. It is refused above
+# this (not truncated: a clipped JSON document is not a roles document).
+MAX_ROLES_CHARS = 16 * 1024
 DEFAULT_TIMEOUT_S = 1800.0
 JOBS_DIRNAME = "jobs"
+# The engine's pid, passed to each worker at spawn: a worker whose parent is no longer
+# this pid is an orphan, and must not analyse or publish (docs/JOBS.md, "Worker lifetime").
+ENGINE_PID_ENV = "KALOS_JOB_ENGINE_PID"
+# Set by ProcessWorker on the worker it starts (a session leader). Only a process that
+# carries it, and is its own session and group leader, may SIGKILL its own group.
+WORKER_SESSION_ENV = "KALOS_JOB_WORKER_SESSION"
 # Shown to the caller for a job that did not finish. The code is the stable
 # part of the contract (docs/JOBS.md, "Error codes"); messages are fixed text.
 ERROR_MESSAGES = {
@@ -78,6 +89,10 @@ ERROR_MESSAGES = {
     "input_unavailable": "the job's input file is missing or changed; resubmit the upload",
     "campaign_changed": (
         "the campaign changed while this job ran, so nothing was published; resubmit the upload"
+    ),
+    "campaign_has_runs": (
+        "the campaign has awaiting or measured runs that this upload would replace, and the "
+        "upload was not confirmed with replace=true; nothing was changed"
     ),
 }
 
@@ -105,6 +120,52 @@ class QueueFull(JobError):
         )
 
 
+class EngineQueueFull(JobError):
+    """The engine as a whole holds its maximum of queued + running jobs (all tenants)."""
+
+    def __init__(self, depth: int) -> None:
+        super().__init__(
+            f"this engine already has {depth} queued or running jobs; wait for some to finish"
+        )
+
+
+class UploadPending(JobError):
+    """The campaign already has a queued or running upload: a second one would fail
+    `campaign_changed` after its full fit, once the first publishes."""
+
+    code = "upload_pending"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "an upload for this campaign is already queued or running; wait for it to finish"
+        )
+
+
+class CampaignHasRuns(JobError):
+    """The upload would replace the campaign's awaiting and measured runs, and the caller
+    did not confirm it with `replace=true`. Refused at submit (409) and, if runs appear
+    after the submit, the job fails with this code and changes nothing."""
+
+    code = "campaign_has_runs"
+
+    def __init__(self, awaiting: int, measured: int) -> None:
+        super().__init__(
+            f"the campaign has {awaiting} awaiting and {measured} measured run(s); an upload "
+            "replaces them, so resubmit with replace=true to confirm"
+        )
+
+
+class JobRolesTooLarge(JobError):
+    def __init__(self) -> None:
+        super().__init__(f"roles is larger than the {MAX_ROLES_CHARS}-character limit")
+
+
+def check_roles(roles: str) -> None:
+    """Refuse an over-long `roles` value (JobRolesTooLarge). Run before the upload is parsed."""
+    if len(roles) > MAX_ROLES_CHARS:
+        raise JobRolesTooLarge()
+
+
 class JobTooLarge(JobError):
     def __init__(self, limit: int) -> None:
         super().__init__(f"the upload is larger than this tenant's job upload limit ({limit} bytes)")
@@ -129,6 +190,7 @@ class JobInputError(Exception):
 class JobSettings:
     enabled: bool
     queue_depth: int
+    global_queue_depth: int
     max_upload_bytes: int
     timeout_s: float
 
@@ -139,15 +201,34 @@ def _env_number(name: str, default: str, cast: type, minimum: float) -> Any:
         value = cast(raw)
     except ValueError:
         raise ValueError(f"{name} must be a number; got {raw!r}") from None
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number; got {raw!r}")
     if value < minimum:
         raise ValueError(f"{name} must be >= {minimum}; got {raw!r}")
     return value
 
 
+_ON = frozenset({"1", "true", "yes", "on"})
+_OFF = frozenset({"0", "false", "no", "off"})
+
+
+def _env_switch(name: str, *, default: bool) -> bool:
+    """An on/off variable. Only the listed spellings are accepted: a typo such as
+    `flase` must fail startup, not quietly mean the other state."""
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in _ON:
+        return True
+    if raw in _OFF:
+        return False
+    raise ValueError(f"{name} must be one of 1, 0, true, false, yes, no, on, off; got {raw!r}")
+
+
 def job_settings() -> JobSettings:
     """The job limits from the environment. Raises ValueError on a malformed or
     out-of-range value; the engine calls this at startup so that fails loudly."""
-    enabled = os.environ.get("KALOS_JOBS_ENABLED", "").strip().lower() not in {"0", "false", "no", "off"}
+    enabled = _env_switch("KALOS_JOBS_ENABLED", default=True)
     max_upload = int(_env_number("KALOS_JOB_MAX_UPLOAD_BYTES", str(MAX_UPLOAD_BYTES), int, 1))
     if max_upload > MAX_UPLOAD_BYTES:
         raise ValueError(
@@ -156,6 +237,8 @@ def job_settings() -> JobSettings:
     return JobSettings(
         enabled=enabled,
         queue_depth=int(_env_number("KALOS_JOB_QUEUE_DEPTH", str(DEFAULT_QUEUE_DEPTH), int, 1)),
+        global_queue_depth=int(_env_number(
+            "KALOS_JOB_GLOBAL_QUEUE_DEPTH", str(DEFAULT_GLOBAL_QUEUE_DEPTH), int, 1)),
         max_upload_bytes=max_upload,
         timeout_s=float(_env_number("KALOS_JOB_TIMEOUT_S", str(DEFAULT_TIMEOUT_S), float, 1)),
     )
@@ -252,9 +335,64 @@ def _write_input(path: Path, raw: bytes) -> None:
     os.replace(tmp, path)
 
 
+def _active_depth(conn: sqlite3.Connection, tenant: str) -> int:
+    return int(conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE tenant = ? AND state IN ('queued', 'running')",
+        (tenant,),
+    ).fetchone()[0])
+
+
+def _active_total(conn: sqlite3.Connection) -> int:
+    return int(conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE state IN ('queued', 'running')",
+    ).fetchone()[0])
+
+
+def run_counts(store: CampaignStore, *, tenant: str, campaign_id: str) -> tuple[int, int]:
+    """(awaiting, measured) pending runs of the campaign: what an upload would replace."""
+    state = store.get(tenant=tenant, campaign_id=campaign_id)
+    if not state:
+        return 0, 0
+    pending = state.get("pending") or []
+    awaiting = sum(1 for run in pending if run.get("result") is None)
+    return awaiting, len(pending) - awaiting
+
+
+def _has_pending_upload(conn: sqlite3.Connection, tenant: str, campaign_id: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM jobs WHERE tenant = ? AND campaign_id = ? AND state IN ('queued', 'running') LIMIT 1",
+        (tenant, campaign_id),
+    ).fetchone() is not None
+
+
+def check_no_pending_upload(store: CampaignStore, *, tenant: str, campaign_id: str) -> None:
+    """Refuse with `UploadPending` if the campaign has a queued or running upload. A cheap
+    read run before the upload is read; `enqueue` repeats it inside its transaction."""
+    with store._txn(write=False) as conn:
+        if _has_pending_upload(conn, tenant, campaign_id):
+            raise UploadPending()
+
+
+def check_queue_capacity(store: CampaignStore, *, tenant: str) -> None:
+    """Refuse with `QueueFull` if `tenant` is already at its queue depth. A cheap
+    read, so the submit route can refuse BEFORE it reads the upload or parses it.
+    `enqueue` repeats the check inside its transaction, which is the one that
+    counts (two submissions can both pass this check)."""
+    validate_tenant_id(tenant)
+    settings = job_settings()
+    with store._txn(write=False) as conn:
+        depth = _active_depth(conn, tenant)
+        total = _active_total(conn)
+    if depth >= settings.queue_depth:
+        raise QueueFull(settings.queue_depth)
+    if total >= settings.global_queue_depth:
+        raise EngineQueueFull(settings.global_queue_depth)
+
+
 def enqueue(
     store: CampaignStore, *, tenant: str, campaign_id: str, raw: bytes, filename: str,
     target: str, anonymize: bool, roles: str, sheet: str | None, requested_by: str | None,
+    replace: bool = False,
 ) -> dict[str, Any]:
     """Queue one upload analysis for `campaign_id` (which must be `tenant`'s and
     not archived). The upload is written to the state directory first, then the
@@ -273,11 +411,15 @@ def enqueue(
     validate_campaign_id(campaign_id)
     if len(raw) > settings.max_upload_bytes:
         raise JobTooLarge(settings.max_upload_bytes)
+    check_roles(roles)
+    # A cheap depth check before anything is written: a refused submit leaves no file.
+    # The check inside the transaction below is the one that counts under races.
+    check_queue_capacity(store, tenant=tenant)
     job_id = "job_" + uuid.uuid4().hex
     rel = _relative_input_path(tenant, job_id)
     path = store.state_dir / rel
     _write_input(path, raw)
-    params = _params_for_storage(filename, target, anonymize, roles, sheet)
+    params = _params_for_storage(filename, target, anonymize, roles, sheet, replace)
     try:
         with store._txn(write=True) as conn:
             campaign = store._resolve(conn, tenant, campaign_id, create=False)
@@ -285,12 +427,13 @@ def enqueue(
                 raise CampaignNotFound()
             if campaign.archived_at is not None:
                 raise CampaignArchived()
-            depth = conn.execute(
-                "SELECT COUNT(*) FROM jobs WHERE tenant = ? AND state IN ('queued', 'running')",
-                (tenant,),
-            ).fetchone()[0]
+            if _has_pending_upload(conn, tenant, campaign_id):
+                raise UploadPending()
+            depth = _active_depth(conn, tenant)
             if depth >= settings.queue_depth:
                 raise QueueFull(settings.queue_depth)
+            if _active_total(conn) >= settings.global_queue_depth:
+                raise EngineQueueFull(settings.global_queue_depth)
             now = time.time()
             conn.execute(
                 "INSERT INTO jobs (id, tenant, campaign_id, kind, state, created_at, updated_at, "
@@ -333,12 +476,16 @@ def job_filename(params: dict[str, Any]) -> str:
 
 def _params_for_storage(
     filename: str, target: str, anonymize: bool, roles: str, sheet: str | None,
+    replace: bool = False,
 ) -> dict[str, Any]:
+    # `replace` is read by the worker (job_worker: an upload job refuses to replace
+    # a campaign's runs unless the caller confirmed it), so it is stored with the job.
     base: dict[str, Any] = {
         "target": target[:256],
         "anonymize": bool(anonymize),
         "roles": roles,
         "sheet": sheet[:256] if sheet else None,
+        "replace": bool(replace),
     }
     if anonymize:
         return {**base, "ext": _safe_extension(filename)}

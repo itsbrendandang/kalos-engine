@@ -40,8 +40,10 @@ stays with the `require_principal` dependency.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import math
 import os
 from collections.abc import Awaitable, Callable, Iterable, MutableMapping
 from typing import Any
@@ -87,15 +89,38 @@ def max_request_bytes() -> int:
 # (19 digits covers every int64), so it is refused without parsing it: `int()`
 # on a multi-thousand-digit string raises ValueError (CPython's int digit limit).
 _MAX_CONTENT_LENGTH_DIGITS = 19
+UPLOAD_READ_TIMEOUT_ENV = "KALOS_UPLOAD_READ_TIMEOUT_S"
+DEFAULT_UPLOAD_READ_TIMEOUT_S = 60.0
+_ERR_READ_TIMEOUT = "The request body was not received in time."
+
+
+def upload_read_timeout_s() -> float:
+    """The overall deadline for receiving an upload's body (`KALOS_UPLOAD_READ_TIMEOUT_S`,
+    default 60 s). Validated: a finite number of at least 1 second, else ValueError
+    naming the variable (the entrypoint and the lifespan check it at startup)."""
+    raw = os.environ.get(UPLOAD_READ_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_UPLOAD_READ_TIMEOUT_S
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"{UPLOAD_READ_TIMEOUT_ENV} must be a number of seconds; got {raw!r}") from None
+    if not math.isfinite(value) or value < 1:
+        raise ValueError(f"{UPLOAD_READ_TIMEOUT_ENV} must be a finite number >= 1; got {raw!r}")
+    return value
 
 
 def route_path(scope: Scope) -> str:
-    """The request path with the ASGI `root_path` prefix removed, trailing
-    slashes dropped, so route matching is independent of where the app is
-    mounted."""
+    """The request path with the ASGI `root_path` prefix removed (on a `/`
+    boundary only, like Starlette's routing), trailing slashes dropped, so
+    route matching is independent of where the app is mounted. Every
+    path-based decision outside the router (body caps, the upload pre-check,
+    the production probe exemption) uses this one function."""
     path = scope.get("path", "") or ""
-    root = scope.get("root_path", "") or ""
-    if root and path.startswith(root):
+    root = (scope.get("root_path", "") or "").rstrip("/")
+    # Same rule as Starlette's `get_route_path`: strip the prefix only on a
+    # path-segment boundary, so root_path "/engine" does not eat "/engineX/...".
+    if root and path.startswith(root) and (len(path) == len(root) or path[len(root)] == "/"):
         path = path[len(root):]
     return path.rstrip("/") or "/"
 
@@ -110,14 +135,22 @@ class RequestSizeLimitMiddleware:
         default_cap: int,
         upload_cap: int,
         upload_paths: Iterable[str],
+        read_timeout_s: float | None = None,
     ) -> None:
         self.app = app
         self.default_cap = default_cap
         self.upload_cap = upload_cap
         self.upload_paths = frozenset(p.rstrip("/") for p in upload_paths)
+        # Overall deadline for receiving an UPLOAD body (None: no deadline). Checked
+        # while the body is still arriving: the multipart parser reads it before any route
+        # code runs, so a route-level gate cannot bound a trickling client.
+        self.read_timeout_s = read_timeout_s
+
+    def is_upload(self, path: str) -> bool:
+        return path.rstrip("/") in self.upload_paths
 
     def cap_for(self, path: str) -> int:
-        return self.upload_cap if path.rstrip("/") in self.upload_paths else self.default_cap
+        return self.upload_cap if self.is_upload(path) else self.default_cap
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -140,13 +173,31 @@ class RequestSizeLimitMiddleware:
 
         received = 0
         over_cap = False
+        timed_out = False
+        body_done = False
+        deadline: float | None = None
+        timeout = self.read_timeout_s if self.is_upload(path) else None
+        loop = asyncio.get_running_loop()
 
         async def _counting_receive() -> Message:
-            nonlocal received, over_cap
+            nonlocal received, over_cap, timed_out, body_done, deadline
             if over_cap:
                 return {"type": "http.disconnect"}
-            message = await receive()
+            if timeout is None or body_done:
+                message = await receive()
+            else:
+                if deadline is None:
+                    deadline = loop.time() + timeout
+                try:
+                    message = await asyncio.wait_for(receive(), max(deadline - loop.time(), 0.0))
+                except asyncio.TimeoutError:
+                    log.warning("upload to %s not received within %.0f s; answered 408", path, timeout)
+                    timed_out = True
+                    over_cap = True
+                    return {"type": "http.disconnect"}
             if message["type"] == "http.request":
+                if not message.get("more_body", False):
+                    body_done = True
                 received += len(message.get("body", b""))
                 if received > cap:
                     log.warning("refused a streamed request to %s over the %d-byte cap", path, cap)
@@ -175,7 +226,10 @@ class RequestSizeLimitMiddleware:
             # The inner app raised on the synthetic disconnect; the 413 below
             # is the real answer.
         if over_cap and not response_started:
-            await _send_error(send, 413, _ERR_TOO_LARGE)
+            if timed_out:
+                await _send_error(send, 408, _ERR_READ_TIMEOUT)
+            else:
+                await _send_error(send, 413, _ERR_TOO_LARGE)
 
 
 def _has_bearer(scope: Scope) -> bool:

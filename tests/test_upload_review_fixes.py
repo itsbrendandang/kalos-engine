@@ -177,7 +177,7 @@ def test_uncompressed_cap_default_is_64_mib():
 def test_twenty_broken_sheets_finish_quickly_and_are_charged():
     """20 sheets that each fail at the very end of a ~1.8 MB part: each failure
     is charged its part's cell bound, so the scan stops early instead of
-    parsing all of them, and the request finishes in a few seconds."""
+    parsing all of them."""
     parts = {
         f"xl/worksheets/sheet{i}.xml": _sheet_xml(25_000, dimension="A1:B2", broken=True)
         for i in range(1, 21)
@@ -195,18 +195,17 @@ def test_twenty_broken_sheets_finish_quickly_and_are_charged():
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(pd.ExcelFile, "parse", _counting)
-        t0 = time.perf_counter()
         with pytest.raises(UploadRejected) as exc:
             parse_upload(raw)
-        elapsed = time.perf_counter() - t0
     assert exc.value.code == "no_usable_sheet"
     # Each failure is charged part_size // 16 cells; the scan stops once the
     # MAX_XLSX_CELLS budget is spent (it would try all 20 if failures were free).
     per_sheet = len(parts["xl/worksheets/sheet1.xml"]) // uploads._MIN_CELL_XML_BYTES
     expected = -(-uploads.MAX_XLSX_CELLS // per_sheet)
     assert expected < 20
+    # The bound is asserted on parse calls, not wall time: a wall-clock ceiling
+    # flaked on slow CI runners (12s vs 10s) while the scan was behaving correctly.
     assert len(calls) == expected, calls
-    assert elapsed < 10, elapsed
 
 
 def test_a_broken_sheet_does_not_block_a_good_one_behind_it():
@@ -218,6 +217,91 @@ def test_a_broken_sheet_does_not_block_a_good_one_behind_it():
     raw = _replace_sheets(buf.getvalue(), {"xl/worksheets/sheet1.xml": _sheet_xml(10, dimension="A1:B11", broken=True)})
     parsed = parse_upload(raw)
     assert parsed.sheet_used == "data"
+
+
+# --- re-review B1: sparse sheets are bounded by their REAL extent ---------------- #
+
+
+def _sparse_sheet_xml(rows: int, col: str = "SF", *, dimension: str | None) -> bytes:
+    head = f'<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="{_NS}">'
+    if dimension:
+        head += f'<dimension ref="{dimension}"/>'
+    cells = "".join(f'<row r="{r}"><c r="{col}{r}"><v>1</v></c></row>' for r in range(1, rows + 1))
+    return (head + "<sheetData>" + cells + "</sheetData></worksheet>").encode()
+
+
+def _assert_fast_bounded_rejection(raw: bytes, match: str) -> None:
+    import tracemalloc
+
+    tracemalloc.start()
+    t0 = time.perf_counter()
+    try:
+        with pytest.raises(UploadRejected, match=match):
+            parse_upload(raw)
+        elapsed = time.perf_counter() - t0
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    # The real invariant is the memory bound below; the time ceiling is only a
+    # hang guard, generous because CI runners vary widely (2 s flaked on a slow runner).
+    assert elapsed < 30.0, elapsed
+    assert peak < 64 * 1024 * 1024, peak  # never the multi-GB expansion
+
+
+@pytest.mark.parametrize("dimension", [None, "A1:B2"])
+def test_sparse_far_column_sheet_is_refused_before_pandas(dimension, monkeypatch):
+    """One cell in column SF on each of 400k rows: a ~2 MB upload that pandas
+    would expand to 400k x 500 cells (GBs of RAM). Refused from the cells' own
+    coordinates, with or without a (lying) <dimension>, before any parse."""
+    raw = _replace_sheets(_workbook(1), {"xl/worksheets/sheet1.xml": _sparse_sheet_xml(400_000, dimension=dimension)})
+    assert len(raw) < 5_000_000
+
+    def _never(*_a, **_k):
+        raise AssertionError("the workbook was handed to pandas")
+
+    monkeypatch.setattr(uploads.pd, "ExcelFile", _never)
+    _assert_fast_bounded_rejection(raw, "too large")
+
+
+def test_a_cell_beyond_the_column_cap_is_refused():
+    raw = _replace_sheets(_workbook(1), {"xl/worksheets/sheet1.xml": _sparse_sheet_xml(3, "XFD", dimension="A1:B3")})
+    _assert_fast_bounded_rejection(raw, "too many columns")
+
+
+def test_sheet_parts_are_found_whatever_they_are_named():
+    """openpyxl follows the workbook's relationships, so a sheet part need not
+    be called sheetN.xml; the extent scan looks at every part's root element."""
+    raw = _replace_sheets(_workbook(1), {"xl/worksheets/sheet1.xml": _sparse_sheet_xml(400_000, dimension=None)})
+    src = zipfile.ZipFile(io.BytesIO(raw))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
+        for info in src.infolist():
+            data = src.read(info.filename).replace(b"worksheets/sheet1.xml", b"worksheets/odd.xml")
+            name = info.filename.replace("worksheets/sheet1.xml", "worksheets/odd.xml")
+            dst.writestr(name, data)
+    renamed = out.getvalue()
+    assert "xl/worksheets/odd.xml" in zipfile.ZipFile(io.BytesIO(renamed)).namelist()
+    _assert_fast_bounded_rejection(renamed, "too large")
+
+
+def test_rows_without_r_attributes_are_counted_like_openpyxl():
+    from kalos.portal.uploads import _SheetExtentScan
+
+    scan = _SheetExtentScan()
+    scan.start("worksheet", {})
+    scan.start(f"{_NS} sheetData", {})
+    for _ in range(3):
+        scan.start(f"{_NS} row", {})
+        scan.start(f"{_NS} c", {})
+        scan.start(f"{_NS} c", {"r": "D7"})
+    assert (scan.max_row, scan.max_col) == (7, 4)
+
+
+def test_a_normal_workbook_still_parses():
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf) as w:
+        _sheet().to_excel(w, sheet_name="data", index=False)
+    assert parse_upload(buf.getvalue()).df.shape == (20, 3)
 
 
 # --- (J) too few rows before "constant"; dates are not numeric ------------------- #
@@ -328,3 +412,29 @@ def test_anonymize_pseudonymizes_identifier_names_in_the_error(client):
     assert "batch_id" not in anon["available_targets"]
     assert any(n.startswith("col_") for n in anon["available_targets"])
     assert "Methanol" in anon["available_targets"]  # process inputs keep their names
+
+
+# --- re-review: catch-all logs carry the exception type, never its text -------- #
+
+
+def test_unexpected_failure_logs_type_and_location_not_the_message(client, monkeypatch, caplog):
+    def _leaky(*_a, **_k):
+        raise ValueError("could not convert string to float: 'ACME-SECRET-CELL'")
+
+    monkeypatch.setattr(portal_module, "_analyze", _leaky)
+    raw = _sheet().to_csv(index=False).encode()
+    with caplog.at_level(logging.DEBUG, logger="kalos.portal"):
+        r = client.post("/api/run", files={"file": ("runs.csv", raw, "text/csv")})
+    assert r.status_code == 400 and r.json()["code"] == "parse_error"
+    assert "ACME-SECRET-CELL" not in caplog.text
+    assert "ACME-SECRET-CELL" not in "".join(
+        str(rec.exc_info) for rec in caplog.records if rec.exc_info
+    )
+    assert "ValueError at test_upload_review_fixes.py" in caplog.text
+    assert "code=parse_error" in caplog.text
+
+
+def test_scrubbed_failure_without_a_traceback():
+    from kalos.portal.uploads import scrubbed_failure
+
+    assert scrubbed_failure(KeyError("secret column")) == "KeyError"

@@ -29,7 +29,7 @@ from typing import Any
 
 import pandas as pd
 
-from kalos.portal.uploads import ParsedUpload, UploadRejected, parse_upload
+from kalos.portal.uploads import ParsedUpload, UploadRejected, parse_upload, scrubbed_failure
 
 log = logging.getLogger("kalos.portal")
 
@@ -241,15 +241,16 @@ def publish_upload_analysis(
             df, result["target"], result["proposal_features"], tenant=tenant,
             campaign_id=campaign_id, analysis=result, dataset=filename, **seed_kwargs,
         )
-    except CampaignError:
+    except CampaignError as exc:
         if campaign_id is not None or not fallback_unstamped:
             raise
-        log.exception("failed to seed the campaign from an uploaded run sheet")
+        log.error("failed to seed the campaign from an uploaded run sheet: %s", scrubbed_failure(exc))
         _publish_unstamped(store, result, filename, tenant=tenant)
-    except Exception:  # noqa: BLE001 - seeding must never fail a sync upload
+    except Exception as exc:  # noqa: BLE001 - seeding must never fail a sync upload
         if not fallback_unstamped:
             raise
-        log.exception("failed to seed the campaign from an uploaded run sheet")
+        # Exception type + location only (#87): the message can quote cell values.
+        log.error("failed to seed the campaign from an uploaded run sheet: %s", scrubbed_failure(exc))
         _publish_unstamped(store, result, filename, tenant=tenant, campaign_id=campaign_id)
     return None
 
@@ -272,5 +273,5 @@ def _publish_unstamped(
         store.save_analysis(
             result, filename, tenant=tenant, campaign_id=campaign_id, campaign_generation=None,
         )
-    except Exception:  # noqa: BLE001 - publishing is best-effort too
-        log.exception("failed to publish the analysis of an uploaded run sheet")
+    except Exception as exc:  # noqa: BLE001 - publishing is best-effort too
+        log.error("failed to publish the analysis of an uploaded run sheet: %s", scrubbed_failure(exc))

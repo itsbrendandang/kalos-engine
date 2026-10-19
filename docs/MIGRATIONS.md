@@ -182,6 +182,30 @@ deploy the previous engine.
 Starting a v2 engine again later re-runs the migration. It takes a fresh
 backup, and the second v1 copy becomes `campaigns_v1_2`.
 
+#### Caveat: a rollback past v3 leaves `jobs_v3_rolledback` pointing at a renamed table
+
+This applies when `down` goes from v3 all the way to v1 (`down --to 1`, or two
+`down` steps). The v3 -> v2 step renames `jobs` to `jobs_v3_rolledback`. Its
+foreign key still names the live parent, `campaigns (id, tenant)`, at that
+point. The v2 -> v1 step then renames that parent to `campaigns_v2_rolledback`.
+SQLite rewrites foreign-key references inside other tables on a rename, so the
+rolled-back copy now reads `REFERENCES "campaigns_v2_rolledback" (id, tenant)`.
+
+- The data is intact. Every job row is still in `jobs_v3_rolledback`, and
+  `PRAGMA foreign_key_check` passes, because the parent it names exists.
+- The copy is not self-consistent. Its foreign key names a table whose name
+  says it was rolled back, not the live `campaigns`. Nothing in the v1 engine
+  reads that table, so this has no effect on the running service. It matters
+  only if someone restores the copy or inspects it by hand.
+- The fix is optional. To remove the dangling reference, rebuild the copy
+  without its foreign-key constraints (create a table with the same columns and
+  no `FOREIGN KEY` clauses, copy the rows, drop the old copy, rename the new
+  one), with the engine stopped and a backup taken first. Or leave the copy as
+  it is. Do not bring the copy back by renaming it to `jobs`: the foreign key
+  would still name the wrong table. A later `up` creates an empty `jobs` table
+  and does not move the history; if the history must be live again, restore
+  the `pre-v3` backup.
+
 ### Roll back, option B: restore the pre-v2 backup (exact pre-upgrade state)
 
 Use this if `down` is not an option. It loses every write made since the
