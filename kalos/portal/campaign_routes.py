@@ -19,9 +19,8 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import AllowInfNan, BaseModel, ConfigDict, Field, StringConstraints
 from pydantic import Strict as _Strict
-from starlette.concurrency import run_in_threadpool
 
-from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
+from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_in_slot
 
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
 from kalos.portal.campaign import (
@@ -32,7 +31,7 @@ from kalos.portal.campaign import (
     CampaignStore,
     get_campaign_store,
 )
-from kalos.portal.uploads import MAX_COLUMNS, UploadRejected, rejection_counts
+from kalos.portal.uploads import MAX_COLUMNS, UploadRejected, rejection_counts, scrubbed_failure
 
 log = logging.getLogger("kalos.portal")
 
@@ -280,14 +279,12 @@ async def _reanalyze(
         # Same single analysis slot /api/run holds (kalos/portal/busy.py): a
         # reanalyze racing an upload - or another reanalyze - gets an honest
         # 503 instead of contending for the CPU with an unfinished fit.
-        result = await run_in_threadpool(
-            run_exclusively(
-                functools.partial(
-                    _analyze, df, target, profile=BIOPROCESS_PROFILE, pending=awaiting,
-                    anonymize=anonymize,
-                ),
-                tenant=tenant,
-            )
+        result = await run_in_slot(
+            functools.partial(
+                _analyze, df, target, profile=BIOPROCESS_PROFILE, pending=awaiting,
+                anonymize=anonymize,
+            ),
+            tenant=tenant,
         )
     except AnalysisBusy as busy:
         return JSONResponse(
@@ -302,12 +299,13 @@ async def _reanalyze(
         # Code and counts only: the message names the customer's columns.
         log.warning("reanalyze rejected: code=%s%s", rej.code or "guard", rejection_counts(rej))
         return JSONResponse(rej.to_body(), status_code=400)
-    except Exception:  # noqa: BLE001 - normalized to a generic 400, same as /api/run
-        # Full traceback logged server-side; the client only ever sees a
+    except Exception as exc:  # noqa: BLE001 - normalized to a generic 400, same as /api/run
+        # Exception type + location logged server-side (never its message,
+        # which can quote the tenant's cells); the client only ever sees a
         # generic message, matching /api/run's catch-all in kalos/portal/app.py.
         # Nothing was committed (plan_fold does not mutate), so the campaign is
         # untouched and a retry is meaningful.
-        log.exception("failed to re-analyze the campaign")
+        log.error("failed to re-analyze the campaign: code=analysis_failed %s", scrubbed_failure(exc))
         return JSONResponse({"error": "could not analyze the campaign data"}, status_code=400)
 
     # The provenance block (kind=reanalyze): the same fields an upload gets, so

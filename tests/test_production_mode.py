@@ -28,13 +28,16 @@ from kalos.portal.config import (  # noqa: E402
 _TOKENS = json.dumps([{
     "token_sha256": hashlib.sha256(b"tok").hexdigest(),
     "subject": "s", "tenant": "acme", "scopes": ["read", "write"],
+    # production accepts static tokens for service accounts only (docs/ENGINE_TOKEN.md)
+    "service_account": True,
 }])
 
 
 def _run(script: str, tmp_path, **env: str) -> subprocess.CompletedProcess:
     full_env = {k: v for k, v in os.environ.items()
                 if k not in {"KALOS_AUTH_TOKENS", "KALOS_AUTH_TOKENS_FILE",
-                             "KALOS_ALLOW_OPEN_ACCESS", "KALOS_ENV"}}
+                             "KALOS_ALLOW_OPEN_ACCESS", "KALOS_ENV",
+                             "KALOS_JWT_PUBLIC_KEYS_FILE", "KALOS_AUTH_DENY_SUBJECTS"}}
     full_env.update({"KALOS_STATE_DIR": str(tmp_path)}, **env)
     return subprocess.run(
         [sys.executable, "-c", textwrap.dedent(script)],
@@ -136,6 +139,25 @@ def test_production_fails_closed_if_tokens_vanish_at_runtime(tmp_path):
     r = _run(script, tmp_path, KALOS_ENV="production", KALOS_AUTH_TOKENS_FILE=str(tokens_file))
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout.strip().splitlines()[-1]) == [200, 503, 200]
+
+
+def test_production_probe_exemption_respects_root_path(tmp_path):
+    """Mounted under a prefix, the probes stay exempt from the production
+    fail-closed guard (matched on the root_path-stripped route path)."""
+    tokens_file = tmp_path / "tokens.json"
+    tokens_file.write_text(_TOKENS)
+    script = f"""
+        import json, pathlib
+        from fastapi.testclient import TestClient
+        from kalos.portal.app import app
+        c = TestClient(app, root_path="/engine")
+        pathlib.Path({str(tokens_file)!r}).write_text("[]")
+        print(json.dumps([c.get("/engine/healthz").status_code,
+                          c.get("/engine/api/latest").status_code]))
+    """
+    r = _run(script, tmp_path, KALOS_ENV="production", KALOS_AUTH_TOKENS_FILE=str(tokens_file))
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout.strip().splitlines()[-1]) == [200, 503]
 
 
 def test_main_entrypoint_refuses_production_without_tokens_even_on_loopback(tmp_path):
