@@ -239,9 +239,9 @@ def _reject_oversized_xlsx_via_openpyxl(raw: bytes) -> None:
             cols = ws.max_column or 0
             rows = ws.max_row or 0
             if cols > MAX_COLUMNS:
-                raise UploadRejected(_ERR_TOO_MANY_COLUMNS)
+                raise UploadRejected(_ERR_TOO_MANY_COLUMNS, code="too_many_columns")
             if rows * cols > MAX_XLSX_CELLS:
-                raise UploadRejected(_ERR_TOO_LARGE)
+                raise UploadRejected(_ERR_TOO_LARGE, code="too_many_cells")
     finally:
         wb.close()
 
@@ -293,7 +293,7 @@ def _reject_oversized_xlsx(raw: bytes) -> dict[str, int]:
         part_sizes = {info.filename: int(info.file_size) for info in zf.infolist()}
         if sum(part_sizes.values()) > MAX_XLSX_UNCOMPRESSED_BYTES:
             log.warning("rejected an xlsx upload over the uncompressed-size cap")
-            raise UploadRejected(_ERR_TOO_LARGE)
+            raise UploadRejected(_ERR_TOO_LARGE, code="payload_too_large")
         if not sheet_names:
             # Not a recognizable xlsx layout (or a non-xlsx zip) - let openpyxl's
             # own validation produce the generic parse-rejection.
@@ -314,9 +314,9 @@ def _reject_oversized_xlsx(raw: bytes) -> dict[str, int]:
                 continue
             rows, cols = parsed
             if cols > MAX_COLUMNS:
-                raise UploadRejected(_ERR_TOO_MANY_COLUMNS)
+                raise UploadRejected(_ERR_TOO_MANY_COLUMNS, code="too_many_columns")
             if rows * cols > MAX_XLSX_CELLS:
-                raise UploadRejected(_ERR_TOO_LARGE)
+                raise UploadRejected(_ERR_TOO_LARGE, code="too_many_cells")
 
     if needs_fallback:
         _reject_oversized_xlsx_via_openpyxl(raw)
@@ -706,9 +706,9 @@ def _quote_list(names: list[str]) -> str:
 def _check_frame_caps(df: pd.DataFrame) -> None:
     rows, cols = df.shape
     if cols > MAX_COLUMNS:
-        raise UploadRejected(_ERR_TOO_MANY_COLUMNS)
+        raise UploadRejected(_ERR_TOO_MANY_COLUMNS, code="too_many_columns")
     if rows * cols > MAX_XLSX_CELLS:
-        raise UploadRejected(_ERR_TOO_LARGE)
+        raise UploadRejected(_ERR_TOO_LARGE, code="too_many_cells")
 
 
 def _match_sheet(requested: str, names: list[str]) -> str | None:
@@ -952,7 +952,7 @@ def parse_upload(
     or exception text.
     """
     if len(raw) > MAX_UPLOAD_BYTES:
-        raise UploadRejected(_ERR_TOO_LARGE)
+        raise UploadRejected(_ERR_TOO_LARGE, code="payload_too_large")
     if len(raw) == 0 or raw.strip(b" \t\r\n\x00\xef\xbb\xbf\xff\xfe") == b"":
         raise UploadRejected(_ERR_EMPTY, code="empty_file")
     if raw[:4] == _ZIP_MAGIC:
