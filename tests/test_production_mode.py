@@ -28,13 +28,16 @@ from kalos.portal.config import (  # noqa: E402
 _TOKENS = json.dumps([{
     "token_sha256": hashlib.sha256(b"tok").hexdigest(),
     "subject": "s", "tenant": "acme", "scopes": ["read", "write"],
+    # production accepts static tokens for service accounts only (docs/ENGINE_TOKEN.md)
+    "service_account": True,
 }])
 
 
 def _run(script: str, tmp_path, **env: str) -> subprocess.CompletedProcess:
     full_env = {k: v for k, v in os.environ.items()
                 if k not in {"KALOS_AUTH_TOKENS", "KALOS_AUTH_TOKENS_FILE",
-                             "KALOS_ALLOW_OPEN_ACCESS", "KALOS_ENV"}}
+                             "KALOS_ALLOW_OPEN_ACCESS", "KALOS_ENV",
+                             "KALOS_JWT_PUBLIC_KEYS_FILE", "KALOS_AUTH_DENY_SUBJECTS"}}
     full_env.update({"KALOS_STATE_DIR": str(tmp_path)}, **env)
     return subprocess.run(
         [sys.executable, "-c", textwrap.dedent(script)],
