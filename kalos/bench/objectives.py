@@ -155,3 +155,46 @@ def mixed_bump(n_cont: int = 2, n_levels: int = 3) -> MixedObjective:
     return MixedObjective(
         f"mixed_bump_{n_cont}c{n_levels}k", cont_bounds, (n_levels,), optimum, optimum, f
     )
+
+
+def bioprocess_like() -> MixedObjective:
+    """Synthetic bioprocess-like titer surface: 3 numeric factors plus 2 categorical.
+
+    Numeric factors `u` are normalised to [0, 1] (think temperature, pH and feed
+    rate). The categorical factors are a strain (4 levels, codes 0-3) and an
+    inducer (3 levels, codes 0-2). Each strain has a baseline offset and its own
+    peak location and width, and each inducer adds a gain:
+
+        f = off[s] + gain[i] + 6 * exp(-0.5 * || (u - c[s]) / w[s] ||^2)
+
+    The trap: the strain with the best offset (s=3) also has the narrowest peak,
+    so a method has to find a small region. The optimum is exact:
+    max over (s, i) of off + gain, plus the amplitude 6 (10.5 here).
+
+    This is a made-up surface for the benchmark protocol in docs/BENCHMARK.md.
+    It is NOT measured process data, and nothing here is calibrated to a real
+    process.
+    """
+    off = np.array([0.0, 1.0, 0.5, 2.0])
+    gain = np.array([0.0, 0.8, 2.5])
+    centers = np.array([
+        [0.3, 0.6, 0.4],
+        [0.7, 0.3, 0.6],
+        [0.5, 0.8, 0.2],
+        [0.2, 0.2, 0.8],
+    ])
+    widths = np.array([0.35, 0.20, 0.15, 0.30])
+    amp = 6.0
+
+    def f(X: np.ndarray) -> np.ndarray:
+        u = X[:, :3]
+        s = np.rint(X[:, 3]).astype(int)
+        i = np.rint(X[:, 4]).astype(int)
+        d2 = (((u - centers[s]) / widths[s, None]) ** 2).sum(axis=1)
+        return off[s] + gain[i] + amp * np.exp(-0.5 * d2)
+
+    optimum = float(off.max() + gain.max() + amp)
+    cont_bounds = np.vstack([np.zeros(3), np.ones(3)])
+    return MixedObjective(
+        "bioprocess_like_mixed", cont_bounds, (4, 3), optimum, amp, f
+    )

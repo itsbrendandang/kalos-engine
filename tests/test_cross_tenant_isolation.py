@@ -45,6 +45,7 @@ from kalos.portal import app as portal_module  # noqa: E402
 from kalos.portal import busy  # noqa: E402
 from kalos.portal import campaign as campaign_module  # noqa: E402
 from kalos.portal.app import app  # noqa: E402
+from kalos.portal.auth import AUTH_STATIC  # noqa: E402
 from kalos.portal.campaign import CampaignStore, get_campaign_store  # noqa: E402
 from kalos.portal.campaigns_api import MAX_NAME_CHARS, CampaignUploadSizeLimit  # noqa: E402
 from kalos.portal.uploads import MAX_UPLOAD_BYTES  # noqa: E402
@@ -320,7 +321,7 @@ def test_upload_to_a_campaign_stores_tenant_scoped_analysis_and_audit(env):
     assert {("campaign.create", "ok"), ("campaign.upload", "ok")} <= actions
     for e in audit:
         assert e["tenant"] == "acme" and e["subject"] == "bob@acme"
-        assert e["auth_method"] == "bearer"
+        assert e["auth_method"] == AUTH_STATIC
         assert e["campaign_id"] == cid
         # no data payloads: never the filename, a sheet, a column, or a value
         assert e["detail"] is None or re.fullmatch(r"runs=\d+", e["detail"])
@@ -337,12 +338,11 @@ def test_every_mutation_is_audited_with_subject_and_auth_method(env):
                   headers=H("a-admin")).json()["started"][0]
     tc.post(f"/api/campaigns/{cid}/runs/{run['id']}/result", json={"value": 1.0},
             headers=H("a-admin"))
-    lease = busy.limiter().try_acquire("acme")  # keep the reanalyze cheap: 503 without fitting
-    assert lease is not None
+    busy._slot.acquire()  # keep the reanalyze cheap: it answers 503 without fitting
     try:
         tc.post(f"/api/campaigns/{cid}/reanalyze", headers=H("a-admin"))
     finally:
-        lease.release()
+        busy._slot.release()
     tc.patch(f"/api/campaigns/{cid}", json={"archived": True}, headers=H("a-admin"))
     tc.patch(f"/api/campaigns/{cid}", json={"archived": False}, headers=H("a-admin"))
     got = [(e["action"], e["outcome"]) for e in reversed(store.audit_entries(tenant="acme"))]
@@ -353,7 +353,7 @@ def test_every_mutation_is_audited_with_subject_and_auth_method(env):
     ]
     for e in store.audit_entries(tenant="acme"):
         assert (e["tenant"], e["subject"], e["auth_method"], e["campaign_id"]) == (
-            "acme", "alice@acme", "bearer", cid)
+            "acme", "alice@acme", AUTH_STATIC, cid)
 
 
 def test_a_probe_of_a_foreign_id_is_audited_without_the_id(env):
@@ -529,8 +529,12 @@ def test_production_mode_serves_the_api_with_the_same_isolation(tmp_path):
     env = {k: v for k, v in os.environ.items()
            if k not in {"KALOS_AUTH_TOKENS", "KALOS_AUTH_TOKENS_FILE",
                         "KALOS_ALLOW_OPEN_ACCESS", "KALOS_ENV"}}
+    prod_tokens = [
+        {**t, "scopes": ["read", "write"], "service_account": True}
+        for t in TOKENS if t["subject"] in ("alice@acme", "gina@globex")
+    ]
     env.update(KALOS_STATE_DIR=str(tmp_path), KALOS_ENV="production",
-               KALOS_AUTH_TOKENS=json.dumps(TOKENS))
+               KALOS_AUTH_TOKENS=json.dumps(prod_tokens))
     r = subprocess.run([sys.executable, "-c", textwrap.dedent(script)], env=env,
                        capture_output=True, text=True, timeout=180)
     assert r.returncode == 0, r.stderr
@@ -636,16 +640,13 @@ def test_size_limits_and_the_analysis_slot_still_apply(env):
     # the single analysis slot: busy -> 503 + Retry-After on upload and reanalyze
     run = store.start([_recipe()], tenant="acme", campaign_id=cid)[0]
     store.set_result(run["id"], 2.0, tenant="acme", campaign_id=cid)
-    lease = busy.limiter().try_acquire("acme")  # acme's one slot is busy
-    assert lease is not None
+    busy._slot.acquire()
     try:
-        # replace=true: the campaign holds a measured run, which an unconfirmed upload would refuse first.
         r1 = tc.post(f"/api/campaigns/{cid}/upload",
-                     files={"file": ("r.csv", _csv(_df(20)), "text/csv")},
-                     data={"replace": "true"}, headers=H("a-write"))
+                     files={"file": ("r.csv", _csv(_df(20)), "text/csv")}, headers=H("a-write"))
         r2 = tc.post(f"/api/campaigns/{cid}/reanalyze", headers=H("a-write"))
     finally:
-        lease.release()
+        busy._slot.release()
     for r in (r1, r2):
         assert r.status_code == 503 and r.headers["Retry-After"]
 

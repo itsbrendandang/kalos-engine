@@ -3,6 +3,8 @@
     python -m kalos.bench            # default sweep (2 surfaces x 2 noise levels)
     python -m kalos.bench --quick    # fewer seeds/budget for a fast check
     python -m kalos.bench --pending  # how much of a round a blind re-proposal wastes
+    python -m kalos.bench --vs-baselines  # head-to-head vs random/LHS/Optuna/Ax/GP-EI
+                                          # (protocol: docs/BENCHMARK.md; needs the bench extra)
 
 Reproducible: every trial is seeded, so the numbers are stable run to run.
 """
@@ -42,6 +44,15 @@ def main(argv: list[str] | None = None) -> int:
     quick = "--quick" in argv
     if "--pending" in argv:
         return _report_pending(quick)
+    if "--vs-baselines" in argv:
+        from pathlib import Path
+
+        from .vs_baselines import run_vs_baselines
+
+        out = Path("benchmarks/results")
+        if "--out" in argv:
+            out = Path(argv[argv.index("--out") + 1])
+        return run_vs_baselines(argv, out)
     seeds = range(4) if quick else range(10)
     budget = 10 if quick else 18
     n_init = 5

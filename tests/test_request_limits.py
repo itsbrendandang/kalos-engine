@@ -353,6 +353,31 @@ def test_upload_paths_match_with_root_path_stripped():
     assert mw.cap_for(route_path({"path": "/engine/api/run", "root_path": "/engine"})) == 99
 
 
+@pytest.mark.parametrize("path,root,expected", [
+    ("/engineX/api/run", "/engine", "/engineX/api/run"),  # not a segment boundary
+    ("/engine/api/run", "/engine/", "/api/run"),
+    ("/api/run", "/engine", "/api/run"),  # server that does not prefix path
+    ("/engine/", "/engine", "/"),
+])
+def test_route_path_strips_root_path_only_on_a_segment_boundary(path, root, expected):
+    from starlette._utils import get_route_path
+
+    from kalos.portal.limits import route_path
+
+    assert route_path({"path": path, "root_path": root}) == expected
+    # agrees with Starlette's own routing rule (modulo the trailing slash)
+    assert route_path({"path": path, "root_path": root}) == (
+        get_route_path({"path": path, "root_path": root.rstrip("/")}).rstrip("/") or "/"
+    )
+
+
+def test_campaign_validation_envelope_under_a_root_path(store):
+    store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
+    tc = TestClient(app, root_path="/engine")
+    r = tc.post("/engine/api/campaign/start", json={"recipes": "nope"})
+    assert r.status_code == 400 and "error" in r.json()
+
+
 def test_upload_under_a_root_path_gets_the_upload_cap():
     """Mounted under a prefix (uvicorn --root-path), the upload route must
     still get the upload cap, not the 1 MiB JSON cap."""
@@ -395,7 +420,7 @@ def test_upload_precheck_lets_a_bearer_through_to_real_verification(monkeypatch)
     r = TestClient(app).post("/api/run", files={"file": ("a.csv", b"a,b\n1,2\n", "text/csv")},
                              headers={"Authorization": "Bearer wrong"})
     assert r.status_code == 401
-    assert r.json() == {"detail": "invalid token"}  # the dependency's answer, not the precheck's
+    assert r.json() == {"detail": "invalid or expired token"}  # the dependency's answer, not the precheck's
 
 
 def test_upload_precheck_is_inert_in_open_mode(client):
