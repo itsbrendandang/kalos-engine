@@ -4,6 +4,14 @@ Newest first.
 
 ## Unreleased
 
+### Fixed - API and ops review (`fix/review-api`)
+
+- **Unknown `KALOS_*` enum values refuse to start (H3).** `KALOS_VALIDATION_MODE=stict` used to select `warn` silently, and a `KALOS_LLM_PROVIDER` typo fell back to the live Anthropic path. One helper (`kalos/envconfig.py`) now raises; `python -m kalos.portal` checks every enum and bounded setting before it binds and exits 2 with one line. `strict` stays out of the templates (docs/HARDENING.md).
+- **An over-cap CSV is refused before pandas parses it (M2).** Row counting is a streaming pass; the header row is decided from that pass; pandas reads the body once.
+- **Every size and shape refusal has a code (M4).** `payload_too_large`, `too_many_rows`, `too_many_columns`, `too_many_cells` (docs/UPLOADS.md).
+- **One error envelope (M3).** Every refusal is `{"error", "code"}` with the HTTP status unchanged. A 422 keeps `detail` for its field list. Unhandled errors answer a generic `internal_error`. Clients that read only a 400 as a bad upload must gate on the status (docs/HARDENING.md, "Error envelope").
+- **Audit retention (L8).** `KALOS_AUDIT_RETENTION_DAYS` (default 365, 1..36500) prunes `audit_log` at startup and daily.
+- **The API docs and schema are served only in `KALOS_ENV=development` (L6).** This was already true; it is now explicit and documented.
 ### Docs - review: known limitations (M5, M6)
 
 - docs/HARDENING.md, "Known limitations", records two judgement calls with evidence and

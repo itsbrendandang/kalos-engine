@@ -23,6 +23,7 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import re
 from typing import Any
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -31,11 +32,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from fastapi import Depends, FastAPI, File, Form, Query, Request, UploadFile
-from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively, run_in_slot
 
@@ -54,6 +55,7 @@ from kalos.portal.config import (
     ProductionConfigError,
     assert_production_posture,
     cors_config,
+    deployment_env,
     is_production,
     is_local_client,
     log_security_posture,
@@ -156,6 +158,34 @@ def _startup_auth_posture() -> bool:
 
 _AUTH_ENFORCED_AT_STARTUP = _startup_auth_posture()
 
+# Audit-log retention (docs/HARDENING.md, "Audit retention"): pruned once at
+# startup, then once a day while the process runs.
+AUDIT_PRUNE_INTERVAL_S = 86_400.0
+
+
+def _prune_audit_log_once(store: CampaignStore) -> int:
+    """Remove audit rows past `KALOS_AUDIT_RETENTION_DAYS`. Never raises: a failed
+    prune is logged and the portal keeps serving."""
+    from kalos.portal.config import audit_retention_days
+
+    try:
+        removed = store.prune_audit_log(audit_retention_days())
+    except Exception:  # noqa: BLE001 - retention must not stop the portal
+        log.exception("audit-log retention prune failed")
+        return 0
+    if removed:
+        log.info("audit-log retention: removed %d rows past the retention window", removed)
+    return removed
+
+
+async def _audit_retention_loop(store: CampaignStore) -> None:
+    import asyncio
+
+    while True:
+        await asyncio.sleep(AUDIT_PRUNE_INTERVAL_S)
+        await run_in_threadpool(_prune_audit_log_once, store)
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Open the campaign store before serving the first request.
@@ -192,7 +222,12 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # previous process, then schedules worker processes. KALOS_JOBS_ENABLED=0
     # leaves it off and the job routes answer 503.
     runner = None
+    audit_task = None
     if store is not None:
+        import asyncio
+
+        _prune_audit_log_once(store)
+        audit_task = asyncio.ensure_future(_audit_retention_loop(store))
         try:
             runner = start_job_runner(store)
         except RunnerLocked:
@@ -205,17 +240,24 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if audit_task is not None:
+            audit_task.cancel()
         if runner is not None:
             stop_job_runner(runner)
         expect_runner(False)
 
 
+# The interactive docs and the schema exist only in development (KALOS_ENV, see
+# docs/HARDENING.md). Any other value refuses to start, so this is never a
+# production-by-accident exposure.
+_DEVELOPMENT = deployment_env() == "development"
+
 app = FastAPI(
     title="Kalos Engine API",
     lifespan=_lifespan,
-    docs_url=None if _PRODUCTION else "/docs",
-    redoc_url=None if _PRODUCTION else "/redoc",
-    openapi_url=None if _PRODUCTION else "/openapi.json",
+    docs_url="/docs" if _DEVELOPMENT else None,
+    redoc_url="/redoc" if _DEVELOPMENT else None,
+    openapi_url="/openapi.json" if _DEVELOPMENT else None,
 )
 
 # Probes stay reachable in every posture: they carry no tenant data.
@@ -254,7 +296,8 @@ async def _refuse_open_remote_access(request, call_next):
             log.error("refused a request: KALOS_ENV=production but authentication is not enforced")
             return JSONResponse(
                 {"error": "This kalos portal is in production mode without authentication "
-                          "configured and is refusing all requests."},
+                          "configured and is refusing all requests.",
+                 "code": "auth_not_configured"},
                 status_code=503,
             )
     if not is_local_client(request.client.host if request.client else None):
@@ -278,7 +321,8 @@ async def _refuse_open_remote_access(request, call_next):
                         "This kalos portal is running without authentication and "
                         "therefore only serves local requests. The operator should "
                         "set KALOS_AUTH_TOKENS_FILE to enable remote access."
-                    )
+                    ),
+                    "code": "auth_not_configured",
                 },
                 status_code=503,
             )
@@ -290,9 +334,9 @@ def _auth_config_error_response(exc: AuthConfigError) -> JSONResponse:
     caller can do nothing about it), 500 for a malformed static-token list."""
     if isinstance(exc, JwtConfigError):
         log_config_error_once(exc)  # once per change, not per request
-        return JSONResponse({"error": "authentication unavailable"}, status_code=503)
+        return JSONResponse({"error": "authentication unavailable", "code": "auth_unavailable"}, status_code=503)
     log.error("kalos auth: token configuration is invalid: %s", exc)
-    return JSONResponse({"error": "authentication is misconfigured"}, status_code=500)
+    return JSONResponse({"error": "authentication is misconfigured", "code": "auth_misconfigured"}, status_code=500)
 
 
 # Bound every request body before any route parses it (kalos/portal/limits.py):
@@ -585,7 +629,7 @@ async def _run_demo(fn, principal: Principal, *args) -> JSONResponse:
         locked = run_exclusively(functools.partial(fn, *args), tenant=principal.tenant)
     except AnalysisBusy as busy:
         return JSONResponse(
-            {"error": str(busy)}, status_code=503,
+            {"error": str(busy), "code": "engine_busy"}, status_code=503,
             headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
         )
     try:
@@ -601,7 +645,9 @@ async def _run_demo(fn, principal: Principal, *args) -> JSONResponse:
         result = await asyncio.wait_for(asyncio.shield(task), timeout=DEMO_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
         log.warning("demo route exceeded %ss; answered 504", DEMO_TIMEOUT_SECONDS)
-        return JSONResponse({"error": "the demo computation timed out"}, status_code=504)
+        return JSONResponse(
+            {"error": "the demo computation timed out", "code": "engine_timeout"}, status_code=504
+        )
     return JSONResponse(result)
 
 
@@ -777,7 +823,7 @@ def upload_error_response(error: BaseException) -> JSONResponse:
         raise error
     except AnalysisBusy as busy:
         return JSONResponse(
-            {"error": str(busy)},
+            {"error": str(busy), "code": "engine_busy"},
             status_code=503,
             headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
         )
@@ -841,27 +887,107 @@ _CAMPAIGN_BODY_FIELDS = frozenset(
 )
 
 
+# --- one error envelope (review M3, docs/HARDENING.md "Error envelope") ------ #
+# Every refusal the engine sends carries `{"error": <message>, "code": <stable
+# machine code>}`, with the HTTP status unchanged. Before these handlers, a
+# FastAPI HTTPException answered `{"detail": ...}`, and a 422 answered
+# `{"detail": [...]}`. The 422 field list is kept under `detail`, without the
+# echoed input values. Unhandled errors answer a generic 500 envelope and log the
+# traceback server-side only.
+_STATUS_CODES = {
+    400: "bad_request",
+    401: "unauthenticated",
+    403: "forbidden",
+    404: "not_found",
+    405: "method_not_allowed",
+    409: "conflict",
+    413: "payload_too_large",
+    422: "validation_error",
+    429: "rate_limited",
+    500: "internal_error",
+    503: "service_unavailable",
+    504: "timeout",
+}
+_LOC_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    """`HTTPException` (401/403 from the auth layer, 404 for an unknown route, 405,
+    and any route's own refusal) as the envelope. Response headers such as
+    `WWW-Authenticate` and `Retry-After` are kept."""
+    from http import HTTPStatus
+
+    if isinstance(exc.detail, str) and exc.detail.strip():
+        message = exc.detail
+    else:
+        try:
+            message = HTTPStatus(exc.status_code).phrase
+        except ValueError:
+            message = "request failed"
+    code = _STATUS_CODES.get(exc.status_code, f"http_{exc.status_code}")
+    return JSONResponse(
+        {"error": message, "code": code}, status_code=exc.status_code, headers=exc.headers,
+    )
+
+
 @app.exception_handler(RequestValidationError)
 async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-    """Body validation failures on `/api/campaign/*` answer 400 with the
-    `{"error": ...}` envelope those routes already use for every other bad
-    input (so the client parses one shape). The message names WHERE and WHAT
-    (field location + pydantic's message) but never echoes the input value.
-    Every other route keeps FastAPI's default 422."""
-    if not route_path(request.scope).startswith("/api/campaign"):
-        return await request_validation_exception_handler(request, exc)
-    parts = []
-    for err in exc.errors()[:5]:
-        # Dict keys show up in `loc` (a recipe's feature names): those are caller
-        # input, so anything that is not a list index or a known field name is
-        # masked rather than echoed.
-        loc = ".".join(
-            str(p) if isinstance(p, int) or p in _CAMPAIGN_BODY_FIELDS else "<key>"
+    """Body and parameter validation failures, in the one error envelope (#98).
+
+    On `/api/campaign*` the status stays 400 (the routes' documented contract):
+    `{"error": "invalid request body: ...", "code": "invalid_body"}`. Every other
+    route answers 422 with `{"error", "code": "validation_error", "detail": [...]}`.
+    `loc` names WHERE and `msg` says WHAT; the submitted value is never echoed. A
+    dict key is masked unless it is known: on campaign routes a campaign body
+    field (`_CAMPAIGN_BODY_FIELDS`), elsewhere a plain identifier (`_LOC_NAME`)."""
+    campaign = route_path(request.scope).startswith("/api/campaign")
+
+    def _shown(part: object) -> bool:
+        if isinstance(part, int):
+            return True
+        if campaign:
+            return part in _CAMPAIGN_BODY_FIELDS
+        return isinstance(part, str) and _LOC_NAME.match(part) is not None
+
+    def _loc(err: dict) -> str:
+        return ".".join(
+            str(p) if _shown(p) else "<key>"
             for p in err.get("loc", ())
             if p != "body"
         )
-        parts.append(f"{loc or 'body'}: {err.get('msg', 'invalid')}"[:200])
-    return JSONResponse({"error": "invalid request body: " + "; ".join(parts)}, status_code=400)
+
+    errors = exc.errors()
+    if campaign:
+        parts = [f"{_loc(err) or 'body'}: {err.get('msg', 'invalid')}"[:200] for err in errors[:5]]
+        return JSONResponse(
+            {"error": "invalid request body: " + "; ".join(parts), "code": "invalid_body"},
+            status_code=400,
+        )
+    details = [
+        {"loc": _loc(err) or "body", "msg": str(err.get("msg", "invalid"))[:200],
+         "type": str(err.get("type", "value_error"))[:64]}
+        for err in errors[:20]
+    ]
+    summary = "; ".join(f"{d['loc']}: {d['msg']}" for d in details[:5])
+    return JSONResponse(
+        {"error": "invalid request: " + summary, "code": "validation_error", "detail": details},
+        status_code=422,
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+    """A failure no route anticipated: a generic 500 envelope. The traceback goes
+    to the server log, never to the client (no internal path, no input text)."""
+    log.error(
+        "unhandled error on %s %s: %s", request.method, request.url.path, type(exc).__name__,
+        exc_info=exc,
+    )
+    return JSONResponse(
+        {"error": "internal server error", "code": "internal_error"}, status_code=500,
+    )
+
 
 # --- Scale-Up Readout: /api/scale/readout (stateless, D6) - a one-page HTML
 # readout over an uploaded multi-scale run sheet. Routes live in

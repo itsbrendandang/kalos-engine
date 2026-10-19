@@ -46,7 +46,7 @@ def test_tokens_emptied_after_the_middleware_check_is_503_not_anonymous(monkeypa
     monkeypatch.setenv("KALOS_AUTH_TOKENS_FILE", str(tokens))
     r = TestClient(app).get("/api/latest")
     assert r.status_code == 503
-    assert r.json() == {"detail": "authentication is not configured"}
+    assert r.json() == {"error": "authentication is not configured", "code": "service_unavailable"}
 
 
 def test_development_open_mode_is_still_anonymous_default():

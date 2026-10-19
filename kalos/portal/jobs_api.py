@@ -151,7 +151,7 @@ async def _preflight_gated(call: Callable[[], Any]) -> Any:
 
 
 JOB_UPLOAD_PATH = re.compile(r"/api/campaigns/cmp_[0-9a-f]{32}/jobs/?")
-_JOB_NOT_FOUND = {"error": "job not found"}
+_JOB_NOT_FOUND = {"error": "job not found", "code": "not_found"}
 
 
 def _job_not_found() -> JSONResponse:
@@ -223,16 +223,16 @@ def _job_error_response(exc: CampaignError) -> JSONResponse:
     if isinstance(exc, jobs.JobNotFound):
         return _job_not_found()
     if isinstance(exc, jobs.JobsDisabled):
-        return JSONResponse({"error": str(exc)}, status_code=503)
+        return JSONResponse({"error": str(exc), "code": "service_unavailable"}, status_code=503)
     if isinstance(exc, (jobs.UploadPending, jobs.CampaignHasRuns)):
         return JSONResponse({"error": str(exc), "code": exc.code}, status_code=409)
     if isinstance(exc, (jobs.QueueFull, jobs.EngineQueueFull)):
         return JSONResponse(
-            {"error": str(exc)}, status_code=429,
+            {"error": str(exc), "code": "rate_limited"}, status_code=429,
             headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
         )
     if isinstance(exc, jobs.JobTooLarge):
-        return JSONResponse({"error": str(exc)}, status_code=413)
+        return JSONResponse({"error": str(exc), "code": "payload_too_large"}, status_code=413)
     return campaign_error_response(exc)
 
 
@@ -275,7 +275,7 @@ async def _submit(
         settings = jobs.job_settings()
     except ValueError:
         log.exception("background job settings are invalid")
-        return JSONResponse({"error": "background jobs are misconfigured"}, status_code=503), None
+        return JSONResponse({"error": "background jobs are misconfigured", "code": "jobs_misconfigured"}, status_code=503), None
     if not settings.enabled:
         return _job_error_response(jobs.JobsDisabled()), None
     # Refuse a full queue before the body is read or parsed (cheap; re-checked in enqueue).
@@ -297,7 +297,8 @@ async def _submit(
         else:
             message = "the engine is receiving too many uploads; retry shortly"
             status = 503
-        return JSONResponse({"error": message}, status_code=status,
+        code = "rate_limited" if status == 429 else "service_unavailable"
+        return JSONResponse({"error": message, "code": code}, status_code=status,
                             headers={"Retry-After": str(RETRY_AFTER_SECONDS)}), None
     try:
         return await _read_and_queue(
@@ -324,7 +325,7 @@ async def _read_and_queue(
         return campaign_error_response(exc), None
     if info["archived"]:
         response = JSONResponse(
-            {"error": "the campaign is archived; it can be read but not changed"}, status_code=409,
+            {"error": "the campaign is archived; it can be read but not changed", "code": "campaign_archived"}, status_code=409,
         )
         return response, None
     if not replace:
@@ -339,7 +340,8 @@ async def _read_and_queue(
         ))
     except PreflightBusy:
         return JSONResponse(
-            {"error": "the engine is checking other uploads; retry shortly"}, status_code=503,
+            {"error": "the engine is checking other uploads; retry shortly",
+             "code": "service_unavailable"}, status_code=503,
             headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
         ), None
     except Exception as exc:  # noqa: BLE001 - mapped to the documented envelopes

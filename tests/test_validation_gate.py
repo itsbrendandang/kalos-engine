@@ -25,6 +25,7 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("torch")
 
+from kalos.envconfig import ConfigError  # noqa: E402
 from kalos.portal.analysis import _analyze, validation_mode  # noqa: E402
 from kalos.portal.uploads import UploadRejected  # noqa: E402
 
@@ -158,10 +159,12 @@ def test_strict_mode_accepts_a_clean_sheet(monkeypatch):
     assert out["validation"]["status"] in {"pass", "pass_with_warnings"}
 
 
-def test_unrecognized_mode_falls_back_to_warn(monkeypatch):
-    """A typo in deployment config must not silently enable rejection."""
+def test_unrecognized_mode_raises_instead_of_falling_back(monkeypatch):
+    """A typo in deployment config must neither silently enable rejection nor
+    silently disable it: it refuses (review H3; tests/test_env_enums.py)."""
     monkeypatch.setenv("KALOS_VALIDATION_MODE", "STRICTT")
-    assert validation_mode() == "warn"
+    with pytest.raises(ConfigError):
+        validation_mode()
 
 
 # --- unit conversion in the live path -------------------------------------- #

@@ -51,7 +51,7 @@ VECTORS = json.loads((Path(__file__).parent / "vectors" / "engine-token.json").r
 
 ISS = "kalos-web"
 AUD = "kalos-engine"
-GENERIC_BODY = {"detail": "invalid or expired token"}
+GENERIC_BODY = {"error": "invalid or expired token", "code": "unauthenticated"}
 DROP = object()  # claim-override sentinel: remove the claim entirely
 
 # Every token this module sends to a live server, so the log check can prove
@@ -614,12 +614,12 @@ def test_refused_token_is_the_same_generic_401(main, world, name, make, reason):
 
 def test_no_authorization_header_is_authentication_required(main, world):
     r = main.request("GET", "/api/latest")
-    assert r.status_code == 401 and r.json() == {"detail": "authentication required"}
+    assert r.status_code == 401 and r.json() == {"error": "authentication required", "code": "unauthenticated"}
 
 
 def test_lowercase_bearer_scheme_is_not_accepted(main, world):
     r = main.request("GET", "/api/latest", headers={"Authorization": f"bearer {ACME.token()}"})
-    assert r.status_code == 401 and r.json() == {"detail": "authentication required"}
+    assert r.status_code == 401 and r.json() == {"error": "authentication required", "code": "unauthenticated"}
 
 
 @pytest.mark.parametrize("name,make,reason", [
@@ -653,10 +653,10 @@ def test_every_refusal_body_is_identical_across_reasons(main, world):
 
 def test_read_only_token_cannot_write(main, world):
     r = main.request("POST", "/api/campaign/start", auth=READ_ONLY, json=_RECIPE)
-    assert r.status_code == 403 and r.json() == {"detail": "requires 'write' scope"}
+    assert r.status_code == 403 and r.json() == {"error": "requires 'write' scope", "code": "forbidden"}
     r = main.request("POST", "/api/run", auth=READ_ONLY,
                      files={"file": ("x.csv", _sheet(3), "text/csv")})
-    assert r.status_code == 403 and r.json() == {"detail": "requires 'write' scope"}
+    assert r.status_code == 403 and r.json() == {"error": "requires 'write' scope", "code": "forbidden"}
     r = main.request("POST", "/api/campaign/reanalyze", auth=READ_ONLY)
     assert r.status_code == 403
 
@@ -664,7 +664,7 @@ def test_read_only_token_cannot_write(main, world):
 def test_write_only_token_cannot_read(main, world):
     """`campaigns:write` does not imply read (docs/ENGINE_TOKEN.md)."""
     r = main.request("GET", "/api/latest", auth=WRITE_ONLY)
-    assert r.status_code == 403 and r.json() == {"detail": "requires 'read' scope"}
+    assert r.status_code == 403 and r.json() == {"error": "requires 'read' scope", "code": "forbidden"}
     assert main.request("GET", "/api/campaign", auth=WRITE_ONLY).status_code == 403
 
 
@@ -685,7 +685,7 @@ def test_admin_scope_is_tenant_scoped(main, world):
 
 def test_scope_refusal_detail_names_only_the_scope(main, world):
     r = main.request("POST", "/api/campaign/start", auth=READ_ONLY, json=_RECIPE)
-    assert r.text == '{"detail":"requires \'write\' scope"}'
+    assert r.text == '{"error":"requires \'write\' scope","code":"forbidden"}'
     assert "acme" not in r.text and "exp" not in r.text
 
 

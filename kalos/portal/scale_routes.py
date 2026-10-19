@@ -69,6 +69,16 @@ class _TargetJsonError(ValueError):
     required key - a 422, not a gate failure."""
 
 
+def _refusal(check: str, detail: str) -> JSONResponse:
+    """A 422 gate refusal. `failed_check` and `detail` are the readout's own
+    fields; `code` and `error` make it the same `{"error", "code"}` envelope every
+    other refusal carries (docs/HARDENING.md "Error envelope")."""
+    return JSONResponse(
+        {"error": detail, "code": check, "failed_check": check, "detail": detail},
+        status_code=422,
+    )
+
+
 def _parse_target(raw: str) -> tuple[TargetSpec, str, list[str], dict[str, float] | None]:
     """Parse the `target` form field into `(TargetSpec, target_column,
     process_columns, physics_overrides)`.
@@ -475,7 +485,7 @@ async def scale_readout(
     try:
         target_spec, target_column, process_columns, physics_overrides = _parse_target(target)
     except _TargetJsonError as exc:
-        return JSONResponse({"failed_check": "invalid_target", "detail": str(exc)}, status_code=422)
+        return _refusal("invalid_target", str(exc))
 
     raw = await file.read(MAX_UPLOAD_BYTES + 1)  # one past the cap: `_parse_upload` rejects it
     try:
@@ -489,7 +499,7 @@ async def scale_readout(
             "failed to parse an uploaded run sheet for the scale readout: code=parse_error %s",
             scrubbed_failure(exc),
         )
-        return JSONResponse({"error": _ERR_PARSE}, status_code=400)
+        return JSONResponse({"error": _ERR_PARSE, "code": "parse_error"}, status_code=400)
 
     try:
         readout = await run_in_slot(
@@ -506,17 +516,15 @@ async def scale_readout(
         )
     except AnalysisBusy as busy:
         return JSONResponse(
-            {"error": str(busy)}, status_code=503, headers={"Retry-After": str(RETRY_AFTER_SECONDS)}
+            {"error": str(busy), "code": "engine_busy"}, status_code=503,
+            headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
         )
     except ValueError as exc:
         # e.g. a malformed process_params/target mismatch surfaced by gate().
-        return JSONResponse({"failed_check": "invalid_target", "detail": str(exc)}, status_code=422)
+        return _refusal("invalid_target", str(exc))
 
     if not readout["gate"]["passed"]:
-        return JSONResponse(
-            {"failed_check": readout["gate"]["failed_check"], "detail": readout["gate"]["detail"]},
-            status_code=422,
-        )
+        return _refusal(readout["gate"]["failed_check"], readout["gate"]["detail"])
 
     return HTMLResponse(render_readout_html(readout), status_code=200)
 

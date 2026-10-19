@@ -163,12 +163,12 @@ class RequestSizeLimitMiddleware:
         if lengths:
             # Conflicting duplicates are a request-smuggling smell; refuse them.
             if len(set(lengths)) != 1 or not lengths[0].strip().isdigit():
-                await _send_error(send, 400, _ERR_BAD_LENGTH)
+                await _send_error(send, 400, _ERR_BAD_LENGTH, code="invalid_content_length")
                 return
             digits = lengths[0].strip().lstrip(b"0")
             if len(digits) > _MAX_CONTENT_LENGTH_DIGITS or int(digits or b"0") > cap:
                 log.warning("refused a request to %s with Content-Length over the %d-byte cap", path, cap)
-                await _send_error(send, 413, _ERR_TOO_LARGE)
+                await _send_error(send, 413, _ERR_TOO_LARGE, code="payload_too_large")
                 return
 
         received = 0
@@ -227,9 +227,9 @@ class RequestSizeLimitMiddleware:
             # is the real answer.
         if over_cap and not response_started:
             if timed_out:
-                await _send_error(send, 408, _ERR_READ_TIMEOUT)
+                await _send_error(send, 408, _ERR_READ_TIMEOUT, code="read_timeout")
             else:
-                await _send_error(send, 413, _ERR_TOO_LARGE)
+                await _send_error(send, 413, _ERR_TOO_LARGE, code="payload_too_large")
 
 
 def _has_bearer(scope: Scope) -> bool:
@@ -280,10 +280,10 @@ class UploadAuthPrecheckMiddleware:
             except Exception:  # noqa: BLE001 - a broken config is the dependency's 500
                 enforced = False
             if enforced:
-                # Same body shape as the dependency's 401 (`{"detail": ...}`),
+                # Same envelope as the dependency's 401 (`{"error", "code"}`),
                 # so a client sees one answer whichever layer refused it.
                 await _send_error(
-                    send, 401, _ERR_AUTH_REQUIRED, key="detail",
+                    send, 401, _ERR_AUTH_REQUIRED, code="unauthenticated",
                     extra_headers=[(b"www-authenticate", b"Bearer")],
                 )
                 return
@@ -295,10 +295,11 @@ async def _send_error(
     status: int,
     message: str,
     *,
-    key: str = "error",
+    code: str,
     extra_headers: list[tuple[bytes, bytes]] | None = None,
 ) -> None:
-    body = json.dumps({key: message}).encode("utf-8")
+    """Send the `{"error", "code"}` envelope every refusal carries (docs/HARDENING.md)."""
+    body = json.dumps({"error": message, "code": code}).encode("utf-8")
     await send({
         "type": "http.response.start",
         "status": status,

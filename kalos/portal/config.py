@@ -17,6 +17,7 @@ import logging
 import os
 
 from kalos.data.anonymizer import salt_configured
+from kalos.envconfig import ConfigError, env_enum, env_int
 
 log = logging.getLogger("kalos.portal")
 
@@ -49,11 +50,18 @@ def cors_config() -> dict:
 
 _ALLOW_OPEN_VAR = "KALOS_ALLOW_OPEN_ACCESS"
 _ENV_VAR = "KALOS_ENV"
-_KNOWN_ENVS = frozenset({"development", "production"})
+_KNOWN_ENVS = ("development", "production")
+VALIDATION_MODE_VAR = "KALOS_VALIDATION_MODE"
+VALIDATION_MODES = ("warn", "strict")
+AUDIT_RETENTION_VAR = "KALOS_AUDIT_RETENTION_DAYS"
+AUDIT_RETENTION_DEFAULT_DAYS = 365
+# 36500 days is a century: a retention "forever" is spelled as the largest value.
+AUDIT_RETENTION_MAX_DAYS = 36_500
 
 
-class ProductionConfigError(RuntimeError):
-    """`KALOS_ENV=production` was requested with a posture it does not allow."""
+class ProductionConfigError(ConfigError):
+    """`KALOS_ENV=production` was requested with a posture it does not allow, or
+    `KALOS_ENV` holds a value the engine does not recognise."""
 
 
 def deployment_env() -> str:
@@ -64,18 +72,39 @@ def deployment_env() -> str:
     such as `KALOS_ENV=prod` would otherwise silently drop every production
     guard, which is exactly the kind of silent failure startup checks exist for.
     """
-    raw = os.environ.get(_ENV_VAR, "").strip().lower()
-    if not raw:
-        return "development"
-    if raw not in _KNOWN_ENVS:
-        accepted = ", ".join(repr(e) for e in sorted(_KNOWN_ENVS))
-        raise ProductionConfigError(
-            f"{_ENV_VAR}={raw[:40]!r} is not recognised. Accepted values: {accepted} "
-            "(case-insensitive), or unset/empty for 'development'. Unknown values are "
-            "refused rather than defaulted so a typo cannot drop the production guards "
-            "(docs/HARDENING.md)."
-        )
-    return raw
+    return env_enum(_ENV_VAR, _KNOWN_ENVS, "development", error=ProductionConfigError)
+
+
+def validation_mode_setting() -> str:
+    """`KALOS_VALIDATION_MODE`: `warn` (default) or `strict`. Unknown values raise
+    `ConfigError` (fail closed; see kalos.envconfig)."""
+    return env_enum(VALIDATION_MODE_VAR, VALIDATION_MODES, "warn")
+
+
+def audit_retention_days() -> int:
+    """`KALOS_AUDIT_RETENTION_DAYS`: how long audit rows are kept (default 365).
+    Rows older than this are pruned at startup and daily. A non-integer or a value
+    outside 1..36500 raises `ConfigError`, so a typo cannot silently drop the
+    trail or keep it forever."""
+    return env_int(
+        AUDIT_RETENTION_VAR, AUDIT_RETENTION_DEFAULT_DAYS,
+        minimum=1, maximum=AUDIT_RETENTION_MAX_DAYS,
+    )
+
+
+def check_env_settings() -> None:
+    """Validate every enum-valued and bounded `KALOS_*` setting read at startup.
+
+    Called by `python -m kalos.portal` before it binds a socket; the message of a
+    `ConfigError` is one line and names the variable. Each read here is the same
+    one the running engine performs, so a value accepted here is accepted there.
+    """
+    from kalos.normalize.config import provider_setting  # deferred: keep config light
+
+    deployment_env()
+    validation_mode_setting()
+    audit_retention_days()
+    provider_setting()
 
 
 def is_production() -> bool:

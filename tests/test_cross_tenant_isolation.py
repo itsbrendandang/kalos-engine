@@ -181,7 +181,7 @@ def test_foreign_campaign_id_is_byte_identical_to_a_missing_one_on_every_route(e
         malformed = tc.request(method, path.format(cid="cmp_nope"), headers=H("a-admin"), **kw)
         assert foreign.status_code == 404, (method, path, foreign.text)
         assert _raw(foreign) == _raw(missing) == _raw(malformed), (method, path)
-        assert foreign.json() == {"error": "campaign not found"}
+        assert foreign.json() == {"error": "campaign not found", "code": "not_found"}
     # nothing about globex's campaign changed
     assert _snapshot(store, b_cid) == before
     # and the owner still sees it normally
@@ -414,7 +414,7 @@ def test_odd_run_ids_fail_safely(env):
     _, b_run = _globex_campaign(store)
     r = tc.post(f"/api/campaigns/{cid}/runs/{b_run}/result", json={"value": 1.0},
                 headers=H("a-write"))
-    assert r.status_code == 404 and r.json() == {"error": "run not found"}
+    assert r.status_code == 404 and r.json() == {"error": "run not found", "code": "not_found"}
     assert b_run not in r.text
     # a non-finite value is refused before anything is looked up
     r = tc.post(f"/api/campaigns/{cid}/runs/{'0' * 32}/result",
@@ -445,7 +445,8 @@ def test_scopes_read_write_admin(env):
                     headers=H("a-write")).status_code == 200
     for archived in (True, False):
         r = tc.patch(f"/api/campaigns/{cid}", json={"archived": archived}, headers=H("a-write"))
-        assert r.status_code == 403 and r.json() == {"detail": "requires 'admin' scope"}
+        assert r.status_code == 403
+        assert r.json() == {"error": "requires 'admin' scope", "code": "forbidden"}
     # ... and the 403 is decided before the id is looked at (no existence oracle)
     for target in (_missing_id(), "cmp_bad"):
         assert tc.patch(f"/api/campaigns/{target}", json={"archived": True},
@@ -674,7 +675,7 @@ def test_campaign_upload_without_a_bearer_is_401_before_the_body_is_read(env):
                     files={"file": ("r.csv", body, "text/csv")})
         assert r.status_code == 401, r.status_code
         assert r.headers.get("www-authenticate") == "Bearer"
-        assert set(r.json()) == {"detail"}
+        assert r.json()["code"] == "unauthenticated" and "error" in r.json()
     # a foreign/missing id without a bearer is the same 401 (no existence oracle)
     r = tc.post(f"/api/campaigns/{_missing_id()}/upload",
                 files={"file": ("r.csv", _csv(_df(20)), "text/csv")})

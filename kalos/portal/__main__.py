@@ -22,12 +22,14 @@ import uvicorn
 
 from kalos.portal import engine_lock
 from kalos.portal.auth import AuthConfigError, get_authenticator
+from kalos.envconfig import ConfigError
 from kalos.portal.job_runner import RunnerLocked, check_startup_config
 from kalos.portal.config import (
     InsecureBindError,
     ProductionConfigError,
     assert_production_posture,
     assert_safe_exposure,
+    check_env_settings,
 )
 
 DEFAULT_HOST = "127.0.0.1"
@@ -69,6 +71,18 @@ def main() -> None:
         print(f"kalos portal: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
 
+    try:
+        # Every enum-valued KALOS_* setting (KALOS_ENV, KALOS_VALIDATION_MODE,
+        # KALOS_LLM_PROVIDER) and bounded one (KALOS_AUDIT_RETENTION_DAYS) is
+        # checked before the socket opens: a typo refuses to start, one line, exit 2.
+        check_env_settings()
+        # Background-job settings that cannot run (kalos/portal/job_runner.py):
+        # refuse to serve rather than come up with jobs accepted and never run.
+        check_startup_config()
+    except (ConfigError, ValueError, RunnerLocked) as exc:
+        print(f"kalos portal: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+
     # One engine per state directory: a second one refuses to start rather than
     # share portal.db and the latest-analysis cache with the first.
     global _ENGINE_LOCK
@@ -77,14 +91,6 @@ def main() -> None:
     except engine_lock.EngineLockError as exc:
         # Held by another engine, or not lockable on this filesystem: either way
         # this engine must not start on the directory.
-        print(f"kalos portal: {exc}", file=sys.stderr)
-        raise SystemExit(2) from None
-
-    try:
-        check_startup_config()
-    except (ValueError, RunnerLocked) as exc:
-        # A background-job setting that cannot run: refuse to serve, rather than come up
-        # with jobs accepted and never run. Same shape as the refusals above.
         print(f"kalos portal: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
 

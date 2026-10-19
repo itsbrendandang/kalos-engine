@@ -111,7 +111,7 @@ def test_invalid_tenant_config_is_a_500_over_http_never_a_login(monkeypatch):
     _configure(monkeypatch, "acme/bio")
     r = TestClient(portal.app).get("/api/latest", headers={"Authorization": "Bearer tok"})
     assert r.status_code == 500
-    assert r.json()["detail"] == "authentication is misconfigured"
+    assert r.json() == {"error": "authentication is misconfigured", "code": "internal_error"}
 
 
 # --- latest cache file naming is injective ---------------------------------- #

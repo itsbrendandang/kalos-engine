@@ -61,10 +61,10 @@ def audit(
 
 
 def _archived(exc: CampaignArchived) -> JSONResponse:
-    return JSONResponse({"error": str(exc)}, status_code=409)
+    return JSONResponse({"error": str(exc), "code": "campaign_archived"}, status_code=409)
 
 
-_NOT_FOUND_BODY = {"error": "campaign not found"}
+_NOT_FOUND_BODY = {"error": "campaign not found", "code": "not_found"}
 
 
 def campaign_not_found_response() -> JSONResponse:
@@ -82,8 +82,8 @@ def campaign_error_response(exc: CampaignError) -> JSONResponse:
     if isinstance(exc, CampaignNotFound):
         return campaign_not_found_response()
     if isinstance(exc, (CampaignArchived, CampaignConflict)):
-        return JSONResponse({"error": str(exc)}, status_code=409)
-    return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse({"error": str(exc), "code": "conflict"}, status_code=409)
+    return JSONResponse({"error": str(exc), "code": "invalid_request"}, status_code=400)
 
 
 # --- request-body bounds (P0 hardening) ------------------------------------- #
@@ -180,7 +180,7 @@ def start_campaign(
         # Authored by CampaignStore, not a raw library error — safe to echo.
         log.warning("campaign start rejected: %s", exc)
         audit(store, principal, "campaign.start", 400)
-        return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse({"error": str(exc), "code": "invalid_request"}, status_code=400)
     audit(store, principal, "campaign.start", 200, detail=f"runs={len(started)}")
     return JSONResponse({"started": started})
 
@@ -202,7 +202,7 @@ def log_campaign_result(
     except CampaignError as exc:
         log.warning("campaign result rejected: %s", exc)
         audit(store, principal, "campaign.result", 400)
-        return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse({"error": str(exc), "code": "invalid_request"}, status_code=400)
     audit(store, principal, "campaign.result", 200)
     return JSONResponse(run)
 
@@ -258,7 +258,7 @@ async def _reanalyze(
         return _archived(exc)
     except CampaignError as exc:
         log.warning("reanalyze rejected: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse({"error": str(exc), "code": "invalid_request"}, status_code=400)
 
     # Runs still in the incubator. They have no outcome to fold, so they never
     # reach `df`; passed separately they keep the next batch from re-proposing an
@@ -273,7 +273,7 @@ async def _reanalyze(
 
     if df.empty:
         log.warning("reanalyze rejected: campaign has no base rows to analyze")
-        return JSONResponse({"error": "the campaign has no data to analyze"}, status_code=400)
+        return JSONResponse({"error": "the campaign has no data to analyze", "code": "no_data"}, status_code=400)
 
     try:
         # Same single analysis slot /api/run holds (kalos/portal/busy.py): a
@@ -288,7 +288,7 @@ async def _reanalyze(
         )
     except AnalysisBusy as busy:
         return JSONResponse(
-            {"error": str(busy)},
+            {"error": str(busy), "code": "engine_busy"},
             status_code=503,
             headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
         )
@@ -306,7 +306,7 @@ async def _reanalyze(
         # Nothing was committed (plan_fold does not mutate), so the campaign is
         # untouched and a retry is meaningful.
         log.error("failed to re-analyze the campaign: code=analysis_failed %s", scrubbed_failure(exc))
-        return JSONResponse({"error": "could not analyze the campaign data"}, status_code=400)
+        return JSONResponse({"error": "could not analyze the campaign data", "code": "analysis_failed"}, status_code=400)
 
     # The provenance block (kind=reanalyze): the same fields an upload gets, so
     # the record of a campaign's current analysis says what produced it.
@@ -324,7 +324,7 @@ async def _reanalyze(
         # describes a base dataset that no longer exists. Nothing was written,
         # neither the fold nor the analysis. Ask the caller to retry.
         log.warning("reanalyze not committed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=409)
+        return JSONResponse({"error": str(exc), "code": "conflict"}, status_code=409)
 
     # Return the SAME shape GET /api/latest returns (the stored analysis carries
     # `dataset` and `updated`, which the frontend's PopulatedResult type expects).

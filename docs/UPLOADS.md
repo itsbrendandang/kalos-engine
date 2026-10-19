@@ -31,9 +31,15 @@ Because the sheet comes from an external client, the upload path is guarded:
   | `no_usable_sheet` | no sheet of a multi-sheet workbook holds a usable table | `sheets`, `sheet_used: null` |
   | `ambiguous_header` | the first two rows are mostly blank or group labels (merged cells), so the column names cannot be identified. Refused rather than guessed. | `columns`: the columns detected (positional names such as `column 3` for unnamed cells; never pandas' `Unnamed: N`) |
   | `too_few_complete_rows` | at least 6 numeric targets, but fewer than 6 runs remain after the runs with a missing, non-numeric or censored cell are excluded | `min_rows`, `n_rows`, `n_dropped_incomplete`, `n_censored_excluded` |
+  | `payload_too_large` | the file is over `KALOS_MAX_UPLOAD_MB` (25 MB by default), or an xlsx's parts add up to more than the uncompressed-size cap | |
+  | `too_many_rows` | a CSV/TSV has more than 100,000 data rows (blank lines are not rows; a quoted newline is one row). Refused before the file is parsed. | `max_rows` |
+  | `too_many_columns` | more than 512 columns | |
+  | `too_many_cells` | an xlsx sheet has more than 2,000,000 cells (rows x columns) | |
   | `parse_error` / `fit_failed` | anything else (generic message), or a numerically intractable fit | `sheets`/`sheet_used` for Excel |
 
-  A size or shape cap (`too large`, `too many columns`) keeps its existing message.
+  CSV/TSV rows are counted by a streaming pass before pandas parses the body, and the header row is decided from that pass, so an over-cap file is refused without the memory cost of a full parse. Measured on a 4.2 M-row, 16 MB body: the refusal raised resident memory by about 230 MB before this change and by none after it (the process high-water mark does not move).
+
+  The size and shape codes above are stable: a client can branch on them. Their messages are engine-authored and may change. The engine's proxy maps `payload_too_large` to a plain upload-limit message; the other codes show the engine's own sentence.
 - **Header row.**
   The column names are read from row 1. When row 1 is mostly blank, or is a merged-cell group label ("Process", "Analytics" above the real headers), the engine reads the names from row 2 instead and records `header_row: 1`, with an `info` finding. A row of text labels over a complete header row is treated the same way.
   If the sheet is ambiguous (a group row with a few gaps, a units row under a partly blank header, or no usable names), the upload is refused with `ambiguous_header`, which lists the detected columns. A single data column with no header name is named by its position (`column 4`) and flagged with a `warning` finding (`unnamed_column`), so `Unnamed: N` never reaches a client.

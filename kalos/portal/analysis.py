@@ -9,7 +9,6 @@ import dataclasses
 import contextlib
 import functools
 import gc
-import os
 import re
 import threading
 import time
@@ -46,6 +45,7 @@ from kalos.portal.uploads import (
     clip_name,
     numeric_columns,
 )
+from kalos.portal.config import validation_mode_setting
 from kalos.portal.cells import (
     BLANK,
     CENSORED,
@@ -108,8 +108,9 @@ def validation_mode() -> str:
     property. Read at call time, not import time, so a deployment can change it
     without a restart and tests can monkeypatch it.
     """
-    mode = os.environ.get("KALOS_VALIDATION_MODE", "warn").strip().lower()
-    return mode if mode in {"warn", "strict"} else "warn"
+    # Fail closed: an unknown value raises (kalos.envconfig) instead of
+    # silently selecting "warn" (review H3).
+    return validation_mode_setting()
 
 
 _OUTCOME_HINT = BIOPROCESS_PROFILE.outcome_hint

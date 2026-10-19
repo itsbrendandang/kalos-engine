@@ -78,6 +78,9 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 | `KALOS_AUTH_DENY_SUBJECTS` | Comma-separated `sub:<subject>` / `sid:<session>` entries refused with 401 (bare entries match either; subject entries also apply to static tokens). | unset |
 | `KALOS_CORS_ORIGINS` | Comma-separated explicit CORS allowlist (e.g. `https://app.acme.com`). When set, replaces the permissive localhost default. | unset (dev localhost) |
 | `KALOS_ENV` | Accepted values: `production` or `development` (case-insensitive, surrounding whitespace ignored); unset or empty means `development`. Any other value (e.g. `prod`, `staging`) refuses to start with `ProductionConfigError` naming the accepted values: a typo must not silently drop the production guards. See "Production mode" below. | unset (= `development`) |
+| `KALOS_VALIDATION_MODE` | `warn` or `strict` (case-insensitive). `warn` analyzes a sheet with validation errors and returns the findings; `strict` refuses it (docs/UPLOADS.md). Any other value refuses to start (exit 2) and raises `ConfigError` at request time, so a typo such as `stict` cannot select `warn` silently. | `warn` |
+| `KALOS_LLM_PROVIDER` | `anthropic`, `ollama` or `none` (case-insensitive). An unknown value refuses to start, rather than falling back to the live Anthropic path. | `anthropic` |
+| `KALOS_AUDIT_RETENTION_DAYS` | Audit-log rows older than this are pruned at startup and once a day. An integer from 1 to 36500 (a century, the way to ask for "keep everything"); anything else refuses to start. See "Audit retention" below. | `365` |
 | `KALOS_MAX_REQUEST_BYTES` | Body-size cap, in bytes, for every non-upload route (the JSON `/api/campaign/*` bodies). Upload routes (`/api/run`, `/api/scale/readout`) are capped at `KALOS_MAX_UPLOAD_MB` + 1 MiB multipart allowance instead. Must be a positive integer. | `1048576` (1 MiB) |
 | `KALOS_JOBS_ENABLED` | `0` turns the background-job queue off: `POST /api/campaigns/{id}/jobs` answers 503 and nothing runs. Job status still reads. (docs/JOBS.md) | `1` |
 | `KALOS_JOB_WORKERS` | Analyses running at once in this engine, sync and background together. Must be >= 1. (docs/JOBS.md) | `2` |
@@ -88,12 +91,50 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 | `KALOS_BUILD_SHA` | Commit the engine was built from, recorded as `run.build_sha` on every analysis. CI passes `github.sha` at image build (`deploy/engine/Containerfile`). | `unknown` |
 | `KALOS_JOB_TIMEOUT_S` | Wall-clock limit for one job; past it the worker is killed and the job is `timed_out`. Must be >= 1. | `1800` |
 
+**Fail-closed settings.** Every enum-valued or bounded `KALOS_*` setting refuses an unknown value instead of defaulting (`kalos/envconfig.py`, one shared helper). `python -m kalos.portal` runs `check_env_settings()` before it binds a socket: a bad value prints one line naming the variable to stderr and exits 2. Unset and empty always mean the default.
+
+When neither `KALOS_AUTH_TOKENS_FILE` nor `KALOS_AUTH_TOKENS` is set, the API runs in **open mode** (anonymous `default` tenant, read+write, admin withheld) and logs a warning at startup.
 When none of `KALOS_AUTH_TOKENS_FILE`, `KALOS_AUTH_TOKENS` and `KALOS_JWT_PUBLIC_KEYS_FILE` is set, the API runs in **open mode** (anonymous `default` tenant, read+write, admin withheld) and logs a warning at startup.
+
+### Deployment templates: two settings deliberately not changed
+
+- **`KALOS_VALIDATION_MODE` stays at `warn` in `deploy/compose.yaml` and `deploy/.env.example`.** Setting `strict` refuses every sheet with an error-severity validation finding. Run against the current suite (review H3, 2026-10-19), `KALOS_VALIDATION_MODE=strict` makes 77 existing tests fail across upload errors, campaign routes, jobs, the scale readout, run records and the validation gate, so it would change what the API accepts for clients today. Turning it on is a product decision for the pilot owner, to be made per client with its findings in hand.
+- **`KALOS_ENV=production` is not set in `deploy/compose.yaml`.** Production mode turns off the demo routes `/api/single` and `/api/multi`, which the kalos-web simulator page calls, and disables the docs. Setting it is the right posture for a shared deployment, but it needs that page changed first. Until then the compose stack runs in development posture; the bind and token checks (`assert_safe_exposure`) still refuse an open non-loopback start.
+
+### Error envelope
+
+Every refusal the engine sends has the same body: `{"error": "<what went wrong and what to do>", "code": "<stable machine code>"}`, plus any extra fields the route documents. The HTTP status is the one the route always used. A client can branch on `code` and show `error`.
+
+| Status | `code` | Sent by |
+| --- | --- | --- |
+| 400 | `bad_request`, or a route-specific code such as `invalid_request`, `invalid_body`, or an upload code (`docs/UPLOADS.md`) | bad input |
+| 401 | `unauthenticated` | no or invalid bearer token (`WWW-Authenticate: Bearer` is kept) |
+| 403 | `forbidden` | a valid token without the required scope |
+| 404 | `not_found` | unknown route, or a campaign, run or job that does not exist for this tenant |
+| 405 | `method_not_allowed` | wrong method on a known route |
+| 409 | `conflict`, `campaign_archived`, `campaign_has_runs` | state refusal |
+| 413 | `payload_too_large` | body over a size cap |
+| 422 | `validation_error` (other routes), `invalid_target` / gate checks (`/api/scale/readout`) | request does not validate |
+| 429 | `rate_limited` | queue depth or rate limit |
+| 500 | `internal_error` | an unanticipated failure; the traceback is logged server-side only |
+| 503 | `engine_busy`, `service_unavailable`, `auth_not_configured` | analysis slot busy, or the portal is not configured for this request |
+| 504 | `engine_timeout` | a demo computation exceeded its wall clock |
+
+A 422 from body or parameter validation also carries `detail`: a list of `{"loc", "msg", "type"}` objects. The submitted values are not echoed. `/api/campaign*` answers 400 `invalid_body` for the same failures, with the field named in `error`.
+
+Clients that treated only a 400 body as a "bad upload" must check the status too. A 401, 403, 404 or 503 body now also has an `error` string.
+
+### Audit retention
+
+Every mutating request writes one `audit_log` row (tenant, subject, auth method, action, outcome; never a token, a file or its contents). `KALOS_AUDIT_RETENTION_DAYS` sets how long those rows are kept: default **365**, an integer from 1 to 36500. The portal removes older rows for every tenant once at startup and once a day, and logs the count removed. A failed prune is logged and does not stop the portal. An invalid value refuses to start (`python -m kalos.portal` exits 2). Deleting an audit row is never a request, so no route can do it.
 
 ### Production mode (`KALOS_ENV=production`)
 
 Decided once at startup. In production the engine:
 
+- **Refuses to start without enforced authentication.** Importing `kalos.portal.app` (and `python -m kalos.portal`) fails with `ProductionConfigError` unless `KALOS_AUTH_TOKENS[_FILE]` holds at least one token. This applies on every bind, loopback included, and `KALOS_ALLOW_OPEN_ACCESS` does **not** override it. A token list of `[]` counts as no auth.
+- **Fails closed at runtime.** Tokens are re-read per request (rotation without restart), so if the token config is emptied after startup every request except `/healthz` and `/readyz` gets a 503, local callers included, instead of silently reopening as anonymous read+write. This holds at two layers: the production middleware refuses the request, and `Authenticator.principal_for` (the `require_principal` dependency) itself raises 503 `authentication is not configured` in production when no tokens load, so a file emptied between the middleware check and the dependency cannot yield the anonymous principal.
+- **Disables the API docs and schema:** `/docs`, `/redoc` and `/openapi.json` are 404. They are served only when `KALOS_ENV=development` (the default when unset). Any other `KALOS_ENV` value refuses to start, so the docs cannot appear on a typo'd production config.
 - **Refuses to start without a usable auth source.** Importing `kalos.portal.app` (and `python -m kalos.portal`, exit 2) fails with `ProductionConfigError` unless `KALOS_JWT_PUBLIC_KEYS_FILE` holds at least one key or `KALOS_AUTH_TOKENS[_FILE]` holds at least one service-account token. This applies on every bind, loopback included, and `KALOS_ALLOW_OPEN_ACCESS` does **not** override it. A token list of `[]` or a JWKS with no keys counts as no auth.
 - **Refuses invalid auth config at startup.** This covers an unreadable or malformed JWKS file (validated whenever `KALOS_JWT_PUBLIC_KEYS_FILE` is set, even alongside static tokens), a JWKS containing the published test-vector keys, an out-of-range `KALOS_JWT_*` knob, and static records that are not `"service_account": true` or that hold `admin`.
 - **Fails closed at runtime.** Tokens and keys are re-read per request (rotation without restart). If both sources are emptied after startup, every request except `/healthz` and `/readyz` gets a 503, local callers included, instead of silently reopening as anonymous read+write. This holds at two layers: the production middleware refuses the request, and `Authenticator.principal_for` (the `require_principal` dependency) itself raises 503 `authentication is not configured` in production when neither static tokens nor a JWT key file are configured, so a file emptied between the middleware check and the dependency cannot yield the anonymous principal. A JWKS file that goes bad at runtime is a 503 too (in every environment).
@@ -116,7 +157,7 @@ The per-tenant `/api/latest` cache file is named `t-<hex of the tenant id's UTF-
 - Upload auth precheck: with authentication enforced, a `POST` to an upload route (`/api/run`, `/api/scale/readout`) without an `Authorization: Bearer <token>` header is answered **401** before the multipart body is read. It only checks that a bearer credential is present; the token is still verified by `require_principal`, so a wrong token is the dependency's usual 401 (after the body is read, bounded by the cap above).
 - `POST /api/campaign/start`: at most 64 recipes per call; each recipe value is, by shape, a finite JSON number (bools refused), a string of at most 512 characters, or null. The shape check alone does NOT refuse numeric strings (`"7.3"` is a valid string); the store then checks every value against the kind of column it lands in, read from the campaign's dataset with the analysis's own typing (single-unit text such as `34.6 C` converted first, then numeric when at least 3 cells and >= 80% of them are numbers, so a pH column with one `ND` cell is numeric; `kalos/portal/recipe_values.py`): a numeric column takes only a finite number within 1e6 x the column's observed span of its observed range (a numeric string is refused, except the exact label of an observed value such as `"200"` for an observed `200`, which is what the engine proposes for a numeric column declared categorical, and is stored as the number); a categorical column takes only one of its observed levels or null (an unknown level is refused, not added); a column with no values takes only null; and a campaign holds at most 256 runs in flight (started, or measured but not yet re-analyzed), beyond which `/start` answers 400; recipe keys are 1-512 characters and must be columns of the campaign's dataset other than the target; `pred`/`std` are finite numbers or null; `mode`/`reason` are at most 512 characters. Unknown extra fields are ignored and not stored.
 - `POST /api/campaign/result`: `id` is 1-512 characters; `value` is a JSON number (a non-finite value is still refused by the store).
-- Validation failures on `/api/campaign/*` answer 400 with the usual `{"error": ...}` envelope naming the field (dict keys masked, input values never echoed). Other routes keep FastAPI's 422.
+- Validation failures on `/api/campaign/*` answer 400 `{"error": ..., "code": "invalid_body"}` naming the field (dict keys masked, input values never echoed). Other routes answer 422 in the same envelope, with the field list under `detail` (see "Error envelope").
 
 ### Probes
 
