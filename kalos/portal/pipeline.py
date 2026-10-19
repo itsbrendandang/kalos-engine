@@ -29,6 +29,7 @@ from typing import Any
 
 import pandas as pd
 
+from kalos.portal.config import read_number
 from kalos.portal.uploads import ParsedUpload, UploadRejected, parse_upload
 
 log = logging.getLogger("kalos.portal")
@@ -38,8 +39,8 @@ ProgressFn = Callable[[str, float], None]
 # --- CPU thread budget (moved from app.py; re-exported there) ---------------- #
 # See the KALOS_TORCH_THREADS comment in kalos/portal/app.py's history: 0 means
 # DO NOT PIN (the container default), the bare-metal default is min(4, cpus).
-TORCH_THREADS = int(
-    os.environ.get("KALOS_TORCH_THREADS", "").strip() or str(min(4, os.cpu_count() or 1))
+TORCH_THREADS = read_number(
+    "KALOS_TORCH_THREADS", str(min(4, os.cpu_count() or 1)), int, minimum=0,
 )
 _torch_threads_configured = False
 

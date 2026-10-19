@@ -136,11 +136,13 @@ def is_production() -> bool:
 
 
 def assert_production_posture(*, auth_enforced: bool) -> None:
-    """In production, refuse to start without enforced authentication.
+    """In production, refuse to start without enforced authentication and
+    without a real `KALOS_ANON_SALT`.
 
     Unlike the non-loopback bind check, `KALOS_ALLOW_OPEN_ACCESS` does NOT
     override this: an operator who declares production has said the portal is
-    not a bench box, so tokenless open access is never acceptable. A no-op
+    not a bench box, so tokenless open access is never acceptable. The salt
+    rule applies on loopback as well (see the inline note). A no-op
     outside production.
     """
     if is_production() and not auth_enforced:
@@ -148,6 +150,15 @@ def assert_production_posture(*, auth_enforced: bool) -> None:
             f"{_ENV_VAR}=production requires authentication: set KALOS_AUTH_TOKENS_FILE "
             "(or KALOS_AUTH_TOKENS) to a list with at least one token. "
             f"{_ALLOW_OPEN_VAR} is ignored in production (docs/HARDENING.md)."
+        )
+    if is_production() and not salt_configured():
+        # Required on EVERY bind, loopback included (docs/HARDENING.md, "Production
+        # mode"): a reverse proxy on the same host reaches a loopback-bound engine,
+        # and the pseudonyms it emits leave the machine either way.
+        raise ProductionConfigError(
+            f"{_ENV_VAR}=production requires KALOS_ANON_SALT: anonymized outputs are "
+            "derived from it and must not use the published dev salt, on any bind "
+            "(docs/HARDENING.md)."
         )
 
 

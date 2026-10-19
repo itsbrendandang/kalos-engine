@@ -54,6 +54,7 @@ from kalos.portal.config import (
     is_local_client,
     log_security_posture,
     open_access_explicitly_allowed,
+    read_number,
     ready_min_free_bytes,
 )
 from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_store
@@ -531,7 +532,7 @@ def _multi_compute(rounds: int, q: int) -> dict:
 # Demo-route wall clock. The thread cannot be killed, so on timeout the client
 # gets a 504 while the computation finishes in the background, STILL holding
 # its admission slot (released by the worker thread, kalos/portal/busy.py).
-DEMO_TIMEOUT_SECONDS = float(os.environ.get("KALOS_DEMO_TIMEOUT_S", "").strip() or "120")
+DEMO_TIMEOUT_SECONDS = read_number("KALOS_DEMO_TIMEOUT_S", "120", float, minimum=1.0)
 
 
 async def _run_demo(fn, principal: Principal, *args) -> JSONResponse:

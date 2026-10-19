@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from kalos.normalize.orientation import detect_orientation
+from kalos.portal.config import read_number
 
 log = logging.getLogger("kalos.portal")
 
@@ -25,7 +26,9 @@ log = logging.getLogger("kalos.portal")
 # arrives as "" - .get's default never applies and float("") crashed the boot
 # (found on the first real container run). Same unset==empty convention
 # kalos/providers/ already follows for every credential var.
-_MAX_UPLOAD_MB = float(os.environ.get("KALOS_MAX_UPLOAD_MB", "").strip() or "25")
+# A malformed value is a ConfigError naming the variable (kalos/portal/config.py),
+# which `python -m kalos.portal` reports as a one-line refusal.
+_MAX_UPLOAD_MB = read_number("KALOS_MAX_UPLOAD_MB", "25", float, minimum=0.000001)
 MAX_UPLOAD_BYTES = int(_MAX_UPLOAD_MB * 1024 * 1024)
 MAX_CSV_ROWS = 100_000       # rows read from a CSV/TSV upload
 MAX_COLUMNS = 512            # columns allowed in any upload (CSV or xlsx)
@@ -53,7 +56,7 @@ _ZIP_MAGIC = b"PK\x03\x04"   # xlsx/xls-as-zip start-of-file marker
 # targets the small-sample bioprocess regime (N <= a couple thousand), so we
 # reject an over-cap fit set rather than silently subsampling (which would be
 # invisible, non-deterministic data loss). Override with KALOS_MAX_FIT_ROWS.
-MAX_FIT_ROWS = int(os.environ.get("KALOS_MAX_FIT_ROWS", "").strip() or "2000")
+MAX_FIT_ROWS = read_number("KALOS_MAX_FIT_ROWS", "2000", int, minimum=1)
 
 MIN_FIT_ROWS = 6
 # The fewest data rows (with a numeric target) a model is fit on - the floor

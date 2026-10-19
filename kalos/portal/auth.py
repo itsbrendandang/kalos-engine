@@ -143,7 +143,13 @@ class Authenticator:
             try:
                 text = Path(path).expanduser().read_text()
             except OSError as exc:
-                raise AuthConfigError(f"cannot read KALOS_AUTH_TOKENS_FILE: {exc}") from exc
+                # The path and errno text are left out on purpose: the message
+                # reaches the startup refusal and the server log, and the operator
+                # already knows which path they configured.
+                raise AuthConfigError(
+                    f"cannot read KALOS_AUTH_TOKENS_FILE ({type(exc).__name__}): check that "
+                    "the file exists and is readable by this process"
+                ) from exc
         else:
             text = os.environ.get("KALOS_AUTH_TOKENS", "").strip()
             if not text:

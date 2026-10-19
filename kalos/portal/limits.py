@@ -42,9 +42,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from collections.abc import Awaitable, Callable, Iterable, MutableMapping
 from typing import Any
+
+from kalos.portal.config import read_number
 
 log = logging.getLogger("kalos.portal")
 
@@ -71,16 +72,9 @@ def max_request_bytes() -> int:
     that is not a positive integer is an operator error and raises, rather
     than silently running with no limit.
     """
-    raw = os.environ.get("KALOS_MAX_REQUEST_BYTES", "").strip()
-    if not raw:
-        return DEFAULT_MAX_REQUEST_BYTES
-    try:
-        value = int(raw)
-    except ValueError:
-        raise ValueError(f"KALOS_MAX_REQUEST_BYTES must be a positive integer; got {raw!r}") from None
-    if value <= 0:
-        raise ValueError(f"KALOS_MAX_REQUEST_BYTES must be a positive integer; got {raw!r}")
-    return value
+    return read_number(
+        "KALOS_MAX_REQUEST_BYTES", str(DEFAULT_MAX_REQUEST_BYTES), int, minimum=1,
+    )
 
 
 # A Content-Length with more digits than this is over any cap we could set
