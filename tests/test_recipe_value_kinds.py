@@ -111,3 +111,93 @@ def test_route_answers_400_with_the_store_message(tmp_path):
         app.dependency_overrides.pop(get_campaign_store, None)
     assert r.status_code == 400
     assert "numeric strings are refused" in r.json()["error"]
+
+
+# --- re-review: the store types columns the way the analysis does ------------- #
+
+from kalos.portal.recipe_values import MAX_PENDING_RUNS, NUMERIC as _NUM  # noqa: E402
+
+
+def test_a_mostly_numeric_column_with_one_text_cell_is_numeric():
+    rows = [{"pH": v} for v in [6.0, 6.5, "ND", 7.0, 6.2, 6.8]]
+    kinds = column_kinds(rows, ["pH"])
+    assert kinds["pH"].kind == _NUM
+    assert check_recipe_values({"pH": 6.41}, kinds) == ({"pH": 6.41}, None)
+
+
+def test_a_single_unit_text_column_is_numeric_in_base_units():
+    rows = [{"Temp": f"{t} C"} for t in [30.1, 31.0, 32.5, 33.0, 29.8, 34.6]]
+    kinds = column_kinds(rows, ["Temp"])
+    assert kinds["Temp"].kind == _NUM
+    assert kinds["Temp"].low == pytest.approx(29.8) and kinds["Temp"].high == pytest.approx(34.6)
+    assert check_recipe_values({"Temp": 31.7}, kinds)[1] is None
+
+
+@pytest.mark.parametrize("value", [1e300, -1e300, 6.5e7])
+def test_numeric_values_far_outside_the_observed_range_are_refused(store, value):
+    with pytest.raises(CampaignError, match="observed span"):
+        _start(store, {"pH": value})
+
+
+def test_values_within_the_magnitude_bound_are_accepted(store):
+    (run,) = _start(store, {"pH": 50.0})  # outside the box, inside the sanity bound
+    assert run["recipe"] == {"pH": 50.0}
+
+
+def test_runs_in_flight_are_capped_per_campaign(store):
+    batch = [{"recipe": {"pH": 6.5}}] * 64
+    for _ in range(MAX_PENDING_RUNS // 64):
+        store.start(batch, tenant="acme")
+    with pytest.raises(CampaignError, match=f"at most {MAX_PENDING_RUNS}"):
+        store.start([{"recipe": {"pH": 6.5}}], tenant="acme")
+    assert len(store.get(tenant="acme")["pending"]) == MAX_PENDING_RUNS
+
+
+def _upload_then_start(tmp_path, df) -> tuple[int, dict]:
+    from fastapi.testclient import TestClient
+
+    from kalos.portal import app as portal
+    from kalos.portal import campaign as campaign_module
+    from kalos.portal.app import app, get_campaign_store
+
+    s = CampaignStore(tmp_path)
+    mp = pytest.MonkeyPatch()
+    mp.setattr(portal, "_STATE_DIR", tmp_path)
+    mp.setattr(portal, "_LATEST_DIR", tmp_path / "latest")
+    mp.setattr(portal, "_LATEST", {})
+    mp.setattr(campaign_module, "_STORE", s)
+    app.dependency_overrides[get_campaign_store] = lambda: s
+    try:
+        c = TestClient(app)
+        up = c.post("/api/run", files={"file": ("runs.csv", df.to_csv(index=False).encode(), "text/csv")})
+        assert up.status_code == 200, up.text
+        proposals = up.json()["proposals"]
+        assert proposals
+        r = c.post("/api/campaign/start", json={"recipes": proposals})
+        return r.status_code, r.json()
+    finally:
+        app.dependency_overrides.pop(get_campaign_store, None)
+        mp.undo()
+
+
+def test_engine_proposals_start_end_to_end_with_text_cells_in_numeric_columns(tmp_path):
+    """Regression: a pH column with one 'ND' cell and a temperature column in
+    '30.1 C' text are numeric to the analysis, so the engine proposes numbers
+    for them; the store must accept its own proposals."""
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    n = 16
+    methanol = rng.uniform(0, 4, n).round(3)
+    ph = rng.uniform(5, 7, n).round(2)
+    temp = rng.uniform(28, 34, n).round(1)
+    df = pd.DataFrame({
+        "Methanol": methanol,
+        "pH": [str(v) for v in ph],
+        "Temp": [f"{t} C" for t in temp],
+        "lipase_titer": (1.5 * methanol + 0.2 * temp + rng.normal(0, 0.1, n)).round(3),
+    })
+    df.loc[3, "pH"] = "ND"
+    status, body = _upload_then_start(tmp_path, df)
+    assert status == 200, body
+    assert len(body["started"]) >= 1

@@ -90,12 +90,16 @@ _MAX_CONTENT_LENGTH_DIGITS = 19
 
 
 def route_path(scope: Scope) -> str:
-    """The request path with the ASGI `root_path` prefix removed, trailing
-    slashes dropped, so route matching is independent of where the app is
-    mounted."""
+    """The request path with the ASGI `root_path` prefix removed (on a `/`
+    boundary only, like Starlette's routing), trailing slashes dropped, so
+    route matching is independent of where the app is mounted. Every
+    path-based decision outside the router (body caps, the upload pre-check,
+    the production probe exemption) uses this one function."""
     path = scope.get("path", "") or ""
-    root = scope.get("root_path", "") or ""
-    if root and path.startswith(root):
+    root = (scope.get("root_path", "") or "").rstrip("/")
+    # Same rule as Starlette's `get_route_path`: strip the prefix only on a
+    # path-segment boundary, so root_path "/engine" does not eat "/engineX/...".
+    if root and path.startswith(root) and (len(path) == len(root) or path[len(root)] == "/"):
         path = path[len(root):]
     return path.rstrip("/") or "/"
 
