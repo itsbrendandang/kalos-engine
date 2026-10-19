@@ -10,9 +10,21 @@ This track closes the surrounding-system gaps in dependency order.
 ## Principles
 
 - **Backward compatible by default.** Every hardening step ships behind configuration and defaults to the current behavior, so the local dev loop and pilot deployments never break mid-migration.
-- **In-house, self-hosted.** No dependency on an external identity provider or SaaS control plane. Auth, storage, and secrets are provisioned and owned by the operator.
+- **In-house, self-hosted engine.** The engine has no dependency on an external identity provider or SaaS control plane. Auth, storage, and secrets are provisioned and owned by the operator. User sign-in lives in kalos-web (see "Architecture" below); the engine only verifies tokens.
 - **Fail closed when configured, open when not.** With no auth configured the API stays open (dev/pilot); the moment tokens are provisioned it enforces them. There is no half-authenticated state.
 - **Reuse what exists.** The experiments path already has a `SqliteStore` (`kalos/store/`) and a constant-time bearer-token check (`kalos/portal/experiments.py`). New work generalizes those rather than inventing parallel mechanisms.
+
+## Architecture: who authenticates whom
+
+```
+browser --(session cookie)--> kalos-web --(Authorization: Bearer <engine token>)--> kalos-engine
+               session provider                 EdDSA JWT, <=120 s, per request
+```
+
+- **kalos-web authenticates users** through its session provider. On each engine call it maps the user's role or permissions to engine scopes, resolves the tenant, and mints a short-lived **engine token**: an Ed25519-signed JWT with `sub`, `sid`, `tenant`, `scopes`, `jti`, `iat`/`nbf`/`exp`.
+- **The engine does not depend on the provider.** It trusts a JWKS file of Ed25519 public keys (`KALOS_JWT_PUBLIC_KEYS_FILE`) and the claim contract in [docs/ENGINE_TOKEN.md](ENGINE_TOKEN.md), nothing else. Changing the web's session provider does not touch the engine.
+- **Static tokens are for service accounts only.** The hashed static tokens (`KALOS_AUTH_TOKENS[_FILE]`) remain for machine callers (ingest jobs, runners). In `KALOS_ENV=production`, every static record must be `"service_account": true`, may not hold `admin`, and carries exactly one tenant. Users never hold static tokens.
+- **Revocation** uses short token lifetimes plus the `KALOS_AUTH_DENY_SUBJECTS` deny-list (subjects and/or session ids). There is no revocation database.
 
 ## Sequence
 
@@ -59,18 +71,24 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 | --- | --- | --- |
 | `KALOS_AUTH_TOKENS_FILE` | Path to a JSON file of provisioned principals (see below). Takes precedence over the env var. | unset |
 | `KALOS_AUTH_TOKENS` | Inline JSON array of provisioned principals. | unset |
+| `KALOS_JWT_PUBLIC_KEYS_FILE` | JWKS file of trusted Ed25519 public keys for engine tokens (docs/ENGINE_TOKEN.md). Setting it enables the JWT branch and disables open mode. | unset |
+| `KALOS_JWT_ISSUER` / `KALOS_JWT_AUDIENCE` | Required `iss` / `aud` of engine tokens. | `kalos-web` / `kalos-engine` |
+| `KALOS_JWT_LEEWAY_S` | Clock-skew leeway for engine tokens, 0-120 s. | `30` |
+| `KALOS_JWT_MAX_TTL_S` | Longest allowed `exp - iat`, 1-300 s. | `120` |
+| `KALOS_AUTH_DENY_SUBJECTS` | Comma-separated `sub:<subject>` / `sid:<session>` entries refused with 401 (bare entries match either; subject entries also apply to static tokens). | unset |
 | `KALOS_CORS_ORIGINS` | Comma-separated explicit CORS allowlist (e.g. `https://app.acme.com`). When set, replaces the permissive localhost default. | unset (dev localhost) |
 | `KALOS_ENV` | Accepted values: `production` or `development` (case-insensitive, surrounding whitespace ignored); unset or empty means `development`. Any other value (e.g. `prod`, `staging`) refuses to start with `ProductionConfigError` naming the accepted values: a typo must not silently drop the production guards. See "Production mode" below. | unset (= `development`) |
 | `KALOS_MAX_REQUEST_BYTES` | Body-size cap, in bytes, for every non-upload route (the JSON `/api/campaign/*` bodies). Upload routes (`/api/run`, `/api/scale/readout`) are capped at `KALOS_MAX_UPLOAD_MB` + 1 MiB multipart allowance instead. Must be a positive integer. | `1048576` (1 MiB) |
 
-When neither `KALOS_AUTH_TOKENS_FILE` nor `KALOS_AUTH_TOKENS` is set, the API runs in **open mode** (anonymous `default` tenant, read+write, admin withheld) and logs a warning at startup.
+When none of `KALOS_AUTH_TOKENS_FILE`, `KALOS_AUTH_TOKENS` and `KALOS_JWT_PUBLIC_KEYS_FILE` is set, the API runs in **open mode** (anonymous `default` tenant, read+write, admin withheld) and logs a warning at startup.
 
 ### Production mode (`KALOS_ENV=production`)
 
 Decided once at startup. In production the engine:
 
-- **Refuses to start without enforced authentication.** Importing `kalos.portal.app` (and `python -m kalos.portal`) fails with `ProductionConfigError` unless `KALOS_AUTH_TOKENS[_FILE]` holds at least one token. This applies on every bind, loopback included, and `KALOS_ALLOW_OPEN_ACCESS` does **not** override it. A token list of `[]` counts as no auth.
-- **Fails closed at runtime.** Tokens are re-read per request (rotation without restart), so if the token config is emptied after startup every request except `/healthz` and `/readyz` gets a 503, local callers included, instead of silently reopening as anonymous read+write. This holds at two layers: the production middleware refuses the request, and `Authenticator.principal_for` (the `require_principal` dependency) itself raises 503 `authentication is not configured` in production when no tokens load, so a file emptied between the middleware check and the dependency cannot yield the anonymous principal.
+- **Refuses to start without a usable auth source.** Importing `kalos.portal.app` (and `python -m kalos.portal`, exit 2) fails with `ProductionConfigError` unless `KALOS_JWT_PUBLIC_KEYS_FILE` holds at least one key or `KALOS_AUTH_TOKENS[_FILE]` holds at least one service-account token. This applies on every bind, loopback included, and `KALOS_ALLOW_OPEN_ACCESS` does **not** override it. A token list of `[]` or a JWKS with no keys counts as no auth.
+- **Refuses invalid auth config at startup.** This covers an unreadable or malformed JWKS file (validated whenever `KALOS_JWT_PUBLIC_KEYS_FILE` is set, even alongside static tokens), a JWKS containing the published test-vector keys, an out-of-range `KALOS_JWT_*` knob, and static records that are not `"service_account": true` or that hold `admin`.
+- **Fails closed at runtime.** Tokens and keys are re-read per request (rotation without restart). If both sources are emptied after startup, every request except `/healthz` and `/readyz` gets a 503, local callers included, instead of silently reopening as anonymous read+write. This holds at two layers: the production middleware refuses the request, and `Authenticator.principal_for` (the `require_principal` dependency) itself raises 503 `authentication is not configured` in production when neither static tokens nor a JWT key file are configured, so a file emptied between the middleware check and the dependency cannot yield the anonymous principal. A JWKS file that goes bad at runtime is a 503 too (in every environment).
 - **Disables the API docs and schema:** `/docs`, `/redoc` and `/openapi.json` are 404.
 - **Does not serve the demo routes** `/api/single` and `/api/multi` (404). They run CPU-heavy GP loops on a synthetic surface outside the single analysis slot (`kalos/portal/busy.py`), so in a shared deployment any token holder could tie up the CPU with them.
 
@@ -106,10 +124,13 @@ Not covered here: per-tenant concurrency limits (design pending).
     "token_sha256": "9f86d0818188...b0f00a08",
     "subject": "svc-lab-ingest",
     "tenant": "acme-bio",
-    "scopes": ["read", "write"]
+    "scopes": ["read", "write"],
+    "service_account": true
   }
 ]
 ```
+
+`service_account` defaults to `false` and is required (`true`) in production, where `admin` is also refused on static tokens. In every environment, `subject` must be 1-256 printable ASCII characters with no spaces or commas, so that any subject can be named in `KALOS_AUTH_DENY_SUBJECTS`. `tenant` may not be the reserved `default`.
 
 Generate a token and its hash out of band, store only the hash here, and hand the raw token to the caller once:
 
@@ -136,4 +157,5 @@ A review of progress against the readiness scorecard surfaced that campaign + la
 - Phase 1c transport/CORS: **done** on `feat/hardening-1c` - CORS allowlist via `KALOS_CORS_ORIGINS`, startup security-posture logging, TLS-via-proxy deployment note. Secrets-provider abstraction deferred.
 - P1 experiments store tenant-scope + auth-gate: **done** on `feat/hardening-experiments-tenancy` - closes the cross-tenant leak the review found; the tenancy guarantee now covers all three stores (campaign, latest, experiments).
 - P0 engine hardening: **done** on `security/p0-engine-hardening` - tenant-id validation + injective latest-cache names, required `tenant` keyword on the stores, `KALOS_ENV=production`, async `/healthz` and generic `/readyz` reason, body-size cap + bounded campaign bodies. Per-tenant concurrency is out of scope (design pending).
+- E2 engine-token verification: **in review** on `feat/engine-jwt-verification` - EdDSA JWTs minted by kalos-web, verified against a JWKS file by `kid` (docs/ENGINE_TOKEN.md); `Principal` gains `auth_method`/`session_id`/`token_id`; deny-list revocation; production restricts static tokens to service accounts.
 - P2 observability, P3 async job queue, P4 latest->SQLite, P5 backups: planned, not started (see "Next backbone" above).

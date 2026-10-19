@@ -421,7 +421,7 @@ def test_upload_precheck_lets_a_bearer_through_to_real_verification(monkeypatch)
     r = TestClient(app).post("/api/run", files={"file": ("a.csv", b"a,b\n1,2\n", "text/csv")},
                              headers={"Authorization": "Bearer wrong"})
     assert r.status_code == 401
-    assert r.json() == {"detail": "invalid token"}  # the dependency's answer, not the precheck's
+    assert r.json() == {"detail": "invalid or expired token"}  # the dependency's answer, not the precheck's
 
 
 def test_upload_precheck_is_inert_in_open_mode(client):
