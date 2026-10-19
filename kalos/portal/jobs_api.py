@@ -51,7 +51,7 @@ log = logging.getLogger("kalos.portal")
 router = APIRouter()
 
 JOB_UPLOAD_PATH = re.compile(r"/api/campaigns/cmp_[0-9a-f]{32}/jobs/?")
-_JOB_NOT_FOUND = {"error": "job not found"}
+_JOB_NOT_FOUND = {"error": "job not found", "code": "not_found"}
 
 
 def _job_not_found() -> JSONResponse:
@@ -120,14 +120,14 @@ def _job_error_response(exc: CampaignError) -> JSONResponse:
     if isinstance(exc, jobs.JobNotFound):
         return _job_not_found()
     if isinstance(exc, jobs.JobsDisabled):
-        return JSONResponse({"error": str(exc)}, status_code=503)
+        return JSONResponse({"error": str(exc), "code": "service_unavailable"}, status_code=503)
     if isinstance(exc, jobs.QueueFull):
         return JSONResponse(
-            {"error": str(exc)}, status_code=429,
+            {"error": str(exc), "code": "rate_limited"}, status_code=429,
             headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
         )
     if isinstance(exc, jobs.JobTooLarge):
-        return JSONResponse({"error": str(exc)}, status_code=413)
+        return JSONResponse({"error": str(exc), "code": "payload_too_large"}, status_code=413)
     return campaign_error_response(exc)
 
 
@@ -168,7 +168,7 @@ async def _submit(
         settings = jobs.job_settings()
     except ValueError:
         log.exception("background job settings are invalid")
-        return JSONResponse({"error": "background jobs are misconfigured"}, status_code=503), None
+        return JSONResponse({"error": "background jobs are misconfigured", "code": "jobs_misconfigured"}, status_code=503), None
     if not settings.enabled:
         return _job_error_response(jobs.JobsDisabled()), None
     # One byte past the tenant's limit is enough to refuse; never hold more.
@@ -182,7 +182,7 @@ async def _submit(
         return campaign_error_response(exc), None
     if info["archived"]:
         response = JSONResponse(
-            {"error": "the campaign is archived; it can be read but not changed"}, status_code=409,
+            {"error": "the campaign is archived; it can be read but not changed", "code": "campaign_archived"}, status_code=409,
         )
         return response, None
     # The sync route's refusals, before a job is spent on the file.

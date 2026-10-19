@@ -71,7 +71,7 @@ RUN_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
 # well-formed campaign id qualifies; anything else keeps the small default cap.
 CAMPAIGN_UPLOAD_PATH = re.compile(r"/api/campaigns/cmp_[0-9a-f]{32}/upload/?")
 
-_RUN_NOT_FOUND_BODY = {"error": "run not found"}
+_RUN_NOT_FOUND_BODY = {"error": "run not found", "code": "not_found"}
 
 
 class CampaignUploadSizeLimit(RequestSizeLimitMiddleware):
@@ -267,7 +267,7 @@ def update_campaign(
         _require_admin(principal)  # before the id is looked at
     if body.name is None and body.archived is None:
         return JSONResponse(
-            {"error": "invalid request body: provide 'name' and/or 'archived'"}, status_code=400
+            {"error": "invalid request body: provide 'name' and/or 'archived'", "code": "invalid_body"}, status_code=400
         )
     if not _valid_campaign_id(campaign_id):
         status, response = 404, campaign_not_found_response()
@@ -321,7 +321,7 @@ async def upload_to_campaign(
         else:
             if info["archived"]:
                 response = JSONResponse(
-                    {"error": "the campaign is archived; it can be read but not changed"},
+                    {"error": "the campaign is archived; it can be read but not changed", "code": "campaign_archived"},
                     status_code=409,
                 )
             else:
@@ -387,7 +387,7 @@ def log_run_result(
     if not _valid_campaign_id(campaign_id):
         response = campaign_not_found_response()
     elif not math.isfinite(body.value):
-        response = JSONResponse({"error": "result value must be a finite number"}, status_code=400)
+        response = JSONResponse({"error": "result value must be a finite number", "code": "invalid_result"}, status_code=400)
     elif RUN_ID_PATTERN.fullmatch(run_id) is None:
         response = JSONResponse(_RUN_NOT_FOUND_BODY, status_code=404)
     else:

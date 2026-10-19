@@ -71,7 +71,7 @@ def test_oversized_json_body_is_413_before_parsing(client, store, monkeypatch):
     body = b'{"recipes": [' + b" " * (DEFAULT_MAX_REQUEST_BYTES + 10) + b"]}"
     r = client.post("/api/campaign/start", content=body, headers={"content-type": "application/json"})
     assert r.status_code == 413
-    assert r.json() == {"error": "The request body is too large."}
+    assert r.json() == {"error": "The request body is too large.", "code": "payload_too_large"}
     assert calls == []  # the route never ran
 
 
@@ -284,7 +284,7 @@ def test_chunked_over_cap_json_body_is_413_on_the_real_app(client, store, monkey
     r = client.post("/api/campaign/start", content=_chunks(30, 100_000),
                     headers={"content-type": "application/json"})
     assert r.status_code == 413
-    assert r.json() == {"error": "The request body is too large."}
+    assert r.json() == {"error": "The request body is too large.", "code": "payload_too_large"}
     assert calls == []
 
 
@@ -300,7 +300,7 @@ def test_chunked_over_cap_upload_is_413_on_the_real_app(client):
     r = client.post("/api/run", content=body(),
                     headers={"content-type": "multipart/form-data; boundary=b"})
     assert r.status_code == 413
-    assert r.json() == {"error": "The request body is too large."}
+    assert r.json() == {"error": "The request body is too large.", "code": "payload_too_large"}
 
 
 def test_chunked_under_cap_json_body_still_works_on_the_real_app(client, store):
@@ -386,7 +386,7 @@ def test_upload_without_a_bearer_is_401_before_the_body_is_read(monkeypatch, hea
     r = TestClient(app).post("/api/run", content=body(),
                              headers={"content-type": "multipart/form-data; boundary=b", **headers})
     assert r.status_code == 401
-    assert r.json() == {"detail": "authentication required"}
+    assert r.json() == {"error": "authentication required", "code": "unauthenticated"}
     assert read == []  # the body generator was never pulled
 
 
@@ -395,7 +395,7 @@ def test_upload_precheck_lets_a_bearer_through_to_real_verification(monkeypatch)
     r = TestClient(app).post("/api/run", files={"file": ("a.csv", b"a,b\n1,2\n", "text/csv")},
                              headers={"Authorization": "Bearer wrong"})
     assert r.status_code == 401
-    assert r.json() == {"detail": "invalid token"}  # the dependency's answer, not the precheck's
+    assert r.json() == {"error": "invalid token", "code": "unauthenticated"}  # the dependency's answer, not the precheck's
 
 
 def test_upload_precheck_is_inert_in_open_mode(client):

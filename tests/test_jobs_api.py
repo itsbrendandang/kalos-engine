@@ -279,7 +279,7 @@ def test_another_tenants_job_is_not_found_and_byte_identical_to_a_missing_one(en
     malformed = tc.get("/api/jobs/job_NOT-A-JOB", headers=H("a-admin"))
     for r in (foreign, absent, malformed):
         assert r.status_code == 404
-        assert r.json() == {"error": "job not found"}
+        assert r.json() == {"error": "job not found", "code": "not_found"}
         assert r.content == foreign.content
     assert GLOBEX_SECRET not in foreign.text
 

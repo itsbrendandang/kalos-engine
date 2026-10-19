@@ -77,6 +77,29 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 
 When neither `KALOS_AUTH_TOKENS_FILE` nor `KALOS_AUTH_TOKENS` is set, the API runs in **open mode** (anonymous `default` tenant, read+write, admin withheld) and logs a warning at startup.
 
+### Error envelope
+
+Every refusal the engine sends has the same body: `{"error": "<what went wrong and what to do>", "code": "<stable machine code>"}`, plus any extra fields the route documents. The HTTP status is the one the route always used. A client can branch on `code` and show `error`.
+
+| Status | `code` | Sent by |
+| --- | --- | --- |
+| 400 | `bad_request`, or a route-specific code such as `invalid_request`, `invalid_body`, or an upload code (`docs/UPLOADS.md`) | bad input |
+| 401 | `unauthenticated` | no or invalid bearer token (`WWW-Authenticate: Bearer` is kept) |
+| 403 | `forbidden` | a valid token without the required scope |
+| 404 | `not_found` | unknown route, or a campaign, run or job that does not exist for this tenant |
+| 405 | `method_not_allowed` | wrong method on a known route |
+| 409 | `conflict`, `campaign_archived`, `campaign_has_runs` | state refusal |
+| 413 | `payload_too_large` | body over a size cap |
+| 422 | `validation_error` (other routes), `invalid_target` / gate checks (`/api/scale/readout`) | request does not validate |
+| 429 | `rate_limited` | queue depth or rate limit |
+| 500 | `internal_error` | an unanticipated failure; the traceback is logged server-side only |
+| 503 | `engine_busy`, `service_unavailable`, `auth_not_configured` | analysis slot busy, or the portal is not configured for this request |
+| 504 | `engine_timeout` | a demo computation exceeded its wall clock |
+
+A 422 from body or parameter validation also carries `detail`: a list of `{"loc", "msg", "type"}` objects. The submitted values are not echoed. `/api/campaign*` answers 400 `invalid_body` for the same failures, with the field named in `error`.
+
+Clients that treated only a 400 body as a "bad upload" must check the status too. A 401, 403, 404 or 503 body now also has an `error` string.
+
 ### Production mode (`KALOS_ENV=production`)
 
 Decided once at startup. In production the engine:
@@ -102,7 +125,7 @@ The per-tenant `/api/latest` cache file is named `t-<hex of the tenant id's UTF-
 - Upload auth precheck: with authentication enforced, a `POST` to an upload route (`/api/run`, `/api/scale/readout`) without an `Authorization: Bearer <token>` header is answered **401** before the multipart body is read. It only checks that a bearer credential is present; the token is still verified by `require_principal`, so a wrong token is the dependency's usual 401 (after the body is read, bounded by the cap above).
 - `POST /api/campaign/start`: at most 64 recipes per call; each recipe value is, by shape, a finite JSON number (bools refused), a string of at most 512 characters, or null. The shape check alone does NOT refuse numeric strings (`"7.3"` is a valid string); the store then checks every value against the kind of column it lands in, read from the campaign's dataset (`kalos/portal/recipe_values.py`): a numeric column takes only a finite number (a numeric string is refused, except the exact label of an observed value such as `"200"` for an observed `200`, which is what the engine proposes for a numeric column declared categorical, and is stored as the number); a categorical column takes only one of its observed levels or null (an unknown level is refused, not added); a column with no values takes only null; recipe keys are 1-512 characters and must be columns of the campaign's dataset other than the target; `pred`/`std` are finite numbers or null; `mode`/`reason` are at most 512 characters. Unknown extra fields are ignored and not stored.
 - `POST /api/campaign/result`: `id` is 1-512 characters; `value` is a JSON number (a non-finite value is still refused by the store).
-- Validation failures on `/api/campaign/*` answer 400 with the usual `{"error": ...}` envelope naming the field (dict keys masked, input values never echoed). Other routes keep FastAPI's 422.
+- Validation failures on `/api/campaign/*` answer 400 `{"error": ..., "code": "invalid_body"}` naming the field (dict keys masked, input values never echoed). Other routes answer 422 in the same envelope, with the field list under `detail` (see "Error envelope").
 
 ### Probes
 

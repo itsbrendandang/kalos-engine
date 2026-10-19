@@ -23,7 +23,7 @@ Not validated under 21 CFR Part 11.
 Responses:
 
 - `200 text/html`: the readout page. Save it as PDF from the browser; page 1 holds the decision, and a provenance appendix follows.
-- `422`: `{"failed_check": ..., "detail": ...}` when the sheet or target fails the gate or the target JSON is malformed.
+- `422`: `{"error": ..., "code": ..., "failed_check": ..., "detail": ...}` when the sheet or target fails the gate or the target JSON is malformed. `code` and `failed_check` carry the same check name (docs/HARDENING.md, "Error envelope").
 - `400`: upload rejected (same rules as `/api/run`).
 - `503` + `Retry-After`: another analysis is running (one analysis slot, shared with `/api/run`).
 
