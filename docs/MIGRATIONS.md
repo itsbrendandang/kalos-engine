@@ -36,6 +36,29 @@ Every connection sets `PRAGMA foreign_keys = ON` and `busy_timeout = 5000`.
 The file is in WAL mode. The composite foreign keys mean an analysis or a
 default can only point at a campaign of the same tenant.
 
+## Schema v3: background jobs
+
+Schema v3 adds one table, `jobs`, for the background-job queue (docs/JOBS.md).
+The change is additive: no v2 table is altered, and no data moves.
+
+- `python -m kalos.portal.migrate up` brings a v2 database to v3. It takes an
+  online backup first, named `portal.db.pre-v3-<UTC timestamp>` (a v1 database
+  gets `pre-v2-...` and goes through v2 to v3 in the same transaction), then
+  creates the table and its two indexes in one `BEGIN IMMEDIATE` transaction.
+- A v3 database is a no-op for `up`. The engine runs the same check at startup.
+- `python -m kalos.portal.migrate down` steps back ONE version (v3 -> v2). It
+  renames `jobs` to `jobs_v3_rolledback` rather than dropping it, so the queue
+  history is kept. `down --to 1` steps all the way back.
+- Job input files are NOT in the database: they live under
+  `<KALOS_STATE_DIR>/jobs/`. A rollback leaves them in place; the next engine
+  start with jobs enabled sweeps any that no live job refers to.
+- `down` is for running OLDER code, which does not know the `jobs` table. An
+  engine started on a v2 database migrates it back to v3 (with a fresh
+  `pre-v3` backup), so do not start the new engine after a rollback you did not
+  intend to undo.
+
+Restoring the `pre-v3` backup gives the exact pre-upgrade state, as for v2.
+
 ## What the v1 -> v2 migration does
 
 It runs on its own when the engine first opens a v1 database
@@ -158,6 +181,30 @@ deploy the previous engine.
 
 Starting a v2 engine again later re-runs the migration. It takes a fresh
 backup, and the second v1 copy becomes `campaigns_v1_2`.
+
+#### Caveat: a rollback past v3 leaves `jobs_v3_rolledback` pointing at a renamed table
+
+This applies when `down` goes from v3 all the way to v1 (`down --to 1`, or two
+`down` steps). The v3 -> v2 step renames `jobs` to `jobs_v3_rolledback`. Its
+foreign key still names the live parent, `campaigns (id, tenant)`, at that
+point. The v2 -> v1 step then renames that parent to `campaigns_v2_rolledback`.
+SQLite rewrites foreign-key references inside other tables on a rename, so the
+rolled-back copy now reads `REFERENCES "campaigns_v2_rolledback" (id, tenant)`.
+
+- The data is intact. Every job row is still in `jobs_v3_rolledback`, and
+  `PRAGMA foreign_key_check` passes, because the parent it names exists.
+- The copy is not self-consistent. Its foreign key names a table whose name
+  says it was rolled back, not the live `campaigns`. Nothing in the v1 engine
+  reads that table, so this has no effect on the running service. It matters
+  only if someone restores the copy or inspects it by hand.
+- The fix is optional. To remove the dangling reference, rebuild the copy
+  without its foreign-key constraints (create a table with the same columns and
+  no `FOREIGN KEY` clauses, copy the rows, drop the old copy, rename the new
+  one), with the engine stopped and a backup taken first. Or leave the copy as
+  it is. Do not bring the copy back by renaming it to `jobs`: the foreign key
+  would still name the wrong table. A later `up` creates an empty `jobs` table
+  and does not move the history; if the history must be live again, restore
+  the `pre-v3` backup.
 
 ### Roll back, option B: restore the pre-v2 backup (exact pre-upgrade state)
 

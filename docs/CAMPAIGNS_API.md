@@ -22,8 +22,8 @@ below), which the first legacy upload creates. A campaign made with
 | Not found | A malformed id, a missing id and another tenant's id all get exactly the same response: `404 {"error": "campaign not found"}` (same status, headers and body bytes). The input is never echoed. |
 | Archived | An archived campaign can still be read. Every write to it gets `409 {"error": "the campaign is archived; it can be read but not changed"}`. |
 | Body errors | `400 {"error": "invalid request body: <field>: <reason>"}`. The same envelope as `/api/campaign/*`, and the submitted value is never echoed. |
-| Body size | JSON bodies have the default cap (`KALOS_MAX_REQUEST_BYTES`, 1 MiB). `POST /api/campaigns/{id}/upload` has the upload cap (`KALOS_MAX_UPLOAD_MB` + multipart allowance). Over the cap: `413`. |
-| Heavy work | Upload and reanalyze share the engine's single analysis slot. When it is busy they return `503` with `Retry-After`. |
+| Body size | JSON bodies have the default cap (`KALOS_MAX_REQUEST_BYTES`, 1 MiB). `POST /api/campaigns/{id}/upload` and `POST /api/campaigns/{id}/jobs` have the upload cap (`KALOS_MAX_UPLOAD_MB` + multipart allowance); a job also has its tenant limit (`KALOS_JOB_MAX_UPLOAD_BYTES`). Over the cap: `413`. |
+| Heavy work | Upload and reanalyze share the engine's analysis limiter: a global cap and a per-tenant cap (`KALOS_JOB_WORKERS`, `KALOS_JOB_PER_TENANT`, docs/JOBS.md). When it is full for this caller they return `503` with `Retry-After`. Background jobs share the same limiter. |
 | Audit | Create, rename, archive, unarchive, upload, start, result and reanalyze each write an `audit_log` row: tenant, subject, auth method (`bearer`, or `anonymous` in open mode), action, campaign id and outcome (`ok` or `http_<status>`). The row never holds a token, a body, a filename or uploaded data. The campaign id is left empty on a 404. Auditing is best-effort and never fails the request. |
 
 ## Campaign object
@@ -52,7 +52,7 @@ below), which the first legacy upload creates. A campaign made with
 | POST | `/api/campaigns` | write | Create a campaign. Body: `{"name": str}`. `201` and the campaign. |
 | GET | `/api/campaigns/{id}` | read | `{"campaign": <campaign>, "summary": <loop summary>}`. The summary has the same shape as `GET /api/campaign`, scoped to this campaign, including `analysis_in_sync`. |
 | PATCH | `/api/campaigns/{id}` | write (+admin for `archived`) | Body: `{"name"?: str, "archived"?: bool}`, at least one of the two. Returns the campaign. |
-| POST | `/api/campaigns/{id}/upload` | write | Upload a run sheet into this campaign (multipart). Same contract as `/api/run`. |
+| POST | `/api/campaigns/{id}/upload` | write | Upload a run sheet into this campaign (multipart; `replace=true` confirms replacing the campaign's runs, see below). Same contract as `/api/run`. |
 | GET | `/api/campaigns/{id}/analysis` | read | This campaign's published analysis, in the `/api/latest` shape (`{"has_data": false}` before the first upload). |
 | POST | `/api/campaigns/{id}/runs` | write | Start runs from a proposed batch. Same body and bounds as `/api/campaign/start`. Returns `{"started": [...]}`. |
 | POST | `/api/campaigns/{id}/runs/{run_id}/result` | write | Body: `{"value": number}`. Records the measured outcome and returns the run. |
@@ -89,15 +89,27 @@ The form fields and errors match `POST /api/run`:
   codes (`parse_error`, `fit_failed`, `corrupt_excel`, `sheet_not_found`,
   ...). Excel responses include `sheets` and `sheet_used`.
 
+A campaign that has awaiting or measured runs is refused with `409` and
+`"code": "campaign_has_runs"`, before the file is read, unless the form carries
+`replace=true`. Nothing is changed on refusal. Clients must confirm the replacement with the
+user before they send `replace=true`. (The kalos-web client does not do this yet:
+its analyze and validate pages post to `/api/run` without the field, so they
+receive the 409 as a rejected upload.)
+
 On success the upload replaces this campaign's state and discards its pending
 runs, and publishes the analysis in the same transaction (docs/CAMPAIGN_LOOP.md,
 "Seeding"). It never touches the tenant's default campaign or `/api/latest`.
+A run added while the fit runs is not overwritten: the publish is a
+compare-and-swap on the generation the check saw, so the upload answers `409`
+(`campaign_changed`) and nothing is written.
 
 The upload checks for a missing, foreign or archived campaign before any fit
 runs. If the campaign is archived while the analysis is running, the upload
 returns `409` and nothing is stored.
 
-Uploads run synchronously for now. Background jobs are a later slice.
+Uploads through this route run synchronously. To queue the same upload as a
+background job (202, polled by id, cancellable, with per-tenant limits), use
+`POST /api/campaigns/{id}/jobs` (see "Background jobs" below and docs/JOBS.md).
 
 ### Runs and results
 
@@ -118,9 +130,23 @@ Reanalyze has the same transactional contract as `/api/campaign/reanalyze`
 
 The new analysis is labelled `campaign round <n>`.
 
+### Background jobs
+
+| Method and path | Scope | Result |
+|---|---|---|
+| `POST /api/campaigns/{id}/jobs` | `write` | `202` + the job. Multipart fields as `/upload`. Refusals of the sheet are `400` before queueing. `429` when the tenant's queue is full. |
+| `GET /api/campaigns/{id}/jobs` | `read` | This campaign's recent jobs, newest first. |
+| `GET /api/jobs/{id}` | `read` | One job: `state` (`queued`, `running`, `succeeded`, `failed`, `cancelled`, `timed_out`), `stage`, `progress`, `error` and `campaign_generation`. |
+| `POST /api/jobs/{id}/cancel` | `write` | Cancels a queued or running job. Idempotent. |
+
+A job's id is `job_` + 32 hex characters. It is tenant-scoped exactly like a
+campaign id: another tenant's job, a missing one and a malformed one all get
+the same `404 {"error": "job not found"}`. Lifecycle, error codes, limits and
+the restart rules are in docs/JOBS.md.
+
 ## Not in this slice
 
-- Background jobs for upload and reanalyze (they run synchronously).
+- Background jobs for reanalyze (it still runs synchronously; upload has a job route).
 - JWT principals (E2). `auth_method` will read the principal's
   `auth_method` once it exists. `tests/test_cross_tenant_isolation_jwt.py` is
   a skipped TODO stub until E2 lands.

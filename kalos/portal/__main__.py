@@ -20,6 +20,7 @@ import sys
 import uvicorn
 
 from kalos.portal.auth import AuthConfigError, get_authenticator
+from kalos.portal.job_runner import RunnerLocked, check_startup_config
 from kalos.portal.config import (
     InsecureBindError,
     ProductionConfigError,
@@ -59,6 +60,14 @@ def main() -> None:
     except (InsecureBindError, ProductionConfigError) as exc:
         # Exit non-zero with the reason on stderr: this is a misconfiguration an
         # operator has to fix, not a crash, so it should read like a refusal.
+        print(f"kalos portal: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+
+    try:
+        check_startup_config()
+    except (ValueError, RunnerLocked) as exc:
+        # A background-job setting that cannot run: refuse to serve, rather than come up
+        # with jobs accepted and never run. Same shape as the refusals above.
         print(f"kalos portal: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
 

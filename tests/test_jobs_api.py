@@ -1,0 +1,791 @@
+"""`/api/campaigns/{id}/jobs` and `/api/jobs/{id}` (docs/JOBS.md): the HTTP contract,
+and the cross-tenant isolation of jobs (tenant A cannot see, list, or cancel
+tenant B's jobs, and gets the same bytes for "not yours" as for "not there").
+
+Two tenants with STATIC bearer tokens, as in tests/test_cross_tenant_isolation.py.
+The worker runs in a thread with a stub analysis (tests/test_jobs.py), driven by
+`JobRunner.tick()`; the TestClient does not run the app lifespan, so nothing
+schedules jobs behind the test's back.
+"""
+from __future__ import annotations
+
+import asyncio
+import fcntl
+import hashlib
+import json
+import os
+import re
+import threading
+import time
+import uuid
+
+import numpy as np
+import pandas as pd
+import pytest
+
+pytest.importorskip("fastapi")
+from fastapi.testclient import TestClient  # noqa: E402
+
+from kalos.portal import busy, job_worker, jobs, jobs_api  # noqa: E402
+from kalos.portal import app as portal_module  # noqa: E402
+from kalos.portal import campaign as campaign_module  # noqa: E402
+from kalos.portal.app import app  # noqa: E402
+from kalos.portal.auth import Principal  # noqa: E402
+from kalos.portal.campaign import CampaignStore, get_campaign_store  # noqa: E402
+from kalos.portal.job_runner import JobRunner, ThreadWorker  # noqa: E402
+from kalos.portal.uploads import MAX_UPLOAD_BYTES  # noqa: E402
+
+
+def _sha(t: str) -> str:
+    return hashlib.sha256(t.encode()).hexdigest()
+
+
+TOKENS = [
+    {"token_sha256": _sha("a-admin"), "subject": "alice@acme", "tenant": "acme",
+     "scopes": ["read", "write", "admin"]},
+    {"token_sha256": _sha("a-write"), "subject": "bob@acme", "tenant": "acme",
+     "scopes": ["read", "write"]},
+    {"token_sha256": _sha("a-read"), "subject": "carol@acme", "tenant": "acme",
+     "scopes": ["read"]},
+    {"token_sha256": _sha("b-admin"), "subject": "gina@globex", "tenant": "globex",
+     "scopes": ["read", "write", "admin"]},
+    {"token_sha256": _sha("b-write"), "subject": "hank@globex", "tenant": "globex",
+     "scopes": ["read", "write"]},
+]
+
+GLOBEX_SECRET = "GLOBEX-SECRET-Project-Hera"
+CID_RE = re.compile(r"cmp_[0-9a-f]{32}")
+
+
+def H(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _df(n: int = 20, seed: int = 0) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    m = rng.uniform(0, 4, n)
+    ph = rng.uniform(5, 7, n)
+    return pd.DataFrame({
+        "Methanol": m.round(3), "pH": ph.round(2),
+        "lipase_titer": (1.5 * m - 0.8 * (ph - 6) ** 2 + rng.normal(0, 0.1, n)).round(3),
+    })
+
+
+def _csv(df: pd.DataFrame | None = None) -> bytes:
+    return (df if df is not None else _df()).to_csv(index=False).encode()
+
+
+def _stub_analyze(df, target, *, profile=None, anonymize=False, progress=None, roles=None, **_):
+    if progress is not None:
+        progress("fitting", 0.15)
+        progress("proposing", 0.8)
+    return {"target": target, "proposal_features": ["Methanol", "pH"], "proposals": [],
+            "marker": "api-stub"}
+
+
+@pytest.fixture
+def env(tmp_path, monkeypatch):
+    for name in ("KALOS_JOB_QUEUE_DEPTH", "KALOS_JOB_MAX_UPLOAD_BYTES", "KALOS_JOB_TIMEOUT_S",
+                 "KALOS_JOBS_ENABLED"):
+        monkeypatch.delenv(name, raising=False)
+    busy.reset_limiter(total=2, per_tenant=1)
+    store = CampaignStore(tmp_path)
+    monkeypatch.setenv("KALOS_AUTH_TOKENS", json.dumps(TOKENS))
+    monkeypatch.delenv("KALOS_AUTH_TOKENS_FILE", raising=False)
+    monkeypatch.setattr(portal_module, "_STATE_DIR", tmp_path)
+    monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
+    monkeypatch.setattr(campaign_module, "_STORE", store)
+    app.dependency_overrides[get_campaign_store] = lambda: store
+    try:
+        yield TestClient(app), store
+    finally:
+        app.dependency_overrides.pop(get_campaign_store, None)
+        busy.reset_limiter()
+        store.close()
+
+
+def _runner(store: CampaignStore) -> JobRunner:
+    def spawn(job_id, _tenant, _state_dir):
+        return ThreadWorker(lambda should_stop: job_worker.run_job(
+            store, job_id, analyze=_stub_analyze, should_stop=should_stop))
+
+    return JobRunner(store, spawn=spawn, timeout_s=60, poll_s=0.01)
+
+
+def _drain(runner: JobRunner, store: CampaignStore, tenant: str, job_id: str) -> dict:
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        runner.tick()
+        job = jobs.get_job(store, tenant=tenant, job_id=job_id)
+        if job and job["state"] in jobs.TERMINAL_STATES:
+            return job
+        time.sleep(0.01)
+    raise AssertionError("job did not finish")
+
+
+def _submit(tc: TestClient, token: str, cid: str, *, data: bytes | None = None,
+            target: str = "lipase_titer", name: str = "runs.csv"):
+    return tc.post(
+        f"/api/campaigns/{cid}/jobs",
+        files={"file": (name, data if data is not None else _csv(), "text/csv")},
+        data={"target": target},
+        headers=H(token),
+    )
+
+
+def _campaign(tc: TestClient, token: str, name: str = "c") -> str:
+    return tc.post("/api/campaigns", json={"name": name}, headers=H(token)).json()["id"]
+
+
+# --- the happy path over HTTP ----------------------------------------------------- #
+
+
+def test_submit_202_then_poll_status_until_published(env):
+    tc, store = env
+    cid = _campaign(tc, "a-write")
+    r = _submit(tc, "a-write", cid)
+    assert r.status_code == 202, r.text
+    job = r.json()["job"]
+    assert r.headers["location"] == f"/api/jobs/{job['id']}"
+    assert job["state"] == "queued" and job["error"] is None and job["campaign_id"] == cid
+    assert "input_path" not in job and "params" not in job and "runner_id" not in job
+
+    status = tc.get(f"/api/jobs/{job['id']}", headers=H("a-read"))
+    assert status.status_code == 200 and status.json()["job"]["state"] == "queued"
+
+    done = _drain(_runner(store), store, "acme", job["id"])
+    body = tc.get(f"/api/jobs/{job['id']}", headers=H("a-read")).json()["job"]
+    assert body["state"] == done["state"] == "succeeded"
+    assert body["campaign_generation"] is not None
+    analysis = tc.get(f"/api/campaigns/{cid}/analysis", headers=H("a-read")).json()
+    assert analysis["has_data"] is True and analysis["marker"] == "api-stub"
+    assert analysis["campaign_generation"] == body["campaign_generation"]
+
+
+def test_job_list_is_newest_first_and_limited(env):
+    tc, _store = env
+    cid = _campaign(tc, "a-write")
+    ids = []
+    for _ in range(3):
+        # A pending upload blocks the next one to the same campaign, so each is cancelled first.
+        ids.append(_submit(tc, "a-write", cid).json()["job"]["id"])
+        tc.post(f"/api/jobs/{ids[-1]}/cancel", headers=H("a-write"))
+    listed = tc.get(f"/api/campaigns/{cid}/jobs?limit=2", headers=H("a-read")).json()["jobs"]
+    assert [j["id"] for j in listed] == list(reversed(ids))[:2]
+    assert tc.get(f"/api/campaigns/{cid}/jobs?limit=0", headers=H("a-read")).status_code == 400
+
+
+def test_a_bad_sheet_is_refused_synchronously_and_queues_nothing(env):
+    tc, store = env
+    cid = _campaign(tc, "a-write")
+    r = _submit(tc, "a-write", cid, target="no_such_column")
+    assert r.status_code == 400, r.text
+    assert "code" in r.json() or "error" in r.json()
+    assert jobs.list_jobs(store, tenant="acme", campaign_id=cid) == []
+    assert not list(store.state_dir.glob("jobs/*/*.bin"))
+
+
+def test_cancel_a_queued_job_over_http_is_immediate_and_idempotent(env):
+    tc, store = env
+    cid = _campaign(tc, "a-write")
+    job = _submit(tc, "a-write", cid).json()["job"]
+    r = tc.post(f"/api/jobs/{job['id']}/cancel", headers=H("a-write"))
+    assert r.status_code == 200 and r.json()["job"]["state"] == "cancelled"
+    again = tc.post(f"/api/jobs/{job['id']}/cancel", headers=H("a-write"))
+    assert again.status_code == 200 and again.json()["job"]["state"] == "cancelled"
+    assert tc.get(f"/api/jobs/{job['id']}", headers=H("a-read")).json()["job"]["error"] is None
+
+
+# --- limits ------------------------------------------------------------------------ #
+
+
+def test_queue_depth_answers_429_with_retry_after(env, monkeypatch):
+    tc, _store = env
+    monkeypatch.setenv("KALOS_JOB_QUEUE_DEPTH", "1")
+    cid = _campaign(tc, "a-write")
+    assert _submit(tc, "a-write", cid).status_code == 202
+    r = _submit(tc, "a-write", cid)
+    assert r.status_code == 429
+    assert int(r.headers["retry-after"]) == busy.RETRY_AFTER_SECONDS
+    assert "queued or running" in r.json()["error"]
+
+
+def _job_files(store: CampaignStore) -> list[str]:
+    base = store.state_dir / jobs.JOBS_DIRNAME
+    return sorted(str(p) for p in base.glob("*/*")) if base.exists() else []
+
+
+def test_a_full_queue_is_refused_before_the_upload_is_parsed_or_written(env, monkeypatch):
+    """HIGH2: the depth check runs before the preflight parse, and nothing is written."""
+    tc, store = env
+    monkeypatch.setenv("KALOS_JOB_QUEUE_DEPTH", "1")
+    cid = _campaign(tc, "a-write")
+    assert _submit(tc, "a-write", cid).status_code == 202
+    before = _job_files(store)
+    parsed: list[bytes] = []
+    monkeypatch.setattr(jobs_api, "preflight_upload", lambda raw, *a, **k: parsed.append(raw))
+    r = _submit(tc, "a-write", cid)
+    assert r.status_code == 429
+    assert parsed == []
+    assert _job_files(store) == before
+
+
+def test_the_engine_wide_cap_answers_429_before_the_upload_is_parsed(env, monkeypatch):
+    tc, store = env
+    monkeypatch.setenv("KALOS_JOB_GLOBAL_QUEUE_DEPTH", "1")
+    cid = _campaign(tc, "a-write")
+    assert _submit(tc, "a-write", cid).status_code == 202
+    parsed: list[bytes] = []
+    monkeypatch.setattr(jobs_api, "preflight_upload", lambda raw, *a, **k: parsed.append(raw))
+    before = _job_files(store)
+    other = _campaign(tc, "b-write", "other")
+    r = tc.post(f"/api/campaigns/{other}/jobs", files={"file": ("runs.csv", _csv(), "text/csv")},
+                data={"target": "lipase_titer"}, headers=H("b-write"))
+    assert r.status_code == 429
+    assert "this engine already has 1" in r.json()["error"]
+    assert int(r.headers["retry-after"]) == busy.RETRY_AFTER_SECONDS
+    assert parsed == [] and _job_files(store) == before
+
+
+def test_preflight_runs_under_a_slot_and_a_busy_engine_refuses_the_submit(env, monkeypatch):
+    tc, store = env
+    held = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(jobs_api, "_preflight_slots", held)
+    held.acquire()  # the one preflight slot is in use
+    cid = _campaign(tc, "a-write")
+    before = _job_files(store)
+    r = _submit(tc, "a-write", cid)
+    assert r.status_code == 503
+    assert int(r.headers["retry-after"]) == busy.RETRY_AFTER_SECONDS
+    assert _job_files(store) == before and jobs.list_jobs(store, tenant="acme", campaign_id=cid) == []
+    held.release()
+    assert _submit(tc, "a-write", cid).status_code == 202
+
+
+def test_a_running_job_does_not_stop_the_same_tenant_submitting_another(env):
+    """The preflight is not the tenant's analysis slot: with one slot per tenant
+    and a job running, the next submission is still accepted (202)."""
+    tc, store = env
+    cid = _campaign(tc, "a-write")
+    release = threading.Event()
+
+    def blocked(df, target, **kw):
+        release.wait(10)
+        return _stub_analyze(df, target, **kw)
+
+    first = _submit(tc, "a-write", cid).json()["job"]
+    other_campaign = _campaign(tc, "a-write", "second campaign")
+    runner = JobRunner(store, spawn=lambda j, _t, _d: ThreadWorker(
+        lambda stop: job_worker.run_job(store, j, analyze=blocked, should_stop=stop)),
+        timeout_s=60, poll_s=0.01)
+    runner.tick()
+    assert jobs.get_job(store, tenant="acme", job_id=first["id"])["state"] == "running"
+    assert _submit(tc, "a-write", other_campaign).status_code == 202
+    release.set()
+    _drain(runner, store, "acme", first["id"])
+
+
+def test_a_cancelled_preflight_releases_its_slot_only_when_the_work_never_started(monkeypatch):
+    sem = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(jobs_api, "_preflight_slots", sem)
+
+    async def cancelled_before_the_thread_ran(*_a, **_k):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(jobs_api, "run_in_threadpool", cancelled_before_the_thread_ran)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(jobs_api._preflight_gated(lambda: None))
+    assert sem.acquire(blocking=False) is True  # released: nothing ran
+    sem.release()
+
+
+def test_a_cancelled_preflight_keeps_its_slot_until_the_parse_finishes(monkeypatch):
+    sem = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(jobs_api, "_preflight_slots", sem)
+    started, finish = threading.Event(), threading.Event()
+
+    def parse():
+        started.set()
+        finish.wait(10)
+
+    async def scenario():
+        task = asyncio.ensure_future(jobs_api._preflight_gated(parse))
+        await asyncio.to_thread(started.wait, 10)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The request is gone, but the parse still runs: its slot is still held.
+        assert sem.acquire(blocking=False) is False
+        finish.set()
+        for _ in range(500):  # the thread releases the slot when the parse returns
+            if sem.acquire(blocking=False):
+                sem.release()
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("the parse's slot was never released")
+
+    asyncio.run(scenario())
+
+
+def test_an_over_long_roles_value_is_a_400_before_anything_is_parsed_or_written(env, monkeypatch):
+    """LOW8: `roles` is bounded (refused, not clipped: clipped JSON is not roles)."""
+    tc, store = env
+    cid = _campaign(tc, "a-write")
+    parsed: list[bytes] = []
+    monkeypatch.setattr(jobs_api, "preflight_upload", lambda raw, *a, **k: parsed.append(raw))
+    before = _job_files(store)
+    r = tc.post(f"/api/campaigns/{cid}/jobs", files={"file": ("runs.csv", _csv(), "text/csv")},
+                data={"target": "lipase_titer", "roles": "x" * (jobs.MAX_ROLES_CHARS + 1)},
+                headers=H("a-write"))
+    assert r.status_code == 400
+    assert "roles is larger than" in r.json()["error"]
+    assert parsed == [] and _job_files(store) == before
+
+
+def test_upload_over_the_tenant_limit_is_413(env, monkeypatch):
+    tc, store = env
+    monkeypatch.setenv("KALOS_JOB_MAX_UPLOAD_BYTES", "1000")
+    cid = _campaign(tc, "a-write")
+    r = _submit(tc, "a-write", cid, data=_csv(_df(200)))
+    assert r.status_code == 413
+    assert jobs.list_jobs(store, tenant="acme", campaign_id=cid) == []
+
+
+def test_upload_over_the_engine_cap_is_413_before_the_route(env):
+    tc, _store = env
+    cid = _campaign(tc, "a-write")
+    r = _submit(tc, "a-write", cid, data=b"0" * (MAX_UPLOAD_BYTES + 2 * 1024 * 1024))
+    assert r.status_code == 413
+
+
+def test_jobs_disabled_answers_503_and_status_still_reads(env, monkeypatch):
+    tc, store = env
+    cid = _campaign(tc, "a-write")
+    job = _submit(tc, "a-write", cid).json()["job"]
+    monkeypatch.setenv("KALOS_JOBS_ENABLED", "0")
+    r = _submit(tc, "a-write", cid)
+    assert r.status_code == 503 and "KALOS_JOBS_ENABLED=0" in r.json()["error"]
+    assert tc.get(f"/api/jobs/{job['id']}", headers=H("a-read")).status_code == 200
+
+
+def test_a_malformed_job_setting_is_a_503_not_a_crash(env, monkeypatch):
+    tc, _store = env
+    cid = _campaign(tc, "a-write")
+    monkeypatch.setenv("KALOS_JOB_TIMEOUT_S", "soon")
+    r = _submit(tc, "a-write", cid)
+    assert r.status_code == 503
+
+
+# --- scopes and auth ------------------------------------------------------------------ #
+
+
+def test_read_scope_cannot_submit_or_cancel(env):
+    tc, store = env
+    cid = _campaign(tc, "a-write")
+    assert _submit(tc, "a-read", cid).status_code == 403
+    job = _submit(tc, "a-write", cid).json()["job"]
+    assert tc.post(f"/api/jobs/{job['id']}/cancel", headers=H("a-read")).status_code == 403
+    assert jobs.get_job(store, tenant="acme", job_id=job["id"])["state"] == "queued"
+
+
+def test_anonymous_job_upload_is_401_before_the_body_is_read(env):
+    tc, _store = env
+    cid = _campaign(tc, "a-write")
+    r = tc.post(f"/api/campaigns/{cid}/jobs", files={"file": ("x.csv", b"x" * 64, "text/csv")})
+    assert r.status_code == 401
+    assert r.headers.get("www-authenticate") == "Bearer"
+
+
+def test_unknown_token_is_401(env):
+    tc, _store = env
+    cid = _campaign(tc, "a-write")
+    assert _submit(tc, "not-a-token", cid).status_code == 401
+
+
+# --- cross-tenant isolation ------------------------------------------------------------- #
+
+
+def _globex_job(tc: TestClient, store: CampaignStore) -> tuple[str, str]:
+    cid = _campaign(tc, "b-admin", GLOBEX_SECRET)
+    job = _submit(tc, "b-write", cid, name=f"{GLOBEX_SECRET}.csv").json()["job"]
+    return cid, job["id"]
+
+
+def test_another_tenants_job_is_not_found_and_byte_identical_to_a_missing_one(env):
+    tc, store = env
+    _cid, job_id = _globex_job(tc, store)
+    missing = "job_" + uuid.uuid4().hex
+    foreign = tc.get(f"/api/jobs/{job_id}", headers=H("a-admin"))
+    absent = tc.get(f"/api/jobs/{missing}", headers=H("a-admin"))
+    malformed = tc.get("/api/jobs/job_NOT-A-JOB", headers=H("a-admin"))
+    for r in (foreign, absent, malformed):
+        assert r.status_code == 404
+        assert r.json() == {"error": "job not found"}
+        assert r.content == foreign.content
+    assert GLOBEX_SECRET not in foreign.text
+
+
+def test_another_tenants_job_cannot_be_cancelled_and_is_left_untouched(env):
+    tc, store = env
+    _cid, job_id = _globex_job(tc, store)
+    before = jobs.get_job(store, tenant="globex", job_id=job_id)
+    r_foreign = tc.post(f"/api/jobs/{job_id}/cancel", headers=H("a-admin"))
+    r_missing = tc.post(f"/api/jobs/job_{uuid.uuid4().hex}/cancel", headers=H("a-admin"))
+    assert r_foreign.status_code == r_missing.status_code == 404
+    assert r_foreign.content == r_missing.content
+    assert jobs.get_job(store, tenant="globex", job_id=job_id) == before
+    assert before["state"] == "queued" and before["cancel_requested"] is False
+
+
+def test_a_running_foreign_job_cannot_be_cancelled_either(env):
+    tc, store = env
+    _cid, job_id = _globex_job(tc, store)
+    jobs.claim(store, tenant="globex", runner_id="t")  # now running
+    r = tc.post(f"/api/jobs/{job_id}/cancel", headers=H("a-admin"))
+    assert r.status_code == 404
+    assert jobs.get_job(store, tenant="globex", job_id=job_id)["cancel_requested"] is False
+
+
+def test_jobs_cannot_be_submitted_to_or_listed_from_another_tenants_campaign(env):
+    tc, store = env
+    gcid, job_id = _globex_job(tc, store)
+    submit = _submit(tc, "a-admin", gcid)
+    missing = _submit(tc, "a-admin", "cmp_" + uuid.uuid4().hex)
+    assert submit.status_code == 404 and submit.content == missing.content
+    listed = tc.get(f"/api/campaigns/{gcid}/jobs", headers=H("a-admin"))
+    absent = tc.get(f"/api/campaigns/cmp_{uuid.uuid4().hex}/jobs", headers=H("a-admin"))
+    assert listed.status_code == 404 and listed.content == absent.content
+    assert GLOBEX_SECRET not in listed.text
+    # and nothing was written under globex
+    assert [j["id"] for j in jobs.list_jobs(store, tenant="globex", campaign_id=gcid)] == [job_id]
+
+
+def test_job_listings_and_audit_rows_are_scoped_to_the_caller(env):
+    tc, store = env
+    acme_cid = _campaign(tc, "a-write")
+    acme_job = _submit(tc, "a-write", acme_cid).json()["job"]["id"]
+    gcid, globex_job = _globex_job(tc, store)
+
+    acme_list = tc.get(f"/api/campaigns/{acme_cid}/jobs", headers=H("a-read")).json()["jobs"]
+    assert [j["id"] for j in acme_list] == [acme_job]
+    assert globex_job not in json.dumps(acme_list)
+    acme_audit = store.audit_entries(tenant="acme", limit=500)
+    globex_audit = store.audit_entries(tenant="globex", limit=500)
+    assert any(e["job_id"] == acme_job and e["action"] == "job.submit" for e in acme_audit)
+    assert all(e["job_id"] != acme_job for e in globex_audit)
+    assert all(e["job_id"] != globex_job for e in acme_audit)
+    assert GLOBEX_SECRET not in json.dumps(acme_audit)
+
+
+def test_each_tenants_job_publishes_only_into_its_own_campaign(env):
+    """The scheduler serves every tenant, but a job runs as its own row: its
+    publish is scoped by that row's tenant and campaign, so two tenants' jobs
+    running side by side never write into each other's campaign."""
+    tc, store = env
+    gcid, globex_job = _globex_job(tc, store)
+    acme_cid = _campaign(tc, "a-write")
+    acme_job = _submit(tc, "a-write", acme_cid, name="acme-runs.csv").json()["job"]["id"]
+    runner = _runner(store)
+    assert _drain(runner, store, "acme", acme_job)["state"] == "succeeded"
+    assert _drain(runner, store, "globex", globex_job)["state"] == "succeeded"
+    acme_analysis = store.load_analysis(tenant="acme", campaign_id=acme_cid)
+    globex_analysis = store.load_analysis(tenant="globex", campaign_id=gcid)
+    assert acme_analysis["dataset"] == "acme-runs.csv"
+    assert globex_analysis["dataset"].startswith(GLOBEX_SECRET)
+    assert store.load_analysis(tenant="acme", campaign_id=acme_cid) is not None
+    assert GLOBEX_SECRET not in json.dumps(acme_analysis)
+    assert store.get(tenant="acme", campaign_id=acme_cid)["base_rows"]
+
+
+# --- the app lifespan starts and stops the runner -------------------------------------- #
+
+
+def test_lifespan_starts_and_stops_the_runner_unless_disabled(env, monkeypatch):
+    from kalos.portal import job_runner
+
+    tc, _store = env
+    with TestClient(app):
+        assert job_runner._runner is not None
+        assert job_runner._runner.runner_id
+    assert job_runner._runner is None  # stopped on shutdown
+
+    monkeypatch.setenv("KALOS_JOBS_ENABLED", "0")
+    with TestClient(app):
+        assert job_runner._runner is None
+
+
+def test_lifespan_refuses_to_boot_when_another_process_runs_the_jobs(env):
+    """A refused runner fails the boot: job submissions would otherwise be accepted
+    by this engine and never be run."""
+    from kalos.portal import job_runner
+
+    tc, store = env
+    lock = store.state_dir / job_runner.RUNNER_LOCK_NAME
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)  # held by "another engine process" (this one, another fd)
+    try:
+        with pytest.raises(job_runner.RunnerLocked):
+            with TestClient(app):
+                pass
+    finally:
+        os.close(fd)
+    assert job_runner._runner is None
+
+
+def test_lifespan_refuses_to_boot_on_a_malformed_job_setting(env, monkeypatch):
+    tc, _store = env
+    monkeypatch.setenv("KALOS_JOB_QUEUE_DEPTH", "-1")
+    with pytest.raises(ValueError, match="KALOS_JOB_QUEUE_DEPTH"):
+        with TestClient(app):
+            pass
+
+
+class _GatedUpload:
+    """An UploadFile whose read() waits until the test opens the gate, so the
+    test can hold submissions in flight and count how many reached the read."""
+
+    filename = "runs.csv"
+
+    def __init__(self, gate: asyncio.Event, data: bytes) -> None:
+        self.reads = 0
+        self._gate = gate
+        self._data = data
+
+    async def read(self, size: int = -1) -> bytes:
+        self.reads += 1
+        await self._gate.wait()
+        return self._data if size < 0 else self._data[:size]
+
+
+def test_concurrent_submits_are_capped_before_any_upload_is_read(env, monkeypatch):
+    """N2: each in-flight submission can hold a whole upload in memory, so the
+    submissions being received are counted per tenant and engine-wide BEFORE the
+    read. Beyond the cap the caller gets 429 (tenant) or 503 (engine) with
+    Retry-After, and the refused upload is never read. A cancelled submission
+    gives its count back."""
+    _tc, store = env
+    # The parses that follow the reads share the preflight slots: widen them so the only
+    # refusals in this test are the submit gate's.
+    monkeypatch.setattr(jobs_api, "_preflight_slots", threading.BoundedSemaphore(8))
+    gate = asyncio.Event()
+
+    def start(tenant: str):
+        # A fresh campaign per submission: a second pending upload to one campaign is refused.
+        cid = store.create_campaign(tenant=tenant, name=f"c{uuid.uuid4().hex[:6]}")["id"]
+        upload = _GatedUpload(gate, _csv())
+        principal = Principal(subject=f"s@{tenant}", tenant=tenant, scopes=frozenset({"write"}))
+        task = asyncio.ensure_future(jobs_api._submit(
+            cid, upload, "lipase_titer", False, "", None, principal, store,
+            portal_module.upload_error_response,
+        ))
+        return upload, task
+
+    async def scenario():
+        per, total = jobs_api.SUBMIT_PER_TENANT, jobs_api.SUBMIT_TOTAL
+        acme = [start("acme") for _ in range(per)]
+        await asyncio.sleep(0.05)
+        assert all(u.reads == 1 for u, _ in acme)
+
+        # the tenant is at its cap: refused with 429 and never read
+        upload, task = start("acme")
+        response, job_id = await task
+        assert response.status_code == 429 and response.headers["Retry-After"]
+        assert upload.reads == 0 and job_id is None
+
+        # other tenants fill the engine up to its cap; the next one is refused with 503
+        assert total - per <= per  # the second tenant can fill the rest without hitting its own cap
+        others = [start("globex") for _ in range(total - per)]
+        await asyncio.sleep(0.05)
+        assert sum(u.reads for u, _ in others) == total - per
+        upload, task = start("initech")
+        response, _ = await task
+        assert response.status_code == 503 and response.headers["Retry-After"]
+        assert upload.reads == 0
+
+        # a cancelled submission gives its count back, so the tenant can submit again
+        _, cancelled = acme[0]
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        assert jobs_api._submit_gate.in_flight() == total - 1
+        upload, task = start("acme")
+        await asyncio.sleep(0.05)
+        assert upload.reads == 1  # admitted: it is being read
+
+        gate.set()
+        results = await asyncio.gather(*[t for _, t in acme[1:]], task, *[t for _, t in others])
+        assert [r[0].status_code for r in results] == [202] * len(results)
+        assert jobs_api._submit_gate.in_flight() == 0
+
+    asyncio.run(scenario())
+
+
+def _portal_entrypoint(tmp_path, extra_env: dict[str, str]):
+    """`python -m kalos.portal` in a subprocess, on a free port, with the given env."""
+    import socket
+    import subprocess
+    import sys
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("KALOS_JOB", "WEB_CONCURRENCY"))}
+    env.update({"KALOS_STATE_DIR": str(tmp_path), "KALOS_PORT": str(port), **extra_env})
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(jobs_api.__file__)))
+    env["PYTHONPATH"] = repo
+    return subprocess.run([sys.executable, "-m", "kalos.portal"], env=env, capture_output=True,
+                          text=True, timeout=60)
+
+
+def test_a_malformed_job_setting_stops_the_portal_at_startup_with_a_message(tmp_path):
+    """D2: `KALOS_JOB_WORKERS=0` used to boot a 'healthy' engine with no runner, and
+    the job routes accepted uploads that never ran. The entrypoint now refuses to
+    serve: exit 2, the variable named, no traceback."""
+    out = _portal_entrypoint(tmp_path, {"KALOS_JOB_WORKERS": "0"})
+    assert out.returncode == 2, out.stderr
+    assert "KALOS_JOB_WORKERS must be >= 1" in out.stderr
+    assert "Traceback" not in out.stderr
+
+
+def test_several_worker_processes_stop_the_portal_at_startup_with_a_nonzero_exit(tmp_path):
+    """D12: WEB_CONCURRENCY above 1 is refused with a message and exit 2. The uvicorn
+    supervisor used to report the failed child as a clean exit (0)."""
+    out = _portal_entrypoint(tmp_path, {"WEB_CONCURRENCY": "4"})
+    assert out.returncode == 2, out.stderr
+    assert "WEB_CONCURRENCY" in out.stderr
+    assert "Traceback" not in out.stderr
+
+
+def test_readyz_is_503_when_jobs_are_expected_but_the_runner_did_not_start(env, monkeypatch):
+    """D2: a server (the lifespan ran) with jobs enabled and no running scheduler is not
+    ready: its job submissions would never run. The reason is fixed text."""
+    from kalos.portal import job_runner
+
+    tc, _store = env
+
+    def broken_start(_store):
+        raise RuntimeError("scheduler exploded")
+
+    monkeypatch.setattr(job_runner, "start_job_runner", broken_start)
+    with TestClient(app) as live:
+        resp = live.get("/readyz")
+    assert resp.status_code == 503
+    assert resp.json() == {"status": "unavailable", "reason": "background jobs are not running"}
+
+
+def test_the_lifespan_refuses_a_malformed_limit_even_with_jobs_disabled(env, monkeypatch):
+    """D2: KALOS_JOB_WORKERS also sizes the sync analysis limiter, so a bad value fails the
+    boot whether or not the queue is enabled."""
+    tc, _store = env
+    # Scoped, so the value is gone before the fixture resets the limiter from the environment.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("KALOS_JOBS_ENABLED", "0")
+        mp.setenv("KALOS_JOB_WORKERS", "0")
+        with pytest.raises(ValueError, match="KALOS_JOB_WORKERS"):
+            with TestClient(app):
+                pass
+
+
+def test_a_plain_upload_to_a_campaign_with_runs_is_refused_until_replace_is_confirmed(env):
+    """D3 at submit: an upload would discard the campaign's awaiting and measured runs,
+    so it is refused (409 campaign_has_runs) unless the caller confirms replace=true."""
+    tc, store = env
+    cid = _campaign(tc, "a-write")
+    store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant="acme", campaign_id=cid)
+    store.start([{"recipe": {"Methanol": 1.0, "pH": 6.0}}], tenant="acme", campaign_id=cid)
+    before = store.get(tenant="acme", campaign_id=cid)
+
+    refused = _submit(tc, "a-write", cid)
+    assert refused.status_code == 409
+    assert refused.json()["code"] == "campaign_has_runs"
+    assert store.get(tenant="acme", campaign_id=cid) == before  # not mutated
+
+    confirmed = tc.post(
+        f"/api/campaigns/{cid}/jobs",
+        files={"file": ("runs.csv", _csv(), "text/csv")},
+        data={"target": "lipase_titer", "replace": "true"},
+        headers=H("a-write"),
+    )
+    assert confirmed.status_code == 202, confirmed.text
+
+
+def test_a_second_upload_to_a_campaign_with_a_pending_one_is_a_409_at_submit(env):
+    """D15 over HTTP: the second submit is refused before its upload is read, and the
+    first job is untouched."""
+    tc, _store = env
+    cid = _campaign(tc, "a-write")
+    first = _submit(tc, "a-write", cid)
+    assert first.status_code == 202
+    second = _submit(tc, "a-write", cid)
+    assert second.status_code == 409
+    assert second.json()["code"] == "upload_pending"
+    assert tc.get(first.headers["Location"], headers=H("a-write")).json()["job"]["state"] == "queued"
+
+
+# --- the sync upload routes (round 3, 2) ---------------------------------------- #
+
+
+def _stub_sync_analysis(**_k):
+    def analyze(df, target, *, profile=None, anonymize=False, progress=None, roles=None, **_):
+        return {"target": target, "proposal_features": ["Methanol", "pH"], "proposals": [],
+                "marker": "sync-stub"}
+    return analyze
+
+
+def _seed_with_runs(store, tenant: str = "acme", campaign_id: str | None = None) -> str:
+    """Seed a campaign (the tenant default when `campaign_id` is None) with one pending run."""
+    store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant=tenant, campaign_id=campaign_id)
+    store.start([{"recipe": {"Methanol": 1.0, "pH": 6.0}}], tenant=tenant, campaign_id=campaign_id)
+    return store.default_campaign_id(tenant=tenant) if campaign_id is None else campaign_id
+
+
+def test_api_run_refuses_to_replace_the_default_campaigns_runs_unless_confirmed(env, monkeypatch):
+    """Round 3, 2: the sync /api/run seeded the default campaign and discarded its runs
+    with no confirmation. It is refused (409 campaign_has_runs) unless replace=true, and
+    the campaign is unchanged."""
+    tc, store = env
+    monkeypatch.setattr(portal_module, "_analyze", _stub_sync_analysis())
+    _seed_with_runs(store)
+    before = store.get(tenant="acme", campaign_id=store.default_campaign_id(tenant="acme"))
+    refused = tc.post("/api/run", files={"file": ("runs.csv", _csv(), "text/csv")},
+                      data={"target": "lipase_titer"}, headers=H("a-write"))
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["code"] == "campaign_has_runs"
+    assert store.get(tenant="acme", campaign_id=store.default_campaign_id(tenant="acme")) == before
+    confirmed = tc.post("/api/run", files={"file": ("runs.csv", _csv(), "text/csv")},
+                        data={"target": "lipase_titer", "replace": "true"}, headers=H("a-write"))
+    assert confirmed.status_code == 200, confirmed.text
+
+
+def test_campaign_upload_refuses_to_replace_runs_unless_confirmed(env, monkeypatch):
+    tc, store = env
+    monkeypatch.setattr(portal_module, "_analyze", _stub_sync_analysis())
+    cid = _campaign(tc, "a-write")
+    _seed_with_runs(store, campaign_id=cid)
+    refused = tc.post(f"/api/campaigns/{cid}/upload", files={"file": ("runs.csv", _csv(), "text/csv")},
+                      data={"target": "lipase_titer"}, headers=H("a-write"))
+    assert refused.status_code == 409 and refused.json()["code"] == "campaign_has_runs"
+    assert store.get(tenant="acme", campaign_id=cid)["pending"]  # the runs are still there
+    confirmed = tc.post(f"/api/campaigns/{cid}/upload", files={"file": ("runs.csv", _csv(), "text/csv")},
+                        data={"target": "lipase_titer", "replace": "true"}, headers=H("a-write"))
+    assert confirmed.status_code == 200, confirmed.text
+
+
+def test_a_run_added_during_a_sync_fit_is_not_silently_discarded(env, monkeypatch):
+    """Round 3, 2: the check happens before the fit, so a run added WHILE the fit runs
+    must not be wiped by the publish. The publish is a compare-and-swap on the generation
+    the check saw; the caller is told to retry (409 campaign_changed)."""
+    tc, store = env
+    cid = _campaign(tc, "a-write")  # an empty campaign: the check passes
+    base_stub = _stub_sync_analysis()
+
+    def analyze_while_a_measurement_lands(df, target, **kwargs):
+        store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant="acme", campaign_id=cid)
+        store.start([{"recipe": {"Methanol": 2.0, "pH": 6.5}}], tenant="acme", campaign_id=cid)
+        return base_stub(df, target, **kwargs)
+
+    monkeypatch.setattr(portal_module, "_analyze", analyze_while_a_measurement_lands)
+    resp = tc.post(f"/api/campaigns/{cid}/upload", files={"file": ("runs.csv", _csv(), "text/csv")},
+                   data={"target": "lipase_titer"}, headers=H("a-write"))
+    assert resp.status_code == 409, resp.text
+    assert store.get(tenant="acme", campaign_id=cid)["pending"], "the run added mid-fit was discarded"

@@ -19,9 +19,8 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import AllowInfNan, BaseModel, ConfigDict, Field, StringConstraints
 from pydantic import Strict as _Strict
-from starlette.concurrency import run_in_threadpool
 
-from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
+from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_in_slot
 
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
 from kalos.portal.campaign import (
@@ -273,12 +272,11 @@ async def _reanalyze(
         # Same single analysis slot /api/run holds (kalos/portal/busy.py): a
         # reanalyze racing an upload - or another reanalyze - gets an honest
         # 503 instead of contending for the CPU with an unfinished fit.
-        result = await run_in_threadpool(
-            run_exclusively(
-                functools.partial(
-                    _analyze, df, target, profile=BIOPROCESS_PROFILE, pending=awaiting
-                )
-            )
+        result = await run_in_slot(
+            functools.partial(
+                _analyze, df, target, profile=BIOPROCESS_PROFILE, pending=awaiting
+            ),
+            tenant=tenant,
         )
     except AnalysisBusy as busy:
         return JSONResponse(

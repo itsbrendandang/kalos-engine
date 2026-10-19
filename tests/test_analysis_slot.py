@@ -108,3 +108,110 @@ def test_api_run_returns_503_with_retry_after_while_slot_held(tmp_path, monkeypa
     resp = client.post("/api/run", files={"file": ("t.csv", _tiny_sheet(), "text/csv")})
     assert resp.status_code == 200
     assert "proposals" in resp.json()
+
+
+# --- cancellation before the worker thread starts --------------------------- #
+# A dispatch task can be cancelled before its first step (or while it waits
+# for a thread). The thread-side release never runs then, so the dispatcher
+# must release the slot itself. Each test below leaks the slot on the code
+# before that fix: the next acquire would answer 503 for good.
+
+
+def test_demo_route_cancelled_before_its_task_starts_releases_slot():
+    import asyncio
+    from types import SimpleNamespace
+
+    from kalos.portal import app as appmod
+
+    busy.reset_limiter(total=1, per_tenant=1)
+    ran: list[int] = []
+
+    async def scenario() -> None:
+        outer = asyncio.ensure_future(
+            appmod._run_demo(lambda: ran.append(1), SimpleNamespace(tenant="default"))
+        )
+        # One step: the handler takes the slot and schedules its dispatch task.
+        await asyncio.sleep(0)
+        dispatch = [t for t in asyncio.all_tasks() if t is not outer and t is not asyncio.current_task()]
+        assert len(dispatch) == 1
+        dispatch[0].cancel()  # cancelled before its first step: the thread never runs
+        with pytest.raises(asyncio.CancelledError):
+            await outer
+
+    asyncio.run(scenario())
+    assert ran == []
+    assert busy.limiter().running() == 0
+    run_exclusively(lambda: None)()  # the slot is free again
+    busy.reset_limiter()
+
+
+def test_run_in_slot_cancelled_while_waiting_for_a_thread_releases_slot(monkeypatch):
+    import asyncio
+
+    import anyio
+
+    busy.reset_limiter(total=2, per_tenant=2)
+    ran: list[int] = []
+    release = threading.Event()
+
+    async def scenario() -> None:
+        # Occupy the only worker thread so the dispatch waits for one.
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        monkeypatch.setattr(limiter, "total_tokens", 1)
+        blocker = asyncio.ensure_future(anyio.to_thread.run_sync(release.wait))
+        await asyncio.sleep(0.05)
+        task = asyncio.ensure_future(
+            busy.run_in_slot(lambda: ran.append(1), tenant="default")
+        )
+        await asyncio.sleep(0.05)
+        assert busy.limiter().running() == 1  # slot taken, thread not yet
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+        await blocker
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        release.set()
+    assert ran == []
+    assert busy.limiter().running() == 0
+    busy.reset_limiter()
+
+
+def test_a_native_cancel_keeps_the_slot_until_the_thread_finishes():
+    """N1: `asyncio.wait_for` (native cancellation) returns from `run_in_slot` while
+    its thread is still computing. The thread owns the slot until it returns, so
+    a second request must still be refused while the first one runs."""
+    import asyncio
+
+    busy.reset_limiter(total=1, per_tenant=1)
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+    def slow() -> str:
+        started.set()
+        release.wait(10)
+        finished.set()
+        return "done"
+
+    async def scenario() -> None:
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(busy.run_in_slot(slow, tenant="a"), timeout=1.0)
+        assert started.wait(5)
+        assert not finished.is_set()
+        assert busy.limiter().running() == 1  # the thread still holds the slot
+        assert busy.limiter().try_acquire("b") is None  # a second request is refused
+        release.set()
+        for _ in range(500):
+            if busy.limiter().running() == 0:
+                break
+            await asyncio.sleep(0.01)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        release.set()
+    assert finished.is_set()
+    assert busy.limiter().running() == 0
+    busy.reset_limiter()

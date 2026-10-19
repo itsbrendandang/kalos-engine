@@ -181,7 +181,7 @@ def test_repeated_migration_does_not_clobber_an_earlier_backup(tmp_path):
     # through the supported path first: `migrate down` back to the v1 shape.
     from kalos.portal.migrate import migrate_down
 
-    migrate_down(db)
+    migrate_down(db, target=1)
     conn = sqlite3.connect(str(db))
     conn.execute("DROP TABLE campaigns")
     conn.execute(_LEGACY_MULTI_CAMPAIGN)
