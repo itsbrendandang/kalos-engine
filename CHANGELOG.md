@@ -4,6 +4,12 @@ Newest first.
 
 ## Unreleased
 
+### Fixed - review: a non-finite constraint floor is a ValueError (L1)
+
+- `constraint` with a NaN or infinite `floor` (or a non-string/empty `column`)
+  raises `ValueError` naming the field, before any fit. Before, botorch raised a bare
+  `RuntimeError` from inside the acquisition.
+
 ### Fixed - review: exact copies are not replicates (M1)
 
 - A row identical to another in every column (same factors AND same target) is an

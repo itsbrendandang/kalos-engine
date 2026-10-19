@@ -1037,6 +1037,7 @@ def _analyze(
 ) -> dict:
     """See `_analyze_body`. Every fitting analysis runs inside `_seeded_analysis`,
     so its proposals depend only on its inputs, not on other analyses in flight."""
+    _validate_constraint(constraint)
     kwargs: dict[str, Any] = dict(
         anonymize=anonymize, roles=roles, profile=profile, pending=pending,
         constraint=constraint, progress=progress, preflight_only=preflight_only,
@@ -1045,6 +1046,25 @@ def _analyze(
         return _analyze_body(df, target, **kwargs)
     with _seeded_analysis(ANALYZE_SEED):
         return _analyze_body(df, target, **kwargs)
+
+
+def _validate_constraint(constraint: Mapping[str, Any] | None) -> None:
+    """Refuse a malformed constraint with a clean ValueError (review L1).
+
+    A NaN or infinite floor used to reach botorch's acquisition and raise a bare
+    RuntimeError ("probability tensor contains either inf, nan ..."). The floor is
+    a number the caller states, so a non-finite one is a caller error and is named as
+    one, before any fit runs."""
+    if constraint is None:
+        return
+    column = constraint.get("column")
+    if not isinstance(column, str) or not column.strip():
+        raise ValueError("constraint.column must be a non-empty column name")
+    floor = constraint.get("floor")
+    if isinstance(floor, bool) or not isinstance(floor, (int, float)):
+        raise ValueError("constraint.floor must be a finite number")
+    if not np.isfinite(float(floor)):
+        raise ValueError("constraint.floor must be a finite number (got NaN or infinity)")
 
 
 def _analyze_body(
