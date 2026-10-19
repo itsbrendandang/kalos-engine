@@ -61,6 +61,9 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 | `KALOS_AUTH_TOKENS` | Inline JSON array of provisioned principals. | unset |
 | `KALOS_CORS_ORIGINS` | Comma-separated explicit CORS allowlist (e.g. `https://app.acme.com`). When set, replaces the permissive localhost default. | unset (dev localhost) |
 | `KALOS_ENV` | Accepted values: `production` or `development` (case-insensitive, surrounding whitespace ignored); unset or empty means `development`. Any other value (e.g. `prod`, `staging`) refuses to start with `ProductionConfigError` naming the accepted values: a typo must not silently drop the production guards. See "Production mode" below. | unset (= `development`) |
+| `KALOS_VALIDATION_MODE` | `warn` or `strict` (case-insensitive). `warn` analyzes a sheet with validation errors and returns the findings; `strict` refuses it (docs/UPLOADS.md). Any other value refuses to start (exit 2) and raises `ConfigError` at request time, so a typo such as `stict` cannot select `warn` silently. | `warn` |
+| `KALOS_LLM_PROVIDER` | `anthropic`, `ollama` or `none` (case-insensitive). An unknown value refuses to start, rather than falling back to the live Anthropic path. | `anthropic` |
+| `KALOS_AUDIT_RETENTION_DAYS` | Audit-log rows older than this are pruned at startup and once a day. An integer from 1 to 36500 (a century, the way to ask for "keep everything"); anything else refuses to start. See "Audit retention" below. | `365` |
 | `KALOS_MAX_REQUEST_BYTES` | Body-size cap, in bytes, for every non-upload route (the JSON `/api/campaign/*` bodies). Upload routes (`/api/run`, `/api/scale/readout`) are capped at `KALOS_MAX_UPLOAD_MB` + 1 MiB multipart allowance instead. Must be a positive integer. | `1048576` (1 MiB) |
 | `KALOS_JOBS_ENABLED` | `0` turns the background-job queue off: `POST /api/campaigns/{id}/jobs` answers 503 and nothing runs. Job status still reads. (docs/JOBS.md) | `1` |
 | `KALOS_JOB_WORKERS` | Analyses running at once in this engine, sync and background together. Must be >= 1. (docs/JOBS.md) | `2` |
@@ -69,6 +72,8 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 | `KALOS_JOB_MAX_UPLOAD_BYTES` | Largest upload a job accepts, per tenant. Must be <= the engine's upload cap. | the upload cap |
 | `KALOS_BUILD_SHA` | Commit the engine was built from, recorded as `run.build_sha` on every analysis. CI passes `github.sha` at image build (`deploy/engine/Containerfile`). | `unknown` |
 | `KALOS_JOB_TIMEOUT_S` | Wall-clock limit for one job; past it the worker is killed and the job is `timed_out`. Must be >= 1. | `1800` |
+
+**Fail-closed settings.** Every enum-valued or bounded `KALOS_*` setting refuses an unknown value instead of defaulting (`kalos/envconfig.py`, one shared helper). `python -m kalos.portal` runs `check_env_settings()` before it binds a socket: a bad value prints one line naming the variable to stderr and exits 2. Unset and empty always mean the default.
 
 When neither `KALOS_AUTH_TOKENS_FILE` nor `KALOS_AUTH_TOKENS` is set, the API runs in **open mode** (anonymous `default` tenant, read+write, admin withheld) and logs a warning at startup.
 

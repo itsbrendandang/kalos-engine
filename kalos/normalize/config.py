@@ -27,6 +27,8 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
+from kalos.envconfig import env_enum
+
 _MODEL_ENV_VAR = "KALOS_NORMALIZE_MODEL"
 _MAX_SAMPLE_ENV_VAR = "KALOS_NORMALIZE_MAX_SAMPLE"
 _API_KEY_ENV_VAR = "ANTHROPIC_API_KEY"
@@ -85,6 +87,11 @@ def credentials_available() -> bool:
     return bool(key)
 
 
+def provider_setting() -> Provider:
+    """`KALOS_LLM_PROVIDER` as a `Provider`; unknown values raise `ConfigError`."""
+    return env_enum(_PROVIDER_ENV_VAR, _PROVIDERS, _DEFAULT_PROVIDER)  # type: ignore[return-value]
+
+
 def load_config() -> NormalizeConfig:
     """Build a `NormalizeConfig` from the `KALOS_NORMALIZE_*`/`KALOS_LLM_*`/
     `KALOS_OLLAMA_*` environment.
@@ -96,8 +103,8 @@ def load_config() -> NormalizeConfig:
       raising, since a malformed env var should degrade gracefully to the
       offline-safe default, not crash plan proposal.
     - `provider`: `KALOS_LLM_PROVIDER`, default `"anthropic"`. An
-      unrecognized value also falls back to `"anthropic"` rather than
-      raising, same as `max_sample`'s malformed-value handling.
+      unrecognized value RAISES `ConfigError` (fail closed: a typo of `none`
+      must not reach a live API). The startup check refuses it first.
     - `ollama_url` / `ollama_model`: `KALOS_OLLAMA_URL` (default
       `"http://localhost:11434"`) / `KALOS_OLLAMA_MODEL` (default
       `"llama3.1"`) - only consulted when `provider == "ollama"`.
@@ -113,8 +120,7 @@ def load_config() -> NormalizeConfig:
         max_sample = _DEFAULT_MAX_SAMPLE
     max_sample = max(_MIN_MAX_SAMPLE, min(_MAX_MAX_SAMPLE, max_sample))
 
-    raw_provider = (os.environ.get(_PROVIDER_ENV_VAR) or _DEFAULT_PROVIDER).strip().lower()
-    provider: Provider = raw_provider if raw_provider in _PROVIDERS else _DEFAULT_PROVIDER  # type: ignore[assignment]
+    provider = provider_setting()
 
     ollama_url = os.environ.get(_OLLAMA_URL_ENV_VAR, _DEFAULT_OLLAMA_URL) or _DEFAULT_OLLAMA_URL
     ollama_model = os.environ.get(_OLLAMA_MODEL_ENV_VAR, _DEFAULT_OLLAMA_MODEL) or _DEFAULT_OLLAMA_MODEL

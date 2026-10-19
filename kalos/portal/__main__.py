@@ -22,11 +22,13 @@ import uvicorn
 
 from kalos.portal import engine_lock
 from kalos.portal.auth import get_authenticator
+from kalos.envconfig import ConfigError
 from kalos.portal.config import (
     InsecureBindError,
     ProductionConfigError,
     assert_production_posture,
     assert_safe_exposure,
+    check_env_settings,
 )
 
 DEFAULT_HOST = "127.0.0.1"
@@ -58,6 +60,15 @@ def main() -> None:
     except (InsecureBindError, ProductionConfigError) as exc:
         # Exit non-zero with the reason on stderr: this is a misconfiguration an
         # operator has to fix, not a crash, so it should read like a refusal.
+        print(f"kalos portal: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+
+    try:
+        # Every enum-valued KALOS_* setting (KALOS_ENV, KALOS_VALIDATION_MODE,
+        # KALOS_LLM_PROVIDER) and bounded one (KALOS_AUDIT_RETENTION_DAYS) is
+        # checked before the socket opens: a typo refuses to start, one line, exit 2.
+        check_env_settings()
+    except ConfigError as exc:
         print(f"kalos portal: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
 

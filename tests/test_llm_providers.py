@@ -15,7 +15,9 @@ import json
 from typing import Any
 
 import pandas as pd
+import pytest
 
+from kalos.envconfig import ConfigError
 from kalos.normalize.config import load_config
 from kalos.normalize.llm import propose_plan
 
@@ -152,10 +154,11 @@ def test_provider_ollama_enabled_live_true_without_any_credential(monkeypatch):
     assert config.enabled_live is True
 
 
-def test_unrecognized_provider_falls_back_to_anthropic_default(monkeypatch):
+def test_unrecognized_provider_raises_instead_of_falling_back(monkeypatch):
+    # Fail closed (review H3): a typo must not select the live Anthropic path.
     monkeypatch.setenv("KALOS_LLM_PROVIDER", "not-a-real-provider")
-    config = load_config()
-    assert config.provider == "anthropic"
+    with pytest.raises(ConfigError, match="KALOS_LLM_PROVIDER"):
+        load_config()
 
 
 def test_ollama_url_and_model_env_overrides(monkeypatch):
