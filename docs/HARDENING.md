@@ -100,6 +100,10 @@ A 422 from body or parameter validation also carries `detail`: a list of `{"loc"
 
 Clients that treated only a 400 body as a "bad upload" must check the status too. A 401, 403, 404 or 503 body now also has an `error` string.
 
+### Audit retention
+
+Every mutating request writes one `audit_log` row (tenant, subject, auth method, action, outcome; never a token, a file or its contents). `KALOS_AUDIT_RETENTION_DAYS` sets how long those rows are kept: default **365**, an integer from 1 to 36500. The portal removes older rows for every tenant once at startup and once a day, and logs the count removed. A failed prune is logged and does not stop the portal. An invalid value refuses to start (`python -m kalos.portal` exits 2). Deleting an audit row is never a request, so no route can do it.
+
 ### Production mode (`KALOS_ENV=production`)
 
 Decided once at startup. In production the engine:

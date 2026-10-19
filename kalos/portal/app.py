@@ -52,6 +52,7 @@ from kalos.portal.auth import (
 from kalos.portal.config import (
     assert_production_posture,
     cors_config,
+    deployment_env,
     is_production,
     is_local_client,
     log_security_posture,
@@ -203,12 +204,17 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             stop_job_runner(runner)
 
 
+# The interactive docs and the schema exist only in development (KALOS_ENV, see
+# docs/HARDENING.md). Any other value refuses to start, so this is never a
+# production-by-accident exposure.
+_DEVELOPMENT = deployment_env() == "development"
+
 app = FastAPI(
     title="Kalos Engine API",
     lifespan=_lifespan,
-    docs_url=None if _PRODUCTION else "/docs",
-    redoc_url=None if _PRODUCTION else "/redoc",
-    openapi_url=None if _PRODUCTION else "/openapi.json",
+    docs_url="/docs" if _DEVELOPMENT else None,
+    redoc_url="/redoc" if _DEVELOPMENT else None,
+    openapi_url="/openapi.json" if _DEVELOPMENT else None,
 )
 
 # Probes stay reachable in every posture: they carry no tenant data.
