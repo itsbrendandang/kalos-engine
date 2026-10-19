@@ -48,6 +48,7 @@ Open PRs are listed as in-progress, not as implemented.
 | Upload caps, loopback-only default, remote refusal when open | IMPLEMENTED | `kalos/portal/uploads.py`, `__main__.py`, `app.py` middleware |
 | Container deploy pack and CI image boot test | IMPLEMENTED (limited verification, see runbook) | `deploy/`, `.github/workflows/ci.yml` |
 | Optimizer beats LHS/random on synthetic surfaces | IMPLEMENTED as a benchmark; not validation | `BENCHMARK.md`, `python -m kalos.bench` |
+| Head-to-head vs random, LHS, Optuna TPE, Ax, vanilla GP-EI on synthetic tasks | IMPLEMENTED as a benchmark; not validation | [Benchmark vs other optimizers](#benchmark-vs-other-optimizers), `docs/BENCHMARK.md`, `benchmarks/results/` |
 | Mechanistic (Monod) prior mean | EXPERIMENTAL, open PRs [#76](https://github.com/itsbrendandang/kalos-engine/pull/76), [#81](https://github.com/itsbrendandang/kalos-engine/pull/81) | not on `main` |
 | Pool-replay benchmark on published media datasets | EXPERIMENTAL, open PR [#77](https://github.com/itsbrendandang/kalos-engine/pull/77) | not on `main` |
 | Hard linear constraints on proposals | EXPERIMENTAL, open PR [#78](https://github.com/itsbrendandang/kalos-engine/pull/78) | not on `main` |
@@ -110,7 +111,7 @@ With no tokens configured the API is open on loopback only; see Security.
 Checks (same as CI):
 
 ```bash
-python -m pip install -e ".[ml,portal,dev]"
+python -m pip install -e ".[ml,portal,bench,dev]"
 ruff check kalos/ tests/ examples/
 mypy
 python -m pytest -q    # 804 tests collected at the time of writing
@@ -178,16 +179,18 @@ Report vulnerabilities privately; a `SECURITY.md` is proposed in open PR #83.
 - **Mechanistic prior benchmark (open PR [#81](https://github.com/itsbrendandang/kalos-engine/pull/81)).** Monod ODE prior mean in simulation, 10 seeds. Only the oracle (correct-model) prior result survives multiple-comparison correction. The mild-prior 8/10 result is not significant once corrected over the four levels. Severe and adversarial priors show no benefit. Remaining caveats: no observation noise, no calibration check, and the 95%-of-best metric normalises over held-out rows. The prior is opt-in and off by default.
 - **Scale-up readout.** Evidence is from a synthetic simulator (`docs/SCALE_EVIDENCE.md`); the refusal rule is the safeguard, not a validation of predictions.
 
-Synthetic benchmark from [`BENCHMARK.md`](BENCHMARK.md), simple regret after 18 experiments, 10 seeds (lower is better):
+Synthetic benchmark from [`BENCHMARK.md`](BENCHMARK.md), simple regret after 18 experiments, 10 seeds (lower is better). Reproduced with `python -m kalos.bench` on the locked stack (torch 2.13.0, BoTorch 0.18.1):
 
 | Surface (synthetic) | Noise | BO regret | LHS regret | Random regret |
 | --- | --- | --- | --- | --- |
-| Gaussian bump (4d, smooth) | 0% | 0.014 | 2.247 | 3.171 |
-| Gaussian bump (4d, smooth) | 15% | 1.676 | 2.247 | 2.592 |
-| Ackley (4d, rugged) | 0% | 1.489 | 3.625 | 3.696 |
-| Ackley (4d, rugged) | 15% | 3.572 | 3.625 | 3.850 |
+| Gaussian bump (4d, smooth) | 0% | 0.013 | 2.247 | 3.171 |
+| Gaussian bump (4d, smooth) | 15% | 1.873 | 2.247 | 2.592 |
+| Ackley (4d, rugged) | 0% | 1.560 | 3.625 | 3.696 |
+| Ackley (4d, rugged) | 15% | 3.014 | 3.625 | 3.850 |
 
-Reproduce with `python -m kalos.bench` (needs the `ml` extra). The gap closes as noise rises.
+BO's margin over LHS shrinks as noise rises (Gaussian 2.23 to 0.37; Ackley 2.07 to 0.61) but stays positive in these four cells, for 10 seeds.
+The BO rows depend on the torch build: torch 2.14.1 gives different BO regrets on the same seeds (Gaussian 15% 2.030, Ackley 15% 2.974). LHS and random do not change.
+These numbers are not a comparison against other optimizers; see [Benchmark vs other optimizers](#benchmark-vs-other-optimizers).
 
 ### Built-in safeguards
 
@@ -198,6 +201,55 @@ Reproduce with `python -m kalos.bench` (needs the `ml` extra). The gap closes as
 - Runs that are started but not yet measured are passed to the acquisition as in-flight points, so a mid-round re-proposal does not repeat them: `tests/test_pending_proposals.py`, `python -m kalos.bench --pending`, [`BENCHMARK.md`](BENCHMARK.md).
 - The scale-up readout refuses to predict when its backtest on your own scale ladder does not beat two naive baselines: [`docs/SCALE_READOUT.md`](docs/SCALE_READOUT.md), `tests/test_scale_readout.py`.
 - Every analysis response carries `seed` and `engine_version`, and the analyze path is seeded so the same upload gives the same proposals: `tests/test_hardening.py`.
+
+## Benchmark vs other optimizers
+
+Kalos's proposal path against random, Latin hypercube (LHS), Optuna TPE, Ax (default generation strategy) and a plain BoTorch GP-EI, on synthetic tasks with known optima.
+The protocol (tasks, seeds, budgets, batch and pending settings, endpoints, statistics) was committed in [`docs/BENCHMARK.md`](docs/BENCHMARK.md) before the run. Raw results are in [`benchmarks/results/`](benchmarks/results/).
+
+**Setup.** 30 seeds (1000-1029) per cell, with bootstrap intervals over seeds.
+Three synthetic cells use a 4-D Gaussian bump and a 4-D Ackley, each at 0% and 15% noise: sequential (batch 1), 5 initial points and 18 experiments.
+One mixed "bioprocess-like" surface (3 numeric and 2 categorical factors, 15% noise; this is a made-up surface, not process data) uses batches of 4: 8 initial points and 20 experiments, with 2 points of each batch still in flight while the next batch is proposed.
+Locked stack: torch 2.13.0, BoTorch 0.18.1, Optuna 5.0.0, Ax 1.3.1 (`uv.lock` for the core pins). Apple M3 Pro, 11 cores, about 16 minutes wall time.
+
+**Result.** Normalised regret of the best queried (true) value after the budget: 0 is the optimum, 1 is the median random point, lower is better. Mean over 30 seeds, 95% bootstrap interval in brackets.
+The last part of each baseline cell is the paired call against Kalos: "Kalos better" when the 95% interval of the paired difference excludes zero; otherwise "tie / unresolved".
+
+| Method | Gaussian 0% | Gaussian 15% | Ackley 0% | Ackley 15% | Bioprocess-like 15% (batch 4) |
+|---|---|---|---|---|---|
+| **Kalos** | **0.002** [0.001, 0.002] | **0.186** [0.120, 0.257] | **0.246** [0.184, 0.309] | **0.521** [0.471, 0.571] | **0.217** [0.171, 0.264] |
+| Random | 0.333 [0.271, 0.392]: Kalos better | 0.333 [0.273, 0.393]: Kalos better | 0.605 [0.565, 0.644]: Kalos better | 0.605 [0.565, 0.643]: Kalos better | 0.440 [0.380, 0.498]: Kalos better |
+| LHS | 0.355 [0.304, 0.406]: Kalos better | 0.355 [0.301, 0.407]: Kalos better | 0.618 [0.583, 0.653]: Kalos better | 0.618 [0.584, 0.653]: Kalos better | 0.459 [0.404, 0.516]: Kalos better |
+| Optuna TPE | 0.133 [0.107, 0.161]: Kalos better | 0.161 [0.126, 0.202]: tie / unresolved | 0.450 [0.413, 0.485]: Kalos better | 0.541 [0.495, 0.581]: tie / unresolved | 0.326 [0.253, 0.401]: Kalos better (borderline) |
+| Ax (default) | 0.002 [0.001, 0.002]: tie / unresolved | 0.191 [0.136, 0.253]: tie / unresolved | 0.284 [0.225, 0.346]: tie / unresolved | 0.522 [0.462, 0.582]: tie / unresolved | 0.325 [0.271, 0.379]: Kalos better |
+| Vanilla GP-EI (BoTorch) | 0.002 [0.001, 0.003]: tie / unresolved | 0.206 [0.143, 0.273]: tie / unresolved | 0.296 [0.238, 0.357]: tie / unresolved | 0.526 [0.467, 0.583]: tie / unresolved | 0.276 [0.222, 0.332]: Kalos better (borderline) |
+
+What the table says, and what it does not:
+
+- **Random and LHS are the weakest rows in every cell.** Kalos's paired interval against each of them excludes zero in all five cells. Every other model-based method also has a lower mean than both, in every cell.
+- **Clean synthetic (Gaussian 0%):** Kalos, Ax and vanilla GP-EI are not separated. All three reach 90% of the optimum in every seed, at about 13 experiments on average. Random, LHS and Optuna TPE reach it in 7-40% of seeds.
+- **Noisy synthetic (15%):** Kalos is not separated from Optuna, Ax or GP-EI. Its point estimate is the lowest on Ackley 0% and on Ackley 15% (where all methods are within the same interval). On Gaussian 15% Optuna TPE has a lower point estimate (0.161 against 0.186), and Ax's is essentially level (0.191). Kalos also reaches 90% of the optimum in 53% of seeds on Gaussian 15%, against 30-40% for the baselines.
+- **Using only measurements** (regret of the best *noisy* observation, which needs no oracle; in the table file, not the headline), Kalos is not ahead on Gaussian 15% (0.315, against Optuna 0.293 and Ax 0.292) or on Ackley 15% (0.613, against Optuna 0.601).
+- **Mixed bioprocess-like:** Kalos has the lowest mean regret (0.217). Against Ax the gap is clear (Holm-adjusted exploratory p about 0.02). Against Optuna and vanilla GP-EI the bootstrap interval only just excludes zero and the Holm-adjusted p is about 0.10, so treat those two as suggestive. Vanilla GP-EI treats categories as ordinal by design, so part of its gap reflects that choice.
+- **Cost:** on the mixed task Kalos took a median of about 19 s per proposal (Ax about 8 s, GP-EI about 3 s) and about 118 s per 5-batch run. On the synthetic tasks Kalos took about 0.3-0.5 s per proposal, in line with GP-EI.
+
+**Caveats.**
+
+- All objectives are synthetic. The bioprocess-like surface was written for this benchmark, and its difficulty is not calibrated to any real process. **Nothing here is a real-data claim.** It does not show that Kalos saves experiments in a wet lab.
+- Regret uses the best *queried true* value, which is an oracle selection. The noisy-observation view above is the honest practitioner view.
+- Every method runs at its library defaults. None is tuned, Kalos included. A tuned Optuna, Ax or BoTorch could do better; this is not an exhaustive search of optimizer configurations.
+- Only one budget, one dimension (4-D synthetic), one batch size per task, and one noise level for the mixed task. Results do not generalise beyond these settings.
+- **The BO numbers depend on the torch build.** The LHS and random rows do not. The benchmark runs on the torch version in `uv.lock`.
+- The first full run failed the reproducibility gate for Ax (its random seeds were not set). The arm was seeded and the whole suite rerun. The first run is kept, unchanged, under [`benchmarks/results/superseded/run1_ax_unseeded/`](benchmarks/results/superseded/run1_ax_unseeded/). Only the Ax rows changed; every other arm reproduced exactly.
+- Not included: scikit-optimize, HEBO and other optimizers. They were not evaluated.
+
+**Reproduce** (about 16 minutes on an 11-core laptop; the synthetic sweep above is `python -m kalos.bench`):
+
+```bash
+python -m pip install -e ".[ml,bench]"
+python -m kalos.bench --vs-baselines           # confirmatory run: writes benchmarks/results/
+python -m kalos.bench --vs-baselines --quick   # smoke test, 2 seeds, writes nothing
+```
 
 ## Current limitations
 

@@ -1,0 +1,47 @@
+{
+  "fresh_process": true,
+  "tolerance": 1e-06,
+  "checks": [
+    {
+      "task": "gaussian_4d",
+      "method": "random",
+      "eta": 0.15,
+      "seed": 1017,
+      "stored_regret_norm": 0.372200475933117,
+      "rerun_regret_norm": 0.372200475933117,
+      "absdiff": 0.0,
+      "pass_1e6": true
+    },
+    {
+      "task": "gaussian_4d",
+      "method": "ax",
+      "eta": 0.15,
+      "seed": 1007,
+      "stored_regret_norm": 0.04208513783908785,
+      "rerun_regret_norm": 0.04208513783908785,
+      "absdiff": 0.0,
+      "pass_1e6": true
+    },
+    {
+      "task": "ackley_4d",
+      "method": "kalos",
+      "eta": 0.15,
+      "seed": 1023,
+      "stored_regret_norm": 0.6874143008854101,
+      "rerun_regret_norm": 0.6874143008854101,
+      "absdiff": 0.0,
+      "pass_1e6": true
+    },
+    {
+      "task": "gaussian_4d",
+      "method": "ax",
+      "eta": 0.0,
+      "seed": 1008,
+      "stored_regret_norm": 0.0036791741952671986,
+      "rerun_regret_norm": 0.0036791741952671986,
+      "absdiff": 0.0,
+      "pass_1e6": true
+    }
+  ],
+  "all_pass": true
+}
