@@ -75,7 +75,7 @@ def test_get_campaign_before_any_seed_has_campaign_false(client):
 
 def test_seed_then_get_campaign_has_campaign_true(store, client):
     df = _tiny_df()
-    store.seed(df, "lipase_titer", ["Methanol", "pH"])
+    store.seed(df, "lipase_titer", ["Methanol", "pH"], tenant="default")
 
     resp = client.get("/api/campaign")
     assert resp.status_code == 200
@@ -92,7 +92,7 @@ def test_seed_then_get_campaign_has_campaign_true(store, client):
 
 
 def test_seed_overwrites_any_existing_campaign(store, client):
-    store.seed(_tiny_df(seed=1), "lipase_titer", ["Methanol", "pH"])
+    store.seed(_tiny_df(seed=1), "lipase_titer", ["Methanol", "pH"], tenant="default")
     client.post("/api/campaign/start", json={"recipes": [
         {"recipe": {"Methanol": 2.0, "pH": 6.0}, "pred": 1.0, "std": 0.1,
          "mode": "explore", "reason": "test"},
@@ -100,7 +100,7 @@ def test_seed_overwrites_any_existing_campaign(store, client):
 
     # A fresh upload seeds a fresh campaign: new base, empty pending, round 0.
     fresh = _tiny_df(seed=2)
-    store.seed(fresh, "lipase_titer", ["Methanol", "pH"])
+    store.seed(fresh, "lipase_titer", ["Methanol", "pH"], tenant="default")
 
     body = client.get("/api/campaign").json()
     assert body["n_base"] == len(fresh)
@@ -111,7 +111,7 @@ def test_seed_overwrites_any_existing_campaign(store, client):
 # --- POST /api/campaign/start: appends pending runs with ids --------------- #
 
 def test_start_appends_pending_runs_with_ids(store, client):
-    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"])
+    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
     recipes = [
         {"recipe": {"Methanol": 2.0, "pH": 6.0}, "pred": 5.1, "std": 0.4,
          "mode": "explore", "reason": "diversifies the batch"},
@@ -148,7 +148,7 @@ def test_start_without_a_campaign_returns_400(client):
 # --- POST /api/campaign/result: sets value, rejects bad input -------------- #
 
 def test_result_sets_value_and_measured_at(store, client):
-    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"])
+    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
     started = client.post("/api/campaign/start", json={"recipes": [
         {"recipe": {"Methanol": 2.0, "pH": 6.0}, "pred": 5.1, "std": 0.4,
          "mode": "explore", "reason": "test"},
@@ -171,7 +171,7 @@ def test_result_sets_value_and_measured_at(store, client):
 
 
 def test_result_unknown_id_returns_400(store, client):
-    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"])
+    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
     resp = client.post("/api/campaign/result", json={"id": "not-a-real-id", "value": 1.0})
     assert resp.status_code == 400
     assert "error" in resp.json()
@@ -179,7 +179,7 @@ def test_result_unknown_id_returns_400(store, client):
 
 @pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])
 def test_result_non_finite_value_returns_400(store, client, bad_value):
-    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"])
+    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
     started = client.post("/api/campaign/start", json={"recipes": [
         {"recipe": {"Methanol": 2.0, "pH": 6.0}, "pred": 5.1, "std": 0.4,
          "mode": "explore", "reason": "test"},
@@ -204,7 +204,7 @@ def test_result_non_finite_value_returns_400(store, client, bad_value):
 
 def test_reanalyze_folds_measured_runs_and_keeps_awaiting(store, client):
     df = _tiny_df()
-    store.seed(df, "lipase_titer", ["Methanol", "pH"])
+    store.seed(df, "lipase_titer", ["Methanol", "pH"], tenant="default")
     started = client.post("/api/campaign/start", json={"recipes": [
         {"recipe": {"Methanol": 2.0, "pH": 6.0}, "pred": 5.1, "std": 0.4,
          "mode": "explore", "reason": "test A"},
@@ -279,7 +279,7 @@ def test_reanalyze_with_a_declared_group_column_and_no_value_in_the_folded_row(s
         "batch": ["A"] * (n // 2) + ["B"] * (n // 2),
         "lipase_titer": np.linspace(2.0, 5.0, n),
     })
-    store.seed(df, "lipase_titer", ["Methanol", "pH"])
+    store.seed(df, "lipase_titer", ["Methanol", "pH"], tenant="default")
     started = client.post("/api/campaign/start", json={"recipes": [
         {"recipe": {"Methanol": 2.0, "pH": 6.0}, "pred": 5.1, "std": 0.4,
          "mode": "explore", "reason": "test"},
@@ -301,7 +301,7 @@ def test_reanalyze_with_no_measured_runs_returns_400_and_does_not_advance_round(
     """Re-analyzing with nothing newly measured is rejected up front — it would
     only inflate `round` and the progress trajectory over an unchanged base."""
     df = _tiny_df()
-    store.seed(df, "lipase_titer", ["Methanol", "pH"])
+    store.seed(df, "lipase_titer", ["Methanol", "pH"], tenant="default")
     # one awaiting run, never measured
     client.post("/api/campaign/start", json={"recipes": [
         {"recipe": {"Methanol": 2.0, "pH": 6.0}, "pred": 5.1, "std": 0.4,
@@ -327,7 +327,7 @@ def test_reanalyze_with_no_measured_runs_returns_400_and_does_not_advance_round(
     {"recipe": {}},                # empty mapping
 ])
 def test_start_rejects_malformed_recipe_with_400(store, client, bad_recipe):
-    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"])
+    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
     resp = client.post("/api/campaign/start", json={"recipes": [bad_recipe]})
     assert resp.status_code == 400
     assert "error" in resp.json()
@@ -343,7 +343,7 @@ def test_reanalyze_analyze_failure_does_not_advance_round_or_fold(store, client,
     `_analyze` works) folds normally. Regression for the persist-then-validate
     ordering bug."""
     df = _tiny_df()
-    store.seed(df, "lipase_titer", ["Methanol", "pH"])
+    store.seed(df, "lipase_titer", ["Methanol", "pH"], tenant="default")
     started = client.post("/api/campaign/start", json={"recipes": [
         {"recipe": {"Methanol": 2.0, "pH": 6.0}, "pred": 5.1, "std": 0.4,
          "mode": "explore", "reason": "measured"},
@@ -381,7 +381,7 @@ def test_reanalyze_on_legacy_campaign_without_generation_key(store, client):
     import json as _json
 
     df = _tiny_df()
-    store.seed(df, "lipase_titer", ["Methanol", "pH"])
+    store.seed(df, "lipase_titer", ["Methanol", "pH"], tenant="default")
     started = client.post("/api/campaign/start", json={"recipes": [
         {"recipe": {"Methanol": 2.0, "pH": 6.0}, "pred": 5.1, "std": 0.4,
          "mode": "explore", "reason": "measured"},
@@ -389,7 +389,7 @@ def test_reanalyze_on_legacy_campaign_without_generation_key(store, client):
     client.post("/api/campaign/result", json={"id": started[0]["id"], "value": 6.0})
 
     # simulate a pre-generation row: strip the key as the last write before reanalyze
-    state = store.get()
+    state = store.get(tenant="default")
     assert state is not None
     state.pop("generation", None)
     with store._conn:
@@ -403,7 +403,7 @@ def test_reanalyze_on_legacy_campaign_without_generation_key(store, client):
     assert body["campaign"]["round"] == 1
     assert body["campaign"]["n_base"] == len(df) + 1
     # the migration is self-healing: the commit re-stamped a real generation
-    final = store.get()
+    final = store.get(tenant="default")
     assert final is not None and "generation" in final
 
 
@@ -415,25 +415,25 @@ def test_commit_fold_aborts_when_campaign_reseeded_underneath(store):
     BLOCKER."""
     from kalos.portal.campaign import CampaignError
 
-    store.seed(_tiny_df(seed=1), "lipase_titer", ["Methanol", "pH"])
+    store.seed(_tiny_df(seed=1), "lipase_titer", ["Methanol", "pH"], tenant="default")
     started = store.start([
         {"recipe": {"Methanol": 2.0, "pH": 6.0}, "pred": 5.1, "std": 0.4,
          "mode": "explore", "reason": "measured"},
-    ])
-    store.set_result(started[0]["id"], 6.0)
+    ], tenant="default")
+    store.set_result(started[0]["id"], 6.0, tenant="default")
 
     # plan the fold (captures the current generation), then a fresh upload
     # reseeds the whole campaign underneath the in-flight re-analysis
-    _df, _target, generation = store.plan_fold()
+    _df, _target, generation = store.plan_fold(tenant="default")
     fresh = _tiny_df(n=10, seed=2)
-    store.seed(fresh, "lipase_titer", ["Methanol", "pH"])
+    store.seed(fresh, "lipase_titer", ["Methanol", "pH"], tenant="default")
 
     with pytest.raises(CampaignError):
-        store.commit_fold(generation)
+        store.commit_fold(generation, tenant="default")
 
     # the fresh upload survives intact: still round 0, base == the new upload,
     # no round-1 fold written over it
-    state = store.get()
+    state = store.get(tenant="default")
     assert state is not None
     assert state["round"] == 0
     assert len(state["base_rows"]) == len(fresh)
@@ -469,7 +469,7 @@ def test_analysis_is_flagged_out_of_sync_when_seeding_failed(store, client, monk
     never fail the upload (kalos/portal/app.py). That is exactly how the two
     resources drift apart — `/api/latest` gets the new analysis, the campaign
     keeps the old one, and both look valid. The stamp makes it visible."""
-    store.seed(_tiny_df(n=10, seed=1), "lipase_titer", ["Methanol", "pH"])
+    store.seed(_tiny_df(n=10, seed=1), "lipase_titer", ["Methanol", "pH"], tenant="default")
 
     def _boom(*_args, **_kwargs):
         raise RuntimeError("seeding blew up")
@@ -488,7 +488,7 @@ def test_a_campaign_seeded_after_the_analysis_is_out_of_sync(store, client):
     assert _upload(client, _tiny_df(n=10)).status_code == 200
     assert client.get("/api/campaign").json()["analysis_in_sync"] is True
 
-    store.seed(_tiny_df(n=14, seed=7), "lipase_titer", ["Methanol", "pH"])
+    store.seed(_tiny_df(n=14, seed=7), "lipase_titer", ["Methanol", "pH"], tenant="default")
 
     assert client.get("/api/campaign").json()["analysis_in_sync"] is False
 

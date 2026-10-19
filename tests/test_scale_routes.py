@@ -233,10 +233,10 @@ def test_valid_write_token_succeeds(client, monkeypatch):
 
 def test_readout_writes_nothing_to_the_campaign_store(client):
     tc, store = client
-    assert store.get() is None
+    assert store.get(tenant="default") is None
     r = _post(tc, target_json=_target_json())
     assert r.status_code == 200
-    assert store.get() is None
+    assert store.get(tenant="default") is None
 
 
 def test_readout_creates_no_new_files_on_disk(client, tmp_path):

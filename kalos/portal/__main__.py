@@ -19,8 +19,13 @@ import sys
 
 import uvicorn
 
-from kalos.portal.auth import get_authenticator
-from kalos.portal.config import InsecureBindError, assert_safe_exposure
+from kalos.portal.auth import AuthConfigError, get_authenticator
+from kalos.portal.config import (
+    InsecureBindError,
+    ProductionConfigError,
+    assert_production_posture,
+    assert_safe_exposure,
+)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8050
@@ -39,8 +44,19 @@ def main() -> None:
         raise SystemExit(2) from None
 
     try:
-        assert_safe_exposure(host, auth_configured=get_authenticator().enforces())
-    except InsecureBindError as exc:
+        auth = get_authenticator()
+        auth_enforced = auth.enforces()
+        # KALOS_ENV=production: tokenless open access is refused on ANY bind,
+        # loopback included, and KALOS_ALLOW_OPEN_ACCESS does not override it.
+        # It needs a usable source: a JWT public key or a service-account token.
+        assert_production_posture(auth_enforced=auth.has_auth_source())
+        assert_safe_exposure(host, auth_configured=auth_enforced)
+    except AuthConfigError as exc:
+        # A malformed token list or an unreadable/malformed JWT key file: fail
+        # closed at startup. Messages never carry token or key material.
+        print(f"kalos portal: authentication configuration is invalid: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except (InsecureBindError, ProductionConfigError) as exc:
         # Exit non-zero with the reason on stderr: this is a misconfiguration an
         # operator has to fix, not a crash, so it should read like a refusal.
         print(f"kalos portal: {exc}", file=sys.stderr)
