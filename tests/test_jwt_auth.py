@@ -374,6 +374,15 @@ def test_identity_claims_must_be_bounded_strings(keys, claim, bad):
     assert _status(keys.auth, _sign(keys.k1, _claims(**{claim: bad}))) == 401
 
 
+@pytest.mark.parametrize("claim", ["sub", "sid", "jti"])
+@pytest.mark.parametrize("bad", [123, ["x"], {"a": 1}, True])
+def test_non_string_identity_claims_are_bad_identity_not_invalid(keys, caplog, claim, bad):
+    """A non-string sub/sid/jti is reported with the documented reason code
+    (bad_identity_claim), not as PyJWT's generic `invalid`."""
+    token = _sign(keys.k1, _claims(**{claim: bad}))
+    assert _reason(keys.auth, token, caplog) == "bad_identity_claim"
+
+
 @pytest.mark.parametrize("claim", ["sub", "sid"])
 @pytest.mark.parametrize("bad", ["user 1", "a,b", "ü", "tab\there", "nl\n", "\x7f"])
 def test_sub_and_sid_are_printable_ascii_without_comma(keys, caplog, claim, bad):
@@ -822,6 +831,23 @@ def test_a_parseable_jwt_that_fails_verification_never_falls_back(keys, clean_en
         {"token_sha256": _sha(forged), "subject": "s", "tenant": "acme", "scopes": [READ]},
     ]))
     assert _reason(keys.auth, forged, caplog) == "bad_signature"
+
+
+@pytest.mark.parametrize("header,reason", [
+    ({"alg": "EdDSA", "typ": "JWT", "kid": "k1", "crit": ["exp"]}, "crit_header"),
+    ({"alg": "EdDSA", "typ": "JWT", "kid": ["k1"]}, "missing_kid"),
+    ({"alg": "EdDSA", "typ": "JWT", "kid": "k1", "crit": "exp"}, "crit_header"),
+])
+def test_parseable_jws_with_a_bad_header_is_classified_and_never_falls_back(
+        keys, clean_env, caplog, header, reason):
+    """A well-formed JWS whose header PyJWT would reject (a non-string kid, an
+    unknown crit) must get its own reason code. The token is also stored as a
+    static record: a fallback would authenticate it, so a 401 proves none."""
+    token = _unsigned(header, _claims(), b"x" * 64)
+    clean_env.setenv("KALOS_AUTH_TOKENS", json.dumps([
+        {"token_sha256": _sha(token), "subject": "s", "tenant": "acme", "scopes": [READ]},
+    ]))
+    assert _reason(keys.auth, token, caplog) == reason
 
 
 def test_open_mode_unaffected_in_dev(clean_env):
