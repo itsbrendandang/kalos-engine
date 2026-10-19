@@ -29,9 +29,14 @@ Because the sheet comes from an external client, the upload path is guarded:
   | `target_empty` / `target_not_numeric` / `target_constant` | the target has no values / no numbers / does not vary | `target`, `available_targets` (+ `target_summary`) |
   | `sheet_not_found` | the requested `sheet` does not exist | `sheet`, `sheets`, `sheet_used: null` |
   | `no_usable_sheet` | no sheet of a multi-sheet workbook holds a usable table | `sheets`, `sheet_used: null` |
+  | `ambiguous_header` | the first two rows are mostly blank or group labels (merged cells), so the column names cannot be identified. Refused rather than guessed. | `columns`: the columns detected (positional names such as `column 3` for unnamed cells; never pandas' `Unnamed: N`) |
+  | `too_few_complete_rows` | at least 6 numeric targets, but fewer than 6 runs remain after the runs with a missing, non-numeric or censored cell are excluded | `min_rows`, `n_rows`, `n_dropped_incomplete`, `n_censored_excluded` |
   | `parse_error` / `fit_failed` | anything else (generic message), or a numerically intractable fit | `sheets`/`sheet_used` for Excel |
 
   A size or shape cap (`too large`, `too many columns`) keeps its existing message.
+- **Header row.**
+  The column names are read from row 1. When row 1 is mostly blank, or is a merged-cell group label ("Process", "Analytics" above the real headers), the engine reads the names from row 2 instead and records `header_row: 1`, with an `info` finding. A row of text labels over a complete header row is treated the same way.
+  If the sheet is ambiguous (a group row with a few gaps, a units row under a partly blank header, or no usable names), the upload is refused with `ambiguous_header`, which lists the detected columns. A single data column with no header name is named by its position (`column 4`) and flagged with a `warning` finding (`unnamed_column`), so `Unnamed: N` never reaches a client.
 - **Workbooks and sheets.**
   `POST /api/run` accepts an optional `sheet` (multipart form field, or `?sheet=` query parameter; the form field wins) naming the sheet to analyze; an exact name, else a unique case- and whitespace-insensitive match.
   Without it, the engine analyzes the FIRST sheet in workbook order that holds a usable table: at least 2 columns, at least 6 data rows, and a numeric column. A workbook whose first sheet is the data therefore behaves exactly as before; a workbook with a notes sheet in front of the data now finds the data.
@@ -40,6 +45,15 @@ Because the sheet comes from an external client, the upload path is guarded:
 - **Provenance.**
   The response includes a `provenance` list: for every column, its status (`kept_feature`, `target`, `dropped_id`, `dropped_output`, `dropped_constant`, `dropped_constant_on_fitted_rows`, `dropped_sparse`, `dropped_all_blank`) and how many cells had to be coerced from non-numeric text (units like "34.6 C").
   A feature that varies over the full sheet but is constant on the target-present rows the GP actually fits is dropped and flagged (`dropped_constant_on_fitted_rows`), never silently pinned to a zero-width bound.
+- **Every drop is counted and reported.**
+  Each cell the model reads is classified: a number; blank; a null token (`n/a`, `NA`, `nan`, `null`, `-`, `?`); a censored value (`<LOD`, `>100`, `<x`, `>x`, `≤x`, `BLQ`, `LOQ`); or any other non-number (`ERR`).
+  - A **missing or non-numeric** cell in the target or in a fitted feature (or a categorical with no level) **excludes its run** from the fit. Nothing is imputed.
+  - A **censored** value **excludes its run** from the fit and is counted separately. Nothing is imputed.
+  - A **blank** feature cell keeps the sparse-component convention (absent = 0). The run stays in the fit, and the count is reported.
+  The result carries `n_dropped_incomplete` (runs excluded for missing or non-numeric cells), `n_censored_excluded` (runs excluded for censoring), and `data_drops` with `cells_by_reason`, `cells_by_column` (per column, per reason), and `blank_cells_as_absent`. Each is also a finding: `dropped_rows`, `dropped_cells` (per column), `censored_rows`, `censored_values` (per column, "excluded, not imputed"), and `blank_as_absent`. The run record carries the same counts (`run.data_drops`).
+  A numeric column still needs at least 80% of its non-blank cells to parse, and null tokens count against that gate. A column that fails it is not a feature (`dropped_non_numeric` when declared, otherwise `dropped_sparse`).
+- **Text factors are categorical features (no declared roles).**
+  Without `roles`, a text column with 2 to 12 distinct values, each repeated (at least two runs per value on average), that holds no numeric-looking cells, is modeled as a categorical feature. It is listed in `auto_categorical` and `categorical_features`, and proposals vary it. Each one has an `auto_categorical` finding that says how to confirm or override it: declare it in `roles.categoricals`. Declaring any `roles` turns auto-detection off, so declare every column the model should use. Identifiers and outcome-like names are never auto-categorical, and neither is a high-cardinality text column such as a per-run note.
 - **Data validation gate.**
   Before any column is typed or dropped, the sheet runs through `kalos.validation`: eleven checks covering unit consistency, physical bounds, duplicates vs replicates, missingness, informative missingness, outliers, provenance metadata, replicate adequacy, controls presence, constant columns, and columns constant within a group.
   The report is returned as `validation`, with `status` one of `pass`, `pass_with_warnings`, or `fail`.
@@ -64,6 +78,8 @@ Because the sheet comes from an external client, the upload path is guarded:
 - **Reproducibility.**
   The analyze path is seeded, so the same upload yields identical proposals; the response carries `seed`, `timestamp`, and `engine_version`.
   Protein embeddings pin the ESM-2 checkpoint to an immutable commit, so upstream cannot change model features without a diff here.
+- **Identifiers versus measurements.**
+  A `sample` column is an identifier only when it is a sample ID, code, name or number (`sample_id`, `Sample Code`), or a bare `sample`. Measured quantities that begin with the word, such as `sample_volume_L` or `sample_mass_g`, are process features and are modeled. `Tank ID`, `Patient ID` and similar compound identifiers remain identifiers.
 - **Opt-in anonymization.**
   Pass the form field `anonymize=true` to strip client/strain identity and hash grouping keys (`kalos/data/anonymizer.py`), so a run stays groupable for leakage-safe CV without carrying who it belongs to.
   Feature and target names are kept as-is (the owner UI legitimately shows drivers like "Methanol").

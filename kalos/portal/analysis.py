@@ -44,8 +44,21 @@ from kalos.portal.uploads import (
     clip_name,
     numeric_columns,
 )
+from kalos.portal.cells import (
+    BLANK,
+    CENSORED,
+    MISSING,
+    NON_NUMERIC,
+    NUMERIC,
+    REASON_CENSORED,
+    REASON_MISSING,
+    REASON_NON_NUMERIC,
+    classify_cells,
+    is_null_label,
+)
 from kalos.portal.validate import column_provenance, provenance_dicts
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
+from kalos.validation.report import Finding, ValidationReport, build_report
 from kalos.validation.bounds import DIMENSION_BOUNDS, infer_dimension
 from kalos.validation.checks import _RUN_ID_RE
 from kalos.validation.target import TargetVariation, assess_target_variation
@@ -437,7 +450,45 @@ def _resolve_columns(
         and not profile.outcome_hint.search(str(c))
     ]
     gcol = next((c for c in df.columns if profile.group_hint.search(str(c))), None)
-    return target, cont_feats, [], gcol, set()
+    return target, cont_feats, _auto_categorical(df, num, target, profile), gcol, set()
+
+
+# A text column is treated as a categorical factor (with no declared roles) when it
+# has between 2 and this many distinct values, each repeated across runs.
+AUTO_CATEGORICAL_MAX_LEVELS = 12
+
+
+def _auto_categorical(df: pd.DataFrame, num: list, target: str, profile: DomainProfile) -> list:
+    """Text columns that look like categorical factors, for a sheet with no declared
+    roles. Without this, a text factor (a resin, a medium) was silently dropped as
+    `dropped_sparse` and no proposal ever varied it.
+
+    A column qualifies when it is not numeric, not the target, not an identifier or
+    outcome by name, holds no numeric-looking cells (a mixed column is ambiguous),
+    and has 2..AUTO_CATEGORICAL_MAX_LEVELS distinct values that repeat: at least two
+    runs per value on average. Each such column is reported by `_analyze` as a
+    finding, so the uploader can confirm it or override it with `roles`.
+    """
+    num_set = set(num)
+    found: list = []
+    for c in df.columns:
+        if c in num_set or c == target:
+            continue
+        name = str(c)
+        if is_identifier_name(name, profile.id_hint) or profile.outcome_hint.search(name):
+            continue
+        series = df[c]
+        if isinstance(series, pd.DataFrame):  # duplicate header; analysis dedupes later
+            continue
+        kinds = classify_cells(series)
+        if kinds.isin([NUMERIC, CENSORED]).any():
+            continue
+        labels = series[kinds == NON_NUMERIC].astype(str).str.strip()
+        n_levels = int(labels.nunique())
+        enough_repeats = 2 * n_levels <= len(labels)
+        if len(labels) >= 3 and 2 <= n_levels <= AUTO_CATEGORICAL_MAX_LEVELS and enough_repeats:
+            found.append(c)
+    return found
 
 
 def _num(x: object, nd: int = 4) -> float | None:
@@ -729,6 +780,154 @@ def _refuse_unusable_target(
     )
 
 
+def _data_drops_block(
+    by_column: dict[str, dict[str, int]],
+    n_rows_dropped: int,
+    n_censored_rows: int,
+    zero_filled: dict[str, int],
+) -> dict:
+    """The `data_drops` block of the result: what was excluded from the fit and why.
+
+    `by_column` counts CELLS per column and reason over the rows that carry data;
+    `rows_dropped` counts the runs that were excluded. Nothing here is imputed, and the
+    per-column keys are the sheet's column names (aliased under `anonymize`)."""
+    by_reason = {REASON_MISSING: 0, REASON_NON_NUMERIC: 0, REASON_CENSORED: 0}
+    for reasons in by_column.values():
+        for reason, n in reasons.items():
+            by_reason[reason] = by_reason.get(reason, 0) + n
+    return {
+        "rows_dropped": int(n_rows_dropped),
+        "censored_rows_excluded": int(n_censored_rows),
+        "cells_by_reason": by_reason,
+        "cells_by_column": {c: dict(r) for c, r in by_column.items()},
+        # blank feature cells kept as 0 (absent) in the fitted runs
+        "blank_cells_as_absent": dict(zero_filled),
+    }
+
+
+_REASON_TEXT = {
+    REASON_MISSING: "missing",
+    REASON_NON_NUMERIC: "non-numeric",
+    REASON_CENSORED: "censored",
+}
+
+
+def _data_findings(
+    by_column: dict[str, dict[str, int]],
+    n_rows_dropped: int,
+    n_censored_rows: int,
+    zero_filled: dict[str, int],
+    *,
+    auto_cats: list[str],
+    header: dict,
+) -> list[Finding]:
+    """Findings for everything the data accounting did. Column names appear only in
+    `column` and in a message that names that one column, so `anonymize` can alias
+    them with the same mechanism as every other finding."""
+    out: list[Finding] = []
+    if n_rows_dropped:
+        out.append(Finding(
+            check="dropped_rows", severity="warning",
+            message=(
+                f"{n_rows_dropped} run{'s were' if n_rows_dropped != 1 else ' was'} excluded from "
+                "the fit because the target or a feature had a missing or non-numeric cell. "
+                "The cells involved are counted per column in the findings. Nothing was imputed."
+            ),
+            detail={"rows_dropped": int(n_rows_dropped)},
+        ))
+    if n_censored_rows:
+        out.append(Finding(
+            check="censored_rows", severity="warning",
+            message=(
+                f"{n_censored_rows} run{'s were' if n_censored_rows != 1 else ' was'} excluded from "
+                "the fit because a value was censored (<LOD, >100, <x or >x). Censored values "
+                "are not imputed and are counted per column in the findings."
+            ),
+            detail={"censored_rows_excluded": int(n_censored_rows)},
+        ))
+    for column, reasons in by_column.items():
+        parts = [
+            f"{reasons[r]} {_REASON_TEXT[r]}"
+            for r in (REASON_MISSING, REASON_NON_NUMERIC, REASON_CENSORED)
+            if reasons.get(r)
+        ]
+        if not parts:
+            continue
+        censored = reasons.get(REASON_CENSORED, 0)
+        others = [p for p in parts if not p.endswith("censored")]
+        if others:
+            out.append(Finding(
+                check="dropped_cells", severity="warning", column=column,
+                message=(
+                    f"Column {column!r}: "
+                    + " and ".join(others)
+                    + " cell(s) were not usable; the runs containing them were excluded from the "
+                    "fit (not imputed)."
+                ),
+                detail={"cells": {r: reasons[r] for r in reasons if r != REASON_CENSORED}},
+            ))
+        if censored:
+            out.append(Finding(
+                check="censored_values", severity="warning", column=column,
+                message=(
+                    f"Column {column!r} has {censored} censored value(s) (<LOD, >100, <x or >x). "
+                    "They were excluded from the fit and not imputed."
+                ),
+                detail={"censored_cells": int(censored)},
+            ))
+    for column, n in zero_filled.items():
+        out.append(Finding(
+            check="blank_as_absent", severity="info", column=column,
+            message=(
+                f"Column {column!r}: {n} blank cell(s) in the fitted runs were treated as 0 "
+                "(absent), as for a sparse component column. The runs were kept."
+            ),
+            detail={"blank_cells": int(n)},
+        ))
+    for column in auto_cats:
+        out.append(Finding(
+            check="auto_categorical", severity="info", column=column,
+            message=(
+                f"Column {column!r} was treated as a categorical feature: text with a few "
+                "repeated values, detected automatically because no roles were declared. "
+                "To confirm it, declare it in roles.categoricals. Declaring any roles turns "
+                "auto-detection off, so list every column the model should use."
+            ),
+        ))
+    if header.get("header_row") == 1:
+        out.append(Finding(
+            check="header_row", severity="info",
+            message=(
+                "The column names were read from the sheet's second row. The first row was "
+                "treated as a group-label row (merged headers) and not used as names."
+            ),
+        ))
+    for column in header.get("named_by_position") or []:
+        out.append(Finding(
+            check="unnamed_column", severity="warning", column=str(column),
+            message=(
+                f"Column {column!r} has no header in the sheet, so it was named by its position. "
+                "Check that it is a real input, or give it a name in the sheet."
+            ),
+        ))
+    return out
+
+
+def _with_data_findings(report: ValidationReport, extra: list[Finding]) -> ValidationReport:
+    """The validation report with the data-accounting findings appended. `status`
+    is re-derived by `build_report`, so a warning here makes the report say so."""
+    if not extra:
+        return report
+    return build_report(
+        mode=report.mode,
+        n_rows=report.n_rows,
+        n_columns=report.n_columns,
+        checks_run=[*report.checks_run, "data_accounting"],
+        findings=[*report.findings, *extra],
+        conversions=report.conversions,
+    )
+
+
 def _analyze(
     df: pd.DataFrame,
     target: str | None = None,
@@ -816,6 +1015,9 @@ def _analyze(
 
         _seed_everything()
     _progress = progress if progress is not None else (lambda _stage, _fraction: None)
+    # Header decision from the upload parser (`uploads.choose_header`), read before
+    # any frame operation below could drop the attrs.
+    header_info: dict = dict(df.attrs.get("kalos_header") or {})
     original_columns = {str(c) for c in df.columns}
     n_header_columns = int(df.shape[1])
     df = _dedupe_columns(df.dropna(axis=1, how="all"))
@@ -887,6 +1089,9 @@ def _analyze(
     target, cont_feats, cat_feats, gcol, declared = _resolve_columns(
         df, num, target, roles, profile
     )
+    # With no declared roles, text factors are auto-detected (see `_auto_categorical`);
+    # they are reported as findings so the uploader can confirm or override them.
+    auto_cats = list(cat_feats) if roles is None else []
     # PART 2 leakage guard: the constraint column (e.g. "purity_pct") is
     # normally already excluded from the feature set by `profile.outcome_hint`
     # (the same mechanism that excludes the target itself), same as the
@@ -927,81 +1132,137 @@ def _analyze(
     if not cont_feats and not cat_feats:
         raise UploadRejected(_ERR_NO_PROCESS_INPUTS, code="no_process_inputs")
 
-    y_all = pd.to_numeric(df[target], errors="coerce")
-    keep = y_all.notna()
-    Xc_raw = df.loc[keep, cont_feats].apply(pd.to_numeric, errors="coerce")  # NaN preserved (for grouping)
-    Xc_zf = Xc_raw.fillna(0.0)                                               # zero-filled (for the GP + box)
-    y = y_all[keep].to_numpy(float)
-    if len(y) < MIN_FIT_ROWS:
-        raise _too_few_rows(len(y), str(target))
-    # Cap the rows the O(n^2) exact GP is fit on, separately from the raw-upload
-    # cap. Reject rather than subsample: silent subsampling would be invisible,
-    # non-deterministic data loss and contradict the reproducibility contract.
-    if len(y) > MAX_FIT_ROWS:
-        raise UploadRejected(_ERR_TOO_MANY_FIT_ROWS)
+    # --- row accounting (D6) ------------------------------------------------- #
+    # Every cell the model reads is classified over ALL rows first, so each drop
+    # is reported by its real reason and column (`kalos.portal.cells`). Nothing is
+    # imputed. A missing or non-numeric cell in the target or a fitted feature
+    # drops its run. A censored value (<LOD, >100, <x, >x) excludes its run from
+    # the fit and is counted separately. A blank feature cell keeps the
+    # sparse-component convention (absent = 0): the run stays in, and the count is
+    # reported. An entirely blank sheet row is not data and is not counted.
+    tgt_kinds = classify_cells(df[target]).to_numpy(object)
+    row_blank = np.ones(len(df), dtype=bool)
+    for c in df.columns:
+        row_blank &= classify_cells(df[c]).to_numpy(object) == BLANK
+    active = ~row_blank
+    y_all = pd.to_numeric(df[target], errors="coerce").to_numpy(float)
+    keep = tgt_kinds == NUMERIC                      # rows with a usable target
+    feat_kind = {c: classify_cells(df[c]).to_numpy(object) for c in cont_feats}
+    Xc_all = df[cont_feats].apply(pd.to_numeric, errors="coerce") if cont_feats else pd.DataFrame(index=df.index)
 
-    # The design box is built from the target-present (fitted) rows, so the honest
-    # varying-feature check must be recomputed on THOSE rows, not the full column. A
-    # feature that varies over the whole sheet but is constant on the fitted rows
-    # would otherwise collapse its bound to zero width silently. Drop such features
-    # and record them so provenance flags them instead of misleading the client.
-    constant_on_fitted: list = []
-    if cont_feats:
-        fitted_range = Xc_zf.max(axis=0) - Xc_zf.min(axis=0)
-        constant_on_fitted = [c for c in cont_feats if float(fitted_range[c]) <= 1e-9]
-        if constant_on_fitted:
-            cont_feats = [c for c in cont_feats if c not in set(constant_on_fitted)]
-            Xc_raw = Xc_raw.drop(columns=constant_on_fitted)
-            Xc_zf = Xc_zf.drop(columns=constant_on_fitted)
-
-    # Categorical features: derive ordered levels from the fitted rows. A blank
-    # cell is NOT a proposable level - it means the categorical is unknown for that
-    # row - so blanks are excluded from the levels here, and rows with a blank in
-    # any kept categorical are dropped from the fit below (you cannot model, or
-    # recommend, a recipe whose categorical component is unknown). Drop any
-    # categorical that carries a single level too (no choice to optimize).
+    # Categorical levels come from the target-present rows. A blank or null-token
+    # label is not a proposable level (it means "unknown"), so it cannot define one.
     kept_cats: list = []
     constant_cats: list = []
     cat_dims_map: dict = {}
     for c in cat_feats:
         labels = df.loc[keep, c].fillna("").astype(str).str.strip()
-        levels = tuple(sorted({v for v in labels.tolist() if v != ""}))
+        levels = tuple(sorted({v for v in labels.tolist() if not is_null_label(v)}))
         if len(levels) < 2:
             constant_cats.append(c)
             continue
         kept_cats.append(c)
         cat_dims_map[c] = levels
+    cat_ok = {
+        c: df[c].fillna("").astype(str).str.strip().isin(cat_dims_map[c]).to_numpy()
+        for c in kept_cats
+    }
 
+    def _row_flags(features: list, cats: list) -> tuple[np.ndarray, np.ndarray]:
+        """(incomplete, censored) per row, over every row of the sheet."""
+        incomplete = np.isin(tgt_kinds, [BLANK, MISSING, NON_NUMERIC])
+        censored = tgt_kinds == CENSORED
+        for c in features:
+            incomplete |= np.isin(feat_kind[c], [MISSING, NON_NUMERIC])
+            censored |= feat_kind[c] == CENSORED
+        for c in cats:
+            incomplete |= ~cat_ok[c]
+        return incomplete, censored
+
+    # Pass 1 decides which features are constant over the rows that will be fitted
+    # (the honest varying-feature check, see the note below), pass 2 recomputes
+    # the drops without the constant features.
+    inc1, cens1 = _row_flags(cont_feats, kept_cats)
+    fit1 = keep & ~inc1 & ~cens1
+    constant_on_fitted: list = []
+    if cont_feats and fit1.any():
+        block = Xc_all[fit1].fillna(0.0)
+        spread = block.max(axis=0) - block.min(axis=0)
+        constant_on_fitted = [c for c in cont_feats if float(spread[c]) <= 1e-9]
+        if constant_on_fitted:
+            cont_feats = [c for c in cont_feats if c not in set(constant_on_fitted)]
+            Xc_all = Xc_all.drop(columns=constant_on_fitted)
+    inc, cens = _row_flags(cont_feats, kept_cats)
+    fit = keep & ~inc & ~cens
+    fit_pos = np.flatnonzero(fit)
     if not cont_feats and not kept_cats:
         raise UploadRejected(_ERR_NO_PROCESS_INPUTS, code="no_process_inputs")
 
-    # Drop fitted rows whose value for any kept categorical is blank/unknown, so a
-    # missing categorical can never poison the GP (as a NaN code) or surface as a
-    # proposed recipe with an empty categorical. `keep_index` is the original-frame
-    # index of the surviving rows, used for every per-row lookup below.
-    keep_index = df.index[keep.to_numpy()]
-    complete = np.ones(len(y), dtype=bool)
+    n_rows_dropped = int((inc & active).sum())
+    n_censored_rows = int((cens & ~inc & active).sum())
+    if len(fit_pos) < MIN_FIT_ROWS:
+        if int(keep.sum()) < MIN_FIT_ROWS:
+            raise _too_few_rows(int(keep.sum()), str(target))
+        raise UploadRejected(
+            f"Only {len(fit_pos)} run{'s have' if len(fit_pos) != 1 else ' has'} complete data "
+            f"for the model. {n_rows_dropped} were excluded for missing or non-numeric cells "
+            f"and {n_censored_rows} for censored values (for example <LOD or >100), which are "
+            f"not imputed. At least {MIN_FIT_ROWS} complete runs are needed to fit a model. "
+            "The per-column counts are in `validation.findings`.",
+            code="too_few_complete_rows",
+            context={
+                "min_rows": MIN_FIT_ROWS,
+                "n_rows": int(len(fit_pos)),
+                "n_dropped_incomplete": n_rows_dropped,
+                "n_censored_excluded": n_censored_rows,
+            },
+        )
+    # Cap the rows the O(n^2) exact GP is fit on, separately from the raw-upload
+    # cap. Reject rather than subsample: silent subsampling would be invisible,
+    # non-deterministic data loss and contradict the reproducibility contract.
+    if len(fit_pos) > MAX_FIT_ROWS:
+        raise UploadRejected(_ERR_TOO_MANY_FIT_ROWS)
+
+    # Per-column tallies over the rows of the sheet that carry data, by reason.
+    by_column: dict[str, dict[str, int]] = {}
+
+    def _tally(column: str, reason: str, n: int) -> None:
+        if n:
+            row = by_column.setdefault(column, {})
+            row[reason] = row.get(reason, 0) + int(n)
+
+    def _tally_kinds(column: str, kinds: np.ndarray, *, blank_is_missing: bool) -> None:
+        for kind, reason in (
+            (MISSING, REASON_MISSING),
+            (NON_NUMERIC, REASON_NON_NUMERIC),
+            (CENSORED, REASON_CENSORED),
+        ):
+            _tally(column, reason, int(((kinds == kind) & active).sum()))
+        if blank_is_missing:
+            _tally(column, REASON_MISSING, int(((kinds == BLANK) & active).sum()))
+
+    _tally_kinds(str(target), tgt_kinds, blank_is_missing=True)
+    for c in cont_feats:
+        _tally_kinds(str(c), feat_kind[c], blank_is_missing=False)
     for c in kept_cats:
-        labels = df.loc[keep_index, c].fillna("").astype(str).str.strip()
-        complete &= labels.isin(cat_dims_map[c]).to_numpy()
-    n_dropped_incomplete = int((~complete).sum())
-    if n_dropped_incomplete:
-        if int(complete.sum()) < 6:
-            raise ValueError(
-                f"only {int(complete.sum())} rows have all declared categoricals present; "
-                "need at least 6 to fit"
-            )
-        pos = np.flatnonzero(complete)
-        y = y[complete]
-        # Dropping incomplete rows can leave only rows that share one target value.
-        _refuse_unusable_target(df.loc[keep_index[pos]], target, num, profile)
-        Xc_raw = Xc_raw.iloc[pos]
-        Xc_zf = Xc_zf.iloc[pos]
-        keep_index = keep_index[pos]
+        _tally(str(c), REASON_MISSING, int(((~cat_ok[c]) & active).sum()))
+    zero_filled = {
+        str(c): int((feat_kind[c][fit_pos] == BLANK).sum())
+        for c in cont_feats
+        if int((feat_kind[c][fit_pos] == BLANK).sum())
+    }
 
     if preflight_only:
         # Every refusal that does not need a fitted model has run.
         return {}
+
+    keep_index = df.index[fit_pos]
+    y = y_all[fit_pos]
+    Xc_raw = Xc_all.iloc[fit_pos]                    # NaN preserved (for grouping)
+    Xc_zf = Xc_raw.fillna(0.0)                       # zero-filled (for the GP + box)
+    if n_rows_dropped or n_censored_rows:
+        # Dropping rows can leave only rows that share one target value.
+        _refuse_unusable_target(df.loc[keep_index], target, num, profile)
 
     # Assemble the design space with continuous dims first, categorical dims last.
     # BoTorch's mixed models accept arbitrary cat_dims indices, so this order is not
@@ -1779,7 +2040,13 @@ def _analyze(
         "n": int(len(y)), "d": len(kept_features), "target": str(target), "group_col": gcol,
         "targets": [str(c) for c in candidate_targets], "features": kept_features,
         "categorical_features": [str(c) for c in kept_cats],
-        "n_dropped_incomplete": n_dropped_incomplete,
+        "n_dropped_incomplete": n_rows_dropped,
+        "n_censored_excluded": n_censored_rows,
+        "data_drops": _data_drops_block(by_column, n_rows_dropped, n_censored_rows, zero_filled),
+        # Text columns the engine treated as categorical with no declared roles
+        # (see `_auto_categorical`); empty when roles were declared.
+        "auto_categorical": [str(c) for c in auto_cats if c in kept_cats],
+        "header_row": header_info.get("header_row"),
         "proposal_optimizer": proposal_optimizer,
         # In-flight recipes the acquisition was told about. 0 means the batch was
         # computed as if nothing were running - true for a one-shot upload, and
@@ -1881,7 +2148,16 @@ def _analyze(
         # normalized before analysis, so the client can see the frame they sent is
         # not byte-for-byte the frame that was modeled. None for a standard sheet.
         "orientation": df.attrs.get("kalos_orientation"),
-        "validation": report_dict(validation),
+        "validation": report_dict(
+            _with_data_findings(
+                validation,
+                _data_findings(
+                    by_column, n_rows_dropped, n_censored_rows, zero_filled,
+                    auto_cats=[str(c) for c in auto_cats if c in kept_cats],
+                    header=header_info,
+                ),
+            )
+        ),
         # Features whose search range was narrowed because some observed cells
         # were physically impossible. Reported, never silent: the client needs to
         # know the box they are being optimized over is not their full data range.
@@ -2078,6 +2354,19 @@ def _anonymize_result(result: dict) -> dict:
     out["design_box_exclusions"] = [
         _alias_named_row(e, alias) for e in out.get("design_box_exclusions", [])
     ]
+    if isinstance(out.get("auto_categorical"), list):
+        out["auto_categorical"] = [alias(str(c)) for c in out["auto_categorical"]]
+    drops = out.get("data_drops")
+    if isinstance(drops, dict):
+        out["data_drops"] = {
+            **drops,
+            "cells_by_column": {
+                alias(str(c)): dict(r) for c, r in drops.get("cells_by_column", {}).items()
+            },
+            "blank_cells_as_absent": {
+                alias(str(c)): n for c, n in drops.get("blank_cells_as_absent", {}).items()
+            },
+        }
     return out
 
 

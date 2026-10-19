@@ -207,6 +207,7 @@ _TYPES = {
     "build_sha": str, "library_versions": dict,
     "validation_mode": str, "n_rows": int, "n_features": int, "kind": str,
     "pending_runs": int, "gates": dict,
+    "data_drops": dict, "header_row": (int, type(None)),
 }
 _KEYS_PLAIN = set(_TYPES) | {"filename", "sheet"}
 

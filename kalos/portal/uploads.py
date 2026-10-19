@@ -11,11 +11,14 @@ import logging
 import os
 import re
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 
 from kalos.normalize.orientation import detect_orientation
+from kalos.portal.cells import BLANK, CENSORED, NON_NUMERIC, NUMERIC, classify_cells
 
 log = logging.getLogger("kalos.portal")
 
@@ -544,17 +547,23 @@ def _decode_text(raw: bytes) -> str:
 
 def numeric_columns(df: pd.DataFrame) -> list:
     """Columns where >=80% of the NON-BLANK cells parse as numbers (and there are
-    at least 3 of them). Blanks count as "absent", so a sparse component column
-    still counts. The single definition `kalos.portal.analysis` also uses."""
+    at least 3 of them). Truly blank cells count as "absent", so a sparse component
+    column still counts. A null token (`n/a`, `NA`) is written text, not an absent
+    cell, so it counts against the gate like any other unparseable cell. Censored
+    values (`<LOD`, `>100`) count as numeric: they are measurements with a bound,
+    excluded row by row at fit time. The single definition `kalos.portal.analysis`
+    also uses."""
     out = []
     for c in df.columns:
         s = df[c]
         if isinstance(s, pd.DataFrame):  # duplicate header; analysis dedupes later
             s = s.iloc[:, 0]
-        nonblank = s.notna() & (s.astype(str).str.strip() != "")
+        kinds = classify_cells(s)
+        nonblank = kinds != BLANK
         if nonblank.sum() < 3:
             continue
-        if pd.to_numeric(s[nonblank], errors="coerce").notna().mean() >= 0.8:
+        numeric = kinds.isin([NUMERIC, CENSORED])
+        if numeric.sum() / nonblank.sum() >= 0.8:
             out.append(c)
     return out
 
@@ -576,8 +585,162 @@ def table_shape_problem(df: pd.DataFrame) -> str | None:
     return None
 
 
+# --- header row --------------------------------------------------------------- #
+
+# A header row is trusted only while most of its data-bearing columns are named.
+# Merged-cell workbooks put a group label ("Process", "Analytics") in one cell
+# and leave the rest of the merged span blank: pandas names those columns
+# "Unnamed: N", and the real column names sit one row lower.
+UNNAMED_SHARE_LIMIT = 0.5
+_UNNAMED_RE = re.compile(r"^Unnamed: \d+(?:_level_\d+)?$")
+_ERR_AMBIGUOUS_HEADER = (
+    "The column names could not be identified: the first two rows have blank or group-label "
+    "cells (merged cells, or a units row under a partly blank header), so the header is "
+    "ambiguous. Put the column names in one header row with no merged cells, or export the "
+    "run sheet as CSV."
+)
+
+
+def _is_unnamed(name: object) -> bool:
+    return bool(_UNNAMED_RE.match(str(name)))
+
+
+def _data_columns(df: pd.DataFrame) -> list[int]:
+    """Positions of the columns that hold at least one non-empty cell."""
+    return [i for i in range(df.shape[1]) if df.iloc[:, i].notna().any()]
+
+
+def _unnamed_share(df: pd.DataFrame) -> float:
+    data = _data_columns(df)
+    if not data:
+        return 0.0
+    return sum(1 for i in data if _is_unnamed(df.columns[i])) / len(data)
+
+
+def _names_look_like_labels(df: pd.DataFrame) -> bool:
+    """A candidate header is plausible only if its names are mostly text, not
+    numbers: a data row promoted to a header would be mostly numeric."""
+    names = [str(c) for c in df.columns if not _is_unnamed(c)]
+    if not names:
+        return False
+
+    def _numeric(text: str) -> bool:
+        try:
+            float(text)
+        except ValueError:
+            return False
+        return True
+
+    return sum(1 for n in names if not _numeric(n)) / len(names) >= 0.5
+
+
+def _column_label(position: int) -> str:
+    """The name a data column without a header gets: its 1-based position. Never
+    pandas' own `Unnamed: N`, which would leak into every response."""
+    return f"column {position + 1}"
+
+
+def _detected_names(df: pd.DataFrame) -> list[str]:
+    return [_column_label(i) if _is_unnamed(df.columns[i]) else str(df.columns[i])
+            for i in _data_columns(df)]
+
+
+def choose_header(read: Callable[[int], pd.DataFrame]) -> tuple[pd.DataFrame, int]:
+    """Read a table with its column names on row 0, or on row 1 when row 0 is a
+    merged-header group label (or title) row. `read(h)` parses the sheet with
+    header row `h`.
+
+    - Row 0 is mostly named: it is the header. Any blank data header cell left is
+      named by its position (`_name_unlabeled`).
+    - Row 0 is mostly unnamed: row 1 is the header, if it is mostly named with text.
+    - Row 0 has a few blank cells and row 1 is a complete text row: ambiguous. That
+      is a group row with gaps, or a units row, and the sheet does not say which, so
+      picking either would silently mislabel columns.
+
+    Anything ambiguous is refused (`ambiguous_header`) with the detected columns.
+    """
+    first = read(0)
+    share0 = _unnamed_share(first)
+    if share0 == 0:
+        return first, 0
+    try:
+        second: pd.DataFrame | None = read(1)
+    except Exception:  # noqa: BLE001 - a sheet with no second row is simply ambiguous
+        second = None
+    second_labels = second is not None and _names_look_like_labels(second)
+    if share0 < UNNAMED_SHARE_LIMIT:
+        if second is not None and second_labels and _unnamed_share(second) == 0:
+            raise _ambiguous_header(first)
+        return first, 0
+    if second is not None and second_labels and _unnamed_share(second) < UNNAMED_SHARE_LIMIT:
+        return second, 1
+    raise _ambiguous_header(first)
+
+
+def _ambiguous_header(first: pd.DataFrame) -> UploadRejected:
+    detected = _detected_names(first)
+    return UploadRejected(
+        f"{_ERR_AMBIGUOUS_HEADER} Columns detected: {_quote_list(detected)}.",
+        code="ambiguous_header",
+        context={"columns": detected},
+    )
+
+
+def _name_unlabeled(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Name every data column that is still unnamed by its position. Returns the
+    frame and the names given (empty when every data column had a header)."""
+    names = [str(c) for c in df.columns]
+    given: list[str] = []
+    for i in _data_columns(df):
+        if _is_unnamed(names[i]):
+            names[i] = _column_label(i)
+            given.append(names[i])
+    if not given:
+        return df, []
+    out = df.copy()
+    out.columns = names
+    return out, given
+
+
+def _typed_cells(df: pd.DataFrame) -> pd.DataFrame:
+    """Give numeric-looking text its number, column by column, the way pandas did
+    before null tokens were kept as text. A column is converted only when it holds
+    no genuine text cell (a non-numeric token such as `ERR`): then `"2.5"` becomes
+    `2.5`, and `n/a` or `<LOD` stay text, marking that cell as missing or censored.
+    A text column is left exactly as written, so its labels do not change."""
+    out = df
+    for i in range(df.shape[1]):
+        series = df.iloc[:, i]
+        if pd.api.types.is_numeric_dtype(series.dtype) or pd.api.types.is_bool_dtype(series.dtype):
+            continue
+        kinds = classify_cells(series)
+        if (kinds == NON_NUMERIC).any() or not (kinds == NUMERIC).any():
+            continue
+        if out is df:
+            out = df.copy()
+        converted = [
+            float(v) if isinstance(v, str) and k == NUMERIC else v
+            for v, k in zip(series.tolist(), kinds.tolist())
+        ]
+        out.isetitem(i, np.array(converted, dtype=object))
+    return out
+
+
+def _record_header(df: pd.DataFrame, header_row: int, named_by_position: list[str]) -> pd.DataFrame:
+    """Keep the header decision on the frame (`attrs`), where `_analyze` turns it
+    into findings. The names that were given by position are recorded so the
+    analysis can say which columns the engine could not name from the sheet."""
+    df.attrs["kalos_header"] = {
+        "header_row": int(header_row),
+        "named_by_position": list(named_by_position),
+    }
+    return df
+
+
 # --- parsing ------------------------------------------------------------------ #
 
+# Null tokens stay text on read (see `kalos.portal.cells`): only a truly empty
+# cell is NaN, so "n/a" and a blank cell are reported as different drops.
 
 MAX_SHEETS_SCANNED = 20
 # The default-sheet search parses sheets in workbook order until one is usable.
@@ -681,9 +844,17 @@ def _parse_excel(raw: bytes, sheet: str | None) -> ParsedUpload:
     ctx = {"sheets": names, "sheet_used": None}
 
     def _read(name: str) -> pd.DataFrame:
+        def _parse_at(header_row: int) -> pd.DataFrame:
+            return book.parse(  # type: ignore[attr-defined]  # pandas-stubs omits ExcelFile.parse
+                name, header=header_row, keep_default_na=False, na_values=[""]
+            )
+
         try:
-            # pandas' stubs (pandas 3) omit ExcelFile.parse; it is the documented method.
-            df = book.parse(name)  # type: ignore[attr-defined]
+            df, header_row = choose_header(_parse_at)
+        except UploadRejected as rej:
+            raise UploadRejected(
+                rej.message, code=rej.code, context={**ctx, "sheet": name, **rej.context}
+            ) from rej
         except Exception as exc:  # noqa: BLE001 - e.g. a chart sheet, a damaged part
             log.warning("could not read an xlsx sheet: %s", type(exc).__name__)
             raise UploadRejected(
@@ -691,11 +862,12 @@ def _parse_excel(raw: bytes, sheet: str | None) -> ParsedUpload:
                 code="corrupt_excel",
                 context={**ctx, "sheet": name},
             ) from exc
+        df, named = _name_unlabeled(_typed_cells(df))
         # Belt-and-suspenders: re-check the materialized shape. The pre-read guard
         # uses the sheet's declared dimensions; this catches a mismatch and the
         # column ceiling on the actual parsed frame.
         _check_frame_caps(df)
-        return _apply_orientation_prepass(df)
+        return _record_header(_apply_orientation_prepass(df), header_row, named)
 
     try:
         if sheet is not None and sheet.strip():
@@ -716,13 +888,17 @@ def _parse_excel(raw: bytes, sheet: str | None) -> ParsedUpload:
         # cells its XML part could hold (it may have been read almost to the
         # end before failing), so broken sheets cannot multiply the work.
         budget = MAX_XLSX_CELLS
+        ambiguous: UploadRejected | None = None
         for name in names[:MAX_SHEETS_SCANNED]:
             try:
                 df = _read(name)
             except UploadRejected as rej:
-                if rej.code != "corrupt_excel":
+                if rej.code not in ("corrupt_excel", "ambiguous_header"):
                     raise
-                # an unreadable sheet is not a candidate; charge it, try the next
+                # an unreadable or ambiguous-header sheet is not a candidate; charge
+                # it, try the next, and remember the header problem for the refusal
+                if rej.code == "ambiguous_header" and ambiguous is None:
+                    ambiguous = rej
                 budget -= _sheet_cell_bound(book, name, part_sizes)
                 if budget <= 0:
                     break
@@ -732,6 +908,8 @@ def _parse_excel(raw: bytes, sheet: str | None) -> ParsedUpload:
             budget -= int(df.shape[0] * df.shape[1])
             if budget <= 0:
                 break
+        if ambiguous is not None:
+            raise ambiguous
         raise UploadRejected(
             f"None of the workbook's {len(names)} sheets ({_quote_list(names)}) holds a "
             f"usable run-sheet table: one needs a header row, at least 2 columns, at "
@@ -768,7 +946,13 @@ def _parse_text(raw: bytes) -> ParsedUpload:
         ncols = pd.read_csv(io.StringIO(text), sep=sep, nrows=0).shape[1]
         if ncols > MAX_COLUMNS:
             raise UploadRejected(_ERR_TOO_MANY_COLUMNS)
-        df = pd.read_csv(io.StringIO(text), sep=sep)
+        # Null tokens (`n/a`, `NA`) stay text on read (see `kalos.portal.cells`):
+        # only a truly empty cell is NaN, so each drop can report its real reason.
+        df, header_row = choose_header(
+            lambda h: pd.read_csv(
+                io.StringIO(text), sep=sep, header=h, keep_default_na=False, na_values=[""]
+            )
+        )
     except pd.errors.ParserError as exc:
         log.warning("rejected an unparseable text upload: %s", type(exc).__name__)
         raise UploadRejected(_ERR_NOT_A_TABLE, code="not_a_table") from exc
@@ -779,7 +963,8 @@ def _parse_text(raw: bytes) -> ParsedUpload:
     # contract, so an over-cap CSV is rejected like the xlsx cell-cap guard.
     if len(df) > MAX_CSV_ROWS:
         raise UploadRejected(_ERR_TOO_LARGE)
-    return ParsedUpload(_apply_orientation_prepass(df), "text")
+    df, named = _name_unlabeled(_typed_cells(df))
+    return ParsedUpload(_record_header(_apply_orientation_prepass(df), header_row, named), "text")
 
 
 def parse_upload(

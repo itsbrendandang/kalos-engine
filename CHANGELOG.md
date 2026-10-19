@@ -4,6 +4,14 @@ Newest first.
 
 ## Unreleased
 
+### Changed - no silent data loss in analysis (`feat/data-handling`, docs/UPLOADS.md)
+
+- **Text factors are modeled (D5).** With no declared `roles`, a text column with 2-12 repeated values is a categorical feature (before: `dropped_sparse`, never varied by a proposal). Each auto-detected column gets an `auto_categorical` finding; declaring roles turns detection off. Result: `auto_categorical`.
+- **Every drop is counted (D6).** Runs excluded for a missing or non-numeric target/feature cell were silent (`n_dropped_incomplete: 0`). They now carry per-column, per-reason counts (`data_drops`) and findings, and the run record echoes the counts (`run.data_drops`). Null tokens (`n/a`, `NA`, `nan`) are kept as text on read, so they are reported as missing rather than folded into blanks. Censored values (`<LOD`, `>100`, `<x`, `>x`) exclude their run from the fit, are counted separately (`n_censored_excluded`), and are never imputed. A blank feature cell still means absent (0) and is reported.
+- **Merged headers (D7).** A group-label row above the column names is skipped and the names are read from the next row (`header_row: 1`). A sheet whose names cannot be identified is refused with `ambiguous_header` and the detected columns. A single unnamed data column is named by position with a warning, so pandas' `Unnamed: N` never reaches a response.
+- **`sample.*` no longer swallows measurements.** `sample_volume_L` and `sample_mass_g` are features. `sample_id`, `Sample Code` and `Tank ID` are still identifiers. The test that recorded the old over-match was replaced.
+- Run record: `data_drops` and `header_row` are added (`run.schema_version` stays 1: the record is unreleased).
+
 ### Added - run record and engine lock (`feat/run-record`)
 
 - Fix (same unreleased branch): `run.n_features` is the fitted feature count

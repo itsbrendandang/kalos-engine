@@ -47,6 +47,8 @@ from typing import Any
 
 import pandas as pd
 
+from kalos.portal.cells import BLANK, CENSORED, MISSING, classify_value
+
 NUMERIC = "numeric"
 CATEGORICAL = "categorical"
 EMPTY = "empty"
@@ -71,6 +73,13 @@ def _is_number(value: Any) -> bool:
 
 def _label(value: Any) -> str:
     return str(value).strip()
+
+
+def _note(value: Any) -> bool:
+    """A null token (`n/a`, `NA`) or a censored value (`<LOD`, `>100`): a written
+    note about a measurement, not a level, so it never makes a column categorical
+    and is never accepted as a recipe value (#94)."""
+    return isinstance(value, str) and classify_value(value) in (BLANK, MISSING, CENSORED)
 
 
 def _blank(value: Any) -> bool:
@@ -118,7 +127,7 @@ def column_kinds(
 
     out: dict[str, ColumnKind] = {}
     for col in wanted:
-        cells = [v for v in frame[col].tolist() if not _blank(v)]
+        cells = [v for v in frame[col].tolist() if not _blank(v) and not _note(v)]
         if not cells:
             out[col] = ColumnKind(EMPTY)
             continue
