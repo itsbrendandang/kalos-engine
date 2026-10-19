@@ -4,6 +4,19 @@ Newest first.
 
 ## Unreleased
 
+### Fixed - review: anonymize hides person names and their level values (H4)
+
+- `is_identifier_name` treats `operator`, `analyst`, `technician`, `tech` and `email`
+  as whole-word person tokens anywhere in a name, and `Name` after a subject
+  (`Donor_Name_1`, `Lab_Tech`, `Operator`, `email` now count). Process variables
+  (`Methanol`, `pH`, `sample_volume_L`) are unchanged.
+- With `anonymize=true`, identifier-column categorical level values are pseudonymized
+  (`level_<hash>`) in the proposal recipes and the response-surface fixed recipe.
+  Identifier names are also aliased in `features`, `target`, `drivers`,
+  `correlation`, `gp_shapes`, `response_surface` and the recipe keys. Before, a
+  recipe carried "Jane Smith 0" verbatim. Scope: docs/HARDENING.md, "What
+  `anonymize=true` covers".
+
 ### Fixed - review: a non-finite constraint floor is a ValueError (L1)
 
 - `constraint` with a NaN or infinite `floor` (or a non-string/empty `column`)

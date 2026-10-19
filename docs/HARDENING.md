@@ -174,9 +174,21 @@ protection. Exactly this is covered:
 - **Identifier column names** (`is_identifier_name` in
   `kalos/portal/analysis.py`: the profile's `id_hint`, the run-id pattern, and a
   word-level rule, so `Tank ID`, `Patient ID`, `Customer Name` and `run_number`
-  all count) are replaced by `col_<hash>` in the response: `provenance`,
-  `group_col`, validation findings and their prose, `design_box_exclusions`,
-  refusal context and message. Identifier columns are not model features.
+  all count). Person-name tokens count anywhere in a name, as whole words:
+  `operator`, `analyst`, `technician`, `tech`, `email`, and `name` after a subject
+  (`Donor_Name_1`, `Lab_Tech`, `Operator`, `email`). Process variables do not
+  (`Methanol`, `pH`, `sample_volume_L`, `technology_level`). Identifier names are
+  replaced by `col_<hash>` in the response: `provenance`, `target`, `group_col`,
+  `features`, `categorical_features`, `proposal_features`, `drivers`, `correlation`
+  labels, `gp_shapes` feature names, the response-surface axes and fixed recipe,
+  every proposal recipe key, `design_box_exclusions`, `auto_categorical`,
+  `data_drops`, validation findings and their prose, and refusal context and
+  message. Identifier columns are not model features unless declared in `roles`.
+- **Categorical level values of identifier columns** (a declared categorical such
+  as `Donor_Name_1`, whose levels are people's names) are replaced by
+  `level_<hash>` in the proposal recipes and the response-surface fixed recipe.
+  Before, "Jane Smith 0" appeared verbatim there (review H4). Levels of ordinary
+  categoricals (`Medium` = `A`/`B`/`C`) are published as they are.
 - **Sheet names** are replaced by `sheet_<hash>` in `sheets`, `sheet_used`, the
   refusals (`sheet_not_found`, `no_usable_sheet`) and the analysis-error text.
 - **The filename** is not stored: not in `run`, not as the campaign's `dataset`
@@ -190,8 +202,11 @@ Not covered (the response or the store still carries these):
 - **`target`** (top-level and `run.target`) and **`run.roles_declared`** keep
   the caller's own column names. A target or declared role that is an
   identifier is shown as sent.
-- **Feature names** (`features`, `proposal_features`, drivers, recipe keys) keep
-  their real names. Features are the process inputs the owner reads.
+- **Process feature names and their values** (`Methanol`, `pH`, numeric
+  settings, categorical levels of ordinary factors) keep their real names. They
+  are the process inputs the owner reads. Identifier-like names are aliased as
+  above; an identifier name that is not recognised by `is_identifier_name` is
+  published as sent, so a naming gap is the thing to fix, not the output.
 - **`campaigns.base_rows` at rest.** The campaign stores the full uploaded sheet
   (every column, including identifier columns and the raw values) in
   `portal.db`, unencrypted and unaltered, so that the loop can fold results into

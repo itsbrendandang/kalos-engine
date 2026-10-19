@@ -2333,7 +2333,10 @@ def _analyze_body(
         "engine_version": ENGINE_VERSION,
     }
     if anonymize:
-        result = _anonymize_result(result)
+        result = _anonymize_result(
+            result,
+            categorical_levels={str(c): cat_dims_map[c] for c in kept_cats},
+        )
     return result
 
 
@@ -2477,6 +2480,12 @@ _ID_SUBJECTS = frozenset({
 })
 _ID_ALONE = frozenset({"id", "ids", "uuid", "guid", "name", "index", "barcode", "identifier", "well", "mrn"})
 
+# Words that name a PERSON wherever they appear in a column name (review H4). They
+# are matched as whole words anywhere in the name, so "Operator", "Lab_Tech" and
+# "Donor_Name_1" are identifiers, while "Methanol" and "pH" are not (no substring
+# match: "technology" is not "tech").
+_PERSON_WORDS = frozenset({"operator", "analyst", "technician", "tech", "email"})
+
 
 def _token_identifier(name: str) -> bool:
     """The compound-name rule. Words are split on any non-alphanumeric run and
@@ -2489,6 +2498,8 @@ def _token_identifier(name: str) -> bool:
         words.pop()
     if not words:
         return False
+    if any(w in _PERSON_WORDS for w in words):
+        return True
     *rest, last = words
     if not rest:
         return last in _ID_ALONE
@@ -2510,21 +2521,83 @@ def _is_identifier_name(name: str) -> bool:
     return is_identifier_name(name)
 
 
-def _anonymize_result(result: dict) -> dict:
-    """Replace identifier-type column names in the response with stable pseudonyms.
+def _anonymize_result(
+    result: dict, *, categorical_levels: Mapping[str, Sequence[str]] | None = None
+) -> dict:
+    """Replace identifier-type column names and values in the response with stable
+    pseudonyms (`anonymize=True`).
 
-    Only identifier-like columns (matched by `_ID_HINT`) are renamed; process
-    features and the target keep their real names because the authenticated owner
-    UI legitimately shows them (a driver like "Methanol"). The mapping is stable
-    (same name -> same pseudonym) via the anonymizer's irreversible hash, so an
-    anonymized report is still internally consistent across fields.
+    Identifier-like columns (`is_identifier_name`: ids, samples, operators,
+    analysts, technicians, names, emails) are renamed everywhere a name appears:
+    provenance, features, drivers, correlation labels, the response-surface axes
+    and fixed recipe, the proposal recipes, and the validation prose. Their
+    CATEGORICAL LEVEL VALUES are pseudonymized too (`categorical_levels`, the levels
+    of each kept categorical feature): a level such as "Jane Smith 0" is a person's
+    name, and leaked verbatim in the recipes before (review H4). Process variables
+    (Methanol, pH, sample_volume_L) and their values keep their real names because
+    the owner UI shows them. The mapping is stable (same name -> same pseudonym)
+    via the anonymizer's irreversible hash, so the report stays internally
+    consistent across fields.
     """
     def alias(name: str) -> str:
         return f"col_{_hash(name)[:8]}" if _is_identifier_name(name) else name
 
+    id_levels: dict[str, set[str]] = {
+        str(c): {str(v) for v in levels}
+        for c, levels in (categorical_levels or {}).items()
+        if _is_identifier_name(str(c))
+    }
+
+    def alias_level(column: str, value: object) -> object:
+        if isinstance(value, str) and value in id_levels.get(column, ()):
+            return f"level_{_hash(column + chr(31) + value)[:8]}"
+        return value
+
+    def alias_recipe(recipe: object) -> object:
+        if not isinstance(recipe, dict):
+            return recipe
+        return {alias(str(k)): alias_level(str(k), v) for k, v in recipe.items()}
+
     out = dict(result)
     if out.get("group_col"):
         out["group_col"] = alias(out["group_col"])
+    if isinstance(out.get("target"), str):
+        out["target"] = alias(out["target"])
+    for key in ("targets", "features", "categorical_features", "proposal_features"):
+        if isinstance(out.get(key), list):
+            out[key] = [alias(str(c)) for c in out[key]]
+    shapes = out.get("gp_shapes")
+    if isinstance(shapes, dict) and isinstance(shapes.get("features"), list):
+        out["gp_shapes"] = {
+            **shapes,
+            "features": [
+                {**f, "name": alias(str(f["name"]))}
+                if isinstance(f, dict) and "name" in f else f
+                for f in shapes["features"]
+            ],
+        }
+    if isinstance(out.get("drivers"), list):
+        out["drivers"] = [
+            {**d, "name": alias(str(d["name"]))} if isinstance(d, dict) and "name" in d else d
+            for d in out["drivers"]
+        ]
+    if isinstance(out.get("proposals"), list):
+        out["proposals"] = [
+            {**p, "recipe": alias_recipe(p["recipe"])} if isinstance(p, dict) and "recipe" in p else p
+            for p in out["proposals"]
+        ]
+    corr = out.get("correlation")
+    if isinstance(corr, dict) and isinstance(corr.get("labels"), list):
+        out["correlation"] = {**corr, "labels": [alias(str(c)) for c in corr["labels"]]}
+    surf = out.get("response_surface")
+    if isinstance(surf, dict):
+        surf_out = dict(surf)
+        for key in ("x_feature", "y_feature"):
+            if isinstance(surf_out.get(key), str):
+                surf_out[key] = alias(surf_out[key])
+        if isinstance(surf_out.get("fixed_recipe"), dict):
+            surf_out["fixed_recipe"] = alias_recipe(surf_out["fixed_recipe"])
+        out["response_surface"] = surf_out
     out["provenance"] = [
         {**row, "name": alias(row["name"])} for row in out.get("provenance", [])
     ]
