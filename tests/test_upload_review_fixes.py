@@ -242,7 +242,9 @@ def _assert_fast_bounded_rejection(raw: bytes, match: str) -> None:
         peak = tracemalloc.get_traced_memory()[1]
     finally:
         tracemalloc.stop()
-    assert elapsed < 2.0, elapsed
+    # The real invariant is the memory bound below; the time ceiling is only a
+    # hang guard, generous because CI runners vary widely (2 s flaked on a slow runner).
+    assert elapsed < 30.0, elapsed
     assert peak < 64 * 1024 * 1024, peak  # never the multi-GB expansion
 
 
