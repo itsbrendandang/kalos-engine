@@ -85,6 +85,7 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 | `KALOS_JOB_QUEUE_DEPTH` | Queued + running jobs one tenant may hold; more answers 429. Must be >= 1. | `8` |
 | `KALOS_JOB_GLOBAL_QUEUE_DEPTH` | Queued + running jobs all tenants may hold together; more answers 429. Must be >= 1. (docs/JOBS.md) | `64` |
 | `KALOS_JOB_MAX_UPLOAD_BYTES` | Largest upload a job accepts, per tenant. Must be <= the engine's upload cap. | the upload cap |
+| `KALOS_BUILD_SHA` | Commit the engine was built from, recorded as `run.build_sha` on every analysis. CI passes `github.sha` at image build (`deploy/engine/Containerfile`). | `unknown` |
 | `KALOS_JOB_TIMEOUT_S` | Wall-clock limit for one job; past it the worker is killed and the job is `timed_out`. Must be >= 1. | `1800` |
 
 When none of `KALOS_AUTH_TOKENS_FILE`, `KALOS_AUTH_TOKENS` and `KALOS_JWT_PUBLIC_KEYS_FILE` is set, the API runs in **open mode** (anonymous `default` tenant, read+write, admin withheld) and logs a warning at startup.
@@ -159,6 +160,75 @@ A review of progress against the readiness scorecard surfaced that campaign + la
 - **P4 - Move `_LATEST` into SQLite: DONE by schema v2** (`feat/campaign-schema-v2`, docs/MIGRATIONS.md): an `analyses` row per campaign, written in the fold's transaction. Original plan: a `latest(tenant, state, updated_at)` row in `portal.db`, retiring the per-tenant file cache; lets the reanalyze latest-write carry a generation stamp in one transaction, closing the documented sub-ms race. Prerequisite for P5 (one DB file = complete tenant state).
 - **P5 - Backups + restore/DR**: scheduled SQLite online `.backup()` into `KALOS_BACKUP_DIR` + a documented restore runbook. Do P4 first so a snapshot captures all state.
 
+### One engine per state directory
+
+`python -m kalos.portal` takes an exclusive, non-blocking `flock` on
+`<KALOS_STATE_DIR>/engine.lock` before it serves. A second engine on the same
+state directory exits with status 2 and a message naming the holder's PID,
+instead of sharing `portal.db` and the latest-analysis cache with the first.
+The kernel drops the lock when the process dies, so a crash leaves nothing
+stale: a SIGKILLed engine leaves `engine.lock` on disk with its dead pid in it,
+and the next engine takes the lock anyway (`tests/test_engine_lock.py`).
+
+Exit status 2 has two reasons, and the message says which:
+
+- **held**: another engine process owns the directory (`already holds`).
+- **unsupported**: the lock could not be taken for any other reason. A
+  filesystem that refuses flock (some network mounts) reports `could not lock
+  ... flock`; a platform without POSIX `fcntl` says so. Neither means another
+  engine is running. Use a local directory for `KALOS_STATE_DIR`.
+
+Limits, stated plainly:
+
+- **Use `python -m kalos.portal`.** It is the one entry point that takes the
+  lock. `uvicorn kalos.portal.app:app --workers N` (N > 1) starts N processes
+  that do not take it, so they share `portal.db` without the guard. Run one
+  process per state directory, or give each engine its own directory.
+- The lock is per host. A state directory on a network filesystem shared by two
+  hosts is not protected by flock; do not share one.
+- Job worker processes do not take the lock (they are children of the engine).
+
+Implementation: `kalos/portal/engine_lock.py`.
+
+### What `anonymize=true` covers, and what it does not
+
+`anonymize` is a presentation control on the analysis, not an at-rest
+protection. Exactly this is covered:
+
+- **Identifier column names** (`is_identifier_name` in
+  `kalos/portal/analysis.py`: the profile's `id_hint`, the run-id pattern, and a
+  word-level rule, so `Tank ID`, `Patient ID`, `Customer Name` and `run_number`
+  all count) are replaced by `col_<hash>` in the response: `provenance`,
+  `group_col`, validation findings and their prose, `design_box_exclusions`,
+  refusal context and message. Identifier columns are not model features.
+- **Sheet names** are replaced by `sheet_<hash>` in `sheets`, `sheet_used`, the
+  refusals (`sheet_not_found`, `no_usable_sheet`) and the analysis-error text.
+- **The filename** is not stored: not in `run`, not as the campaign's `dataset`
+  label (which becomes `anonymized upload <hash>`), and not in a background
+  job's row beyond its extension while the job runs (docs/JOBS.md).
+- A campaign **re-analysis** keeps the anonymize setting of the analysis it
+  replaces.
+
+Not covered (the response or the store still carries these):
+
+- **`target`** (top-level and `run.target`) and **`run.roles_declared`** keep
+  the caller's own column names. A target or declared role that is an
+  identifier is shown as sent.
+- **Feature names** (`features`, `proposal_features`, drivers, recipe keys) keep
+  their real names. Features are the process inputs the owner reads.
+- **`campaigns.base_rows` at rest.** The campaign stores the full uploaded sheet
+  (every column, including identifier columns and the raw values) in
+  `portal.db`, unencrypted and unaltered, so that the loop can fold results into
+  it. `anonymize` does not change what is stored there. Treat `portal.db` and
+  the state directory as holding the raw data. Deleting or pseudonymizing
+  `base_rows` is a separate decision (it would break re-analysis of existing
+  campaigns).
+- **Background job rows while queued or running**: target, roles and sheet are
+  stored in the clear until the job reaches a terminal state (docs/JOBS.md).
+- **The alias hash** is salted with `KALOS_ANON_SALT`. Without it the dev salt
+  applies, and a common name (`Patient ID`) can be recognised by hashing a list
+  of candidates. Production must set the salt.
+
 ## Status log
 
 - Phase 1a authentication + authorization: **done** (merged).
@@ -167,6 +237,7 @@ A review of progress against the readiness scorecard surfaced that campaign + la
 - P1 experiments store tenant-scope + auth-gate: **done** on `feat/hardening-experiments-tenancy` - closes the cross-tenant leak the review found; the tenancy guarantee now covers all three stores (campaign, latest, experiments).
 - P0 engine hardening: **done** on `security/p0-engine-hardening` - tenant-id validation + injective latest-cache names, required `tenant` keyword on the stores, `KALOS_ENV=production`, async `/healthz` and generic `/readyz` reason, body-size cap + bounded campaign bodies. Per-tenant concurrency is out of scope (design pending).
 - Background jobs (P3, `feat/background-jobs`, docs/JOBS.md): **in review** - a persistent `jobs` table (schema v3), a worker process per job, a runner that admits jobs through the shared per-tenant and global limiter, status/cancel routes, per-job timeouts, per-tenant queue depth and upload limits, restart recovery, and cross-tenant isolation tests. Per-tenant concurrency, which the P0 entry above left out of scope, is now bounded by `KALOS_JOB_PER_TENANT`.
+- Run record (provenance, `feat/run-record`): **in review** - every analysis carries a versioned `run` block (input hash, sheet, target, roles, seed, thread count, build sha, library versions, validation mode, shape). Anonymized runs keep no filename or sheet. docs/CAMPAIGNS_API.md, "Run record". Engine state-directory lock (`engine.lock`) in the same branch.
 - Background jobs review (PR #91), HIGH1: the runner registers a worker before its pid is written; a failed start or pid write kills the worker and fails the job (`worker_unavailable`), a failed claim leaves the job queued, and a slot is released only after the outcome is recorded (docs/JOBS.md, "Start failure").
 - Background jobs review (PR #91), MED5: every worker exit, including a worker that exits on its own, kills its process group (docs/JOBS.md, "Cancellation and timeouts").
 - Background jobs review (PR #91), MED4: each worker gets a wall-clock deadline (time limit + 60 s) and a watchdog ends it when the deadline passes or its engine is gone (docs/JOBS.md, "Worker lifetime").

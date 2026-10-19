@@ -38,6 +38,7 @@ import json
 import logging
 import math
 import os
+import re
 import sqlite3
 import time
 import uuid
@@ -418,14 +419,7 @@ def enqueue(
     rel = _relative_input_path(tenant, job_id)
     path = store.state_dir / rel
     _write_input(path, raw)
-    params = {
-        "filename": (filename or "uploaded dataset")[:256],
-        "target": target[:256],
-        "anonymize": bool(anonymize),
-        "roles": roles,
-        "sheet": sheet[:256] if sheet else None,
-        "replace": bool(replace),
-    }
+    params = _params_for_storage(filename, target, anonymize, roles, sheet, replace)
     try:
         with store._txn(write=True) as conn:
             campaign = store._resolve(conn, tenant, campaign_id, create=False)
@@ -456,6 +450,46 @@ def enqueue(
     job = get_job(store, tenant=tenant, job_id=job_id)
     assert job is not None
     return job
+
+
+# What the stored `params` keep of a job's form fields, and when (docs/JOBS.md,
+# "Privacy"). `params` is JSON on the job row. Under `anonymize` the filename is
+# never stored: the worker only needs its extension (format detection), so only
+# that is kept. Every terminal state (succeeded, failed, cancelled, timed_out)
+# clears `params` entirely (to '{}'), in the same transaction that sets the state.
+_EXT_RE = re.compile(r"\.[a-z0-9]{1,8}")
+
+
+def _safe_extension(filename: str | None) -> str:
+    ext = os.path.splitext(filename or "")[1].lower()
+    return ext if _EXT_RE.fullmatch(ext) else ""
+
+
+def job_filename(params: dict[str, Any]) -> str:
+    """The filename the worker parses with: the real one, or under anonymize a
+    placeholder carrying only the stored extension (the parser reads nothing else
+    from it)."""
+    if params.get("filename"):
+        return str(params["filename"])
+    return "upload" + str(params.get("ext") or "")
+
+
+def _params_for_storage(
+    filename: str, target: str, anonymize: bool, roles: str, sheet: str | None,
+    replace: bool = False,
+) -> dict[str, Any]:
+    # `replace` is read by the worker (job_worker: an upload job refuses to replace
+    # a campaign's runs unless the caller confirmed it), so it is stored with the job.
+    base: dict[str, Any] = {
+        "target": target[:256],
+        "anonymize": bool(anonymize),
+        "roles": roles,
+        "sheet": sheet[:256] if sheet else None,
+        "replace": bool(replace),
+    }
+    if anonymize:
+        return {**base, "ext": _safe_extension(filename)}
+    return {**base, "filename": (filename or "uploaded dataset")[:256]}
 
 
 def _clip(value: str | None, limit: int = 512) -> str | None:
@@ -510,7 +544,7 @@ def request_cancel(store: CampaignStore, *, tenant: str, job_id: str) -> dict[st
         if row["state"] == "queued":
             conn.execute(
                 "UPDATE jobs SET state = 'cancelled', stage = 'cancelled', cancel_requested = 1, "
-                "finished_at = ?, updated_at = ?, input_purged_at = ? "
+                "finished_at = ?, updated_at = ?, input_purged_at = ?, params = '{}' "
                 "WHERE id = ? AND tenant = ? AND state = 'queued'",
                 (now, now, now, job_id, tenant),
             )
@@ -620,7 +654,8 @@ def finish(
             return False
         cur = conn.execute(
             "UPDATE jobs SET state = ?, stage = ?, error_code = ?, error_message = ?, "
-            "finished_at = ?, updated_at = ?, worker_pid = NULL, input_purged_at = ? "
+            "finished_at = ?, updated_at = ?, worker_pid = NULL, input_purged_at = ?, "
+            "params = '{}' "
             "WHERE id = ? AND tenant = ? AND state IN ('queued', 'running')",
             (state, state, code, message, now, now, now, job_id, tenant),
         )
@@ -640,7 +675,7 @@ def mark_succeeded(conn: sqlite3.Connection, *, tenant: str, job_id: str, genera
     cur = conn.execute(
         "UPDATE jobs SET state = 'succeeded', stage = 'succeeded', progress = 1, "
         "result_ref = ?, finished_at = ?, updated_at = ?, worker_pid = NULL, "
-        "error_code = NULL, error_message = NULL, input_purged_at = ? "
+        "error_code = NULL, error_message = NULL, input_purged_at = ?, params = '{}' "
         "WHERE id = ? AND tenant = ? AND state = 'running' AND cancel_requested = 0",
         (generation, now, now, now, job_id, tenant),
     )

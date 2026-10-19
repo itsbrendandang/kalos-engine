@@ -67,5 +67,6 @@ Because the sheet comes from an external client, the upload path is guarded:
 - **Opt-in anonymization.**
   Pass the form field `anonymize=true` to strip client/strain identity and hash grouping keys (`kalos/data/anonymizer.py`), so a run stays groupable for leakage-safe CV without carrying who it belongs to.
   Feature and target names are kept as-is (the owner UI legitimately shows drivers like "Methanol").
+  Identifier column names (`Tank ID`, `Customer Name`, `run_number`) and sheet names are aliased; the stored campaign still holds the raw sheet. Full scope: docs/HARDENING.md, "What `anonymize=true` covers".
 
 See also [`docs/CAMPAIGN_LOOP.md`](CAMPAIGN_LOOP.md) and [`docs/SCALE_READOUT.md`](SCALE_READOUT.md).

@@ -144,6 +144,67 @@ campaign id: another tenant's job, a missing one and a malformed one all get
 the same `404 {"error": "job not found"}`. Lifecycle, error codes, limits and
 the restart rules are in docs/JOBS.md.
 
+### Run record (provenance)
+
+Every analysis result carries a `run` block (`kalos/portal/run_record.py`,
+schema `run.schema_version` = 1). It says what produced the result:
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | `1`. Bumped when a field is added, renamed or retyped, from the first release of the record. Schema 1 has not shipped: fields added during review (`kind`, `pending_runs`, the fit and sheet fields below) stayed in version 1. |
+| `kind` | `upload` (a run sheet: `/api/run`, `/api/campaigns/{id}/upload`, jobs) or `reanalyze` (`POST /api/campaign/reanalyze`, the campaign's folded base dataset). |
+| `input_sha256`, `input_bytes` | SHA-256 and length of the uploaded bytes exactly as received. For `kind=reanalyze`: of the folded dataset serialized as CSV (`fold_bytes`). |
+| `filename`, `sheet` | The upload's name and the sheet analyzed (Excel). **Absent** when `anonymize` is true. |
+| `target` | The target the analysis used (the resolved one when the request left it blank). |
+| `profile` | `bioprocess` (inferred roles) or `generic` (declared roles). |
+| `roles_declared` | The `roles` object the caller sent, or `null`. |
+| `anonymize`, `seed` | The request's anonymize flag and the fit seed. |
+| `torch_threads` | The configured thread count (`KALOS_TORCH_THREADS`). **`null` = unpinned** (the config said 0: torch keeps its own default). |
+| `torch_threads_actual` | `torch.get_num_threads()` when the fit ran; `null` if torch was never loaded. |
+| `max_fit_rows` | The engine's fit-row cap (`KALOS_MAX_FIT_ROWS`) in force. |
+| `sheet_index`, `sheet_hash` | Position of the analysed sheet in the workbook, and a salted hash of its name (the alias hash). Both `null` for a CSV. Kept under anonymize. |
+| `build_sha` | `KALOS_BUILD_SHA` at image build (CI sets it to the commit), else `unknown`. |
+| `library_versions` | `numpy`, `pandas`, `torch`, `botorch` (`null` if not installed). |
+| `validation_mode` | `warn` or `strict` (`KALOS_VALIDATION_MODE`). |
+| `pending_runs` | Runs in the incubator the batch was told about (`reanalyze`); `0` for an upload. |
+| `n_rows`, `n_features` | Rows parsed; input features the model was fit on (`d` in the result, the kept feature columns; a categorical is one column here, not its one-hot width). Not the top drivers in `proposal_features`. |
+| `gates` | Keys in this result where the gate decisions live: `promotion`, `proposal_gating`, `validation`. The decisions are not copied into `run`. |
+
+Compatibility:
+
+- The top-level `seed` and `engine_version` keys are unchanged.
+- The block is stored inside the existing analyses JSON blob. No migration.
+  Rows written before it existed have **no `run` key** at all (absent, not
+  `null`). Test for the key, not for a null value.
+- The sync routes and background jobs attach the same block for the same bytes,
+  because both call `kalos.portal.pipeline.compute_upload_analysis`.
+
+Re-analysis (`kind=reanalyze`) keeps the anonymize setting of the analysis it
+replaces: the campaign does not store the flag, so a re-analysis of an
+anonymized upload is anonymized too (before this, it published the real
+identifier names again).
+
+Privacy: with `anonymize=true` the stored `run` has no `filename` and no
+`sheet`, only the hash. Workbook sheet names are aliased too: `sheets` and
+`sheet_used` in the response, the sheet names in refusals (`sheet_not_found`,
+`no_usable_sheet`) and in the analysis-error sentence all read `sheet_<hash>`.
+The alias is a salted hash (`KALOS_ANON_SALT`), so it does not let a client
+choose a sheet by its alias. A background job keeps no filename under anonymize
+either, only its extension, and clears its stored parameters when it reaches a
+terminal state (docs/JOBS.md, "Job parameters"). The stored `dataset` label is then
+`anonymized upload <first 12 hex of input_sha256>`, not the filename. The
+`target` and any declared `roles` keep their real column names, as the
+existing `target` field already does; anonymize only pseudonymizes the
+identifier-type columns in the analysis body. Full scope, including the raw
+sheet stored at rest in `campaigns.base_rows`: docs/HARDENING.md, "What
+`anonymize=true` covers".
+
+Determinism: the same bytes give the same proposals on the same library stack
+and the same torch thread count (`run.torch_threads`, `run.library_versions`).
+That is the only claim. A different torch or botorch version, or a different
+thread count, may legitimately change the numbers. Compare `run` before
+comparing proposals.
+
 ## Not in this slice
 
 - Background jobs for reanalyze (it still runs synchronously; upload has a job route).

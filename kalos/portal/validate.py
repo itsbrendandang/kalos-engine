@@ -16,6 +16,7 @@ regexes/thresholds `_analyze` uses, and never logs raw column names or values.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from collections.abc import Callable
 from typing import Literal, Pattern
 
 import pandas as pd
@@ -78,7 +79,7 @@ def column_provenance(
     target: str,
     features: list[str],
     numeric_cols: list[str],
-    id_hint: Pattern[str],
+    is_identifier: Callable[[str], bool],
     outcome_hint: Pattern[str],
     constant_on_fitted_rows: list[str] | None = None,
     declared: set[str] | None = None,
@@ -92,8 +93,9 @@ def column_provenance(
       - `target`: the chosen target column name.
       - `features`: the columns kept as model inputs.
       - `numeric_cols`: columns that passed the >=80% numeric-parse test.
-      - `id_hint` / `outcome_hint`: the compiled regexes `_analyze` uses to drop
-        identifier-like and output-like columns.
+      - `is_identifier` / `outcome_hint`: the predicate `_analyze` uses to drop
+        identifier-like columns (`analysis.is_identifier_name`) and the compiled
+        regex for output-like columns.
       - `constant_on_fitted_rows`: columns that vary over the full sheet but are
         constant on the target-present rows the GP actually fits, so their design
         box would collapse to zero width. `_analyze` drops these; they are flagged
@@ -138,7 +140,7 @@ def column_provenance(
             # declared as a feature but not numeric and not used as a categorical:
             # honestly say it could not be modeled as a number, not "sparse".
             status = "dropped_non_numeric"
-        elif id_hint.match(name.strip()):
+        elif is_identifier(name.strip()):
             status = "dropped_id"
         elif outcome_hint.search(name):
             status = "dropped_output"

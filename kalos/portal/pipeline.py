@@ -59,6 +59,31 @@ def ensure_torch_threads() -> None:
     _torch_threads_configured = True
 
 
+def _parse(raw: bytes, filename: str, sheet: str | None, anonymize: bool) -> ParsedUpload:
+    """`parse_upload`, with sheet names aliased under `anonymize`: the refusal
+    (`sheet_not_found`, `no_usable_sheet`) and the parsed workbook both carry
+    `sheet_<hash>` names, never the uploader's sheet names (kalos/portal/analysis.py)."""
+    from kalos.portal.analysis import anonymize_parsed, anonymize_sheet_rejection
+
+    try:
+        parsed = parse_upload(raw, filename=filename, sheet=sheet)
+    except UploadRejected as rej:
+        if anonymize:
+            raise anonymize_sheet_rejection(rej) from rej
+        raise
+    return anonymize_parsed(parsed) if anonymize else parsed
+
+
+def torch_threads_actual() -> int | None:
+    """What torch reports as its thread count now, or None when torch has not
+    been loaded (a stub analysis, or a path that never fit). Read at record time,
+    after the fit, so it is the count the fit actually ran with."""
+    import sys
+
+    torch = sys.modules.get("torch")
+    return int(torch.get_num_threads()) if torch is not None else None
+
+
 def _roles_and_profile(roles_json: str) -> tuple[Any, Any]:
     from kalos.domains import BIOPROCESS_PROFILE, GENERIC_PROFILE, ColumnRoles
 
@@ -93,7 +118,7 @@ def preflight_upload(
     sheet context, `ValueError`, parser errors). Returns the parsed upload."""
     from kalos.portal.analysis import _analyze
 
-    parsed = parse_upload(raw, filename=filename, sheet=sheet)
+    parsed = _parse(raw, filename, sheet, anonymize)
     try:
         roles, profile = _roles_and_profile(roles_json)
         _analyze(parsed.df, target, anonymize=anonymize, roles=roles, profile=profile,
@@ -121,7 +146,7 @@ def compute_upload_analysis(
     ensure_torch_threads()
     if progress is not None:
         progress("parsing", 0.05)
-    parsed = parse_upload(raw, filename=filename, sheet=sheet)
+    parsed = _parse(raw, filename, sheet, anonymize)
     kwargs: dict[str, Any] = {"anonymize": anonymize}
     if progress is not None:
         kwargs["progress"] = progress
@@ -129,6 +154,7 @@ def compute_upload_analysis(
         roles, profile = _roles_and_profile(roles_json)
         if roles is not None:
             kwargs["roles"] = roles
+        profile_name = profile.name
         result = analyze(parsed.df, target, profile=profile, **kwargs)
     except Exception as exc:
         annotated = _annotated(parsed, exc, anonymize)
@@ -137,7 +163,39 @@ def compute_upload_analysis(
         raise annotated from exc
     # Excel uploads only: `sheets` (every sheet, workbook order) and
     # `sheet_used` (the one analyzed), so a client can offer a sheet selector.
-    return parsed.df, {**result, **parsed.context()}
+    # `run` (kalos/portal/run_record.py) is attached here, after the parse and
+    # the analysis, so the sync routes and the job worker record the same thing.
+    # `n_features` is the fitted feature count (`result["d"]`), NOT
+    # `proposal_features`, which is only the top drivers the proposals vary.
+    from kalos.portal import run_record
+    from kalos.portal.analysis import ANALYZE_SEED
+
+    record = run_record.build(
+        raw, filename, parsed.sheet_used, result.get("target", target), roles_json,
+        anonymize, profile_name, TORCH_THREADS, int(result.get("seed", ANALYZE_SEED)),
+        len(parsed.df), int(result["d"]), sheet_index=parsed.sheet_index,
+        sheet_hash=parsed.sheet_hash, torch_threads_actual=torch_threads_actual(),
+    )
+    return parsed.df, {**result, **parsed.context(), "run": record.to_dict()}
+
+
+def attach_reanalyze_run(
+    df: pd.DataFrame, result: dict, *, anonymize: bool, pending_runs: int,
+) -> dict:
+    """The `run` block for a campaign re-analysis (`kind="reanalyze"`): the same
+    fields an upload gets, with the input hashed over the folded dataset `df`
+    and the number of in-flight runs the batch was told about. Returns a new
+    dict; `result` is not mutated."""
+    from kalos.portal import run_record
+    from kalos.portal.analysis import ANALYZE_SEED
+
+    record = run_record.build(
+        run_record.fold_bytes(df), None, None, result.get("target"), "", anonymize,
+        "bioprocess", TORCH_THREADS, int(result.get("seed", ANALYZE_SEED)),
+        len(df), int(result["d"]), kind="reanalyze", pending_runs=pending_runs,
+        torch_threads_actual=torch_threads_actual(),
+    )
+    return {**result, "run": record.to_dict()}
 
 
 _ANY = object()
@@ -167,6 +225,10 @@ def publish_upload_analysis(
     """
     from kalos.portal.campaign import CampaignError
 
+    # The label the campaign and /api/latest store for this upload. Under
+    # anonymize the filename is never stored (the run record has no filename
+    # either), only a label derived from the input hash.
+    filename = stored_dataset_label(result, filename)
     seed_kwargs: dict[str, Any] = {}
     if expected_generation is not _ANY:
         seed_kwargs["expected_generation"] = expected_generation
@@ -191,6 +253,17 @@ def publish_upload_analysis(
         log.error("failed to seed the campaign from an uploaded run sheet: %s", scrubbed_failure(exc))
         _publish_unstamped(store, result, filename, tenant=tenant, campaign_id=campaign_id)
     return None
+
+
+def stored_dataset_label(result: dict, filename: str) -> str:
+    """The `dataset` label an analysis is stored under. The raw filename, except
+    when the result's run record says `anonymize`: then a label built from the
+    input hash, so a stored analysis never carries the uploader's filename."""
+    run = result.get("run")
+    if isinstance(run, dict) and run.get("anonymize"):
+        digest = str(run.get("input_sha256") or "")[:12]
+        return f"anonymized upload {digest}" if digest else "anonymized upload"
+    return filename
 
 
 def _publish_unstamped(

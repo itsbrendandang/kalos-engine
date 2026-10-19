@@ -79,7 +79,7 @@ def _stub_analyze(df, target, *, profile=None, anonymize=False, progress=None, r
     if progress is not None:
         progress("fitting", 0.15)
         progress("proposing", 0.8)
-    return {"target": target, "proposal_features": ["Methanol", "pH"], "proposals": [],
+    return {"target": target, "proposal_features": ["Methanol", "pH"], "d": 2, "proposals": [],
             "marker": "api-stub"}
 
 
@@ -727,8 +727,8 @@ def test_a_second_upload_to_a_campaign_with_a_pending_one_is_a_409_at_submit(env
 
 def _stub_sync_analysis(**_k):
     def analyze(df, target, *, profile=None, anonymize=False, progress=None, roles=None, **_):
-        return {"target": target, "proposal_features": ["Methanol", "pH"], "proposals": [],
-                "marker": "sync-stub"}
+        return {"target": target, "proposal_features": ["Methanol", "pH"], "d": 2,
+                "proposals": [], "marker": "sync-stub"}
     return analyze
 
 

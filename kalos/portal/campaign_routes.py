@@ -242,6 +242,7 @@ async def _reanalyze(
 ) -> JSONResponse:
     from kalos.domains import BIOPROCESS_PROFILE
     from kalos.portal.app import _analyze
+    from kalos.portal.pipeline import attach_reanalyze_run
 
     tenant = principal.tenant
     # Transactional re-analyze (docs/CAMPAIGN_LOOP.md): plan the fold in memory,
@@ -263,6 +264,12 @@ async def _reanalyze(
     # reach `df`; passed separately they keep the next batch from re-proposing an
     # experiment already underway.
     awaiting = store.awaiting_recipes(tenant=tenant, campaign_id=campaign_id)
+    # Privacy setting: a re-analysis keeps the anonymize setting of the analysis
+    # it replaces (the campaign does not store the flag itself). Without this a
+    # re-analysis of an anonymized upload would publish the real column names.
+    previous = store.load_analysis(tenant=tenant, campaign_id=campaign_id) or {}
+    previous_run = previous.get("run")
+    anonymize = bool(isinstance(previous_run, dict) and previous_run.get("anonymize"))
 
     if df.empty:
         log.warning("reanalyze rejected: campaign has no base rows to analyze")
@@ -274,7 +281,8 @@ async def _reanalyze(
         # 503 instead of contending for the CPU with an unfinished fit.
         result = await run_in_slot(
             functools.partial(
-                _analyze, df, target, profile=BIOPROCESS_PROFILE, pending=awaiting
+                _analyze, df, target, profile=BIOPROCESS_PROFILE, pending=awaiting,
+                anonymize=anonymize,
             ),
             tenant=tenant,
         )
@@ -299,6 +307,10 @@ async def _reanalyze(
         # untouched and a retry is meaningful.
         log.error("failed to re-analyze the campaign: code=analysis_failed %s", scrubbed_failure(exc))
         return JSONResponse({"error": "could not analyze the campaign data"}, status_code=400)
+
+    # The provenance block (kind=reanalyze): the same fields an upload gets, so
+    # the record of a campaign's current analysis says what produced it.
+    result = attach_reanalyze_run(df, result, anonymize=anonymize, pending_runs=len(awaiting))
 
     try:
         # The fold and the analysis that describes it, in one transaction.

@@ -4,6 +4,60 @@ Newest first.
 
 ## Unreleased
 
+### Added - run record and engine lock (`feat/run-record`)
+
+- Fix (same unreleased branch): `run.n_features` is the fitted feature count
+  (`d`), not the number of top drivers in `proposal_features` (at most 4).
+- Identifier detection is no longer start-anchored. `Tank ID`, `Patient ID`,
+  `Customer Name` (and `TankID`, `Sample ID 2`) were not recognised as
+  identifiers: they were modeled as features and, under `anonymize=true`,
+  published by name. A word-level rule (`is_identifier_name`) now catches them;
+  real measurements (`Methanol`, `batch_titer`, `run_duration_days`) are still
+  not identifiers. Note: this changes the feature set for sheets with such
+  columns. (docs/HARDENING.md, "What `anonymize=true` covers")
+- Documented, not changed: the campaign stores the full raw sheet in
+  `campaigns.base_rows`, and `anonymize` does not cover it. (docs/HARDENING.md)
+- With `anonymize=true`, workbook sheet names are aliased (`sheet_<hash>`) in
+  responses, refusals (`sheet_not_found`, `no_usable_sheet`) and analysis-error
+  sentences. Before, `sheet_not_found` listed the uploader's real sheet names.
+- Campaign re-analysis (`POST /api/campaign/reanalyze`) attaches a `run` block
+  with `kind: "reanalyze"`, the folded dataset's hash as input, and
+  `pending_runs`. It also keeps the anonymize setting of the analysis it
+  replaces: before, a re-analysis of an anonymized upload published the real
+  identifier column names again.
+- Every analysis result carries a versioned `run` block (`run.schema_version`
+  1): input SHA-256 and size, sheet, target, profile, declared roles, anonymize,
+  seed, torch threads, `build_sha`, library versions, validation mode, row and
+  feature counts, and the keys of the gate decisions it refers to. Sync routes
+  and background jobs attach the same block for the same bytes. Stored inside
+  the existing analyses blob; no migration. Rows written earlier have no `run`
+  key (absent, not null). `seed` and `engine_version` are unchanged.
+  (docs/CAMPAIGNS_API.md)
+- The record also states the fit-row cap (`max_fit_rows`), the thread count
+  torch actually ran with (`torch_threads_actual`; `torch_threads` is `null`
+  when unpinned, not `0`), and the analysed sheet's index and salted hash
+  (`sheet_index`, `sheet_hash`).
+- `KALOS_BUILD_SHA` (set by CI from `github.sha` via the image's build arg) is
+  recorded as `run.build_sha`; `unknown` when not provided.
+- `python -m kalos.portal` takes `<KALOS_STATE_DIR>/engine.lock` (flock) and
+  refuses to start when another engine holds it (exit 2). A flock failure that
+  is not contention (a filesystem without flock) is reported as such, not as
+  "another engine". `uvicorn --workers N` bypasses the lock: use
+  `python -m kalos.portal`. (docs/HARDENING.md, "One engine per state directory")
+
+### Changed - anonymized uploads store no filename
+
+- With `anonymize=true` the stored analysis carries no filename: the `run`
+  block omits `filename` and `sheet`, and the stored `dataset` label is
+  `anonymized upload <hash prefix>`. Before, the raw filename was stored as the
+  campaign's dataset label even when anonymize was requested.
+- Background jobs (`jobs.params`): under `anonymize=true` the job row stores
+  the file extension, not the filename, and every terminal state clears the
+  stored parameters (target, roles, sheet, filename). While a job is queued or
+  running, its row still holds target, roles and sheet names in the clear, and
+  SQLite may keep cleared values in free pages until vacuum. (docs/JOBS.md,
+  "Job parameters")
+
 ### Added - background analysis jobs (`feat/background-jobs`, docs/JOBS.md)
 
 - `POST /api/campaigns/{id}/jobs` queues an upload analysis and returns `202`;
