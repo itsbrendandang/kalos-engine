@@ -6,6 +6,7 @@ expansion. Sizes are configurable via env; the CSV/xlsx caps are constants.
 """
 from __future__ import annotations
 
+import csv
 import io
 import logging
 import os
@@ -481,22 +482,37 @@ def _is_unnamed(name: object) -> bool:
     return bool(_UNNAMED_RE.match(str(name)))
 
 
+@dataclass(frozen=True)
+class _HeaderCandidate:
+    """One candidate header row, as header detection sees it: the names of its
+    columns and the positions of the columns that hold at least one non-empty
+    cell in the rows BELOW it. Built from a parsed frame (xlsx) or from one
+    streaming pass over the raw text (CSV), so the decision is identical either way
+    and the CSV path never has to parse the file more than once."""
+
+    names: list[str]
+    data_cols: list[int]
+
+
 def _data_columns(df: pd.DataFrame) -> list[int]:
     """Positions of the columns that hold at least one non-empty cell."""
     return [i for i in range(df.shape[1]) if df.iloc[:, i].notna().any()]
 
 
-def _unnamed_share(df: pd.DataFrame) -> float:
-    data = _data_columns(df)
-    if not data:
+def _candidate_from_frame(df: pd.DataFrame) -> _HeaderCandidate:
+    return _HeaderCandidate([str(c) for c in df.columns], _data_columns(df))
+
+
+def _unnamed_share(cand: _HeaderCandidate) -> float:
+    if not cand.data_cols:
         return 0.0
-    return sum(1 for i in data if _is_unnamed(df.columns[i])) / len(data)
+    return sum(1 for i in cand.data_cols if _is_unnamed(cand.names[i])) / len(cand.data_cols)
 
 
-def _names_look_like_labels(df: pd.DataFrame) -> bool:
+def _names_look_like_labels(cand: _HeaderCandidate) -> bool:
     """A candidate header is plausible only if its names are mostly text, not
     numbers: a data row promoted to a header would be mostly numeric."""
-    names = [str(c) for c in df.columns if not _is_unnamed(c)]
+    names = [n for n in cand.names if not _is_unnamed(n)]
     if not names:
         return False
 
@@ -516,15 +532,32 @@ def _column_label(position: int) -> str:
     return f"column {position + 1}"
 
 
-def _detected_names(df: pd.DataFrame) -> list[str]:
-    return [_column_label(i) if _is_unnamed(df.columns[i]) else str(df.columns[i])
-            for i in _data_columns(df)]
+def _detected_names(cand: _HeaderCandidate) -> list[str]:
+    return [_column_label(i) if _is_unnamed(cand.names[i]) else cand.names[i]
+            for i in cand.data_cols]
+
+
+def decide_header(first: _HeaderCandidate, second: _HeaderCandidate | None) -> int:
+    """0 when row 0 is the header, 1 when row 1 is; raises `ambiguous_header` when
+    neither is clearly right. The rules are documented on `choose_header`."""
+    share0 = _unnamed_share(first)
+    if share0 == 0:
+        return 0
+    second_labels = second is not None and _names_look_like_labels(second)
+    if share0 < UNNAMED_SHARE_LIMIT:
+        if second is not None and second_labels and _unnamed_share(second) == 0:
+            raise _ambiguous_header(first)
+        return 0
+    if second is not None and second_labels and _unnamed_share(second) < UNNAMED_SHARE_LIMIT:
+        return 1
+    raise _ambiguous_header(first)
 
 
 def choose_header(read: Callable[[int], pd.DataFrame]) -> tuple[pd.DataFrame, int]:
     """Read a table with its column names on row 0, or on row 1 when row 0 is a
     merged-header group label (or title) row. `read(h)` parses the sheet with
-    header row `h`.
+    header row `h`. Used for xlsx sheets, whose parse is already bounded by the
+    cell caps in `_reject_oversized_xlsx`.
 
     - Row 0 is mostly named: it is the header. Any blank data header cell left is
       named by its position (`_name_unlabeled`).
@@ -536,24 +569,18 @@ def choose_header(read: Callable[[int], pd.DataFrame]) -> tuple[pd.DataFrame, in
     Anything ambiguous is refused (`ambiguous_header`) with the detected columns.
     """
     first = read(0)
-    share0 = _unnamed_share(first)
-    if share0 == 0:
+    cand0 = _candidate_from_frame(first)
+    if _unnamed_share(cand0) == 0:
         return first, 0
     try:
         second: pd.DataFrame | None = read(1)
     except Exception:  # noqa: BLE001 - a sheet with no second row is simply ambiguous
         second = None
-    second_labels = second is not None and _names_look_like_labels(second)
-    if share0 < UNNAMED_SHARE_LIMIT:
-        if second is not None and second_labels and _unnamed_share(second) == 0:
-            raise _ambiguous_header(first)
-        return first, 0
-    if second is not None and second_labels and _unnamed_share(second) < UNNAMED_SHARE_LIMIT:
-        return second, 1
-    raise _ambiguous_header(first)
+    header = decide_header(cand0, _candidate_from_frame(second) if second is not None else None)
+    return (second if header == 1 and second is not None else first), header
 
 
-def _ambiguous_header(first: pd.DataFrame) -> UploadRejected:
+def _ambiguous_header(first: _HeaderCandidate) -> UploadRejected:
     detected = _detected_names(first)
     return UploadRejected(
         f"{_ERR_AMBIGUOUS_HEADER} Columns detected: {_quote_list(detected)}.",
@@ -811,34 +838,93 @@ def _sheet_cell_bound(book: pd.ExcelFile, name: str, part_sizes: dict[str, int])
     return max(size // _MIN_CELL_XML_BYTES, 1) if size else fallback
 
 
+@dataclass(frozen=True)
+class _TextScan:
+    """What one streaming pass over a CSV/TSV body learns before pandas runs.
+
+    `n_rows` counts non-blank records (quote-aware, so a quoted newline is one
+    record), stopping one past `stop_after`. `header` is the first record and
+    `second` the next one. Each candidate's `data_cols` is taken over the records
+    below it, exactly as pandas would see them for that header row.
+    """
+
+    n_rows: int
+    header: _HeaderCandidate | None
+    second: _HeaderCandidate | None
+
+
+def _scan_text_table(text: str, sep: str, *, stop_after: int) -> _TextScan:
+    """One pass with the `csv` module: constant memory, no pandas. It stops as soon
+    as more than `stop_after` records have been seen, so an over-cap file costs
+    only as much as the cap itself."""
+    # newline="" so a lone CR ends a record the way pandas' parser treats it.
+    reader = csv.reader(io.StringIO(text, newline=""), delimiter=sep)
+    names0: list[str] = []
+    names1: list[str] = []
+    occ0: set[int] = set()  # non-empty cells in records below the first
+    occ1: set[int] = set()  # non-empty cells in records below the second
+    n = 0
+    for record in reader:
+        if not record:  # pandas skips blank lines
+            continue
+        n += 1
+        if n > stop_after:
+            break
+        if n == 1:
+            names0 = [cell if cell != "" else f"Unnamed: {i}" for i, cell in enumerate(record)]
+            continue
+        if n == 2:
+            names1 = [cell if cell != "" else f"Unnamed: {i}" for i, cell in enumerate(record)]
+        for i, cell in enumerate(record):
+            if cell != "":
+                occ0.add(i)
+                if n >= 3:
+                    occ1.add(i)
+    if n == 0:
+        return _TextScan(0, None, None)
+    header = _HeaderCandidate(names0, sorted(i for i in occ0 if i < len(names0)))
+    second = (
+        _HeaderCandidate(names1, sorted(i for i in occ1 if i < len(names1))) if n >= 2 else None
+    )
+    return _TextScan(n, header, second)
+
+
 def _parse_text(raw: bytes) -> ParsedUpload:
     text = _decode_text(raw)
     if text.strip() == "":
         raise UploadRejected(_ERR_EMPTY, code="empty_file")
     head = text[:4000]
     sep = "\t" if head.count("\t") > head.count(",") else ","
+    # Refuse an over-cap file BEFORE pandas parses it (review M2). The count
+    # stops one record past the cap, so the streaming pass is bounded too. A
+    # header on row 1 leaves one record fewer for data, so the count is an upper
+    # bound on the data rows and the exact check follows the header decision.
+    scan = _scan_text_table(text, sep, stop_after=MAX_CSV_ROWS + 2)
+    if scan.n_rows > MAX_CSV_ROWS + 2:
+        raise UploadRejected(_ERR_TOO_LARGE, code="too_many_rows", context={"max_rows": MAX_CSV_ROWS})
+    if scan.header is None:
+        raise UploadRejected(_ERR_EMPTY, code="empty_file")
+    # cap columns first (cheap, from the header) before any pandas parse
+    if len(scan.header.names) > MAX_COLUMNS:
+        raise UploadRejected(_ERR_TOO_MANY_COLUMNS, code="too_many_columns")
+    header_row = decide_header(scan.header, scan.second)
+    if scan.n_rows - 1 - header_row > MAX_CSV_ROWS:
+        raise UploadRejected(_ERR_TOO_LARGE, code="too_many_rows", context={"max_rows": MAX_CSV_ROWS})
     try:
-        # cap columns first (cheap, from the header) before reading the full body
-        ncols = pd.read_csv(io.StringIO(text), sep=sep, nrows=0).shape[1]
-        if ncols > MAX_COLUMNS:
-            raise UploadRejected(_ERR_TOO_MANY_COLUMNS)
         # Null tokens (`n/a`, `NA`) stay text on read (see `kalos.portal.cells`):
         # only a truly empty cell is NaN, so each drop can report its real reason.
-        df, header_row = choose_header(
-            lambda h: pd.read_csv(
-                io.StringIO(text), sep=sep, header=h, keep_default_na=False, na_values=[""]
-            )
+        # The one and only pandas parse of the body.
+        df = pd.read_csv(
+            io.StringIO(text), sep=sep, header=header_row, keep_default_na=False, na_values=[""]
         )
     except pd.errors.ParserError as exc:
         log.warning("rejected an unparseable text upload: %s", type(exc).__name__)
         raise UploadRejected(_ERR_NOT_A_TABLE, code="not_a_table") from exc
     except pd.errors.EmptyDataError as exc:
         raise UploadRejected(_ERR_EMPTY, code="empty_file") from exc
-    # Fail closed on the row cap rather than silently truncating to the first
-    # MAX_CSV_ROWS rows: silent data loss would contradict the safe-errors
-    # contract, so an over-cap CSV is rejected like the xlsx cell-cap guard.
-    if len(df) > MAX_CSV_ROWS:
-        raise UploadRejected(_ERR_TOO_LARGE)
+    except csv.Error as exc:
+        log.warning("rejected an unparseable text upload: %s", type(exc).__name__)
+        raise UploadRejected(_ERR_NOT_A_TABLE, code="not_a_table") from exc
     df, named = _name_unlabeled(_typed_cells(df))
     return ParsedUpload(_record_header(_apply_orientation_prepass(df), header_row, named), "text")
 
