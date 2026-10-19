@@ -81,3 +81,18 @@ def test_absent_cells_extend_a_sparse_box_to_include_zero():
     observed = np.array([2.0, 3.0])
     lo, hi, n = _physical_range("Glucose_g_L", observed, absent=2)
     assert (lo, hi, n) == (0.0, 3.0, 0)
+
+
+def test_an_in_flight_recipe_with_a_blank_ph_is_dropped_and_reported():
+    """Review H2: an awaiting run with no pH is not zero-filled into the design.
+    It is dropped and counted in `n_pending_dropped`."""
+    out = _analyze(
+        _ph_sheet(),
+        target="titer",
+        pending=[
+            {"pH": 6.5, "Glucose_g_L": 10.0, "Temperature": 34.0},
+            {"pH": None, "Glucose_g_L": 10.0, "Temperature": 34.0},
+        ],
+    )
+    assert out["n_pending_considered"] == 1
+    assert out["n_pending_dropped"] == 1

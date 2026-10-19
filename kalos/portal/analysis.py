@@ -1929,7 +1929,10 @@ def _analyze(
     # as taken. Encoding can drop rows (a recipe naming an unknown categorical
     # level cannot be placed in the design at all), so the count actually used is
     # reported rather than assumed equal to what the caller passed.
-    X_pending = _encode_pending(pending, cont_feats, kept_cats, code_maps, X.shape[1])
+    X_pending, n_pending_dropped = _encode_pending(
+        pending, cont_feats, kept_cats, code_maps, X.shape[1],
+        absent_zero=absent_zero & set(map(str, cont_feats)),
+    )
     n_pending = 0 if X_pending is None else int(X_pending.shape[0])
     # `propose_batch` never returns two near-duplicate recipes (see its
     # docstring); on a design space with fewer than q distinct candidates the
@@ -2135,6 +2138,9 @@ def _analyze(
         # computed as if nothing were running - true for a one-shot upload, and
         # the thing to check first if a round re-proposes work already started.
         "n_pending_considered": n_pending,
+        # In-flight recipes dropped because a continuous component (or a kept
+        # categorical level) was missing: no coordinate, so not zero-filled.
+        "n_pending_dropped": int(n_pending_dropped),
         "cv_spearman": None if rho != rho else round(rho, 3),
         "cv_ci95": ci95,
         "cv_n_groups": rep["n_groups"],
@@ -2265,7 +2271,9 @@ def _encode_pending(
     kept_cats: list,
     code_maps: dict,
     width: int,
-) -> np.ndarray | None:
+    *,
+    absent_zero: frozenset[str] | set[str] = frozenset(),
+) -> tuple[np.ndarray | None, int]:
     """Encode in-flight recipes into the fitted design's X layout, or None.
 
     Mirrors how the FITTED rows are built, so a pending recipe lands at the same
@@ -2275,24 +2283,36 @@ def _encode_pending(
     are assembled continuous-first, categorical-last.
 
     A row is DROPPED when a kept categorical is missing, blank, or names a level
-    that does not exist in this design: such a recipe has no coordinate here, and
-    inventing one (say, code 0) would mark the wrong region of the space as taken.
-    Returns None when nothing is left to report, which leaves the acquisition
-    exactly as it is today. Never raises - a malformed in-flight record must
-    degrade the proposal's information, not fail the analysis.
+    that does not exist in this design, or when a continuous component is missing
+    (blank, non-numeric, or the column is absent from the record). Such a recipe
+    has no honest coordinate: inventing one (zero-filling a pH, or code 0 for a
+    level) would mark the wrong region of the space as taken (review H2). The only
+    exception is an `absent_zero` column (a sparse / concentration component),
+    where a blank means 0 (see `_absent_is_zero_columns`).
+
+    Returns `(encoded, n_dropped)`. `encoded` is None when nothing is left, which
+    leaves the acquisition exactly as it is today; `n_dropped` counts every
+    in-flight record that was dropped, so the caller can report it. Never raises -
+    a malformed in-flight record must degrade the proposal's information, not fail
+    the analysis.
     """
     if pending is None:
-        return None
+        return None, 0
     frame = pending if isinstance(pending, pd.DataFrame) else pd.DataFrame(list(pending))
     if frame.empty:
-        return None
+        return None, 0
     cols: list[np.ndarray] = []
+    usable = np.ones(len(frame), dtype=bool)
     for c in cont_feats:
         if c in frame.columns:
-            cols.append(pd.to_numeric(frame[c], errors="coerce").fillna(0.0).to_numpy(float))
+            vals = pd.to_numeric(frame[c], errors="coerce")
         else:
-            cols.append(np.zeros(len(frame), dtype=float))
-    usable = np.ones(len(frame), dtype=bool)
+            vals = pd.Series(np.nan, index=frame.index)
+        if c in absent_zero:
+            vals = vals.fillna(0.0)
+        arr_c = vals.to_numpy(float)
+        usable &= np.isfinite(arr_c)
+        cols.append(arr_c)
     for c in kept_cats:
         codes = np.full(len(frame), np.nan)
         if c in frame.columns:
@@ -2301,13 +2321,16 @@ def _encode_pending(
         usable &= np.isfinite(codes)
         cols.append(codes)
     if not cols:
-        return None
+        return None, 0
     arr = np.column_stack(cols)
     usable &= np.isfinite(arr).all(axis=1)
+    n_dropped = int(len(frame) - usable.sum())
     arr = arr[usable]
-    if arr.shape[0] == 0 or arr.shape[1] != width:
-        return None
-    return arr
+    if arr.shape[1] != width:
+        return None, int(len(frame))
+    if arr.shape[0] == 0:
+        return None, n_dropped
+    return arr, n_dropped
 
 
 @functools.lru_cache(maxsize=8)

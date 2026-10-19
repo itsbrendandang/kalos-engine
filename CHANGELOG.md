@@ -4,6 +4,13 @@ Newest first.
 
 ## Unreleased
 
+### Fixed - review: an in-flight recipe with a missing component is dropped (H2)
+
+- `_encode_pending` zero-filled a missing continuous component. Such a recipe now
+  has no coordinate and is dropped, as a missing categorical level already was.
+  The count is reported as `n_pending_dropped`. Sparse / concentration components
+  still read a blank as 0.
+
 ### Fixed - review: a blank cell is not 0.0 (C1, critical)
 
 - A blank feature cell was zero-filled for every column, and 0.0 then widened the
