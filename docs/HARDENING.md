@@ -77,6 +77,11 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 
 When neither `KALOS_AUTH_TOKENS_FILE` nor `KALOS_AUTH_TOKENS` is set, the API runs in **open mode** (anonymous `default` tenant, read+write, admin withheld) and logs a warning at startup.
 
+### Deployment templates: two settings deliberately not changed
+
+- **`KALOS_VALIDATION_MODE` stays at `warn` in `deploy/compose.yaml` and `deploy/.env.example`.** Setting `strict` refuses every sheet with an error-severity validation finding. Run against the current suite (review H3, 2026-10-19), `KALOS_VALIDATION_MODE=strict` makes 77 existing tests fail across upload errors, campaign routes, jobs, the scale readout, run records and the validation gate, so it would change what the API accepts for clients today. Turning it on is a product decision for the pilot owner, to be made per client with its findings in hand.
+- **`KALOS_ENV=production` is not set in `deploy/compose.yaml`.** Production mode turns off the demo routes `/api/single` and `/api/multi`, which the kalos-web simulator page calls, and disables the docs. Setting it is the right posture for a shared deployment, but it needs that page changed first. Until then the compose stack runs in development posture; the bind and token checks (`assert_safe_exposure`) still refuse an open non-loopback start.
+
 ### Error envelope
 
 Every refusal the engine sends has the same body: `{"error": "<what went wrong and what to do>", "code": "<stable machine code>"}`, plus any extra fields the route documents. The HTTP status is the one the route always used. A client can branch on `code` and show `error`.
