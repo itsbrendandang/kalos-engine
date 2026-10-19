@@ -12,7 +12,7 @@ import logging
 import os
 import re
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -853,12 +853,22 @@ class _TextScan:
     second: _HeaderCandidate | None
 
 
+# One line at a time, terminators kept, with CR, LF and CRLF all ending a line the
+# way pandas' parser treats them. Lazy on purpose: a StringIO copy of the body
+# would double its memory before the cap is even checked.
+_LINE_RE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+\Z")
+
+
+def _iter_lines(text: str) -> Iterator[str]:
+    for match in _LINE_RE.finditer(text):
+        yield match.group(0)
+
+
 def _scan_text_table(text: str, sep: str, *, stop_after: int) -> _TextScan:
     """One pass with the `csv` module: constant memory, no pandas. It stops as soon
     as more than `stop_after` records have been seen, so an over-cap file costs
     only as much as the cap itself."""
-    # newline="" so a lone CR ends a record the way pandas' parser treats it.
-    reader = csv.reader(io.StringIO(text, newline=""), delimiter=sep)
+    reader = csv.reader(_iter_lines(text), delimiter=sep)
     names0: list[str] = []
     names1: list[str] = []
     occ0: set[int] = set()  # non-empty cells in records below the first
@@ -891,7 +901,7 @@ def _scan_text_table(text: str, sep: str, *, stop_after: int) -> _TextScan:
 
 def _parse_text(raw: bytes) -> ParsedUpload:
     text = _decode_text(raw)
-    if text.strip() == "":
+    if text == "" or text.isspace():  # no copy, unlike text.strip()
         raise UploadRejected(_ERR_EMPTY, code="empty_file")
     head = text[:4000]
     sep = "\t" if head.count("\t") > head.count(",") else ","

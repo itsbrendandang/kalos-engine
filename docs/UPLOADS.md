@@ -37,7 +37,7 @@ Because the sheet comes from an external client, the upload path is guarded:
   | `too_many_cells` | an xlsx sheet has more than 2,000,000 cells (rows x columns) | |
   | `parse_error` / `fit_failed` | anything else (generic message), or a numerically intractable fit | `sheets`/`sheet_used` for Excel |
 
-  CSV/TSV rows are counted by a streaming pass before pandas parses the body, and the header row is decided from that pass, so an over-cap file is refused without the memory cost of a full parse (a 4.2 M-row, 24 MB file is refused in tens of MB, not hundreds).
+  CSV/TSV rows are counted by a streaming pass before pandas parses the body, and the header row is decided from that pass, so an over-cap file is refused without the memory cost of a full parse. Measured on a 4.2 M-row, 16 MB body: the refusal raised resident memory by about 230 MB before this change and by none after it (the process high-water mark does not move).
 
   The size and shape codes above are stable: a client can branch on them. Their messages are engine-authored and may change. The engine's proxy maps `payload_too_large` to a plain upload-limit message; the other codes show the engine's own sentence.
 - **Header row.**

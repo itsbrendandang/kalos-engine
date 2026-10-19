@@ -123,3 +123,15 @@ def test_over_cap_csv_rss_growth_is_bounded():
     # Old code: ~500 MB of growth. Refused early: the decoded text (about 17 MB)
     # is the only large allocation. The bound leaves room for allocator noise.
     assert result["growth"] < 120 * 1024 * 1024, result
+
+
+@pytest.mark.parametrize("eol", ["\r\n", "\r", "\n"])
+def test_every_line_ending_counts_one_row(monkeypatch, eol):
+    """CRLF, bare CR and LF all end a record, as they do for pandas."""
+    monkeypatch.setattr(uploads, "MAX_CSV_ROWS", 4)
+    raw = eol.join(["a,b", "1,2", "3,4", "5,6", "7,8", ""]).encode()
+    assert len(parse_upload(raw, filename="eol.csv").df) == 4
+    over = eol.join(["a,b", "1,2", "3,4", "5,6", "7,8", "9,10", ""]).encode()
+    with pytest.raises(UploadRejected) as exc:
+        parse_upload(over, filename="eol.csv")
+    assert exc.value.code == "too_many_rows"
