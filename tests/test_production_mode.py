@@ -35,7 +35,7 @@ def _run(script: str, tmp_path, **env: str) -> subprocess.CompletedProcess:
     full_env = {k: v for k, v in os.environ.items()
                 if k not in {"KALOS_AUTH_TOKENS", "KALOS_AUTH_TOKENS_FILE",
                              "KALOS_ALLOW_OPEN_ACCESS", "KALOS_ENV"}}
-    full_env.update({"KALOS_STATE_DIR": str(tmp_path)}, **env)
+    full_env.update({"KALOS_STATE_DIR": str(tmp_path), "KALOS_ANON_SALT": "test-salt"}, **env)
     return subprocess.run(
         [sys.executable, "-c", textwrap.dedent(script)],
         env=full_env, capture_output=True, text=True, timeout=180,
@@ -157,6 +157,7 @@ def test_config_helpers(monkeypatch):
     assert deployment_env() == "development" and not is_production()
     assert_production_posture(auth_enforced=False)  # no-op outside production
     monkeypatch.setenv("KALOS_ENV", " Production ")
+    monkeypatch.setenv("KALOS_ANON_SALT", "test-salt")
     assert is_production()
     assert_production_posture(auth_enforced=True)
     with pytest.raises(ProductionConfigError):
