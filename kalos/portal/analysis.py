@@ -62,7 +62,6 @@ from kalos.portal.validate import column_provenance, provenance_dicts
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
 from kalos.validation.report import Finding, ValidationReport, build_report
 from kalos.validation.bounds import DIMENSION_BOUNDS, infer_dimension
-from kalos.validation.checks import _RUN_ID_RE
 from kalos.validation.target import TargetVariation, assess_target_variation
 
 # NOTE: `kalos.core.evaluation` (which imports `kalos.core.surrogate`),
