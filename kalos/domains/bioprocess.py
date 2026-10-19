@@ -25,10 +25,17 @@ BIOPROCESS_PROFILE = DomainProfile(
         # dropped from the model. Compound forms are caught by the word rule in
         # `kalos.portal.analysis.is_identifier_name` either way.
         r"^(id|name|sample(?:[ _.-]?(?:ids?|codes?|names?|no|num|number|ref|label|uuid))?"
-        r"|well|index|run|experiment|round|date|time|medium|strain|recipe|batch|campaign|group|lot"
-        r"|notes?)$",
+        # Medium, strain, recipe, batch, campaign, group and lot are NOT here:
+        # they are process FACTORS in most sheets (a medium lot with a real effect
+        # on titer), so they are modeled as categoricals. Only the compound ID
+        # forms (`batch_id`, `lot_number`, `campaign_id`) are identifiers, via
+        # `kalos.portal.analysis.is_identifier_name`.
+        r"|well|index|run|experiment|round|date|time|notes?)$",
         re.I,
     ),
+    # Names that MAY be a replicate/leakage grouping. Used as the CV group only
+    # when it is declared in roles, or when each of its levels is confounded with
+    # a single recipe (see `kalos.portal.analysis._auto_group_column`).
     group_hint=re.compile(r"medium|strain|recipe|batch|campaign|group|lot", re.I),
 )
 

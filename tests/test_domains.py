@@ -192,8 +192,11 @@ def test_analyze_bioprocess_inference_unchanged_by_default():
     })
     out = _analyze(df, profile=BIOPROCESS_PROFILE)
     assert out["target"] == "lipase_titer"
-    assert out["categorical_features"] == []
-    assert out["proposal_optimizer"] == "continuous"
+    # `medium` is a process factor (H1): it is modeled as a categorical with an
+    # auto_categorical finding, so the optimizer is mixed, not continuous.
+    assert out["categorical_features"] == ["medium"]
+    assert out["auto_categorical"] == ["medium"]
+    assert out["proposal_optimizer"] != "continuous"
     assert "biomass_od600" not in out["features"]
     assert "Methanol" in out["features"]
 

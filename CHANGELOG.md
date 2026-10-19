@@ -4,6 +4,18 @@ Newest first.
 
 ## Unreleased
 
+### Fixed - review: factors are not identifiers (H1)
+
+- `medium`, `strain`, `recipe`, `batch`, `campaign`, `group` and `lot` are no longer
+  identifiers (`id_hint`). They are candidate categorical factors, reported with an
+  `auto_categorical` finding. Compound IDs (`batch_id`, `lot_number`) and bare
+  `batch`/`lot`/`campaign` in `_RUN_ID_RE` are still identifiers only in ID form.
+- A group-named column is the CV group only when every level is confounded with a
+  single recipe, or when declared in `roles.groups`. Before, `Medium in {A,B,C}` with a
+  real effect was dropped as an id and became the leakage group.
+- Behaviour change: sheets with such columns get new categorical features and
+  therefore new proposals (mixed optimizer instead of continuous).
+
 ### Changed - no silent data loss in analysis (`feat/data-handling`, docs/UPLOADS.md)
 
 - **Text factors are modeled (D5).** With no declared `roles`, a text column with 2-12 repeated values is a categorical feature (before: `dropped_sparse`, never varied by a proposal). Each auto-detected column gets an `auto_categorical` finding; declaring roles turns detection off. Result: `auto_categorical`.

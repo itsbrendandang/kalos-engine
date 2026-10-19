@@ -429,11 +429,11 @@ def _resolve_columns(
                 and not profile.outcome_hint.search(str(c))
             ]
         gcol = roles.groups if (roles.groups and roles.groups in df.columns) else None
-        if gcol is None:
-            gcol = next((c for c in df.columns if profile.group_hint.search(str(c))), None)
         # normalize both feature lists to sheet-column order
         cont_feats = [c for c in df.columns if c in set(cont_feats)]
         cat_feats = [c for c in df.columns if c in cat_set]
+        if gcol is None:
+            gcol = _auto_group_column(df, profile, [*cont_feats, *cat_feats])
         return target, cont_feats, cat_feats, gcol, declared
 
     # inference mode (default profile = bioprocess): unchanged legacy behavior
@@ -449,8 +449,40 @@ def _resolve_columns(
         and not is_identifier_name(c, profile.id_hint)
         and not profile.outcome_hint.search(str(c))
     ]
-    gcol = next((c for c in df.columns if profile.group_hint.search(str(c))), None)
-    return target, cont_feats, _auto_categorical(df, num, target, profile), gcol, set()
+    cat_feats = _auto_categorical(df, num, target, profile)
+    gcol = _auto_group_column(df, profile, [*cont_feats, *cat_feats])
+    return target, cont_feats, cat_feats, gcol, set()
+
+
+def _auto_group_column(df: pd.DataFrame, profile: DomainProfile, features: list) -> str | None:
+    """The CV group column detected from the sheet's names, or None.
+
+    A name matching `profile.group_hint` (medium, strain, batch, lot, ...) is NOT
+    automatically a leakage barrier. Medium is usually a process FACTOR: grouping
+    folds by it hides the very effect the model should learn, and proposals never
+    vary it (the `Medium in {A,B,C}` repro). So it is used as the group only when
+    every one of its levels is confounded with a single recipe - each level's rows
+    are all the same feature settings, so the level IS the recipe and grouping by
+    it cannot hide a factor. Otherwise it stays a candidate factor and the caller
+    reports it. A declared `roles.groups` never reaches this function.
+    """
+    names = [str(c) for c in features]
+    for c in df.columns:
+        if not profile.group_hint.search(str(c)):
+            continue
+        # The recipe is the other features: the candidate itself is what is tested.
+        feats = [f for f in names if f != str(c)]
+        if not feats:
+            continue
+        labels = df[c].fillna("").astype(str).str.strip()
+        levels = [v for v in labels.unique().tolist() if not is_null_label(v)]
+        if len(levels) < 2:
+            continue
+        recipe = row_hash_groups(df[feats])
+        per_level = pd.Series(recipe).groupby(labels.to_numpy()).nunique()
+        if all(int(per_level.get(v, 0)) == 1 for v in levels):
+            return c
+    return None
 
 
 # A text column is treated as a categorical factor (with no declared roles) when it
@@ -2265,8 +2297,21 @@ def identifier_pattern(id_hint_pattern: str) -> re.Pattern[str]:
     string so a different domain profile gets its own union.
     """
     return re.compile(
-        f"(?:{id_hint_pattern})|(?:{_RUN_ID_RE.pattern})", re.IGNORECASE
+        f"(?:{id_hint_pattern})|(?:{_RUN_ID_COMPOUND_PATTERN})", re.IGNORECASE
     )
+
+
+# The run-id pattern from `kalos.validation.checks`, with the BARE words `batch`,
+# `lot` and `campaign` removed: on their own they name a process factor (a medium
+# lot, a batch of media), not an identifier. Only their ID forms (`batch_id`,
+# `lot_number`, `campaign_id`) remain identifiers. See the H1 note in
+# `kalos.domains.bioprocess`.
+_RUN_ID_COMPOUND_PATTERN = (
+    r"^(run|experiment|expt|sample|culture|vessel|reactor|bioreactor)"
+    r"([ _\-.]?(id|ids|no|num|number|code|label|name|key|ref))?$"
+    r"|^(batch|lot|campaign)([ _\-.]?(id|ids|no|num|number|code|label|name|key|ref))$"
+    r"|^(id|uuid|index|well|barcode)$"
+)
 
 
 # Token rule for compound identifier names (see `is_identifier_name`). The last
