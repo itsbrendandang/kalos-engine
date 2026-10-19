@@ -590,6 +590,9 @@ def _noise_block(
         "n_replicated": int(nr["n_replicated"]),
         "replicate_aware": bool(replicate_aware),
         "icc": _num(nr["icc"], 3),
+        # Exact copies of a run (same factors AND same target) are not replicates
+        # and are excluded from noise_sd / icc (review M1).
+        "n_exact_duplicates": int(nr.get("n_exact_duplicates", 0)),
         "noise_sd": _num(np.sqrt(noise_var) if np.isfinite(noise_var) else None),
         "signal_sd": _num(np.sqrt(signal_var) if np.isfinite(signal_var) else None),
         "best_single": _num(best_single),

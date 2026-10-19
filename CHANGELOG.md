@@ -4,6 +4,14 @@ Newest first.
 
 ## Unreleased
 
+### Fixed - review: exact copies are not replicates (M1)
+
+- A row identical to another in every column (same factors AND same target) is an
+  exact copy, not a replicate. Copies are removed before the replicate noise and ICC
+  statistics. Before, a pasted-twice sheet gave `noise_sd: 0` and `icc: 1.0`.
+  `noise.n_exact_duplicates` reports how many were removed. True replicates (same
+  factors, different target) are unchanged.
+
 ### Fixed - review: proposals do not depend on concurrent analyses (C3)
 
 - `_analyze` seeded the process-wide torch and numpy RNGs at its start. Two analyses
