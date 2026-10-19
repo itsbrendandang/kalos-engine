@@ -49,7 +49,10 @@ from kalos.portal.auth import (
     get_authenticator,
     require_scope,
 )
+from kalos.portal.auth_errors import JwtConfigError
+from kalos.portal.jwt_auth import log_config_error_once
 from kalos.portal.config import (
+    ProductionConfigError,
     assert_production_posture,
     cors_config,
     is_production,
@@ -61,6 +64,7 @@ from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_sto
 from kalos.portal.limits import (
     MULTIPART_OVERHEAD_BYTES,
     max_request_bytes,
+    route_path,
 )
 from kalos.portal.migrate import legacy_latest_filename
 from kalos.portal.tenancy import validate_tenant_id
@@ -83,6 +87,7 @@ from kalos.portal.uploads import (
     parse_upload,
     rejection_counts as _rejection_counts,
     safe_context,
+    scrubbed_failure,
 )
 from kalos.providers import provider_status
 
@@ -140,7 +145,31 @@ def _ensure_torch_threads() -> None:
 #   - does not register the demo routes /api/single and /api/multi (CPU-heavy GP
 #     loops that run OUTSIDE the single analysis slot), so they are 404.
 _PRODUCTION = is_production()
-assert_production_posture(auth_enforced=get_authenticator().enforces())
+
+
+def _startup_auth_posture() -> bool:
+    """Check the auth posture once at import; return whether auth is enforced.
+
+    Production requires a USABLE auth source (a JWT public key or a
+    service-account static token), and any auth config error - including an
+    unreadable or malformed JWT key file - refuses to start.
+    """
+    auth = get_authenticator()
+    try:
+        enforced = auth.enforces()
+        has_source = auth.has_auth_source()
+    except AuthConfigError as exc:
+        if _PRODUCTION:
+            # The detail (never token material) is in the chained exception.
+            raise ProductionConfigError(
+                "KALOS_ENV=production: the authentication configuration is invalid"
+            ) from exc
+        raise
+    assert_production_posture(auth_enforced=has_source)
+    return enforced
+
+
+_AUTH_ENFORCED_AT_STARTUP = _startup_auth_posture()
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -197,15 +226,14 @@ _PROBE_PATHS = frozenset({"/healthz", "/readyz"})
 # immediately with no restart either.
 @app.middleware("http")
 async def _refuse_open_remote_access(request, call_next):
-    if _PRODUCTION and request.url.path not in _PROBE_PATHS:
+    if _PRODUCTION and route_path(request.scope) not in _PROBE_PATHS:
         # Production refuses to START without tokens, but tokens are re-read per
         # request (rotation without restart), so an emptied tokens file would
         # silently reopen the API. Fail closed instead, local callers included.
         try:
-            enforced = get_authenticator().enforces()
-        except AuthConfigError:
-            log.exception("kalos auth: token configuration is invalid")
-            return JSONResponse({"error": "authentication is misconfigured"}, status_code=500)
+            enforced = get_authenticator().has_auth_source()
+        except AuthConfigError as exc:
+            return _auth_config_error_response(exc)
         if not enforced:
             log.error("refused a request: KALOS_ENV=production but authentication is not enforced")
             return JSONResponse(
@@ -214,7 +242,11 @@ async def _refuse_open_remote_access(request, call_next):
                 status_code=503,
             )
     if not is_local_client(request.client.host if request.client else None):
-        if not get_authenticator().enforces() and not open_access_explicitly_allowed():
+        try:
+            remote_enforced = get_authenticator().enforces()
+        except AuthConfigError as exc:
+            return _auth_config_error_response(exc)
+        if not remote_enforced and not open_access_explicitly_allowed():
             log.warning(
                 "refused a remote request to an unauthenticated portal from %s %s",
                 request.client.host if request.client else "unknown",
@@ -235,6 +267,16 @@ async def _refuse_open_remote_access(request, call_next):
                 status_code=503,
             )
     return await call_next(request)
+
+
+def _auth_config_error_response(exc: AuthConfigError) -> JSONResponse:
+    """Fail closed on a broken auth config: 503 for the JWT key file (the
+    caller can do nothing about it), 500 for a malformed static-token list."""
+    if isinstance(exc, JwtConfigError):
+        log_config_error_once(exc)  # once per change, not per request
+        return JSONResponse({"error": "authentication unavailable"}, status_code=503)
+    log.error("kalos auth: token configuration is invalid: %s", exc)
+    return JSONResponse({"error": "authentication is misconfigured"}, status_code=500)
 
 
 # Bound every request body before any route parses it (kalos/portal/limits.py):
@@ -258,7 +300,7 @@ app.add_middleware(
 app.add_middleware(CORSMiddleware, **cors_config())
 
 # Log the effective security posture (auth + CORS) once at import/startup.
-log_security_posture(auth_enforced=get_authenticator().enforces())
+log_security_posture(auth_enforced=_AUTH_ENFORCED_AT_STARTUP)
 
 BOUNDS = np.array([[0, 0, 0], [1, 1, 1]], float)
 TITER_OPT = np.array([0.7, 0.3, 0.5])
@@ -571,16 +613,16 @@ def _run_uploaded_sync(
             df, result["target"], result["proposal_features"], tenant=tenant,
             campaign_id=campaign_id, analysis=result, dataset=filename,
         )
-    except CampaignError:
+    except CampaignError as exc:
         # An explicit campaign (POST /api/campaigns/{id}/upload) that vanished
         # or was archived mid-analysis: say so (404/409) instead of returning
         # an analysis that was never stored.
         if campaign_id is not None:
             raise
-        log.exception("failed to seed the campaign from an uploaded run sheet")
+        log.error("failed to seed the campaign from an uploaded run sheet: %s", scrubbed_failure(exc))
         _publish_unstamped(result, filename, tenant=tenant, store=store)
-    except Exception:  # noqa: BLE001 - seeding must never fail the upload
-        log.exception("failed to seed the campaign from an uploaded run sheet")
+    except Exception as exc:  # noqa: BLE001 - seeding must never fail the upload
+        log.error("failed to seed the campaign from an uploaded run sheet: %s", scrubbed_failure(exc))
         # Still publish the analysis, unstamped: the campaign then reports
         # itself out of sync with /api/latest instead of the two silently
         # describing different run sheets.
@@ -597,8 +639,8 @@ def _publish_unstamped(
             result, filename, tenant=tenant, campaign_generation=None, store=store,
             campaign_id=campaign_id,
         )
-    except Exception:  # noqa: BLE001 - publishing is best-effort too
-        log.exception("failed to publish the analysis of an uploaded run sheet")
+    except Exception as exc:  # noqa: BLE001 - publishing is best-effort too
+        log.error("failed to publish the analysis of an uploaded run sheet: %s", scrubbed_failure(exc))
 
 
 @app.post("/api/run")
@@ -687,10 +729,11 @@ async def _run_uploaded(
             status_code=400,
         )
     except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError, UnicodeError) as exc:
-        # Log the full traceback server-side for debugging; return a generic
+        # Log the exception TYPE and location server-side (never its message:
+        # pandas quotes cell values and column names in it); return a generic
         # message so no parser detail, column name, cell value, or stack trace
-        # ever reaches the (unauthenticated) client.
-        log.exception("failed to parse or analyze an uploaded file")
+        # ever reaches the client either.
+        log.error("failed to parse or analyze an uploaded file: code=parse_error %s", scrubbed_failure(exc))
         return JSONResponse(
             {"error": _ERR_PARSE, "code": "parse_error", **safe_context(getattr(exc, "upload_context", {}))},
             status_code=400,
@@ -700,9 +743,9 @@ async def _run_uploaded(
         # returns the {error} JSON envelope the frontend parses, never FastAPI's
         # default text/plain HTTP 500. This covers torch.linalg.LinAlgError from a
         # GP fit and an AssertionError from the leakage guard, among others. As
-        # above, the full traceback is logged server-side and only the generic
-        # message reaches the (unauthenticated) client.
-        log.exception("failed to parse or analyze an uploaded file")
+        # above, only the exception type and location are logged server-side and
+        # only the generic message reaches the client.
+        log.error("failed to parse or analyze an uploaded file: code=parse_error %s", scrubbed_failure(exc))
         return JSONResponse(
             {"error": _ERR_PARSE, "code": "parse_error", **safe_context(getattr(exc, "upload_context", {}))},
             status_code=400,
@@ -730,7 +773,7 @@ async def _validation_error(request: Request, exc: RequestValidationError) -> JS
     input (so the client parses one shape). The message names WHERE and WHAT
     (field location + pydantic's message) but never echoes the input value.
     Every other route keeps FastAPI's default 422."""
-    if not request.url.path.startswith("/api/campaign"):
+    if not route_path(request.scope).startswith("/api/campaign"):
         return await request_validation_exception_handler(request, exc)
     parts = []
     for err in exc.errors()[:5]:

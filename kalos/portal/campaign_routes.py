@@ -32,7 +32,7 @@ from kalos.portal.campaign import (
     CampaignStore,
     get_campaign_store,
 )
-from kalos.portal.uploads import MAX_COLUMNS, UploadRejected, rejection_counts
+from kalos.portal.uploads import MAX_COLUMNS, UploadRejected, rejection_counts, scrubbed_failure
 
 log = logging.getLogger("kalos.portal")
 
@@ -293,12 +293,13 @@ async def _reanalyze(
         # Code and counts only: the message names the customer's columns.
         log.warning("reanalyze rejected: code=%s%s", rej.code or "guard", rejection_counts(rej))
         return JSONResponse(rej.to_body(), status_code=400)
-    except Exception:  # noqa: BLE001 - normalized to a generic 400, same as /api/run
-        # Full traceback logged server-side; the client only ever sees a
+    except Exception as exc:  # noqa: BLE001 - normalized to a generic 400, same as /api/run
+        # Exception type + location logged server-side (never its message,
+        # which can quote the tenant's cells); the client only ever sees a
         # generic message, matching /api/run's catch-all in kalos/portal/app.py.
         # Nothing was committed (plan_fold does not mutate), so the campaign is
         # untouched and a retry is meaningful.
-        log.exception("failed to re-analyze the campaign")
+        log.error("failed to re-analyze the campaign: code=analysis_failed %s", scrubbed_failure(exc))
         return JSONResponse({"error": "could not analyze the campaign data"}, status_code=400)
 
     try:

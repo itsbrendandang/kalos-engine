@@ -22,7 +22,6 @@ from pathlib import Path
 from string import Template
 from typing import Any
 
-import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
@@ -35,6 +34,7 @@ from kalos.portal.uploads import (
     UploadRejected,
     _parse_upload,
     rejection_counts,
+    scrubbed_failure,
 )
 from kalos.scale.readout import MIN_RESIDUALS, MIN_RUNG_N_FOR_LICENSE, NUMBER, NUMBER_WITH_WARNING, REFUSAL, TargetSpec, build_readout
 from kalos.scale.readout import format_liters_plain as _format_liters_plain
@@ -483,11 +483,12 @@ async def scale_readout(
     except UploadRejected as rej:
         log.warning("scale readout upload rejected: code=%s%s", rej.code or "guard", rejection_counts(rej))
         return JSONResponse(rej.to_body(), status_code=400)
-    except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError, UnicodeError):
-        log.exception("failed to parse an uploaded run sheet for the scale readout")
-        return JSONResponse({"error": _ERR_PARSE}, status_code=400)
-    except Exception:  # noqa: BLE001 - normalized to a generic 400, same as /api/run
-        log.exception("failed to parse an uploaded run sheet for the scale readout")
+    except Exception as exc:  # noqa: BLE001 - normalized to a generic 400, same as /api/run
+        # Type + location only: parser messages quote the uploader's cells.
+        log.error(
+            "failed to parse an uploaded run sheet for the scale readout: code=parse_error %s",
+            scrubbed_failure(exc),
+        )
         return JSONResponse({"error": _ERR_PARSE}, status_code=400)
 
     try:

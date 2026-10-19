@@ -1,0 +1,32 @@
+[
+  {
+    "task": "gaussian_4d",
+    "method": "random",
+    "eta": 0.15,
+    "seed": 1017,
+    "stored_regret_norm": 0.372200475933117,
+    "rerun_regret_norm": 0.372200475933117,
+    "absdiff": 0.0,
+    "pass_1e6": true
+  },
+  {
+    "task": "gaussian_4d",
+    "method": "ax",
+    "eta": 0.15,
+    "seed": 1007,
+    "stored_regret_norm": 0.0788762481424895,
+    "rerun_regret_norm": 0.012134821829207665,
+    "absdiff": 0.06674142631328184,
+    "pass_1e6": false
+  },
+  {
+    "task": "ackley_4d",
+    "method": "kalos",
+    "eta": 0.15,
+    "seed": 1023,
+    "stored_regret_norm": 0.6874143008854101,
+    "rerun_regret_norm": 0.6874143008854101,
+    "absdiff": 0.0,
+    "pass_1e6": true
+  }
+]
