@@ -23,6 +23,7 @@ What this file proves, route by route:
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -74,6 +75,22 @@ TOKENS = [
 
 def H(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+@contextlib.contextmanager
+def _analysis_slots_exhausted(tenant: str = "acme"):
+    """Take every analysis slot this tenant can hold, so its sync analysis routes
+    answer 503 + Retry-After (busy.run_exclusively) without fitting anything.
+    (#91 replaced the single-slot semaphore with a per-tenant limiter.)"""
+    limiter = busy.limiter()
+    held = []
+    while (lease := limiter.try_acquire(tenant, yield_to_queue=False)) is not None:
+        held.append(lease)
+    try:
+        yield
+    finally:
+        for lease in held:
+            lease.release()
 
 
 def _df(n: int = 8, seed: int = 0) -> pd.DataFrame:
@@ -338,11 +355,8 @@ def test_every_mutation_is_audited_with_subject_and_auth_method(env):
                   headers=H("a-admin")).json()["started"][0]
     tc.post(f"/api/campaigns/{cid}/runs/{run['id']}/result", json={"value": 1.0},
             headers=H("a-admin"))
-    busy._slot.acquire()  # keep the reanalyze cheap: it answers 503 without fitting
-    try:
+    with _analysis_slots_exhausted("acme"):  # keep the reanalyze cheap: 503 without fitting
         tc.post(f"/api/campaigns/{cid}/reanalyze", headers=H("a-admin"))
-    finally:
-        busy._slot.release()
     tc.patch(f"/api/campaigns/{cid}", json={"archived": True}, headers=H("a-admin"))
     tc.patch(f"/api/campaigns/{cid}", json={"archived": False}, headers=H("a-admin"))
     got = [(e["action"], e["outcome"]) for e in reversed(store.audit_entries(tenant="acme"))]
@@ -640,13 +654,12 @@ def test_size_limits_and_the_analysis_slot_still_apply(env):
     # the single analysis slot: busy -> 503 + Retry-After on upload and reanalyze
     run = store.start([_recipe()], tenant="acme", campaign_id=cid)[0]
     store.set_result(run["id"], 2.0, tenant="acme", campaign_id=cid)
-    busy._slot.acquire()
-    try:
-        r1 = tc.post(f"/api/campaigns/{cid}/upload",
+    with _analysis_slots_exhausted("acme"):
+        # The campaign holds a measured run, so an upload needs replace=true (#91,
+        # 409 campaign_has_runs otherwise); the busy check is what this test is for.
+        r1 = tc.post(f"/api/campaigns/{cid}/upload", data={"replace": "true"},
                      files={"file": ("r.csv", _csv(_df(20)), "text/csv")}, headers=H("a-write"))
         r2 = tc.post(f"/api/campaigns/{cid}/reanalyze", headers=H("a-write"))
-    finally:
-        busy._slot.release()
     for r in (r1, r2):
         assert r.status_code == 503 and r.headers["Retry-After"]
 
