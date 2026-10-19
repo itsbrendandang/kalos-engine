@@ -31,7 +31,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from fastapi import Depends, FastAPI, File, Form, Query, Request, UploadFile
-from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

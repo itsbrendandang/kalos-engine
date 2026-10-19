@@ -97,7 +97,7 @@ def test_a_group_header_file_is_read_once(read_csv_calls):
 def test_over_cap_csv_rss_growth_is_bounded():
     """A fresh process: the 4.2 M-row file (about 24 MB) must not grow the
     resident set by pandas-sized amounts before it is refused."""
-    script = textwrap.dedent(f"""
+    script = textwrap.dedent("""
         import json, resource, sys
         from kalos.portal.uploads import UploadRejected, parse_upload
         rows = 4_200_000
@@ -112,7 +112,7 @@ def test_over_cap_csv_rss_growth_is_bounded():
             code = None
         except UploadRejected as rej:
             code = rej.code
-        print(json.dumps({{"code": code, "growth": rss() - before}}))
+        print(json.dumps({"code": code, "growth": rss() - before}))
     """)
     env = {k: v for k, v in os.environ.items() if not k.startswith("KALOS_")}
     out = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True,

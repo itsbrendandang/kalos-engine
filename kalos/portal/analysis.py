@@ -8,7 +8,6 @@ from __future__ import annotations
 import dataclasses
 import functools
 import gc
-import os
 import re
 import time
 from collections.abc import Mapping, Sequence
