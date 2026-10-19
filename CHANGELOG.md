@@ -11,7 +11,8 @@ Newest first.
   mostly-feasible sheet) and M6 (the promotion gate reads the pooled Spearman, not
   `producer_spearman`; a sheet with producer Spearman 0.02 still passes). Also: the
   concurrency serialization (C3), the concentration naming gap (C1), and the
-  replicate-aware fit still weighting exact copies (M1).
+  replicate-aware fit still weighting exact copies (M1), and the M1 decision on identical
+  floor (`0.0`) readings, which the scale diagnostic test now records as a strict xfail.
 
 ### Fixed - review: anonymize hides person names and their level values (H4)
 

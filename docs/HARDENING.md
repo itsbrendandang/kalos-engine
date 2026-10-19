@@ -284,6 +284,21 @@ These are judgement calls for the science owner; the code is unchanged.
   drop their runs. This is the safe direction, but a sheet with many such columns will
   lose rows. Declare them in `roles.sparse`, or extend the pattern deliberately.
 
+### M1 decision: identical floor readings are exact copies (open)
+
+- Under the M1 rule, a row identical to another in every column, target included, is a
+  copy and is not a replicate. On a zero-floored assay, several runs at the same
+  settings that all read exactly `0.0` are therefore copies. The zero-variance floor
+  recipes are removed from the noise and ICC statistics, and the variance-mean coupling
+  that the heteroscedasticity diagnostic reads (`suggests_transform`) is gone.
+- Evidence: `tests/test_noise_scale_and_producers.py::test_analyze_reports_the_scale_diagnostic`
+  (strict xfail). On that sheet, 13 of 20 recipes' repeated `0.0` readings collapse to
+  one. The diagnostic flips from `suggests_transform: true` to `false`.
+- The rule is implemented as the spec states. Whether a repeated floor reading (a real
+  below-LOD result) should be exempt from the copy rule is a product and assay decision.
+  A row-id column would let the engine tell a real repeat from a paste; without one the
+  two are indistinguishable from the data alone.
+
 ### Replicate-aware fit still counts exact copies (M1 follow-on)
 
 - Exact copies are removed from `noise_report`, the ICC and the heteroscedasticity
