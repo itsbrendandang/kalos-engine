@@ -185,15 +185,31 @@ def test_each_censored_spelling_is_excluded(token):
     assert out["n"] == N - 1
 
 
-def test_a_blank_feature_cell_is_kept_as_absent_and_reported():
-    """Blank = absent (sparse component convention). Kept, as before, but counted."""
+def test_a_blank_feature_cell_drops_its_run_and_is_reported():
+    """Review C1: a blank cell of an ordinary feature (here Temp) is UNKNOWN, not
+    0.0. The run is dropped through the row accounting, counted per column, and
+    nothing is imputed."""
     df = _sheet()
     df.loc[7, "Temp"] = None
     out = _analyze(df, target="lipase_titer")
+    assert out["n"] == N - 1
+    assert out["n_dropped_incomplete"] == 1
+    assert out["data_drops"]["cells_by_column"]["Temp"] == {"missing": 1}
+    assert out["data_drops"]["blank_cells_as_absent"] == {}
+    assert _findings(out, "blank_as_absent") == []
+
+
+def test_a_blank_concentration_cell_is_absent_and_reported():
+    """A concentration-type column (glucose, methanol, a salt, ...) keeps the
+    sparse-component convention: a blank is 0 (absent), the run is kept, counted."""
+    df = _sheet()
+    df["Glucose_g_L"] = np.linspace(1.0, 10.0, N)
+    df.loc[7, "Glucose_g_L"] = None
+    out = _analyze(df, target="lipase_titer")
     assert out["n"] == N
     assert out["n_dropped_incomplete"] == 0
-    assert out["data_drops"]["blank_cells_as_absent"] == {"Temp": 1}
-    assert _findings(out, "blank_as_absent")[0]["column"] == "Temp"
+    assert out["data_drops"]["blank_cells_as_absent"] == {"Glucose_g_L": 1}
+    assert _findings(out, "blank_as_absent")[0]["column"] == "Glucose_g_L"
 
 
 def test_too_few_complete_runs_is_a_specific_refusal():

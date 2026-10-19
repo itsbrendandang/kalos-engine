@@ -405,7 +405,7 @@ def propose_batch(
     `optimize_acqf_mixed*`). `None` (the default) seeds nothing here, which is
     byte-identical to the historical behavior: reproducibility is entirely the
     caller's responsibility, via seeding the global torch RNG before calling
-    (as the portal's `_seed_everything` and the bench harness already do). A
+    (as the portal's `_seeded_analysis` and the bench harness already do). A
     library consumer that never seeds the global RNG gets silently
     non-reproducible proposals under that contract - passing an explicit `seed`
     here closes that gap. It is applied inside `torch.random.fork_rng()`, which

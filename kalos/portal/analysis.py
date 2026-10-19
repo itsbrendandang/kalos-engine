@@ -6,11 +6,13 @@ so the model never "predicts" titer from another measured output (leakage).
 from __future__ import annotations
 
 import dataclasses
+import contextlib
 import functools
 import gc
 import re
+import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Callable
 
 import numpy as np
@@ -60,7 +62,6 @@ from kalos.portal.validate import column_provenance, provenance_dicts
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
 from kalos.validation.report import Finding, ValidationReport, build_report
 from kalos.validation.bounds import DIMENSION_BOUNDS, infer_dimension
-from kalos.validation.checks import _RUN_ID_RE
 from kalos.validation.target import TargetVariation, assess_target_variation
 
 # NOTE: `kalos.core.evaluation` (which imports `kalos.core.surrogate`),
@@ -68,7 +69,7 @@ from kalos.validation.target import TargetVariation, assess_target_variation
 # module level. This module is imported by `kalos.portal.app` (the portal),
 # so a top-level torch import here would tax portal boot with the whole
 # torch/botorch/gpytorch stack (~220 MB) before any analysis ever runs. They
-# are imported lazily inside `_analyze`/`_seed_everything`, the only places
+# are imported lazily inside `_analyze`/`_analyze_body`, the only places
 # that actually need them. `kalos.domains` above is torch-free by contract.
 #
 # This is load-bearing and easy to break by accident: it was broken, by a single
@@ -329,12 +330,34 @@ CONSTRAINT_MIN_ROWS = 6
 # constraint model is held to the identical bar rather than a laxer one.
 
 
-def _seed_everything(seed: int = ANALYZE_SEED) -> None:
-    """Seed torch + numpy so one upload yields one deterministic set of proposals."""
+# torch's default generator and numpy's global RNG are PROCESS-wide. Two analyses
+# running on two threads (busy.py admits two) would reseed each other mid-fit, so
+# the proposals depended on which thread got there first (review C3). Every
+# analysis holds this lock for its seeded scope, so the RNG is never shared.
+_RNG_LOCK = threading.RLock()
+
+
+@contextlib.contextmanager
+def _seeded_analysis(seed: int = ANALYZE_SEED) -> Iterator[None]:
+    """Run one analysis with torch and numpy seeded to `seed`, then restore them.
+
+    The seed is applied inside `torch.random.fork_rng` and `np.random.get_state`
+    snapshots, so the caller's global RNG state is put back on exit. The lock is
+    held for the whole scope, so two concurrent analyses run one after the other
+    on the RNG and give exactly the proposals they would give sequentially.
+    Nothing here depends on the global RNG having been seeded beforehand.
+    """
     import torch  # local: deferred, see module-level note above
 
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+    with _RNG_LOCK:
+        np_state = np.random.get_state()
+        try:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(seed)
+                np.random.seed(seed)
+                yield
+        finally:
+            np.random.set_state(np_state)
 
 
 def _dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -392,7 +415,7 @@ def _resolve_columns(
         # Fail loudly so the caller is never told a declared column was honored
         # when it was not - ids included (a typo'd id leaves the real id in as a
         # feature otherwise).
-        declared_names = [*roles.features, *roles.categoricals, *roles.ids]
+        declared_names = [*roles.features, *roles.categoricals, *roles.ids, *roles.sparse]
         if roles.groups:
             declared_names.append(roles.groups)
         unknown = sorted({c for c in declared_names if c not in df.columns})
@@ -430,11 +453,11 @@ def _resolve_columns(
                 and not profile.outcome_hint.search(str(c))
             ]
         gcol = roles.groups if (roles.groups and roles.groups in df.columns) else None
-        if gcol is None:
-            gcol = next((c for c in df.columns if profile.group_hint.search(str(c))), None)
         # normalize both feature lists to sheet-column order
         cont_feats = [c for c in df.columns if c in set(cont_feats)]
         cat_feats = [c for c in df.columns if c in cat_set]
+        if gcol is None:
+            gcol = _auto_group_column(df, profile, [*cont_feats, *cat_feats])
         return target, cont_feats, cat_feats, gcol, declared
 
     # inference mode (default profile = bioprocess): unchanged legacy behavior
@@ -450,8 +473,40 @@ def _resolve_columns(
         and not is_identifier_name(c, profile.id_hint)
         and not profile.outcome_hint.search(str(c))
     ]
-    gcol = next((c for c in df.columns if profile.group_hint.search(str(c))), None)
-    return target, cont_feats, _auto_categorical(df, num, target, profile), gcol, set()
+    cat_feats = _auto_categorical(df, num, target, profile)
+    gcol = _auto_group_column(df, profile, [*cont_feats, *cat_feats])
+    return target, cont_feats, cat_feats, gcol, set()
+
+
+def _auto_group_column(df: pd.DataFrame, profile: DomainProfile, features: list) -> str | None:
+    """The CV group column detected from the sheet's names, or None.
+
+    A name matching `profile.group_hint` (medium, strain, batch, lot, ...) is NOT
+    automatically a leakage barrier. Medium is usually a process FACTOR: grouping
+    folds by it hides the very effect the model should learn, and proposals never
+    vary it (the `Medium in {A,B,C}` repro). So it is used as the group only when
+    every one of its levels is confounded with a single recipe - each level's rows
+    are all the same feature settings, so the level IS the recipe and grouping by
+    it cannot hide a factor. Otherwise it stays a candidate factor and the caller
+    reports it. A declared `roles.groups` never reaches this function.
+    """
+    names = [str(c) for c in features]
+    for c in df.columns:
+        if not profile.group_hint.search(str(c)):
+            continue
+        # The recipe is the other features: the candidate itself is what is tested.
+        feats = [f for f in names if f != str(c)]
+        if not feats:
+            continue
+        labels = df[c].fillna("").astype(str).str.strip()
+        levels = [v for v in labels.unique().tolist() if not is_null_label(v)]
+        if len(levels) < 2:
+            continue
+        recipe = row_hash_groups(df[feats])
+        per_level = pd.Series(recipe).groupby(labels.to_numpy()).nunique()
+        if all(int(per_level.get(v, 0)) == 1 for v in levels):
+            return c
+    return None
 
 
 # A text column is treated as a categorical factor (with no declared roles) when it
@@ -535,6 +590,9 @@ def _noise_block(
         "n_replicated": int(nr["n_replicated"]),
         "replicate_aware": bool(replicate_aware),
         "icc": _num(nr["icc"], 3),
+        # Exact copies of a run (same factors AND same target) are not replicates
+        # and are excluded from noise_sd / icc (review M1).
+        "n_exact_duplicates": int(nr.get("n_exact_duplicates", 0)),
         "noise_sd": _num(np.sqrt(noise_var) if np.isfinite(noise_var) else None),
         "signal_sd": _num(np.sqrt(signal_var) if np.isfinite(signal_var) else None),
         "best_single": _num(best_single),
@@ -676,7 +734,26 @@ def _alternative_scale_block(
     }
 
 
-def _physical_range(name: str, col: np.ndarray) -> tuple[float, float, int]:
+def _absent_is_zero_columns(cont_feats: list, roles: ColumnRoles | None) -> set[str]:
+    """Continuous feature columns where a BLANK cell means "absent" (0).
+
+    Only two kinds of column qualify: a column the caller declared `sparse` in
+    roles, and a concentration-type column by name (`infer_dimension` ==
+    "concentration": a titer-like analyte, glucose, methanol, a salt, a feed
+    component). For a component like that a blank is a real zero. Every other
+    feature cell is an unknown value: a blank pH is not a pH of 0.0, so its run is
+    dropped through the row accounting instead of being imputed (review C1).
+    """
+    declared = set(roles.sparse) if roles is not None else set()
+    return {
+        str(c) for c in cont_feats
+        if str(c) in declared or infer_dimension(str(c)) == "concentration"
+    }
+
+
+def _physical_range(
+    name: str, col: np.ndarray, *, absent: int = 0
+) -> tuple[float, float, int]:
     """Observed range of `col`, computed over PHYSICALLY POSSIBLE values only.
 
     The design box handed to the optimizer is the observed [min, max] of each
@@ -701,6 +778,7 @@ def _physical_range(name: str, col: np.ndarray) -> tuple[float, float, int]:
     one alongside an error-severity finding.
     """
     lo_obs, hi_obs = float(col.min()), float(col.max())
+    lo_obs, hi_obs = _with_absent(lo_obs, hi_obs, absent)
     dim = infer_dimension(name)
     if dim is None:
         return lo_obs, hi_obs, 0
@@ -708,14 +786,30 @@ def _physical_range(name: str, col: np.ndarray) -> tuple[float, float, int]:
     valid = col[(col >= b.hard_lo) & (col <= b.hard_hi)]
     n_excluded = int(col.size - valid.size)
     if n_excluded == 0 or valid.size == 0:
-        return lo_obs, hi_obs, 0 if valid.size else n_excluded
+        if valid.size:
+            return lo_obs, hi_obs, 0
+        return lo_obs, hi_obs, n_excluded
     lo, hi = float(valid.min()), float(valid.max())
     if hi <= lo:
         # The valid cells are all one value: a zero-width box would collapse the
         # dimension. Keep the real observed span rather than emit a degenerate
         # design; the validation report carries the impossible-value error.
         return lo_obs, hi_obs, n_excluded
+    lo, hi = _with_absent(lo, hi, absent)
     return lo, hi, n_excluded
+
+
+def _with_absent(lo: float, hi: float, absent: int) -> tuple[float, float]:
+    """Widen the box to include 0 when blank cells were read as absent (0).
+
+    Those rows carry a 0 in the fitted design, so the box must contain that point
+    (a sparse component at zero is a real recipe). This is the only value that is
+    not an observed cell, and it is added only for a sparse/concentration column
+    that actually had blanks.
+    """
+    if absent and lo > 0.0:
+        return 0.0, hi
+    return lo, hi
 
 
 def _target_error_context(
@@ -941,6 +1035,50 @@ def _analyze(
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
 ) -> dict:
+    """See `_analyze_body`. Every fitting analysis runs inside `_seeded_analysis`,
+    so its proposals depend only on its inputs, not on other analyses in flight."""
+    _validate_constraint(constraint)
+    kwargs: dict[str, Any] = dict(
+        anonymize=anonymize, roles=roles, profile=profile, pending=pending,
+        constraint=constraint, progress=progress, preflight_only=preflight_only,
+    )
+    if preflight_only:
+        return _analyze_body(df, target, **kwargs)
+    with _seeded_analysis(ANALYZE_SEED):
+        return _analyze_body(df, target, **kwargs)
+
+
+def _validate_constraint(constraint: Mapping[str, Any] | None) -> None:
+    """Refuse a malformed constraint with a clean ValueError (review L1).
+
+    A NaN or infinite floor used to reach botorch's acquisition and raise a bare
+    RuntimeError ("probability tensor contains either inf, nan ..."). The floor is
+    a number the caller states, so a non-finite one is a caller error and is named as
+    one, before any fit runs."""
+    if constraint is None:
+        return
+    column = constraint.get("column")
+    if not isinstance(column, str) or not column.strip():
+        raise ValueError("constraint.column must be a non-empty column name")
+    floor = constraint.get("floor")
+    if isinstance(floor, bool) or not isinstance(floor, (int, float)):
+        raise ValueError("constraint.floor must be a finite number")
+    if not np.isfinite(float(floor)):
+        raise ValueError("constraint.floor must be a finite number (got NaN or infinity)")
+
+
+def _analyze_body(
+    df: pd.DataFrame,
+    target: str | None = None,
+    *,
+    anonymize: bool = False,
+    roles: ColumnRoles | None = None,
+    profile: DomainProfile = BIOPROCESS_PROFILE,
+    pending: pd.DataFrame | Sequence[Mapping[str, Any]] | None = None,
+    constraint: Mapping[str, Any] | None = None,
+    progress: Callable[[str, float], None] | None = None,
+    preflight_only: bool = False,
+) -> dict:
     """Run the engine on an arbitrary run sheet: pick the target (the value to
     maximize), use the process INPUTS as features (other measured outputs are
     excluded to avoid leakage), then honest grouped-CV, signed drivers, and a
@@ -1014,7 +1152,6 @@ def _analyze(
             _response_surface_gp,
         )
 
-        _seed_everything()
     _progress = progress if progress is not None else (lambda _stage, _fraction: None)
     # Header decision from the upload parser (`uploads.choose_header`), read before
     # any frame operation below could drop the attrs.
@@ -1169,12 +1306,17 @@ def _analyze(
         for c in kept_cats
     }
 
+    # Blank feature cells are absent (0) only for sparse / concentration columns
+    # (see `_absent_is_zero_columns`); for every other feature a blank is missing.
+    absent_zero = _absent_is_zero_columns(cont_feats, roles)
+
     def _row_flags(features: list, cats: list) -> tuple[np.ndarray, np.ndarray]:
         """(incomplete, censored) per row, over every row of the sheet."""
         incomplete = np.isin(tgt_kinds, [BLANK, MISSING, NON_NUMERIC])
         censored = tgt_kinds == CENSORED
         for c in features:
-            incomplete |= np.isin(feat_kind[c], [MISSING, NON_NUMERIC])
+            bad = [MISSING, NON_NUMERIC] if str(c) in absent_zero else [BLANK, MISSING, NON_NUMERIC]
+            incomplete |= np.isin(feat_kind[c], bad)
             censored |= feat_kind[c] == CENSORED
         for c in cats:
             incomplete |= ~cat_ok[c]
@@ -1244,13 +1386,13 @@ def _analyze(
 
     _tally_kinds(str(target), tgt_kinds, blank_is_missing=True)
     for c in cont_feats:
-        _tally_kinds(str(c), feat_kind[c], blank_is_missing=False)
+        _tally_kinds(str(c), feat_kind[c], blank_is_missing=str(c) not in absent_zero)
     for c in kept_cats:
         _tally(str(c), REASON_MISSING, int(((~cat_ok[c]) & active).sum()))
     zero_filled = {
         str(c): int((feat_kind[c][fit_pos] == BLANK).sum())
         for c in cont_feats
-        if int((feat_kind[c][fit_pos] == BLANK).sum())
+        if str(c) in absent_zero and int((feat_kind[c][fit_pos] == BLANK).sum())
     }
 
     if preflight_only:
@@ -1260,7 +1402,13 @@ def _analyze(
     keep_index = df.index[fit_pos]
     y = y_all[fit_pos]
     Xc_raw = Xc_all.iloc[fit_pos]                    # NaN preserved (for grouping)
-    Xc_zf = Xc_raw.fillna(0.0)                       # zero-filled (for the GP + box)
+    # Only absent-zero columns can still hold a blank here (every other feature's
+    # incomplete rows were excluded above), so this zero-fill is the declared
+    # absence convention and nothing else.
+    Xc_zf = Xc_raw.copy()
+    for c in cont_feats:
+        if str(c) in absent_zero:
+            Xc_zf[c] = Xc_raw[c].fillna(0.0)
     if n_rows_dropped or n_censored_rows:
         # Dropping rows can leave only rows that share one target value.
         _refuse_unusable_target(df.loc[keep_index], target, num, profile)
@@ -1272,8 +1420,12 @@ def _analyze(
     cont_arr = Xc_zf.to_numpy(float) if cont_feats else np.empty((len(y), 0))
     box_exclusions: list[dict] = []
     for j, c in enumerate(cont_feats):
-        col = cont_arr[:, j]
-        lower, upper, n_excluded = _physical_range(str(c), col)
+        # The box is built from OBSERVED cells only: blanks (absent-zero columns
+        # only) are counted, not read as values.
+        raw_col = Xc_raw[c].to_numpy(float)
+        observed = raw_col[~np.isnan(raw_col)]
+        n_absent = int(np.isnan(raw_col).sum())
+        lower, upper, n_excluded = _physical_range(str(c), observed, absent=n_absent)
         if n_excluded:
             box_exclusions.append(
                 {"column": str(c), "n_excluded": n_excluded, "lower": lower, "upper": upper}
@@ -1847,7 +1999,10 @@ def _analyze(
     # as taken. Encoding can drop rows (a recipe naming an unknown categorical
     # level cannot be placed in the design at all), so the count actually used is
     # reported rather than assumed equal to what the caller passed.
-    X_pending = _encode_pending(pending, cont_feats, kept_cats, code_maps, X.shape[1])
+    X_pending, n_pending_dropped = _encode_pending(
+        pending, cont_feats, kept_cats, code_maps, X.shape[1],
+        absent_zero=absent_zero & set(map(str, cont_feats)),
+    )
     n_pending = 0 if X_pending is None else int(X_pending.shape[0])
     # `propose_batch` never returns two near-duplicate recipes (see its
     # docstring); on a design space with fewer than q distinct candidates the
@@ -1859,6 +2014,9 @@ def _analyze(
         cat_dims=cat_dims,
         cat_cardinalities=cat_cardinalities,
         pending=X_pending,
+        # Explicit, not the global RNG: the seed the run record reports is the seed
+        # the acquisition actually used (review C3).
+        seed=ANALYZE_SEED,
         # PART 1: only ever passed when GATE POLICY (above) cleared all three
         # conditions - `None` here is what keeps an ungated run's batch
         # byte-identical to the pre-gating acquisition.
@@ -2053,6 +2211,9 @@ def _analyze(
         # computed as if nothing were running - true for a one-shot upload, and
         # the thing to check first if a round re-proposes work already started.
         "n_pending_considered": n_pending,
+        # In-flight recipes dropped because a continuous component (or a kept
+        # categorical level) was missing: no coordinate, so not zero-filled.
+        "n_pending_dropped": int(n_pending_dropped),
         "cv_spearman": None if rho != rho else round(rho, 3),
         "cv_ci95": ci95,
         "cv_n_groups": rep["n_groups"],
@@ -2172,7 +2333,10 @@ def _analyze(
         "engine_version": ENGINE_VERSION,
     }
     if anonymize:
-        result = _anonymize_result(result)
+        result = _anonymize_result(
+            result,
+            categorical_levels={str(c): cat_dims_map[c] for c in kept_cats},
+        )
     return result
 
 
@@ -2183,7 +2347,9 @@ def _encode_pending(
     kept_cats: list,
     code_maps: dict,
     width: int,
-) -> np.ndarray | None:
+    *,
+    absent_zero: frozenset[str] | set[str] = frozenset(),
+) -> tuple[np.ndarray | None, int]:
     """Encode in-flight recipes into the fitted design's X layout, or None.
 
     Mirrors how the FITTED rows are built, so a pending recipe lands at the same
@@ -2193,24 +2359,36 @@ def _encode_pending(
     are assembled continuous-first, categorical-last.
 
     A row is DROPPED when a kept categorical is missing, blank, or names a level
-    that does not exist in this design: such a recipe has no coordinate here, and
-    inventing one (say, code 0) would mark the wrong region of the space as taken.
-    Returns None when nothing is left to report, which leaves the acquisition
-    exactly as it is today. Never raises - a malformed in-flight record must
-    degrade the proposal's information, not fail the analysis.
+    that does not exist in this design, or when a continuous component is missing
+    (blank, non-numeric, or the column is absent from the record). Such a recipe
+    has no honest coordinate: inventing one (zero-filling a pH, or code 0 for a
+    level) would mark the wrong region of the space as taken (review H2). The only
+    exception is an `absent_zero` column (a sparse / concentration component),
+    where a blank means 0 (see `_absent_is_zero_columns`).
+
+    Returns `(encoded, n_dropped)`. `encoded` is None when nothing is left, which
+    leaves the acquisition exactly as it is today; `n_dropped` counts every
+    in-flight record that was dropped, so the caller can report it. Never raises -
+    a malformed in-flight record must degrade the proposal's information, not fail
+    the analysis.
     """
     if pending is None:
-        return None
+        return None, 0
     frame = pending if isinstance(pending, pd.DataFrame) else pd.DataFrame(list(pending))
     if frame.empty:
-        return None
+        return None, 0
     cols: list[np.ndarray] = []
+    usable = np.ones(len(frame), dtype=bool)
     for c in cont_feats:
         if c in frame.columns:
-            cols.append(pd.to_numeric(frame[c], errors="coerce").fillna(0.0).to_numpy(float))
+            vals = pd.to_numeric(frame[c], errors="coerce")
         else:
-            cols.append(np.zeros(len(frame), dtype=float))
-    usable = np.ones(len(frame), dtype=bool)
+            vals = pd.Series(np.nan, index=frame.index)
+        if c in absent_zero:
+            vals = vals.fillna(0.0)
+        arr_c = vals.to_numpy(float)
+        usable &= np.isfinite(arr_c)
+        cols.append(arr_c)
     for c in kept_cats:
         codes = np.full(len(frame), np.nan)
         if c in frame.columns:
@@ -2219,13 +2397,16 @@ def _encode_pending(
         usable &= np.isfinite(codes)
         cols.append(codes)
     if not cols:
-        return None
+        return None, 0
     arr = np.column_stack(cols)
     usable &= np.isfinite(arr).all(axis=1)
+    n_dropped = int(len(frame) - usable.sum())
     arr = arr[usable]
-    if arr.shape[0] == 0 or arr.shape[1] != width:
-        return None
-    return arr
+    if arr.shape[1] != width:
+        return None, int(len(frame))
+    if arr.shape[0] == 0:
+        return None, n_dropped
+    return arr, n_dropped
 
 
 @functools.lru_cache(maxsize=8)
@@ -2266,8 +2447,21 @@ def identifier_pattern(id_hint_pattern: str) -> re.Pattern[str]:
     string so a different domain profile gets its own union.
     """
     return re.compile(
-        f"(?:{id_hint_pattern})|(?:{_RUN_ID_RE.pattern})", re.IGNORECASE
+        f"(?:{id_hint_pattern})|(?:{_RUN_ID_COMPOUND_PATTERN})", re.IGNORECASE
     )
+
+
+# The run-id pattern from `kalos.validation.checks`, with the BARE words `batch`,
+# `lot` and `campaign` removed: on their own they name a process factor (a medium
+# lot, a batch of media), not an identifier. Only their ID forms (`batch_id`,
+# `lot_number`, `campaign_id`) remain identifiers. See the H1 note in
+# `kalos.domains.bioprocess`.
+_RUN_ID_COMPOUND_PATTERN = (
+    r"^(run|experiment|expt|sample|culture|vessel|reactor|bioreactor)"
+    r"([ _\-.]?(id|ids|no|num|number|code|label|name|key|ref))?$"
+    r"|^(batch|lot|campaign)([ _\-.]?(id|ids|no|num|number|code|label|name|key|ref))$"
+    r"|^(id|uuid|index|well|barcode)$"
+)
 
 
 # Token rule for compound identifier names (see `is_identifier_name`). The last
@@ -2286,6 +2480,12 @@ _ID_SUBJECTS = frozenset({
 })
 _ID_ALONE = frozenset({"id", "ids", "uuid", "guid", "name", "index", "barcode", "identifier", "well", "mrn"})
 
+# Words that name a PERSON wherever they appear in a column name (review H4). They
+# are matched as whole words anywhere in the name, so "Operator", "Lab_Tech" and
+# "Donor_Name_1" are identifiers, while "Methanol" and "pH" are not (no substring
+# match: "technology" is not "tech").
+_PERSON_WORDS = frozenset({"operator", "analyst", "technician", "tech", "email"})
+
 
 def _token_identifier(name: str) -> bool:
     """The compound-name rule. Words are split on any non-alphanumeric run and
@@ -2298,6 +2498,8 @@ def _token_identifier(name: str) -> bool:
         words.pop()
     if not words:
         return False
+    if any(w in _PERSON_WORDS for w in words):
+        return True
     *rest, last = words
     if not rest:
         return last in _ID_ALONE
@@ -2319,21 +2521,83 @@ def _is_identifier_name(name: str) -> bool:
     return is_identifier_name(name)
 
 
-def _anonymize_result(result: dict) -> dict:
-    """Replace identifier-type column names in the response with stable pseudonyms.
+def _anonymize_result(
+    result: dict, *, categorical_levels: Mapping[str, Sequence[str]] | None = None
+) -> dict:
+    """Replace identifier-type column names and values in the response with stable
+    pseudonyms (`anonymize=True`).
 
-    Only identifier-like columns (matched by `_ID_HINT`) are renamed; process
-    features and the target keep their real names because the authenticated owner
-    UI legitimately shows them (a driver like "Methanol"). The mapping is stable
-    (same name -> same pseudonym) via the anonymizer's irreversible hash, so an
-    anonymized report is still internally consistent across fields.
+    Identifier-like columns (`is_identifier_name`: ids, samples, operators,
+    analysts, technicians, names, emails) are renamed everywhere a name appears:
+    provenance, features, drivers, correlation labels, the response-surface axes
+    and fixed recipe, the proposal recipes, and the validation prose. Their
+    CATEGORICAL LEVEL VALUES are pseudonymized too (`categorical_levels`, the levels
+    of each kept categorical feature): a level such as "Jane Smith 0" is a person's
+    name, and leaked verbatim in the recipes before (review H4). Process variables
+    (Methanol, pH, sample_volume_L) and their values keep their real names because
+    the owner UI shows them. The mapping is stable (same name -> same pseudonym)
+    via the anonymizer's irreversible hash, so the report stays internally
+    consistent across fields.
     """
     def alias(name: str) -> str:
         return f"col_{_hash(name)[:8]}" if _is_identifier_name(name) else name
 
+    id_levels: dict[str, set[str]] = {
+        str(c): {str(v) for v in levels}
+        for c, levels in (categorical_levels or {}).items()
+        if _is_identifier_name(str(c))
+    }
+
+    def alias_level(column: str, value: object) -> object:
+        if isinstance(value, str) and value in id_levels.get(column, ()):
+            return f"level_{_hash(column + chr(31) + value)[:8]}"
+        return value
+
+    def alias_recipe(recipe: object) -> object:
+        if not isinstance(recipe, dict):
+            return recipe
+        return {alias(str(k)): alias_level(str(k), v) for k, v in recipe.items()}
+
     out = dict(result)
     if out.get("group_col"):
         out["group_col"] = alias(out["group_col"])
+    if isinstance(out.get("target"), str):
+        out["target"] = alias(out["target"])
+    for key in ("targets", "features", "categorical_features", "proposal_features"):
+        if isinstance(out.get(key), list):
+            out[key] = [alias(str(c)) for c in out[key]]
+    shapes = out.get("gp_shapes")
+    if isinstance(shapes, dict) and isinstance(shapes.get("features"), list):
+        out["gp_shapes"] = {
+            **shapes,
+            "features": [
+                {**f, "name": alias(str(f["name"]))}
+                if isinstance(f, dict) and "name" in f else f
+                for f in shapes["features"]
+            ],
+        }
+    if isinstance(out.get("drivers"), list):
+        out["drivers"] = [
+            {**d, "name": alias(str(d["name"]))} if isinstance(d, dict) and "name" in d else d
+            for d in out["drivers"]
+        ]
+    if isinstance(out.get("proposals"), list):
+        out["proposals"] = [
+            {**p, "recipe": alias_recipe(p["recipe"])} if isinstance(p, dict) and "recipe" in p else p
+            for p in out["proposals"]
+        ]
+    corr = out.get("correlation")
+    if isinstance(corr, dict) and isinstance(corr.get("labels"), list):
+        out["correlation"] = {**corr, "labels": [alias(str(c)) for c in corr["labels"]]}
+    surf = out.get("response_surface")
+    if isinstance(surf, dict):
+        surf_out = dict(surf)
+        for key in ("x_feature", "y_feature"):
+            if isinstance(surf_out.get(key), str):
+                surf_out[key] = alias(surf_out[key])
+        if isinstance(surf_out.get("fixed_recipe"), dict):
+            surf_out["fixed_recipe"] = alias_recipe(surf_out["fixed_recipe"])
+        out["response_surface"] = surf_out
     out["provenance"] = [
         {**row, "name": alias(row["name"])} for row in out.get("provenance", [])
     ]

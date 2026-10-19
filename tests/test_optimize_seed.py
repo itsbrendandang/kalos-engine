@@ -4,7 +4,7 @@
 are stochastic: multi-start acquisition optimization for both, plus the qLogNEHVI
 Sobol sampler for the multi-objective path. Reproducibility has always come from
 the CALLER seeding the global torch RNG before calling - the portal's
-`_seed_everything` and the bench harness both do this today. A library consumer
+`_seeded_analysis` and the bench harness both do this today. A library consumer
 that imports `kalos.core.optimize` directly and never seeds the global RNG gets
 silently non-reproducible proposals under that contract, with no way to opt out.
 

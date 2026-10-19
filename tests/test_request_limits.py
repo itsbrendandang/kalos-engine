@@ -261,7 +261,7 @@ def test_result_body_is_bounded(client, store, body):
 
 
 def test_validation_400_is_scoped_to_campaign_routes(client):
-    # other routes keep FastAPI's default 422 envelope
+    # other routes answer 422 in the one {error, code} envelope, detail kept (#98)
     r = client.get("/api/single", params={"rounds": 0})
     assert r.status_code == 422
     assert "detail" in r.json()
@@ -353,6 +353,31 @@ def test_upload_paths_match_with_root_path_stripped():
     assert mw.cap_for(route_path({"path": "/engine/api/run", "root_path": "/engine"})) == 99
 
 
+@pytest.mark.parametrize("path,root,expected", [
+    ("/engineX/api/run", "/engine", "/engineX/api/run"),  # not a segment boundary
+    ("/engine/api/run", "/engine/", "/api/run"),
+    ("/api/run", "/engine", "/api/run"),  # server that does not prefix path
+    ("/engine/", "/engine", "/"),
+])
+def test_route_path_strips_root_path_only_on_a_segment_boundary(path, root, expected):
+    from starlette._utils import get_route_path
+
+    from kalos.portal.limits import route_path
+
+    assert route_path({"path": path, "root_path": root}) == expected
+    # agrees with Starlette's own routing rule (modulo the trailing slash)
+    assert route_path({"path": path, "root_path": root}) == (
+        get_route_path({"path": path, "root_path": root.rstrip("/")}).rstrip("/") or "/"
+    )
+
+
+def test_campaign_validation_envelope_under_a_root_path(store):
+    store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
+    tc = TestClient(app, root_path="/engine")
+    r = tc.post("/engine/api/campaign/start", json={"recipes": "nope"})
+    assert r.status_code == 400 and "error" in r.json()
+
+
 def test_upload_under_a_root_path_gets_the_upload_cap():
     """Mounted under a prefix (uvicorn --root-path), the upload route must
     still get the upload cap, not the 1 MiB JSON cap."""
@@ -395,9 +420,86 @@ def test_upload_precheck_lets_a_bearer_through_to_real_verification(monkeypatch)
     r = TestClient(app).post("/api/run", files={"file": ("a.csv", b"a,b\n1,2\n", "text/csv")},
                              headers={"Authorization": "Bearer wrong"})
     assert r.status_code == 401
-    assert r.json() == {"error": "invalid token", "code": "unauthenticated"}  # the dependency's answer, not the precheck's
+    # the dependency's answer (not the precheck's), in the one {error, code} envelope
+    assert r.json() == {"error": "invalid or expired token", "code": "unauthenticated"}
 
 
 def test_upload_precheck_is_inert_in_open_mode(client):
     r = client.post("/api/run", files={"file": ("a.csv", b"a,b\n1,2\n", "text/csv")})
     assert r.status_code != 401
+
+
+def test_a_trickled_upload_body_is_answered_408_at_the_read_deadline():
+    """Round 3, 3: an upload whose body trickles in is cut off at an overall read deadline
+    (408), instead of holding its request (and any slot it has) indefinitely. The gate
+    in the submit route runs after the form is parsed, so the deadline has to live here,
+    where the body is read."""
+    import asyncio
+    import time
+
+    from kalos.portal.limits import RequestSizeLimitMiddleware
+
+    async def inner(scope, receive, send):
+        # Reads the whole body, as FastAPI's form parser does, then answers.
+        while True:
+            message = await receive()
+            if message["type"] != "http.request" or not message.get("more_body"):
+                break
+        await send({"type": "http.response.start", "status": 202, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    async def trickle():
+        yield {"type": "http.request", "body": b"x", "more_body": True}
+        await asyncio.sleep(30)  # the client stalls; the body never completes
+        yield {"type": "http.request", "body": b"", "more_body": False}
+
+    async def run(middleware, chunks):
+        gen = chunks()
+        sent: list[dict] = []
+
+        async def receive():
+            try:
+                return await gen.__anext__()
+            except StopAsyncIteration:
+                return {"type": "http.disconnect"}
+
+        async def send(message):
+            sent.append(message)
+
+        scope = {"type": "http", "method": "POST", "path": "/api/run", "headers": [],
+                 "root_path": ""}
+        await middleware(scope, receive, send)
+        return sent
+
+    async def scenario():
+        middleware = RequestSizeLimitMiddleware(
+            inner, default_cap=1024, upload_cap=1 << 20, upload_paths=["/api/run"],
+            read_timeout_s=0.3,
+        )
+        started = time.monotonic()
+        sent = await run(middleware, trickle)
+        assert time.monotonic() - started < 5
+        assert sent[0]["status"] == 408
+
+        async def complete():
+            yield {"type": "http.request", "body": b"x", "more_body": False}
+
+        ok = await run(middleware, complete)
+        assert ok[0]["status"] == 202  # a body that arrives in time is untouched
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "0.5", "soon"])
+def test_a_malformed_upload_read_timeout_fails_startup(monkeypatch, value):
+    """Round 3, 3: KALOS_UPLOAD_READ_TIMEOUT_S is validated like the other settings."""
+    from kalos.portal import job_runner
+    from kalos.portal.limits import upload_read_timeout_s
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("KALOS_UPLOAD_READ_TIMEOUT_S", value)
+        with pytest.raises(ValueError, match="KALOS_UPLOAD_READ_TIMEOUT_S"):
+            upload_read_timeout_s()
+        with pytest.raises(ValueError, match="KALOS_UPLOAD_READ_TIMEOUT_S"):
+            job_runner.check_startup_config()
+    assert upload_read_timeout_s() == 60.0

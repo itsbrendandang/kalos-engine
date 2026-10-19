@@ -12,6 +12,84 @@ Newest first.
 - **One error envelope (M3).** Every refusal is `{"error", "code"}` with the HTTP status unchanged. A 422 keeps `detail` for its field list. Unhandled errors answer a generic `internal_error`. Clients that read only a 400 as a bad upload must gate on the status (docs/HARDENING.md, "Error envelope").
 - **Audit retention (L8).** `KALOS_AUDIT_RETENTION_DAYS` (default 365, 1..36500) prunes `audit_log` at startup and daily.
 - **The API docs and schema are served only in `KALOS_ENV=development` (L6).** This was already true; it is now explicit and documented.
+### Docs - review: known limitations (M5, M6)
+
+- docs/HARDENING.md, "Known limitations", records two judgement calls with evidence and
+  no code change: M5 (`class_weight="balanced"` understates P(feasible) on a
+  mostly-feasible sheet) and M6 (the promotion gate reads the pooled Spearman, not
+  `producer_spearman`; a sheet with producer Spearman 0.02 still passes). Also: the
+  concurrency serialization (C3), the concentration naming gap (C1), and the
+  replicate-aware fit still weighting exact copies (M1), and the M1 decision on identical
+  floor (`0.0`) readings, which the scale diagnostic test now records as a strict xfail.
+
+### Fixed - review: anonymize hides person names and their level values (H4)
+
+- `is_identifier_name` treats `operator`, `analyst`, `technician`, `tech` and `email`
+  as whole-word person tokens anywhere in a name, and `Name` after a subject
+  (`Donor_Name_1`, `Lab_Tech`, `Operator`, `email` now count). Process variables
+  (`Methanol`, `pH`, `sample_volume_L`) are unchanged.
+- With `anonymize=true`, identifier-column categorical level values are pseudonymized
+  (`level_<hash>`) in the proposal recipes and the response-surface fixed recipe.
+  Identifier names are also aliased in `features`, `target`, `drivers`,
+  `correlation`, `gp_shapes`, `response_surface` and the recipe keys. Before, a
+  recipe carried "Jane Smith 0" verbatim. Scope: docs/HARDENING.md, "What
+  `anonymize=true` covers".
+
+### Fixed - review: a non-finite constraint floor is a ValueError (L1)
+
+- `constraint` with a NaN or infinite `floor` (or a non-string/empty `column`)
+  raises `ValueError` naming the field, before any fit. Before, botorch raised a bare
+  `RuntimeError` from inside the acquisition.
+
+### Fixed - review: exact copies are not replicates (M1)
+
+- A row identical to another in every column (same factors AND same target) is an
+  exact copy, not a replicate. Copies are removed before the replicate noise and ICC
+  statistics. Before, a pasted-twice sheet gave `noise_sd: 0` and `icc: 1.0`.
+  `noise.n_exact_duplicates` reports how many were removed. True replicates (same
+  factors, different target) are unchanged.
+
+### Fixed - review: proposals do not depend on concurrent analyses (C3)
+
+- `_analyze` seeded the process-wide torch and numpy RNGs at its start. Two analyses
+  on two threads (busy.py admits two) reseeded each other mid-fit, so proposals
+  depended on thread timing. Every analysis now runs in `_seeded_analysis`, which
+  holds a lock and seeds torch and numpy inside a fork, then restores the caller's
+  numpy state. Concurrent analyses run one after the other on the RNG, with the same
+  output as sequential runs. Trade-off: the seeded section of two concurrent
+  analyses is serialized (docs/HARDENING.md, "Known limitations").
+- `propose_batch` is called with `seed=ANALYZE_SEED`, so the run record's `seed`
+  is the seed the acquisition used.
+
+### Fixed - review: an in-flight recipe with a missing component is dropped (H2)
+
+- `_encode_pending` zero-filled a missing continuous component. Such a recipe now
+  has no coordinate and is dropped, as a missing categorical level already was.
+  The count is reported as `n_pending_dropped`. Sparse / concentration components
+  still read a blank as 0.
+
+### Fixed - review: a blank cell is not 0.0 (C1, critical)
+
+- A blank feature cell was zero-filled for every column, and 0.0 then widened the
+  design box, so proposals landed at pH 0.0 (24 runs, pH 6.0-7.5, three blanks gave
+  proposals down to 0.0). Now only columns declared in `roles.sparse` and
+  concentration-type columns (by name) read a blank as absent (0). Any other blank
+  drops its run through the row accounting (`cells_by_column: missing`).
+- The design box is built from observed cells only. An absent-zero column's box
+  includes 0 only when blanks were read as 0.
+- `ColumnRoles` gains an optional `sparse` list.
+
+### Fixed - review: factors are not identifiers (H1)
+
+- `medium`, `strain`, `recipe`, `batch`, `campaign`, `group` and `lot` are no longer
+  identifiers (`id_hint`). They are candidate categorical factors, reported with an
+  `auto_categorical` finding. Compound IDs (`batch_id`, `lot_number`) and bare
+  `batch`/`lot`/`campaign` in `_RUN_ID_RE` are still identifiers only in ID form.
+- A group-named column is the CV group only when every level is confounded with a
+  single recipe, or when declared in `roles.groups`. Before, `Medium in {A,B,C}` with a
+  real effect was dropped as an id and became the leakage group.
+- Behaviour change: sheets with such columns get new categorical features and
+  therefore new proposals (mixed optimizer instead of continuous).
 
 ### Changed - no silent data loss in analysis (`feat/data-handling`, docs/UPLOADS.md)
 

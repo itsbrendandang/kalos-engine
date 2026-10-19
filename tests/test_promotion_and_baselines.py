@@ -366,7 +366,12 @@ def test_cv_logo_skipped_with_reason_on_recipe_hash_only_sheet():
 
 
 def test_cv_logo_populated_when_a_group_column_exists_with_few_groups():
-    out = _analyze(_strong_signal_with_producers(n_groups=8))
+    # `campaign` is a declared group here. A name-matched column is only a group when
+    # every level is one recipe (H1), so the group is declared in roles.
+    from kalos.domains import ColumnRoles
+
+    roles = ColumnRoles.from_dict({"target": "lipase_titer", "groups": "campaign"})
+    out = _analyze(_strong_signal_with_producers(n_groups=8), roles=roles)
     logo = out["cv_logo"]
     assert logo["reason"] is None
     assert logo["n_groups"] == 8

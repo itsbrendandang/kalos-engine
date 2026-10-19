@@ -85,7 +85,9 @@ def test_noise_report_keys_and_icc_ballpark():
     y = np.repeat(recipe_means, n_reps) + rng.normal(0, np.sqrt(noise_sigma2), n_recipes * n_reps)
 
     report = noise_report(X, y)
-    assert set(report.keys()) == {"n_rows", "n_recipes", "n_replicated", "noise_var", "signal_var", "icc"}
+    assert set(report.keys()) == {
+        "n_rows", "n_recipes", "n_replicated", "noise_var", "signal_var", "icc", "n_exact_duplicates",
+    }
     assert report["n_rows"] == n_recipes * n_reps
     assert report["n_recipes"] == n_recipes
     assert report["n_replicated"] == n_recipes

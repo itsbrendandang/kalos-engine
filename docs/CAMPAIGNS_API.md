@@ -52,7 +52,7 @@ below), which the first legacy upload creates. A campaign made with
 | POST | `/api/campaigns` | write | Create a campaign. Body: `{"name": str}`. `201` and the campaign. |
 | GET | `/api/campaigns/{id}` | read | `{"campaign": <campaign>, "summary": <loop summary>}`. The summary has the same shape as `GET /api/campaign`, scoped to this campaign, including `analysis_in_sync`. |
 | PATCH | `/api/campaigns/{id}` | write (+admin for `archived`) | Body: `{"name"?: str, "archived"?: bool}`, at least one of the two. Returns the campaign. |
-| POST | `/api/campaigns/{id}/upload` | write | Upload a run sheet into this campaign (multipart). Same contract as `/api/run`. |
+| POST | `/api/campaigns/{id}/upload` | write | Upload a run sheet into this campaign (multipart; `replace=true` confirms replacing the campaign's runs, see below). Same contract as `/api/run`. |
 | GET | `/api/campaigns/{id}/analysis` | read | This campaign's published analysis, in the `/api/latest` shape (`{"has_data": false}` before the first upload). |
 | POST | `/api/campaigns/{id}/runs` | write | Start runs from a proposed batch. Same body and bounds as `/api/campaign/start`. Returns `{"started": [...]}`. |
 | POST | `/api/campaigns/{id}/runs/{run_id}/result` | write | Body: `{"value": number}`. Records the measured outcome and returns the run. |
@@ -89,9 +89,19 @@ The form fields and errors match `POST /api/run`:
   codes (`parse_error`, `fit_failed`, `corrupt_excel`, `sheet_not_found`,
   ...). Excel responses include `sheets` and `sheet_used`.
 
+A campaign that has awaiting or measured runs is refused with `409` and
+`"code": "campaign_has_runs"`, before the file is read, unless the form carries
+`replace=true`. Nothing is changed on refusal. Clients must confirm the replacement with the
+user before they send `replace=true`. (The kalos-web client does not do this yet:
+its analyze and validate pages post to `/api/run` without the field, so they
+receive the 409 as a rejected upload.)
+
 On success the upload replaces this campaign's state and discards its pending
 runs, and publishes the analysis in the same transaction (docs/CAMPAIGN_LOOP.md,
 "Seeding"). It never touches the tenant's default campaign or `/api/latest`.
+A run added while the fit runs is not overwritten: the publish is a
+compare-and-swap on the generation the check saw, so the upload answers `409`
+(`campaign_changed`) and nothing is written.
 
 The upload checks for a missing, foreign or archived campaign before any fit
 runs. If the campaign is archived while the analysis is running, the upload

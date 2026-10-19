@@ -59,6 +59,9 @@ class ColumnRoles:
     usual". `groups` is the optional replicate-grouping column. `ids` are
     columns to ignore. `categoricals` names the feature columns whose values are
     unordered labels rather than numbers; their levels are derived from the data.
+    `sparse` names continuous feature columns where a BLANK cell means "absent"
+    (a component not added, so 0). Only these, and concentration-type columns by
+    name, take a blank as 0; every other blank feature cell drops its run.
     """
 
     target: str
@@ -66,6 +69,7 @@ class ColumnRoles:
     groups: str | None = None
     ids: tuple[str, ...] = ()
     categoricals: tuple[str, ...] = ()
+    sparse: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict) -> "ColumnRoles":
@@ -96,6 +100,7 @@ class ColumnRoles:
             groups=(groups or None),
             ids=as_tuple(data.get("ids")),
             categoricals=as_tuple(data.get("categoricals")),
+            sparse=as_tuple(data.get("sparse")),
         )
 
 

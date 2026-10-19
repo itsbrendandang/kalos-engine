@@ -1,0 +1,57 @@
+vs-baselines: 900 runs, seeds=30, wall 1095s
+### gaussian_4d, noise 0%
+
+| method | regret (raw) mean [95% CI] | regret (norm) | obs-best regret (norm) | reach 90%: rate, mean experiments | ask s / run (mean) | vs Kalos |
+| --- | --- | --- | --- | --- | --- | --- |
+| kalos | 0.015 [0.011, 0.019] | 0.002 | 0.002 | 1.00, 12.9 (N=23) | 11.0 | - |
+| random | 2.528 [2.073, 2.980] | 0.333 | 0.333 | 0.13, 21.9 (N=23) | 0.0 | Kalos better; W/T/L 30/0/0 |
+| lhs | 2.696 [2.297, 3.083] | 0.355 | 0.355 | 0.07, 22.6 (N=23) | 0.0 | Kalos better; W/T/L 30/0/0 |
+| optuna_tpe | 1.006 [0.814, 1.222] | 0.133 | 0.133 | 0.40, 20.8 (N=23) | 0.0 | Kalos better; W/T/L 30/0/0 |
+| ax | 0.017 [0.010, 0.026] | 0.002 | 0.002 | 1.00, 12.6 (N=23) | 18.1 | unresolved (CI includes 0); W/T/L 1/29/0 |
+| botorch_gp_ei | 0.015 [0.011, 0.020] | 0.002 | 0.002 | 1.00, 12.9 (N=23) | 8.4 | unresolved (CI includes 0); W/T/L 0/30/0 |
+
+### gaussian_4d, noise 15%
+
+| method | regret (raw) mean [95% CI] | regret (norm) | obs-best regret (norm) | reach 90%: rate, mean experiments | ask s / run (mean) | vs Kalos |
+| --- | --- | --- | --- | --- | --- | --- |
+| kalos | 1.414 [0.931, 1.992] | 0.186 | 0.315 | 0.53, 19.5 (N=23) | 16.4 | - |
+| random | 2.528 [2.073, 2.969] | 0.333 | 0.398 | 0.13, 21.9 (N=23) | 0.0 | Kalos better; W/T/L 22/3/5 |
+| lhs | 2.696 [2.293, 3.080] | 0.355 | 0.422 | 0.07, 22.6 (N=23) | 0.0 | Kalos better; W/T/L 22/2/6 |
+| optuna_tpe | 1.219 [0.950, 1.525] | 0.161 | 0.293 | 0.30, 21.1 (N=23) | 0.0 | unresolved (CI includes 0); W/T/L 13/5/12 |
+| ax | 1.329 [0.932, 1.779] | 0.175 | 0.280 | 0.50, 19.8 (N=23) | 27.5 | unresolved (CI includes 0); W/T/L 17/0/13 |
+| botorch_gp_ei | 1.561 [1.098, 2.083] | 0.206 | 0.318 | 0.40, 20.2 (N=23) | 13.1 | unresolved (CI includes 0); W/T/L 12/6/12 |
+
+### ackley_4d, noise 0%
+
+| method | regret (raw) mean [95% CI] | regret (norm) | obs-best regret (norm) | reach 90%: rate, mean experiments | ask s / run (mean) | vs Kalos |
+| --- | --- | --- | --- | --- | --- | --- |
+| kalos | 1.409 [1.062, 1.779] | 0.246 | 0.246 | 0.27, 22.6 (N=23) | 16.0 | - |
+| random | 3.469 [3.242, 3.685] | 0.605 | 0.605 | 0.00, 24.0 (N=23) | 0.0 | Kalos better; W/T/L 29/0/1 |
+| lhs | 3.542 [3.338, 3.741] | 0.618 | 0.618 | 0.00, 24.0 (N=23) | 0.0 | Kalos better; W/T/L 27/3/0 |
+| optuna_tpe | 2.581 [2.359, 2.783] | 0.450 | 0.450 | 0.00, 24.0 (N=23) | 0.0 | Kalos better; W/T/L 25/0/5 |
+| ax | 1.685 [1.289, 2.103] | 0.294 | 0.294 | 0.17, 23.5 (N=23) | 28.8 | unresolved (CI includes 0); W/T/L 17/0/13 |
+| botorch_gp_ei | 1.696 [1.365, 2.042] | 0.296 | 0.296 | 0.10, 23.7 (N=23) | 9.9 | unresolved (CI includes 0); W/T/L 20/1/9 |
+
+### ackley_4d, noise 15%
+
+| method | regret (raw) mean [95% CI] | regret (norm) | obs-best regret (norm) | reach 90%: rate, mean experiments | ask s / run (mean) | vs Kalos |
+| --- | --- | --- | --- | --- | --- | --- |
+| kalos | 2.986 [2.700, 3.282] | 0.521 | 0.613 | 0.00, 24.0 (N=23) | 11.0 | - |
+| random | 3.469 [3.244, 3.685] | 0.605 | 0.663 | 0.00, 24.0 (N=23) | 0.0 | Kalos better; W/T/L 21/3/6 |
+| lhs | 3.542 [3.344, 3.742] | 0.618 | 0.751 | 0.00, 24.0 (N=23) | 0.0 | Kalos better; W/T/L 21/3/6 |
+| optuna_tpe | 3.101 [2.855, 3.338] | 0.541 | 0.601 | 0.00, 24.0 (N=23) | 0.0 | unresolved (CI includes 0); W/T/L 16/3/11 |
+| ax | 2.975 [2.626, 3.313] | 0.519 | 0.646 | 0.00, 24.0 (N=23) | 22.7 | unresolved (CI includes 0); W/T/L 14/2/14 |
+| botorch_gp_ei | 3.014 [2.667, 3.348] | 0.526 | 0.644 | 0.03, 23.9 (N=23) | 12.9 | unresolved (CI includes 0); W/T/L 11/5/14 |
+
+### bioprocess_like_mixed, noise 15%
+
+| method | regret (raw) mean [95% CI] | regret (norm) | obs-best regret (norm) | reach 90%: rate, mean experiments | ask s / run (mean) | vs Kalos |
+| --- | --- | --- | --- | --- | --- | --- |
+| kalos | 1.628 [1.290, 1.989] | 0.217 | 0.275 | 0.27, 27.3 (N=28) | 117.4 | - |
+| random | 3.303 [2.843, 3.742] | 0.440 | 0.459 | 0.07, 28.5 (N=28) | 0.0 | Kalos better; W/T/L 25/1/4 |
+| lhs | 3.448 [3.032, 3.876] | 0.459 | 0.494 | 0.00, 29.0 (N=28) | 0.0 | Kalos better; W/T/L 28/1/1 |
+| optuna_tpe | 2.444 [1.898, 3.002] | 0.326 | 0.369 | 0.17, 27.9 (N=28) | 0.0 | Kalos better; W/T/L 18/1/11 |
+| ax | 2.365 [1.904, 2.893] | 0.315 | 0.360 | 0.10, 28.5 (N=28) | 33.6 | Kalos better; W/T/L 20/1/9 |
+| botorch_gp_ei | 2.070 [1.671, 2.500] | 0.276 | 0.332 | 0.13, 27.1 (N=28) | 12.1 | Kalos better; W/T/L 18/3/9 |
+
+wrote benchmarks/results/vs_baselines_runs.csv, vs_baselines_curves.csv, vs_baselines.json

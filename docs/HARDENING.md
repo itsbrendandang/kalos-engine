@@ -10,9 +10,21 @@ This track closes the surrounding-system gaps in dependency order.
 ## Principles
 
 - **Backward compatible by default.** Every hardening step ships behind configuration and defaults to the current behavior, so the local dev loop and pilot deployments never break mid-migration.
-- **In-house, self-hosted.** No dependency on an external identity provider or SaaS control plane. Auth, storage, and secrets are provisioned and owned by the operator.
+- **In-house, self-hosted engine.** The engine has no dependency on an external identity provider or SaaS control plane. Auth, storage, and secrets are provisioned and owned by the operator. User sign-in lives in kalos-web (see "Architecture" below); the engine only verifies tokens.
 - **Fail closed when configured, open when not.** With no auth configured the API stays open (dev/pilot); the moment tokens are provisioned it enforces them. There is no half-authenticated state.
 - **Reuse what exists.** The experiments path already has a `SqliteStore` (`kalos/store/`) and a constant-time bearer-token check (`kalos/portal/experiments.py`). New work generalizes those rather than inventing parallel mechanisms.
+
+## Architecture: who authenticates whom
+
+```
+browser --(session cookie)--> kalos-web --(Authorization: Bearer <engine token>)--> kalos-engine
+               session provider                 EdDSA JWT, <=120 s, per request
+```
+
+- **kalos-web authenticates users** through its session provider. On each engine call it maps the user's role or permissions to engine scopes, resolves the tenant, and mints a short-lived **engine token**: an Ed25519-signed JWT with `sub`, `sid`, `tenant`, `scopes`, `jti`, `iat`/`nbf`/`exp`.
+- **The engine does not depend on the provider.** It trusts a JWKS file of Ed25519 public keys (`KALOS_JWT_PUBLIC_KEYS_FILE`) and the claim contract in [docs/ENGINE_TOKEN.md](ENGINE_TOKEN.md), nothing else. Changing the web's session provider does not touch the engine.
+- **Static tokens are for service accounts only.** The hashed static tokens (`KALOS_AUTH_TOKENS[_FILE]`) remain for machine callers (ingest jobs, runners). In `KALOS_ENV=production`, every static record must be `"service_account": true`, may not hold `admin`, and carries exactly one tenant. Users never hold static tokens.
+- **Revocation** uses short token lifetimes plus the `KALOS_AUTH_DENY_SUBJECTS` deny-list (subjects and/or session ids). There is no revocation database.
 
 ## Sequence
 
@@ -59,6 +71,11 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 | --- | --- | --- |
 | `KALOS_AUTH_TOKENS_FILE` | Path to a JSON file of provisioned principals (see below). Takes precedence over the env var. | unset |
 | `KALOS_AUTH_TOKENS` | Inline JSON array of provisioned principals. | unset |
+| `KALOS_JWT_PUBLIC_KEYS_FILE` | JWKS file of trusted Ed25519 public keys for engine tokens (docs/ENGINE_TOKEN.md). Setting it enables the JWT branch and disables open mode. | unset |
+| `KALOS_JWT_ISSUER` / `KALOS_JWT_AUDIENCE` | Required `iss` / `aud` of engine tokens. | `kalos-web` / `kalos-engine` |
+| `KALOS_JWT_LEEWAY_S` | Clock-skew leeway for engine tokens, 0-120 s. | `30` |
+| `KALOS_JWT_MAX_TTL_S` | Longest allowed `exp - iat`, 1-300 s. | `120` |
+| `KALOS_AUTH_DENY_SUBJECTS` | Comma-separated `sub:<subject>` / `sid:<session>` entries refused with 401 (bare entries match either; subject entries also apply to static tokens). | unset |
 | `KALOS_CORS_ORIGINS` | Comma-separated explicit CORS allowlist (e.g. `https://app.acme.com`). When set, replaces the permissive localhost default. | unset (dev localhost) |
 | `KALOS_ENV` | Accepted values: `production` or `development` (case-insensitive, surrounding whitespace ignored); unset or empty means `development`. Any other value (e.g. `prod`, `staging`) refuses to start with `ProductionConfigError` naming the accepted values: a typo must not silently drop the production guards. See "Production mode" below. | unset (= `development`) |
 | `KALOS_VALIDATION_MODE` | `warn` or `strict` (case-insensitive). `warn` analyzes a sheet with validation errors and returns the findings; `strict` refuses it (docs/UPLOADS.md). Any other value refuses to start (exit 2) and raises `ConfigError` at request time, so a typo such as `stict` cannot select `warn` silently. | `warn` |
@@ -69,6 +86,7 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 | `KALOS_JOB_WORKERS` | Analyses running at once in this engine, sync and background together. Must be >= 1. (docs/JOBS.md) | `2` |
 | `KALOS_JOB_PER_TENANT` | Analyses one tenant may run at once. With the default one tenant can never hold every slot. Must be >= 1. | `1` |
 | `KALOS_JOB_QUEUE_DEPTH` | Queued + running jobs one tenant may hold; more answers 429. Must be >= 1. | `8` |
+| `KALOS_JOB_GLOBAL_QUEUE_DEPTH` | Queued + running jobs all tenants may hold together; more answers 429. Must be >= 1. (docs/JOBS.md) | `64` |
 | `KALOS_JOB_MAX_UPLOAD_BYTES` | Largest upload a job accepts, per tenant. Must be <= the engine's upload cap. | the upload cap |
 | `KALOS_BUILD_SHA` | Commit the engine was built from, recorded as `run.build_sha` on every analysis. CI passes `github.sha` at image build (`deploy/engine/Containerfile`). | `unknown` |
 | `KALOS_JOB_TIMEOUT_S` | Wall-clock limit for one job; past it the worker is killed and the job is `timed_out`. Must be >= 1. | `1800` |
@@ -76,6 +94,7 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 **Fail-closed settings.** Every enum-valued or bounded `KALOS_*` setting refuses an unknown value instead of defaulting (`kalos/envconfig.py`, one shared helper). `python -m kalos.portal` runs `check_env_settings()` before it binds a socket: a bad value prints one line naming the variable to stderr and exits 2. Unset and empty always mean the default.
 
 When neither `KALOS_AUTH_TOKENS_FILE` nor `KALOS_AUTH_TOKENS` is set, the API runs in **open mode** (anonymous `default` tenant, read+write, admin withheld) and logs a warning at startup.
+When none of `KALOS_AUTH_TOKENS_FILE`, `KALOS_AUTH_TOKENS` and `KALOS_JWT_PUBLIC_KEYS_FILE` is set, the API runs in **open mode** (anonymous `default` tenant, read+write, admin withheld) and logs a warning at startup.
 
 ### Deployment templates: two settings deliberately not changed
 
@@ -116,6 +135,10 @@ Decided once at startup. In production the engine:
 - **Refuses to start without enforced authentication.** Importing `kalos.portal.app` (and `python -m kalos.portal`) fails with `ProductionConfigError` unless `KALOS_AUTH_TOKENS[_FILE]` holds at least one token. This applies on every bind, loopback included, and `KALOS_ALLOW_OPEN_ACCESS` does **not** override it. A token list of `[]` counts as no auth.
 - **Fails closed at runtime.** Tokens are re-read per request (rotation without restart), so if the token config is emptied after startup every request except `/healthz` and `/readyz` gets a 503, local callers included, instead of silently reopening as anonymous read+write. This holds at two layers: the production middleware refuses the request, and `Authenticator.principal_for` (the `require_principal` dependency) itself raises 503 `authentication is not configured` in production when no tokens load, so a file emptied between the middleware check and the dependency cannot yield the anonymous principal.
 - **Disables the API docs and schema:** `/docs`, `/redoc` and `/openapi.json` are 404. They are served only when `KALOS_ENV=development` (the default when unset). Any other `KALOS_ENV` value refuses to start, so the docs cannot appear on a typo'd production config.
+- **Refuses to start without a usable auth source.** Importing `kalos.portal.app` (and `python -m kalos.portal`, exit 2) fails with `ProductionConfigError` unless `KALOS_JWT_PUBLIC_KEYS_FILE` holds at least one key or `KALOS_AUTH_TOKENS[_FILE]` holds at least one service-account token. This applies on every bind, loopback included, and `KALOS_ALLOW_OPEN_ACCESS` does **not** override it. A token list of `[]` or a JWKS with no keys counts as no auth.
+- **Refuses invalid auth config at startup.** This covers an unreadable or malformed JWKS file (validated whenever `KALOS_JWT_PUBLIC_KEYS_FILE` is set, even alongside static tokens), a JWKS containing the published test-vector keys, an out-of-range `KALOS_JWT_*` knob, and static records that are not `"service_account": true` or that hold `admin`.
+- **Fails closed at runtime.** Tokens and keys are re-read per request (rotation without restart). If both sources are emptied after startup, every request except `/healthz` and `/readyz` gets a 503, local callers included, instead of silently reopening as anonymous read+write. This holds at two layers: the production middleware refuses the request, and `Authenticator.principal_for` (the `require_principal` dependency) itself raises 503 `authentication is not configured` in production when neither static tokens nor a JWT key file are configured, so a file emptied between the middleware check and the dependency cannot yield the anonymous principal. A JWKS file that goes bad at runtime is a 503 too (in every environment).
+- **Disables the API docs and schema:** `/docs`, `/redoc` and `/openapi.json` are 404.
 - **Does not serve the demo routes** `/api/single` and `/api/multi` (404). They run CPU-heavy GP loops on a synthetic surface outside the single analysis slot (`kalos/portal/busy.py`), so in a shared deployment any token holder could tie up the CPU with them.
 
 Development (the default) keeps all of the above as before.
@@ -130,15 +153,17 @@ The per-tenant `/api/latest` cache file is named `t-<hex of the tenant id's UTF-
 
 ### Request limits
 
-- Body size: a pure-ASGI middleware (`kalos/portal/limits.py`) answers **413** for a `Content-Length` over the route's cap without reading the body (a `Content-Length` of more than 19 significant digits is 413 without being parsed), **400** for a malformed or conflicting `Content-Length`, and counts chunked bodies (no `Content-Length`) as they stream, failing with **413** once they cross the cap. The chunked case uses flag+disconnect (the inner app is told the client disconnected, its answer is discarded, the middleware sends the 413), because raising from `receive` was turned into a generic 400 by FastAPI's body parsing and `BaseHTTPMiddleware` on the real app. Upload paths are matched with the ASGI `root_path` stripped, so a prefix-mounted deployment keeps the upload cap.
+- Body size: a pure-ASGI middleware (`kalos/portal/limits.py`) answers **413** for a `Content-Length` over the route's cap without reading the body (a `Content-Length` of more than 19 significant digits is 413 without being parsed), **400** for a malformed or conflicting `Content-Length`, and counts chunked bodies (no `Content-Length`) as they stream, failing with **413** once they cross the cap. The chunked case uses flag+disconnect (the inner app is told the client disconnected, its answer is discarded, the middleware sends the 413), because raising from `receive` was turned into a generic 400 by FastAPI's body parsing and `BaseHTTPMiddleware` on the real app. Upload paths are matched with the ASGI `root_path` stripped (on a `/` segment boundary, the same rule as Starlette's routing), so a prefix-mounted deployment keeps the upload cap; the production probe exemption and the `/api/campaign` 400-envelope scoping use the same stripped path.
 - Upload auth precheck: with authentication enforced, a `POST` to an upload route (`/api/run`, `/api/scale/readout`) without an `Authorization: Bearer <token>` header is answered **401** before the multipart body is read. It only checks that a bearer credential is present; the token is still verified by `require_principal`, so a wrong token is the dependency's usual 401 (after the body is read, bounded by the cap above).
-- `POST /api/campaign/start`: at most 64 recipes per call; each recipe value is, by shape, a finite JSON number (bools refused), a string of at most 512 characters, or null. The shape check alone does NOT refuse numeric strings (`"7.3"` is a valid string); the store then checks every value against the kind of column it lands in, read from the campaign's dataset (`kalos/portal/recipe_values.py`): a numeric column takes only a finite number (a numeric string is refused, except the exact label of an observed value such as `"200"` for an observed `200`, which is what the engine proposes for a numeric column declared categorical, and is stored as the number); a categorical column takes only one of its observed levels or null (an unknown level is refused, not added); a column with no values takes only null; recipe keys are 1-512 characters and must be columns of the campaign's dataset other than the target; `pred`/`std` are finite numbers or null; `mode`/`reason` are at most 512 characters. Unknown extra fields are ignored and not stored.
+- `POST /api/campaign/start`: at most 64 recipes per call; each recipe value is, by shape, a finite JSON number (bools refused), a string of at most 512 characters, or null. The shape check alone does NOT refuse numeric strings (`"7.3"` is a valid string); the store then checks every value against the kind of column it lands in, read from the campaign's dataset with the analysis's own typing (single-unit text such as `34.6 C` converted first, then numeric when at least 3 cells and >= 80% of them are numbers, so a pH column with one `ND` cell is numeric; `kalos/portal/recipe_values.py`): a numeric column takes only a finite number within 1e6 x the column's observed span of its observed range (a numeric string is refused, except the exact label of an observed value such as `"200"` for an observed `200`, which is what the engine proposes for a numeric column declared categorical, and is stored as the number); a categorical column takes only one of its observed levels or null (an unknown level is refused, not added); a column with no values takes only null; and a campaign holds at most 256 runs in flight (started, or measured but not yet re-analyzed), beyond which `/start` answers 400; recipe keys are 1-512 characters and must be columns of the campaign's dataset other than the target; `pred`/`std` are finite numbers or null; `mode`/`reason` are at most 512 characters. Unknown extra fields are ignored and not stored.
 - `POST /api/campaign/result`: `id` is 1-512 characters; `value` is a JSON number (a non-finite value is still refused by the store).
 - Validation failures on `/api/campaign/*` answer 400 `{"error": ..., "code": "invalid_body"}` naming the field (dict keys masked, input values never echoed). Other routes answer 422 in the same envelope, with the field list under `detail` (see "Error envelope").
 
 ### Probes
 
 `/healthz` is an `async` handler so it answers from the event loop and cannot queue behind worker threads busy with analysis. `/readyz` builds the campaign store and runs a tenant-agnostic read of the schema version (`SELECT MAX(version) FROM schema_migrations`, never a tenant table), both inside one try; on any failure (including a store that cannot be opened) it answers 503 with the fixed reason `campaign store unavailable` and logs the exception server-side (no exception text in the unauthenticated response).
+
+`/readyz` also answers 503 (`background jobs are not running`) when the engine's lifespan expects the job scheduler and it is not running (`kalos/portal/job_runner.py`, `runner_down`). A bare app without the lifespan does not declare an expectation, so it is not affected.
 
 Not covered here: per-tenant concurrency limits (design pending).
 
@@ -150,10 +175,13 @@ Not covered here: per-tenant concurrency limits (design pending).
     "token_sha256": "9f86d0818188...b0f00a08",
     "subject": "svc-lab-ingest",
     "tenant": "acme-bio",
-    "scopes": ["read", "write"]
+    "scopes": ["read", "write"],
+    "service_account": true
   }
 ]
 ```
+
+`service_account` defaults to `false` and is required (`true`) in production, where `admin` is also refused on static tokens. In every environment, `subject` must be 1-256 printable ASCII characters with no spaces or commas, so that any subject can be named in `KALOS_AUTH_DENY_SUBJECTS`. `tenant` may not be the reserved `default`.
 
 Generate a token and its hash out of band, store only the hash here, and hand the raw token to the caller once:
 
@@ -211,9 +239,21 @@ protection. Exactly this is covered:
 - **Identifier column names** (`is_identifier_name` in
   `kalos/portal/analysis.py`: the profile's `id_hint`, the run-id pattern, and a
   word-level rule, so `Tank ID`, `Patient ID`, `Customer Name` and `run_number`
-  all count) are replaced by `col_<hash>` in the response: `provenance`,
-  `group_col`, validation findings and their prose, `design_box_exclusions`,
-  refusal context and message. Identifier columns are not model features.
+  all count). Person-name tokens count anywhere in a name, as whole words:
+  `operator`, `analyst`, `technician`, `tech`, `email`, and `name` after a subject
+  (`Donor_Name_1`, `Lab_Tech`, `Operator`, `email`). Process variables do not
+  (`Methanol`, `pH`, `sample_volume_L`, `technology_level`). Identifier names are
+  replaced by `col_<hash>` in the response: `provenance`, `target`, `group_col`,
+  `features`, `categorical_features`, `proposal_features`, `drivers`, `correlation`
+  labels, `gp_shapes` feature names, the response-surface axes and fixed recipe,
+  every proposal recipe key, `design_box_exclusions`, `auto_categorical`,
+  `data_drops`, validation findings and their prose, and refusal context and
+  message. Identifier columns are not model features unless declared in `roles`.
+- **Categorical level values of identifier columns** (a declared categorical such
+  as `Donor_Name_1`, whose levels are people's names) are replaced by
+  `level_<hash>` in the proposal recipes and the response-surface fixed recipe.
+  Before, "Jane Smith 0" appeared verbatim there (review H4). Levels of ordinary
+  categoricals (`Medium` = `A`/`B`/`C`) are published as they are.
 - **Sheet names** are replaced by `sheet_<hash>` in `sheets`, `sheet_used`, the
   refusals (`sheet_not_found`, `no_usable_sheet`) and the analysis-error text.
 - **The filename** is not stored: not in `run`, not as the campaign's `dataset`
@@ -227,8 +267,11 @@ Not covered (the response or the store still carries these):
 - **`target`** (top-level and `run.target`) and **`run.roles_declared`** keep
   the caller's own column names. A target or declared role that is an
   identifier is shown as sent.
-- **Feature names** (`features`, `proposal_features`, drivers, recipe keys) keep
-  their real names. Features are the process inputs the owner reads.
+- **Process feature names and their values** (`Methanol`, `pH`, numeric
+  settings, categorical levels of ordinary factors) keep their real names. They
+  are the process inputs the owner reads. Identifier-like names are aliased as
+  above; an identifier name that is not recognised by `is_identifier_name` is
+  published as sent, so a naming gap is the thing to fix, not the output.
 - **`campaigns.base_rows` at rest.** The campaign stores the full uploaded sheet
   (every column, including identifier columns and the raw values) in
   `portal.db`, unencrypted and unaltered, so that the loop can fold results into
@@ -242,6 +285,92 @@ Not covered (the response or the store still carries these):
   applies, and a common name (`Patient ID`) can be recognised by hashing a list
   of candidates. Production must set the salt.
 
+## Known limitations
+
+Each item states what the engine does, the evidence, and why it is not changed here.
+These are judgement calls for the science owner; the code is unchanged.
+
+### M5. Feasibility classifier uses `class_weight="balanced"`, which miscalibrates P(feasible)
+
+- **What it does.** `FeasibilityClassifier` (`kalos/core/feasibility.py`) is a
+  `StandardScaler` + `LogisticRegression(class_weight="balanced")`. Balanced weighting
+  makes the classifier rank well and gives it the minority class equal total weight. It
+  does not make its probabilities calibrated to the base rate.
+- **Evidence** (synthetic, `/tmp` experiment, 5-fold stratified CV, n=400, the
+  feasible class at 90% and 70%): with balanced weights the mean predicted
+  P(feasible) is 0.554 against an actual 0.848 (Brier 0.215), and 0.530 against 0.660
+  (Brier 0.203). Unweighted gives 0.847 against 0.848 (Brier 0.119), and 0.659 against
+  0.660 (Brier 0.186). Balanced weighting therefore understates P(feasible) by
+  roughly 30 points on a mostly-feasible sheet.
+- **Where it matters.** The gated acquisition multiplies EI by this probability
+  (`proposal_gating`), and the per-proposal `p_feasible` is reported to the client.
+  Both are biased low when the base rate is high, which makes the optimizer
+  over-avoid recipes that are usually fine. The AUC used by the gate is unaffected
+  (it is rank-based), so the gate can pass while the probabilities are wrong.
+- **Not changed** because the fix (drop balancing, or recalibrate with a held-out
+  isotonic/Platt step) changes which recipes are proposed on every zero-inflated
+  sheet, and that is a product decision. Tracked as a follow-up.
+
+### M6. The promotion gate reads the POOLED Spearman, not `producer_spearman`
+
+- **What it does.** `_analyze` passes `surrogate_spearman` = the pooled out-of-fold
+  Spearman (`rho`, over producers and non-producers together) to `check_gates`. The
+  producer-only Spearman (`reliability.producer_spearman`) is reported beside it but
+  is not an input to the verdict.
+- **Evidence** (synthetic, `/tmp` experiment, n=60, 33 producers, zeros
+  for the non-producing half, producer titer pure noise on the features): pooled
+  Spearman 0.781, `producer_spearman` 0.021 (`producer_clears_floor: false`), and
+  `promotion.passed: true`, with no failures listed. The separation of zeros from
+  non-zeros, which is a feasibility signal, carries the verdict. The engine cannot
+  rank its producing recipes at all on this sheet.
+- **Why it matters.** `promotion.passed` reads as "fit to promote". Under this
+  sheet the producer ranking is at chance.
+- **Not changed** because switching the input to `producer_spearman` changes the
+  verdict on existing uploads, and the choice of which Spearman a promotion must
+  clear is a product and validation decision (the same line as `clears_floor`).
+  The `promotion.meaning` text does not say this; it should if the gate is kept.
+
+### C3 follow-on: the seeded analysis section is serialized
+
+- `_analyze` holds `_RNG_LOCK` for its whole run, so two admitted analyses (busy.py
+  `KALOS_JOB_WORKERS=2`) run their seeded sections one after the other. The result is
+  deterministic and identical to sequential, but the parallelism between two
+  analyses is lost. A per-call `torch.Generator` through BoTorch would remove the lock;
+  that is a larger refactor and is not done.
+- Scale readout (`kalos/scale/readout.py`) uses torch outside `_analyze` and does not
+  take the lock. Its output is not covered by the determinism guarantee.
+
+### Concentration naming gap (C1 follow-on)
+
+- A blank cell is read as 0 only for a column declared in `roles.sparse`, or whose
+  name matches the concentration pattern (`kalos/validation/bounds.py`:
+  `titer`, `conc`, `g/L`, `mg/mL`, `glucose`, `methanol`, a salt name, ...).
+  `Supplement_g_L` does not match (`g_L` with an underscore is not `g/L`), so its blanks
+  drop their runs. This is the safe direction, but a sheet with many such columns will
+  lose rows. Declare them in `roles.sparse`, or extend the pattern deliberately.
+
+### M1 decision: identical floor readings are exact copies (open)
+
+- Under the M1 rule, a row identical to another in every column, target included, is a
+  copy and is not a replicate. On a zero-floored assay, several runs at the same
+  settings that all read exactly `0.0` are therefore copies. The zero-variance floor
+  recipes are removed from the noise and ICC statistics, and the variance-mean coupling
+  that the heteroscedasticity diagnostic reads (`suggests_transform`) is gone.
+- Evidence: `tests/test_noise_scale_and_producers.py::test_analyze_reports_the_scale_diagnostic`
+  (strict xfail). On that sheet, 13 repeated `0.0` readings are removed as copies
+  (`noise.n_exact_duplicates: 13`). The diagnostic flips from `suggests_transform: true` to `false`.
+- The rule is implemented as the spec states. Whether a repeated floor reading (a real
+  below-LOD result) should be exempt from the copy rule is a product and assay decision.
+  A row-id column would let the engine tell a real repeat from a paste; without one the
+  two are indistinguishable from the data alone.
+
+### Replicate-aware fit still counts exact copies (M1 follow-on)
+
+- Exact copies are removed from `noise_report`, the ICC and the heteroscedasticity
+  report. The replicate-aware GP fit (`aggregate_replicates`) still sees them, so a
+  pasted-twice row still weights its recipe's mean and `n_reps`. The reported noise is
+  correct; the fit weighting is not yet.
+
 ## Status log
 
 - Phase 1a authentication + authorization: **done** (merged).
@@ -251,5 +380,36 @@ Not covered (the response or the store still carries these):
 - P0 engine hardening: **done** on `security/p0-engine-hardening` - tenant-id validation + injective latest-cache names, required `tenant` keyword on the stores, `KALOS_ENV=production`, async `/healthz` and generic `/readyz` reason, body-size cap + bounded campaign bodies. Per-tenant concurrency is out of scope (design pending).
 - Background jobs (P3, `feat/background-jobs`, docs/JOBS.md): **in review** - a persistent `jobs` table (schema v3), a worker process per job, a runner that admits jobs through the shared per-tenant and global limiter, status/cancel routes, per-job timeouts, per-tenant queue depth and upload limits, restart recovery, and cross-tenant isolation tests. Per-tenant concurrency, which the P0 entry above left out of scope, is now bounded by `KALOS_JOB_PER_TENANT`.
 - Run record (provenance, `feat/run-record`): **in review** - every analysis carries a versioned `run` block (input hash, sheet, target, roles, seed, thread count, build sha, library versions, validation mode, shape). Anonymized runs keep no filename or sheet. docs/CAMPAIGNS_API.md, "Run record". Engine state-directory lock (`engine.lock`) in the same branch.
+- Background jobs review (PR #91), HIGH1: the runner registers a worker before its pid is written; a failed start or pid write kills the worker and fails the job (`worker_unavailable`), a failed claim leaves the job queued, and a slot is released only after the outcome is recorded (docs/JOBS.md, "Start failure").
+- Background jobs review (PR #91), MED5: every worker exit, including a worker that exits on its own, kills its process group (docs/JOBS.md, "Cancellation and timeouts").
+- Background jobs review (PR #91), MED4: each worker gets a wall-clock deadline (time limit + 60 s) and a watchdog ends it when the deadline passes or its engine is gone (docs/JOBS.md, "Worker lifetime").
+- Background jobs review (PR #91): real-process test that a time-limit kill reaches a worker and its child that ignore SIGTERM (docs/JOBS.md, "Release-gate tests").
+- Background jobs review (PR #91), HIGH2: a full tenant queue is refused before the upload is read or parsed; the submit-time parse runs under a process-wide preflight slot (`PREFLIGHT_CONCURRENCY`, 503 + Retry-After when none is free) and nothing is written before it passes (docs/JOBS.md, "Submit").
+- Background jobs review (PR #91), MED3: an engine-wide queue cap across tenants, `KALOS_JOB_GLOBAL_QUEUE_DEPTH` (docs/JOBS.md, "Scheduling and limits").
+- Background jobs review (PR #91), MED6: one job scheduler per state directory. The runner takes `<state_dir>/jobs.runner.lock` (flock) at start and refuses to boot the engine if another process holds it, or if `WEB_CONCURRENCY` > 1 (docs/JOBS.md, "Multiple engine processes are refused").
+- Background jobs review (PR #91), LOW7: startup also sweeps half-written upload files (`.tmp`), not only `.bin` inputs no live job refers to (docs/JOBS.md, "Restart and crash recovery").
+- Background jobs review (PR #91), LOW8: the job submit route refuses a `roles` value over 16 KiB with a 400, before the upload is parsed (refused rather than clipped, since a clipped JSON document is not a roles document) (docs/JOBS.md, "Synchronous refusals").
+- Background jobs review (PR #91), LOW9: a rollback from v3 to v1 leaves the rolled-back `jobs_v3_rolledback` copy with a foreign key that names `campaigns_v2_rolledback`. The data is intact; the copy is not self-consistent, and dropping its foreign keys is an optional cleanup (docs/MIGRATIONS.md, "Caveat: a rollback past v3").
+- Background jobs review (PR #91), LOW10: an unexpected analysis failure in a job worker logs its exception type, code and innermost location, not the message or traceback, since both can quote customer column text. Operators must not ship engine logs to a third party unredacted (docs/JOBS.md, "Logs").
+- Background jobs review (PR #91), N1: a sync analysis cancelled by native asyncio cancellation (`asyncio.wait_for`) released its slot while its thread was still computing, so a second request was admitted. The slot is now released only by the thread, or by the dispatcher when the call never started (`kalos/portal/busy.py`, `Exclusive.abandon`).
+- Background jobs review (PR #91), N2: the job submit route counts the submissions being received per tenant and engine-wide before it reads the upload, and refuses beyond `SUBMIT_PER_TENANT` (429) or `SUBMIT_TOTAL` (503), both with Retry-After; a cancelled submission releases its count (docs/JOBS.md, "Scheduling and limits").
+- Background jobs review (PR #91), N4: the runner builds the child (reads its timeout setting) before the start's try block, so a setting that raised left the claimed job `running` and its slot held; the start now registers the child first and treats any BaseException as `worker_unavailable` (docs/JOBS.md, "Start failure").
+- Background jobs review (PR #91), N5: `fcntl` is imported where the runner lock is taken, so the runner module loads on non-POSIX platforms; the engine refuses to start only when jobs are enabled, with a message saying why. The NFS/SMB caveat for `flock` is documented (docs/JOBS.md, "Multiple engine processes are refused").
+- Background jobs review (PR #91), N6: the runner lock is released only after the scheduler can no longer start a worker. A scheduling pass holds a pass lock; shutdown waits for it, then kills and records the children, and keeps the lock if the pass does not finish in time (docs/JOBS.md, "Cancellation and timeouts").
+- Background jobs review (PR #91), N7: a submit refused for queue depth writes no upload to disk (the depth check runs before the write; the in-transaction check stays authoritative) (docs/JOBS.md, "Scheduling and limits").
+- Background jobs review (PR #91), N8 (part 1): a job that cannot be loaded, or a campaign store that cannot be opened in the worker, is logged by exception type and exits without a traceback (docs/JOBS.md, "Logs").
+- Background jobs review (PR #91), N8 (part 2): the worker's deadline is a monotonic duration (`KALOS_JOB_DEADLINE_S`, seconds left at spawn) instead of an absolute epoch, so a wall-clock step does not kill or extend a live worker (docs/JOBS.md, "Worker lifetime").
+- Background jobs review (PR #91), N3: when the engine dies, each job worker's watchdog SIGKILLs the worker's own process group before exiting, so its children die too; startup recovery kills a recorded worker group after checking its command line in /proc (Linux, no `ps` needed) or `ps` (macOS), and signals nothing it cannot verify (docs/JOBS.md, "Worker lifetime", "Restart and crash recovery").
+- Background jobs review (PR #91), D2 + D12: `python -m kalos.portal` validates the `KALOS_JOB*` settings and the runner's prerequisites before it serves, and exits 2 with one line naming the problem (`WEB_CONCURRENCY` > 1 used to exit 0 through uvicorn's supervisor); `/readyz` is 503 when the scheduler an engine expects is not running (docs/JOBS.md, "Scheduling and limits").
+- Background jobs review (PR #91), D1: a worker whose engine died during its import window was never stopped (the watchdog took the parent pid after the imports) and published over its campaign. The engine pid is passed to the worker, checked at start, at each progress point and in the publish transaction; an orphan publishes nothing (docs/JOBS.md, "Worker lifetime").
+- Background jobs review (PR #91), D3 + D15: an upload job no longer silently discards a campaign's awaiting and measured runs. It is refused at submit (409 `campaign_has_runs`) and fails with that code if runs appear later, unless the caller confirms `replace=true`. A second pending upload to the same campaign is refused at submit (409 `upload_pending`) (docs/JOBS.md, "Scheduling and limits").
+- Background jobs review (PR #91), round 3, 1: `nan` and `inf` passed the numeric `KALOS_JOB*` checks (`nan < minimum` is False), so a NaN time limit never fired. Non-finite values are refused at startup for every numeric variable (docs/JOBS.md, "Scheduling and limits").
+- Background jobs review (PR #91), round 3, 4: `KALOS_JOBS_ENABLED` accepts only `1/0`, `true/false`, `yes/no`, `on/off` (case-insensitive); any other value fails startup naming the variable. Before, a typo such as `flase` meant enabled.
+- Background jobs review (PR #91), round 3, 5: the runner no longer reaps a worker before its process group is signalled (Linux observes the exit with waitid WNOWAIT), so a reused pid can never be the target. A worker may SIGKILL its group only when it is a ProcessWorker-started session leader (docs/JOBS.md, "Cancellation and timeouts").
+- Background jobs review (PR #91), round 3, 3: upload bodies have an overall read deadline (408, `KALOS_UPLOAD_READ_TIMEOUT_S`), enforced where the body is read, since the submit gate runs after the form is parsed (docs/JOBS.md, "Trickled uploads").
+- Background jobs review (PR #91), round 3, 2: the sync upload routes (`POST /api/run`, `POST /api/campaigns/{id}/upload`) refuse a campaign with awaiting or measured runs (409 `campaign_has_runs`) unless `replace=true`, and the publish is a compare-and-swap on the generation checked before the fit (docs/CAMPAIGNS_API.md, "Uploads").
+- Background jobs review (PR #91), round 3, 6: direct `uvicorn kalos.portal.app:app` with several workers still exits 0 (uvicorn's supervisor reports the failed workers as a clean stop; the app is not imported in the parent, so it cannot fail there). Not fixable in-process; documented (docs/JOBS.md, "Multiple engine processes are refused"). The deployed entrypoint `python -m kalos.portal` exits 2.
+- Background jobs review (PR #91), sync slot leak: a dispatch cancelled before its worker thread starts released no analysis slot, so later requests got 503. Every dispatcher (`/api/run`, the campaign reanalyze, the scale readout, the demo routes) now releases the slot on cancellation at any point (`kalos/portal/busy.py`, `run_in_slot`).
 - P2 observability, P4 latest->SQLite, P5 backups: planned, not started (see "Next backbone" above). P4 is done by schema v2; see the entries above.
+- E2 engine-token verification: **merged** to `main` (#88): EdDSA JWTs minted by kalos-web, verified against a JWKS file by `kid` (docs/ENGINE_TOKEN.md); `Principal` gains `auth_method`/`session_id`/`token_id`; deny-list revocation; production restricts static tokens to service accounts.
 - Schema v2 (multi-campaign storage): **in review** on `feat/campaign-schema-v2` - `portal.db` gains `schema_migrations`, multi-campaign `campaigns` (`cmp_` ids, `UNIQUE(id, tenant)`), `analyses` (replacing `_LATEST` and `latest/*.json`), `tenant_defaults` (the legacy routes act on the tenant default) and `audit_log`; WAL, `foreign_keys`, `busy_timeout`; every store write is `BEGIN IMMEDIATE` + generation compare-and-swap; explicit, backed-up, reversible migration (`python -m kalos.portal.migrate up|down|status`). Runbook: docs/MIGRATIONS.md.

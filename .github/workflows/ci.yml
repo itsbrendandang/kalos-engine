@@ -10,7 +10,9 @@ jobs:
       # ml carries the optional torch stack the engine tests need; portal so the
       # portal tests actually run (they importorskip fastapi) and mypy checks them
       # against real FastAPI types; dev brings ruff, mypy, and the type stubs.
-      - run: python -m pip install -e ".[ml,portal,dev]"
+      # bench brings the optional Optuna and Ax comparators so the head-to-head
+      # arms in kalos/bench/vs_baselines.py are exercised (tests/test_vs_baselines.py).
+      - run: python -m pip install -e ".[ml,portal,bench,dev]"
       # Lint the whole tree, not just kalos/: an unused import and a dead local
       # sat in examples/ for months because CI only ever looked at the package.
       - run: ruff check kalos/ tests/ examples/

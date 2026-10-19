@@ -104,6 +104,14 @@ def test_groups_length_is_validated():
 # --- the live path: a sparse media-style sheet ------------------------------- #
 
 
+def _sparse_roles(*sparse: str):
+    """The sheets here leave component cells blank on purpose. Their names do not
+    say "concentration", so they are declared sparse (review C1): a blank is absent."""
+    from kalos.domains import ColumnRoles
+
+    return ColumnRoles.from_dict({"target": "lipase_titer", "sparse": list(sparse)})
+
+
 def _sparse_media_sheet(n: int = 12) -> pd.DataFrame:
     """A media sheet where half the formulations OMIT a candidate component.
 
@@ -173,7 +181,7 @@ def test_a_blank_is_not_the_same_recipe_as_a_deliberate_zero():
     variance from titers that differ by 4 g/L, which is exactly how an assay-noise
     floor gets inflated and an ICC gets deflated.
     """
-    noise = _analyze(_blank_versus_dosed_zero_sheet(), target="lipase_titer")["noise"]
+    noise = _analyze(_blank_versus_dosed_zero_sheet(), target="lipase_titer", roles=_sparse_roles("Supplement_g_L"))["noise"]
     # 4 dosed + 3 blank + 3 dosed-at-zero = 10 distinct recipes, none replicated.
     # Under the old value-based grouping the 3 pairs merged, giving 7 recipes and
     # 3 "replicates" whose variance came from titers 4 g/L apart.
@@ -185,8 +193,11 @@ def test_a_blank_is_not_the_same_recipe_as_a_deliberate_zero():
 def test_genuine_replicates_are_still_detected_on_a_sparse_sheet():
     """The fix must not break real replicate detection when blanks are present."""
     df = _sparse_media_sheet()
-    doubled = pd.concat([df, df], ignore_index=True)  # every recipe run twice
-    noise = _analyze(doubled, target="lipase_titer")["noise"]
+    # Every recipe run twice: the second run has its OWN measured titer (a copy
+    # with the same titer would be an exact duplicate, not a replicate - M1).
+    again = df.assign(lipase_titer=df["lipase_titer"] + 0.05)
+    doubled = pd.concat([df, again], ignore_index=True)
+    noise = _analyze(doubled, target="lipase_titer", roles=_sparse_roles("Yeast_extract_g_L"))["noise"]
     assert noise["n_recipes"] == 12
     assert noise["n_replicated"] == 12
     assert noise["noise_sd"] is not None
@@ -202,6 +213,6 @@ def test_declared_group_column_is_not_used_as_the_recipe_key():
     """
     df = _sparse_media_sheet()
     df["medium"] = "LOT-A"  # matches BIOPROCESS_PROFILE's group hint
-    noise = _analyze(df, target="lipase_titer")["noise"]
+    noise = _analyze(df, target="lipase_titer", roles=_sparse_roles("Yeast_extract_g_L"))["noise"]
     assert noise["n_recipes"] == 12, "the group column must not collapse recipes"
     assert noise["n_replicated"] == 0

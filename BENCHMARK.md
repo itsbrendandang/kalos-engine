@@ -22,10 +22,10 @@ Simple regret = distance from the true optimum (lower is better).
 
 | Surface | Noise | BO regret | LHS regret | Random regret | BO vs LHS |
 | --- | --- | --- | --- | --- | --- |
-| Gaussian bump (4d, smooth) | 0% | **0.014** | 2.247 | 3.171 | reaches LHS's end-value ~11 experiments sooner |
-| Gaussian bump (4d, smooth) | 15% | **1.676** | 2.247 | 2.592 | ~2 experiments sooner |
-| Ackley (4d, rugged) | 0% | **1.489** | 3.625 | 3.696 | ~14 experiments sooner |
-| Ackley (4d, rugged) | 15% | **3.572** | 3.625 | 3.850 | ~tied |
+| Gaussian bump (4d, smooth) | 0% | **0.013** | 2.247 | 3.171 | reaches LHS's end-value ~11 experiments sooner |
+| Gaussian bump (4d, smooth) | 15% | **1.873** | 2.247 | 2.592 | ~1 experiment sooner |
+| Ackley (4d, rugged) | 0% | **1.560** | 3.625 | 3.696 | ~14 experiments sooner |
+| Ackley (4d, rugged) | 15% | **3.014** | 3.625 | 3.850 | ~3 experiments sooner |
 
 ## The honest read
 
@@ -34,7 +34,8 @@ With clean measurements it does not just win, it dominates: near-zero regret on 
 This is not a broken wrapper over a GP; the optimization machinery works.
 
 **2. Observation noise is the decisive factor, not the algorithm.**
-At 15% measurement noise the advantage shrinks to modest on the smooth surface and essentially disappears on the rugged one.
+At 15% measurement noise the advantage shrinks (smooth: 2.23 to 0.37 regret units over LHS; rugged: 2.07 to 0.61) but stays positive in these 10-seed runs.
+The BO rows were reproduced on torch 2.13.0 (the version in `uv.lock`); torch 2.14.1 gives different BO regrets on the same seeds, so these numbers depend on the torch build.
 Real assay noise is frequently at or above this level, which is exactly why the real media data shows a fragile ~0.37-0.52 held-out signal: the optimizer is fine, the data is noisy relative to the effect being chased.
 
 **3. What this means for the product.**

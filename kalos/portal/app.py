@@ -24,6 +24,7 @@ import functools
 import logging
 import os
 import re
+from typing import Any
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -37,7 +38,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively
+from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively, run_in_slot
 
 from kalos.portal.analysis import _analyze, _annotate
 from kalos.portal.auth import (
@@ -48,7 +49,10 @@ from kalos.portal.auth import (
     get_authenticator,
     require_scope,
 )
+from kalos.portal.auth_errors import JwtConfigError
+from kalos.portal.jwt_auth import log_config_error_once
 from kalos.portal.config import (
+    ProductionConfigError,
     assert_production_posture,
     cors_config,
     deployment_env,
@@ -61,6 +65,8 @@ from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_sto
 from kalos.portal.limits import (
     MULTIPART_OVERHEAD_BYTES,
     max_request_bytes,
+    upload_read_timeout_s,
+    route_path,
 )
 from kalos.portal.migrate import legacy_latest_filename
 from kalos.portal.tenancy import validate_tenant_id
@@ -85,6 +91,7 @@ from kalos.portal.uploads import (
     parse_upload,
     rejection_counts as _rejection_counts,
     safe_context,
+    scrubbed_failure,
 )
 from kalos.providers import provider_status
 
@@ -125,7 +132,31 @@ from kalos.portal.pipeline import ensure_torch_threads as _ensure_torch_threads 
 #     loops), so they are 404. Outside production they now run under the same
 #     admission limiter as every analysis, with a wall-clock timeout.
 _PRODUCTION = is_production()
-assert_production_posture(auth_enforced=get_authenticator().enforces())
+
+
+def _startup_auth_posture() -> bool:
+    """Check the auth posture once at import; return whether auth is enforced.
+
+    Production requires a USABLE auth source (a JWT public key or a
+    service-account static token), and any auth config error - including an
+    unreadable or malformed JWT key file - refuses to start.
+    """
+    auth = get_authenticator()
+    try:
+        enforced = auth.enforces()
+        has_source = auth.has_auth_source()
+    except AuthConfigError as exc:
+        if _PRODUCTION:
+            # The detail (never token material) is in the chained exception.
+            raise ProductionConfigError(
+                "KALOS_ENV=production: the authentication configuration is invalid"
+            ) from exc
+        raise
+    assert_production_posture(auth_enforced=has_source)
+    return enforced
+
+
+_AUTH_ENFORCED_AT_STARTUP = _startup_auth_posture()
 
 # Audit-log retention (docs/HARDENING.md, "Audit retention"): pruned once at
 # startup, then once a day while the process runs.
@@ -167,11 +198,18 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     the store (e.g. an unwritable state dir) is logged and the process starts
     anyway, so `/readyz` reports it as a generic 503, as it did before.
     """
-    from kalos.portal.job_runner import start_job_runner, stop_job_runner
+    from kalos.portal.job_runner import (
+        RunnerLocked,
+        check_startup_config,
+        expect_runner,
+        start_job_runner,
+        stop_job_runner,
+    )
     from kalos.portal.jobs import job_settings
     from kalos.portal.migrate import MigrationError, SchemaError
 
-    job_settings()  # a malformed KALOS_JOB_* value fails the boot, not the first job
+    check_startup_config()  # a malformed KALOS_JOB* value fails the boot, not the first job
+    expect_runner(job_settings().enabled)  # /readyz is 503 while an expected runner is down
 
     store = None
     try:
@@ -192,6 +230,11 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
         audit_task = asyncio.ensure_future(_audit_retention_loop(store))
         try:
             runner = start_job_runner(store)
+        except RunnerLocked:
+            # Refused on purpose: a second scheduler on this state dir would double-run
+            # jobs. Boot fails loudly, because job submissions would otherwise be accepted
+            # and never run.
+            raise
         except Exception:  # noqa: BLE001 - jobs are optional; the sync routes still work
             log.exception("background job runner could not be started")
     try:
@@ -201,6 +244,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             audit_task.cancel()
         if runner is not None:
             stop_job_runner(runner)
+        expect_runner(False)
 
 
 # The interactive docs and the schema exist only in development (KALOS_ENV, see
@@ -240,18 +284,14 @@ _PROBE_PATHS = frozenset({"/healthz", "/readyz"})
 # immediately with no restart either.
 @app.middleware("http")
 async def _refuse_open_remote_access(request, call_next):
-    if _PRODUCTION and request.url.path not in _PROBE_PATHS:
+    if _PRODUCTION and route_path(request.scope) not in _PROBE_PATHS:
         # Production refuses to START without tokens, but tokens are re-read per
         # request (rotation without restart), so an emptied tokens file would
         # silently reopen the API. Fail closed instead, local callers included.
         try:
-            enforced = get_authenticator().enforces()
-        except AuthConfigError:
-            log.exception("kalos auth: token configuration is invalid")
-            return JSONResponse(
-                {"error": "authentication is misconfigured", "code": "auth_misconfigured"},
-                status_code=500,
-            )
+            enforced = get_authenticator().has_auth_source()
+        except AuthConfigError as exc:
+            return _auth_config_error_response(exc)
         if not enforced:
             log.error("refused a request: KALOS_ENV=production but authentication is not enforced")
             return JSONResponse(
@@ -261,7 +301,11 @@ async def _refuse_open_remote_access(request, call_next):
                 status_code=503,
             )
     if not is_local_client(request.client.host if request.client else None):
-        if not get_authenticator().enforces() and not open_access_explicitly_allowed():
+        try:
+            remote_enforced = get_authenticator().enforces()
+        except AuthConfigError as exc:
+            return _auth_config_error_response(exc)
+        if not remote_enforced and not open_access_explicitly_allowed():
             log.warning(
                 "refused a remote request to an unauthenticated portal from %s %s",
                 request.client.host if request.client else "unknown",
@@ -285,6 +329,16 @@ async def _refuse_open_remote_access(request, call_next):
     return await call_next(request)
 
 
+def _auth_config_error_response(exc: AuthConfigError) -> JSONResponse:
+    """Fail closed on a broken auth config: 503 for the JWT key file (the
+    caller can do nothing about it), 500 for a malformed static-token list."""
+    if isinstance(exc, JwtConfigError):
+        log_config_error_once(exc)  # once per change, not per request
+        return JSONResponse({"error": "authentication unavailable", "code": "auth_unavailable"}, status_code=503)
+    log.error("kalos auth: token configuration is invalid: %s", exc)
+    return JSONResponse({"error": "authentication is misconfigured", "code": "auth_misconfigured"}, status_code=500)
+
+
 # Bound every request body before any route parses it (kalos/portal/limits.py):
 # a Content-Length over the cap is a 413 without reading the body; a chunked
 # body is counted as it streams. Added before CORS so CORS stays outermost and
@@ -294,6 +348,7 @@ app.add_middleware(
     default_cap=max_request_bytes(),
     upload_cap=MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES,
     upload_paths=UPLOAD_PATHS,
+    read_timeout_s=upload_read_timeout_s(),  # 408 when an upload body is not received in time
 )
 # With auth enforced, an upload carrying no bearer token is a 401 before its
 # (up to ~25 MB) multipart body is read. Presence check only; the token is
@@ -306,7 +361,7 @@ app.add_middleware(
 app.add_middleware(CORSMiddleware, **cors_config())
 
 # Log the effective security posture (auth + CORS) once at import/startup.
-log_security_posture(auth_enforced=get_authenticator().enforces())
+log_security_posture(auth_enforced=_AUTH_ENFORCED_AT_STARTUP)
 
 BOUNDS = np.array([[0, 0, 0], [1, 1, 1]], float)
 TITER_OPT = np.array([0.7, 0.3, 0.5])
@@ -466,6 +521,14 @@ def readyz() -> JSONResponse:
         return JSONResponse(
             {"status": "unavailable", "reason": "campaign store unavailable"}, status_code=503
         )
+    from kalos.portal.job_runner import runner_down
+
+    if runner_down():
+        # Jobs are accepted only while the scheduler runs; a dead one means they would queue forever.
+        log.error("readiness check failed: the background job runner is not running")
+        return JSONResponse(
+            {"status": "unavailable", "reason": "background jobs are not running"}, status_code=503
+        )
     return JSONResponse({"status": "ok"})
 
 
@@ -569,7 +632,15 @@ async def _run_demo(fn, principal: Principal, *args) -> JSONResponse:
             {"error": str(busy), "code": "engine_busy"}, status_code=503,
             headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
         )
-    task = asyncio.ensure_future(run_in_threadpool(locked))
+    try:
+        task = asyncio.ensure_future(run_in_threadpool(locked))
+    except BaseException:
+        locked.abandon()
+        raise
+    # The task can be cancelled before its first step, in which case the
+    # coroutine never runs and the thread never releases the slot. A finished
+    # task (cancelled or not) has no thread left, so release here too.
+    task.add_done_callback(lambda _t: locked.abandon())
     try:
         result = await asyncio.wait_for(asyncio.shield(task), timeout=DEMO_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
@@ -602,10 +673,28 @@ if not _PRODUCTION:
     app.get("/api/multi")(run_multi)
 
 
+_NO_GUARD: Any = object()  # publish without a compare-and-swap (a confirmed replacement)
+
+
+def _upload_target(store: CampaignStore, *, tenant: str, campaign_id: str | None) -> tuple[
+    str | None, str | None, int, int,
+]:
+    """What an upload would publish over: (campaign id or None, its generation, awaiting
+    runs, measured runs). The campaign is the explicit one, else the tenant's default; a
+    tenant with no campaign yet has nothing to overwrite."""
+    from kalos.portal import jobs  # deferred: jobs_api imports this module
+
+    cid = campaign_id or store.default_campaign_id(tenant=tenant)
+    if cid is None:
+        return None, None, 0, 0
+    awaiting, measured = jobs.run_counts(store, tenant=tenant, campaign_id=cid)
+    return cid, store.generation_of(tenant=tenant, campaign_id=cid), awaiting, measured
+
+
 def _run_uploaded_sync(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
     *, tenant: str, sheet: str | None = None, store: CampaignStore | None = None,
-    campaign_id: str | None = None,
+    campaign_id: str | None = None, expected_generation: Any = _NO_GUARD,
 ) -> dict:
     """The CPU-bound body of an upload: parse -> analyze -> persist -> result.
 
@@ -634,9 +723,16 @@ def _run_uploaded_sync(
     # stamped with the generation it was seeded with. Best-effort for the
     # default campaign; an explicit campaign that vanished or was archived
     # mid-analysis raises (404/409) instead of returning an unstored analysis.
+    # A guarded publish is a compare-and-swap on the generation the caller checked: a run
+    # added during the fit makes it a `campaign_changed` 409 for an explicit campaign (the
+    # default campaign keeps its state and the analysis is published out of sync, the
+    # sync contract). Either way the runs are not overwritten.
+    publish_kwargs: dict[str, Any] = (
+        {} if expected_generation is _NO_GUARD else {"expected_generation": expected_generation}
+    )
     publish_upload_analysis(
         store if store is not None else get_campaign_store(), result, filename,
-        tenant=tenant, campaign_id=campaign_id, df=df,
+        tenant=tenant, campaign_id=campaign_id, df=df, **publish_kwargs,
     )
     return result
 
@@ -649,10 +745,12 @@ async def run_uploaded(
     roles: str = Form(default=""),
     sheet: str = Form(default=""),
     sheet_query: str | None = Query(default=None, alias="sheet"),
+    replace: bool = Form(default=False),
     _principal: Principal = Depends(require_scope(WRITE)),
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
-    """Upload a run sheet and analyze it.
+    """Upload a run sheet and analyze it. A campaign that has awaiting or measured runs
+    is refused (409 `campaign_has_runs`) unless `replace=true` confirms the replacement.
 
     `sheet` (multipart form field, or `?sheet=` query parameter; the form field
     wins) picks a workbook sheet by name. Omitted, the first sheet in workbook
@@ -664,7 +762,7 @@ async def run_uploaded(
     file, its name, or its contents).
     """
     response = await _run_uploaded(
-        file, target, anonymize, roles, sheet, sheet_query, _principal, store
+        file, target, anonymize, roles, sheet, sheet_query, _principal, store, replace=replace,
     )
     _audit(store, _principal, "run.upload", response.status_code)
     return response
@@ -673,13 +771,29 @@ async def run_uploaded(
 async def _run_uploaded(
     file: UploadFile, target: str, anonymize: bool, roles: str, sheet: str,
     sheet_query: str | None, _principal: Principal, store: CampaignStore,
-    *, campaign_id: str | None = None,
+    *, campaign_id: str | None = None, replace: bool = False,
 ) -> JSONResponse:
+    tenant = _principal.tenant
+    # The publish replaces the campaign's runs: refuse before the upload is read or fitted,
+    # unless the caller confirmed it. The generation seen here guards the publish below.
+    expected_generation: Any = _NO_GUARD
+    try:
+        target_id, generation, awaiting, measured = _upload_target(
+            store, tenant=tenant, campaign_id=campaign_id,
+        )
+    except CampaignError as exc:
+        return campaign_error_response(exc)
+    if (awaiting or measured) and not replace:
+        from kalos.portal import jobs  # deferred: jobs_api imports this module
+
+        refusal = jobs.CampaignHasRuns(awaiting, measured)
+        return JSONResponse({"error": str(refusal), "code": refusal.code}, status_code=409)
+    if not replace:
+        expected_generation = generation
     # One byte past the cap is enough for `_parse_upload` to reject it; never
     # load a multi-GB body into this single process just to measure it.
     raw = await file.read(MAX_UPLOAD_BYTES + 1)
     filename = file.filename or "uploaded dataset"
-    tenant = _principal.tenant
     try:
         # Offload the CPU-bound parse + fit + save to a worker thread so this
         # single-worker service does not block the event loop (and every other
@@ -687,15 +801,13 @@ async def _run_uploaded(
         # single analysis slot (kalos/portal/busy.py): a second upload while
         # one is fitting gets an honest 503, and a disconnected client's
         # orphaned fit keeps the slot until it truly finishes.
-        result = await run_in_threadpool(
-            run_exclusively(
-                functools.partial(
-                    _run_uploaded_sync, raw, target or None, anonymize, filename, roles,
-                    tenant=tenant, sheet=(sheet or sheet_query or None), store=store,
-                    campaign_id=campaign_id,
-                ),
-                tenant=tenant,
-            )
+        result = await run_in_slot(
+            functools.partial(
+                _run_uploaded_sync, raw, target or None, anonymize, filename, roles,
+                tenant=tenant, sheet=(sheet or sheet_query or None), store=store,
+                campaign_id=campaign_id, expected_generation=expected_generation,
+            ),
+            tenant=tenant,
         )
         return JSONResponse(result)
     except Exception as exc:  # noqa: BLE001 - mapped to the documented envelopes
@@ -737,10 +849,11 @@ def upload_error_response(error: BaseException) -> JSONResponse:
             status_code=400,
         )
     except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError, UnicodeError) as exc:
-        # Log the full traceback server-side for debugging; return a generic
+        # Log the exception TYPE and location server-side (never its message:
+        # pandas quotes cell values and column names in it); return a generic
         # message so no parser detail, column name, cell value, or stack trace
-        # ever reaches the (unauthenticated) client.
-        log.exception("failed to parse or analyze an uploaded file")
+        # ever reaches the client either.
+        log.error("failed to parse or analyze an uploaded file: code=parse_error %s", scrubbed_failure(exc))
         return JSONResponse(
             {"error": _ERR_PARSE, "code": "parse_error", **safe_context(getattr(exc, "upload_context", {}))},
             status_code=400,
@@ -750,9 +863,9 @@ def upload_error_response(error: BaseException) -> JSONResponse:
         # returns the {error} JSON envelope the frontend parses, never FastAPI's
         # default text/plain HTTP 500. This covers torch.linalg.LinAlgError from a
         # GP fit and an AssertionError from the leakage guard, among others. As
-        # above, the full traceback is logged server-side and only the generic
-        # message reaches the (unauthenticated) client.
-        log.exception("failed to parse or analyze an uploaded file")
+        # above, only the exception type and location are logged server-side and
+        # only the generic message reaches the client.
+        log.error("failed to parse or analyze an uploaded file: code=parse_error %s", scrubbed_failure(exc))
         return JSONResponse(
             {"error": _ERR_PARSE, "code": "parse_error", **safe_context(getattr(exc, "upload_context", {}))},
             status_code=400,
@@ -820,34 +933,33 @@ async def _http_error(request: Request, exc: StarletteHTTPException) -> JSONResp
 
 @app.exception_handler(RequestValidationError)
 async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-    """Body and parameter validation failures.
+    """Body and parameter validation failures, in the one error envelope (#98).
 
     On `/api/campaign*` the status stays 400 (the routes' documented contract):
     `{"error": "invalid request body: ...", "code": "invalid_body"}`. Every other
     route answers 422 with `{"error", "code": "validation_error", "detail": [...]}`.
-    `loc` names WHERE and `msg` says WHAT; the submitted value is never echoed, and
-    a dict key that is not a plain identifier is masked (it is caller input).
-    """
+    `loc` names WHERE and `msg` says WHAT; the submitted value is never echoed. A
+    dict key is masked unless it is known: on campaign routes a campaign body
+    field (`_CAMPAIGN_BODY_FIELDS`), elsewhere a plain identifier (`_LOC_NAME`)."""
+    campaign = route_path(request.scope).startswith("/api/campaign")
+
+    def _shown(part: object) -> bool:
+        if isinstance(part, int):
+            return True
+        if campaign:
+            return part in _CAMPAIGN_BODY_FIELDS
+        return isinstance(part, str) and _LOC_NAME.match(part) is not None
+
     def _loc(err: dict) -> str:
         return ".".join(
-            str(p) if isinstance(p, int) or (isinstance(p, str) and _LOC_NAME.match(p))
-            else "<key>"
+            str(p) if _shown(p) else "<key>"
             for p in err.get("loc", ())
             if p != "body"
         )
 
     errors = exc.errors()
-    if request.url.path.startswith("/api/campaign"):
-        parts = []
-        for err in errors[:5]:
-            # Dict keys show up in `loc` (a recipe's feature names): masked unless
-            # they are a known field, so a caller's key is never reflected.
-            loc = ".".join(
-                str(p) if isinstance(p, int) or p in _CAMPAIGN_BODY_FIELDS else "<key>"
-                for p in err.get("loc", ())
-                if p != "body"
-            )
-            parts.append(f"{loc or 'body'}: {err.get('msg', 'invalid')}"[:200])
+    if campaign:
+        parts = [f"{_loc(err) or 'body'}: {err.get('msg', 'invalid')}"[:200] for err in errors[:5]]
         return JSONResponse(
             {"error": "invalid request body: " + "; ".join(parts), "code": "invalid_body"},
             status_code=400,
