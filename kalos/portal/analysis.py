@@ -6,12 +6,14 @@ so the model never "predicts" titer from another measured output (leakage).
 from __future__ import annotations
 
 import dataclasses
+import contextlib
 import functools
 import gc
 import os
 import re
+import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Callable
 
 import numpy as np
@@ -68,7 +70,7 @@ from kalos.validation.target import TargetVariation, assess_target_variation
 # module level. This module is imported by `kalos.portal.app` (the portal),
 # so a top-level torch import here would tax portal boot with the whole
 # torch/botorch/gpytorch stack (~220 MB) before any analysis ever runs. They
-# are imported lazily inside `_analyze`/`_seed_everything`, the only places
+# are imported lazily inside `_analyze`/`_analyze_body`, the only places
 # that actually need them. `kalos.domains` above is torch-free by contract.
 #
 # This is load-bearing and easy to break by accident: it was broken, by a single
@@ -328,12 +330,34 @@ CONSTRAINT_MIN_ROWS = 6
 # constraint model is held to the identical bar rather than a laxer one.
 
 
-def _seed_everything(seed: int = ANALYZE_SEED) -> None:
-    """Seed torch + numpy so one upload yields one deterministic set of proposals."""
+# torch's default generator and numpy's global RNG are PROCESS-wide. Two analyses
+# running on two threads (busy.py admits two) would reseed each other mid-fit, so
+# the proposals depended on which thread got there first (review C3). Every
+# analysis holds this lock for its seeded scope, so the RNG is never shared.
+_RNG_LOCK = threading.RLock()
+
+
+@contextlib.contextmanager
+def _seeded_analysis(seed: int = ANALYZE_SEED) -> Iterator[None]:
+    """Run one analysis with torch and numpy seeded to `seed`, then restore them.
+
+    The seed is applied inside `torch.random.fork_rng` and `np.random.get_state`
+    snapshots, so the caller's global RNG state is put back on exit. The lock is
+    held for the whole scope, so two concurrent analyses run one after the other
+    on the RNG and give exactly the proposals they would give sequentially.
+    Nothing here depends on the global RNG having been seeded beforehand.
+    """
     import torch  # local: deferred, see module-level note above
 
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+    with _RNG_LOCK:
+        np_state = np.random.get_state()
+        try:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(seed)
+                np.random.seed(seed)
+                yield
+        finally:
+            np.random.set_state(np_state)
 
 
 def _dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -1008,6 +1032,30 @@ def _analyze(
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
 ) -> dict:
+    """See `_analyze_body`. Every fitting analysis runs inside `_seeded_analysis`,
+    so its proposals depend only on its inputs, not on other analyses in flight."""
+    kwargs: dict[str, Any] = dict(
+        anonymize=anonymize, roles=roles, profile=profile, pending=pending,
+        constraint=constraint, progress=progress, preflight_only=preflight_only,
+    )
+    if preflight_only:
+        return _analyze_body(df, target, **kwargs)
+    with _seeded_analysis(ANALYZE_SEED):
+        return _analyze_body(df, target, **kwargs)
+
+
+def _analyze_body(
+    df: pd.DataFrame,
+    target: str | None = None,
+    *,
+    anonymize: bool = False,
+    roles: ColumnRoles | None = None,
+    profile: DomainProfile = BIOPROCESS_PROFILE,
+    pending: pd.DataFrame | Sequence[Mapping[str, Any]] | None = None,
+    constraint: Mapping[str, Any] | None = None,
+    progress: Callable[[str, float], None] | None = None,
+    preflight_only: bool = False,
+) -> dict:
     """Run the engine on an arbitrary run sheet: pick the target (the value to
     maximize), use the process INPUTS as features (other measured outputs are
     excluded to avoid leakage), then honest grouped-CV, signed drivers, and a
@@ -1081,7 +1129,6 @@ def _analyze(
             _response_surface_gp,
         )
 
-        _seed_everything()
     _progress = progress if progress is not None else (lambda _stage, _fraction: None)
     # Header decision from the upload parser (`uploads.choose_header`), read before
     # any frame operation below could drop the attrs.
@@ -1944,6 +1991,9 @@ def _analyze(
         cat_dims=cat_dims,
         cat_cardinalities=cat_cardinalities,
         pending=X_pending,
+        # Explicit, not the global RNG: the seed the run record reports is the seed
+        # the acquisition actually used (review C3).
+        seed=ANALYZE_SEED,
         # PART 1: only ever passed when GATE POLICY (above) cleared all three
         # conditions - `None` here is what keeps an ungated run's batch
         # byte-identical to the pre-gating acquisition.

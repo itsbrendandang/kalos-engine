@@ -4,6 +4,18 @@ Newest first.
 
 ## Unreleased
 
+### Fixed - review: proposals do not depend on concurrent analyses (C3)
+
+- `_analyze` seeded the process-wide torch and numpy RNGs at its start. Two analyses
+  on two threads (busy.py admits two) reseeded each other mid-fit, so proposals
+  depended on thread timing. Every analysis now runs in `_seeded_analysis`, which
+  holds a lock and seeds torch and numpy inside a fork, then restores the caller's
+  numpy state. Concurrent analyses run one after the other on the RNG, with the same
+  output as sequential runs. Trade-off: the seeded section of two concurrent
+  analyses is serialized (docs/HARDENING.md, "Known limitations").
+- `propose_batch` is called with `seed=ANALYZE_SEED`, so the run record's `seed`
+  is the seed the acquisition used.
+
 ### Fixed - review: an in-flight recipe with a missing component is dropped (H2)
 
 - `_encode_pending` zero-filled a missing continuous component. Such a recipe now
