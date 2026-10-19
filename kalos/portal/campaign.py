@@ -895,6 +895,17 @@ class CampaignStore:
                  _clip(request_id, 128), _clip(detail)),
             )
 
+    def prune_audit_log(self, retention_days: int, *, now: float | None = None) -> int:
+        """Delete audit rows older than `retention_days`, for every tenant (a
+        maintenance operation, not a tenant request). Returns the rows removed.
+        Run at startup and daily (kalos/portal/app.py, KALOS_AUDIT_RETENTION_DAYS)."""
+        if retention_days < 1:
+            raise ValueError("retention_days must be at least 1")
+        cutoff = (time.time() if now is None else now) - retention_days * 86_400.0
+        with self._txn(write=True) as conn:
+            cur = conn.execute("DELETE FROM audit_log WHERE ts < ?", (cutoff,))
+            return int(cur.rowcount or 0)
+
     def audit_entries(self, *, tenant: str, limit: int = 100) -> list[dict[str, Any]]:
         """`tenant`'s most recent audit entries, newest first."""
         validate_tenant_id(tenant)

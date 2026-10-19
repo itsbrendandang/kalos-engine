@@ -106,7 +106,7 @@ Decided once at startup. In production the engine:
 
 - **Refuses to start without enforced authentication.** Importing `kalos.portal.app` (and `python -m kalos.portal`) fails with `ProductionConfigError` unless `KALOS_AUTH_TOKENS[_FILE]` holds at least one token. This applies on every bind, loopback included, and `KALOS_ALLOW_OPEN_ACCESS` does **not** override it. A token list of `[]` counts as no auth.
 - **Fails closed at runtime.** Tokens are re-read per request (rotation without restart), so if the token config is emptied after startup every request except `/healthz` and `/readyz` gets a 503, local callers included, instead of silently reopening as anonymous read+write. This holds at two layers: the production middleware refuses the request, and `Authenticator.principal_for` (the `require_principal` dependency) itself raises 503 `authentication is not configured` in production when no tokens load, so a file emptied between the middleware check and the dependency cannot yield the anonymous principal.
-- **Disables the API docs and schema:** `/docs`, `/redoc` and `/openapi.json` are 404.
+- **Disables the API docs and schema:** `/docs`, `/redoc` and `/openapi.json` are 404. They are served only when `KALOS_ENV=development` (the default when unset). Any other `KALOS_ENV` value refuses to start, so the docs cannot appear on a typo'd production config.
 - **Does not serve the demo routes** `/api/single` and `/api/multi` (404). They run CPU-heavy GP loops on a synthetic surface outside the single analysis slot (`kalos/portal/busy.py`), so in a shared deployment any token holder could tie up the CPU with them.
 
 Development (the default) keeps all of the above as before.

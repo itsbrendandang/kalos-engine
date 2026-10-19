@@ -127,6 +127,34 @@ from kalos.portal.pipeline import ensure_torch_threads as _ensure_torch_threads 
 _PRODUCTION = is_production()
 assert_production_posture(auth_enforced=get_authenticator().enforces())
 
+# Audit-log retention (docs/HARDENING.md, "Audit retention"): pruned once at
+# startup, then once a day while the process runs.
+AUDIT_PRUNE_INTERVAL_S = 86_400.0
+
+
+def _prune_audit_log_once(store: CampaignStore) -> int:
+    """Remove audit rows past `KALOS_AUDIT_RETENTION_DAYS`. Never raises: a failed
+    prune is logged and the portal keeps serving."""
+    from kalos.portal.config import audit_retention_days
+
+    try:
+        removed = store.prune_audit_log(audit_retention_days())
+    except Exception:  # noqa: BLE001 - retention must not stop the portal
+        log.exception("audit-log retention prune failed")
+        return 0
+    if removed:
+        log.info("audit-log retention: removed %d rows past the retention window", removed)
+    return removed
+
+
+async def _audit_retention_loop(store: CampaignStore) -> None:
+    import asyncio
+
+    while True:
+        await asyncio.sleep(AUDIT_PRUNE_INTERVAL_S)
+        await run_in_threadpool(_prune_audit_log_once, store)
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Open the campaign store before serving the first request.
@@ -156,7 +184,12 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # previous process, then schedules worker processes. KALOS_JOBS_ENABLED=0
     # leaves it off and the job routes answer 503.
     runner = None
+    audit_task = None
     if store is not None:
+        import asyncio
+
+        _prune_audit_log_once(store)
+        audit_task = asyncio.ensure_future(_audit_retention_loop(store))
         try:
             runner = start_job_runner(store)
         except Exception:  # noqa: BLE001 - jobs are optional; the sync routes still work
@@ -164,6 +197,8 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if audit_task is not None:
+            audit_task.cancel()
         if runner is not None:
             stop_job_runner(runner)
 
