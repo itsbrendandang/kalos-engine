@@ -391,7 +391,7 @@ def _resolve_columns(
         # Fail loudly so the caller is never told a declared column was honored
         # when it was not - ids included (a typo'd id leaves the real id in as a
         # feature otherwise).
-        declared_names = [*roles.features, *roles.categoricals, *roles.ids]
+        declared_names = [*roles.features, *roles.categoricals, *roles.ids, *roles.sparse]
         if roles.groups:
             declared_names.append(roles.groups)
         unknown = sorted({c for c in declared_names if c not in df.columns})
@@ -707,7 +707,26 @@ def _alternative_scale_block(
     }
 
 
-def _physical_range(name: str, col: np.ndarray) -> tuple[float, float, int]:
+def _absent_is_zero_columns(cont_feats: list, roles: ColumnRoles | None) -> set[str]:
+    """Continuous feature columns where a BLANK cell means "absent" (0).
+
+    Only two kinds of column qualify: a column the caller declared `sparse` in
+    roles, and a concentration-type column by name (`infer_dimension` ==
+    "concentration": a titer-like analyte, glucose, methanol, a salt, a feed
+    component). For a component like that a blank is a real zero. Every other
+    feature cell is an unknown value: a blank pH is not a pH of 0.0, so its run is
+    dropped through the row accounting instead of being imputed (review C1).
+    """
+    declared = set(roles.sparse) if roles is not None else set()
+    return {
+        str(c) for c in cont_feats
+        if str(c) in declared or infer_dimension(str(c)) == "concentration"
+    }
+
+
+def _physical_range(
+    name: str, col: np.ndarray, *, absent: int = 0
+) -> tuple[float, float, int]:
     """Observed range of `col`, computed over PHYSICALLY POSSIBLE values only.
 
     The design box handed to the optimizer is the observed [min, max] of each
@@ -732,6 +751,7 @@ def _physical_range(name: str, col: np.ndarray) -> tuple[float, float, int]:
     one alongside an error-severity finding.
     """
     lo_obs, hi_obs = float(col.min()), float(col.max())
+    lo_obs, hi_obs = _with_absent(lo_obs, hi_obs, absent)
     dim = infer_dimension(name)
     if dim is None:
         return lo_obs, hi_obs, 0
@@ -739,14 +759,30 @@ def _physical_range(name: str, col: np.ndarray) -> tuple[float, float, int]:
     valid = col[(col >= b.hard_lo) & (col <= b.hard_hi)]
     n_excluded = int(col.size - valid.size)
     if n_excluded == 0 or valid.size == 0:
-        return lo_obs, hi_obs, 0 if valid.size else n_excluded
+        if valid.size:
+            return lo_obs, hi_obs, 0
+        return lo_obs, hi_obs, n_excluded
     lo, hi = float(valid.min()), float(valid.max())
     if hi <= lo:
         # The valid cells are all one value: a zero-width box would collapse the
         # dimension. Keep the real observed span rather than emit a degenerate
         # design; the validation report carries the impossible-value error.
         return lo_obs, hi_obs, n_excluded
+    lo, hi = _with_absent(lo, hi, absent)
     return lo, hi, n_excluded
+
+
+def _with_absent(lo: float, hi: float, absent: int) -> tuple[float, float]:
+    """Widen the box to include 0 when blank cells were read as absent (0).
+
+    Those rows carry a 0 in the fitted design, so the box must contain that point
+    (a sparse component at zero is a real recipe). This is the only value that is
+    not an observed cell, and it is added only for a sparse/concentration column
+    that actually had blanks.
+    """
+    if absent and lo > 0.0:
+        return 0.0, hi
+    return lo, hi
 
 
 def _target_error_context(
@@ -1200,12 +1236,17 @@ def _analyze(
         for c in kept_cats
     }
 
+    # Blank feature cells are absent (0) only for sparse / concentration columns
+    # (see `_absent_is_zero_columns`); for every other feature a blank is missing.
+    absent_zero = _absent_is_zero_columns(cont_feats, roles)
+
     def _row_flags(features: list, cats: list) -> tuple[np.ndarray, np.ndarray]:
         """(incomplete, censored) per row, over every row of the sheet."""
         incomplete = np.isin(tgt_kinds, [BLANK, MISSING, NON_NUMERIC])
         censored = tgt_kinds == CENSORED
         for c in features:
-            incomplete |= np.isin(feat_kind[c], [MISSING, NON_NUMERIC])
+            bad = [MISSING, NON_NUMERIC] if str(c) in absent_zero else [BLANK, MISSING, NON_NUMERIC]
+            incomplete |= np.isin(feat_kind[c], bad)
             censored |= feat_kind[c] == CENSORED
         for c in cats:
             incomplete |= ~cat_ok[c]
@@ -1275,13 +1316,13 @@ def _analyze(
 
     _tally_kinds(str(target), tgt_kinds, blank_is_missing=True)
     for c in cont_feats:
-        _tally_kinds(str(c), feat_kind[c], blank_is_missing=False)
+        _tally_kinds(str(c), feat_kind[c], blank_is_missing=str(c) not in absent_zero)
     for c in kept_cats:
         _tally(str(c), REASON_MISSING, int(((~cat_ok[c]) & active).sum()))
     zero_filled = {
         str(c): int((feat_kind[c][fit_pos] == BLANK).sum())
         for c in cont_feats
-        if int((feat_kind[c][fit_pos] == BLANK).sum())
+        if str(c) in absent_zero and int((feat_kind[c][fit_pos] == BLANK).sum())
     }
 
     if preflight_only:
@@ -1291,7 +1332,13 @@ def _analyze(
     keep_index = df.index[fit_pos]
     y = y_all[fit_pos]
     Xc_raw = Xc_all.iloc[fit_pos]                    # NaN preserved (for grouping)
-    Xc_zf = Xc_raw.fillna(0.0)                       # zero-filled (for the GP + box)
+    # Only absent-zero columns can still hold a blank here (every other feature's
+    # incomplete rows were excluded above), so this zero-fill is the declared
+    # absence convention and nothing else.
+    Xc_zf = Xc_raw.copy()
+    for c in cont_feats:
+        if str(c) in absent_zero:
+            Xc_zf[c] = Xc_raw[c].fillna(0.0)
     if n_rows_dropped or n_censored_rows:
         # Dropping rows can leave only rows that share one target value.
         _refuse_unusable_target(df.loc[keep_index], target, num, profile)
@@ -1303,8 +1350,12 @@ def _analyze(
     cont_arr = Xc_zf.to_numpy(float) if cont_feats else np.empty((len(y), 0))
     box_exclusions: list[dict] = []
     for j, c in enumerate(cont_feats):
-        col = cont_arr[:, j]
-        lower, upper, n_excluded = _physical_range(str(c), col)
+        # The box is built from OBSERVED cells only: blanks (absent-zero columns
+        # only) are counted, not read as values.
+        raw_col = Xc_raw[c].to_numpy(float)
+        observed = raw_col[~np.isnan(raw_col)]
+        n_absent = int(np.isnan(raw_col).sum())
+        lower, upper, n_excluded = _physical_range(str(c), observed, absent=n_absent)
         if n_excluded:
             box_exclusions.append(
                 {"column": str(c), "n_excluded": n_excluded, "lower": lower, "upper": upper}

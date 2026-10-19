@@ -4,6 +4,17 @@ Newest first.
 
 ## Unreleased
 
+### Fixed - review: a blank cell is not 0.0 (C1, critical)
+
+- A blank feature cell was zero-filled for every column, and 0.0 then widened the
+  design box, so proposals landed at pH 0.0 (24 runs, pH 6.0-7.5, three blanks gave
+  proposals down to 0.0). Now only columns declared in `roles.sparse` and
+  concentration-type columns (by name) read a blank as absent (0). Any other blank
+  drops its run through the row accounting (`cells_by_column: missing`).
+- The design box is built from observed cells only. An absent-zero column's box
+  includes 0 only when blanks were read as 0.
+- `ColumnRoles` gains an optional `sparse` list.
+
 ### Fixed - review: factors are not identifiers (H1)
 
 - `medium`, `strain`, `recipe`, `batch`, `campaign`, `group` and `lot` are no longer
