@@ -292,8 +292,8 @@ These are judgement calls for the science owner; the code is unchanged.
   recipes are removed from the noise and ICC statistics, and the variance-mean coupling
   that the heteroscedasticity diagnostic reads (`suggests_transform`) is gone.
 - Evidence: `tests/test_noise_scale_and_producers.py::test_analyze_reports_the_scale_diagnostic`
-  (strict xfail). On that sheet, 13 of 20 recipes' repeated `0.0` readings collapse to
-  one. The diagnostic flips from `suggests_transform: true` to `false`.
+  (strict xfail). On that sheet, 13 repeated `0.0` readings are removed as copies
+  (`noise.n_exact_duplicates: 13`). The diagnostic flips from `suggests_transform: true` to `false`.
 - The rule is implemented as the spec states. Whether a repeated floor reading (a real
   below-LOD result) should be exempt from the copy rule is a product and assay decision.
   A row-id column would let the engine tell a real repeat from a paste; without one the
