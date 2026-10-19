@@ -84,6 +84,44 @@ def _group_indices(X: np.ndarray, decimals: int) -> list[np.ndarray]:
     return [np.asarray(seen[key], dtype=int) for key in order]
 
 
+def _without_exact_copies(
+    X: np.ndarray,
+    y: np.ndarray,
+    *,
+    decimals: int,
+    groups: GroupKeys | None,
+) -> tuple[np.ndarray, np.ndarray, GroupKeys | None, int]:
+    """Drop EXACT COPIES: rows identical to an earlier row in every column.
+
+    A true replicate is a distinct run at the same settings. It has the same
+    factor values but its own measured target, so it carries independent noise
+    information. An exact copy (the same row pasted twice, a re-import) repeats one
+    measurement. Counted as a replicate it gives a zero within-recipe variance,
+    which collapses the noise floor to 0 and the ICC to 1.0 (review M1). Copies are
+    removed before the noise and ICC statistics, and the number removed is returned.
+    """
+    Xa = np.asarray(X, dtype=float)
+    ya = np.asarray(y, dtype=float).reshape(-1)
+    seen: set[tuple[object, ...]] = set()
+    keep = np.ones(Xa.shape[0], dtype=bool)
+    keys = list(groups) if groups is not None else [None] * Xa.shape[0]
+    for i in range(Xa.shape[0]):
+        row = tuple(np.round(Xa[i], decimals).tolist())
+        key = (keys[i], row, round(float(ya[i]), 12))
+        if key in seen:
+            keep[i] = False
+        else:
+            seen.add(key)
+    n_copies = int((~keep).sum())
+    if n_copies == 0:
+        return Xa, ya, groups, 0
+    if groups is None:
+        kept_groups: GroupKeys | None = None
+    else:
+        kept_groups = [k for k, flag in zip(keys, keep) if flag]
+    return Xa[keep], ya[keep], kept_groups, n_copies
+
+
 def aggregate_replicates(
     X: np.ndarray,
     y: np.ndarray,
@@ -209,6 +247,7 @@ def heteroscedasticity_report(
     Needs at least `MIN_REPLICATED_FOR_HETERO` replicated recipes: correlating
     variance against mean over two points is not a measurement.
     """
+    X, y, groups, _n_copies = _without_exact_copies(X, y, decimals=decimals, groups=groups)
     ya = np.asarray(y, dtype=float).reshape(-1)
     _, y_mean, y_var, n_reps = aggregate_replicates(X, y, decimals=decimals, groups=groups)
     replicated = n_reps >= 2
@@ -330,8 +369,12 @@ def noise_report(
         differences rather than assay noise; `nan` if either input is `nan`
         or the denominator is 0.
     """
-    X_unique, y_mean, y_var, n_reps = aggregate_replicates(
+    n_rows = int(np.asarray(X).shape[0])
+    X_nc, y_nc, groups_nc, n_copies = _without_exact_copies(
         X, y, decimals=decimals, groups=groups
+    )
+    X_unique, y_mean, y_var, n_reps = aggregate_replicates(
+        X_nc, y_nc, decimals=decimals, groups=groups_nc
     )
     n_recipes = X_unique.shape[0]
     replicated = n_reps >= 2
@@ -347,10 +390,12 @@ def noise_report(
         icc = float(signal_var / denom) if denom > 0 else float("nan")
 
     return {
-        "n_rows": int(np.asarray(X).shape[0]),
+        "n_rows": n_rows,
         "n_recipes": n_recipes,
         "n_replicated": n_replicated,
         "noise_var": noise_var,
         "signal_var": signal_var,
         "icc": icc,
+        # Exact copies removed before the statistics above; they are not replicates.
+        "n_exact_duplicates": int(n_copies),
     }

@@ -263,14 +263,21 @@ def test_provenance_reports_every_column_status():
 # --- privacy / anonymize ----------------------------------------------------- #
 
 def test_anonymize_masks_only_identifier_columns():
-    plain = portal._analyze(_good_sheet())
-    anon = portal._analyze(_good_sheet(), anonymize=True)
+    # An identifier group (`batch_id`, declared): pseudonymized under anonymize. A
+    # factor such as `medium` is not an identifier and is published as sent (H1/H4).
+    from kalos.domains import ColumnRoles
+
+    df = _good_sheet()
+    df["batch_id"] = df["medium"]
+    roles = ColumnRoles.from_dict({"target": "lipase_titer", "groups": "batch_id"})
+    plain = portal._analyze(df, roles=roles)
+    anon = portal._analyze(df, roles=roles, anonymize=True)
     # process features and target keep their real names (owner UI needs them)
     assert anon["target"] == "lipase_titer"
     assert "Methanol" in anon["features"]
     # the id-type group column is pseudonymized
-    assert plain["group_col"] == "medium"
-    assert anon["group_col"] != "medium" and anon["group_col"].startswith("col_")
+    assert plain["group_col"] == "batch_id"
+    assert anon["group_col"] != "batch_id" and anon["group_col"].startswith("col_")
     # provenance keeps feature/target names but masks the id column
     anon_prov = {r["status"]: r["name"] for r in anon["provenance"]}
     assert anon_prov["target"] == "lipase_titer"

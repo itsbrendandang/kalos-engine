@@ -161,21 +161,37 @@ def test_pending_outside_the_box_is_clamped_not_ignored():
 
 
 def test_encode_pending_matches_the_fit_conventions():
-    """Continuous components zero-fill like `Xc_zf`; categoricals become codes."""
-    encoded = _encode_pending(
+    """Categoricals become codes; a sparse (absent-zero) component zero-fills."""
+    encoded, dropped = _encode_pending(
         [{"Glucose": 1.0, "Strain": "A"}, {"Strain": "B"}],
         ["Glucose"],
         ["Strain"],
         {"Strain": {"A": 0, "B": 1}},
         2,
+        absent_zero={"Glucose"},
     )
     assert encoded.tolist() == [[1.0, 0.0], [0.0, 1.0]]
+    assert dropped == 0
+
+
+def test_a_missing_continuous_component_drops_the_run_not_zero_fills_it():
+    """Review H2: a recipe with no pH is unknown, not pH 0.0. It is dropped and
+    counted, exactly as a missing categorical level already was."""
+    encoded, dropped = _encode_pending(
+        [{"pH": 6.5, "Strain": "A"}, {"Strain": "B"}],
+        ["pH"],
+        ["Strain"],
+        {"Strain": {"A": 0, "B": 1}},
+        2,
+    )
+    assert encoded.tolist() == [[6.5, 0.0]]
+    assert dropped == 1
 
 
 def test_a_recipe_naming_an_unknown_level_is_dropped():
     """It has no coordinate in this design, and inventing one (code 0) would mark
     the wrong region taken - worse than not knowing about the run at all."""
-    encoded = _encode_pending(
+    encoded, dropped = _encode_pending(
         [{"Glucose": 1.0, "Strain": "A"}, {"Glucose": 2.0, "Strain": "unseen"}],
         ["Glucose"],
         ["Strain"],
@@ -183,15 +199,17 @@ def test_a_recipe_naming_an_unknown_level_is_dropped():
         2,
     )
     assert encoded.tolist() == [[1.0, 0.0]]
+    assert dropped == 1
 
 
 @pytest.mark.parametrize("empty", [None, [], pd.DataFrame()], ids=["none", "list", "frame"])
 def test_encode_pending_returns_none_when_there_is_nothing_running(empty):
-    assert _encode_pending(empty, ["Glucose"], [], {}, 1) is None
+    assert _encode_pending(empty, ["Glucose"], [], {}, 1) == (None, 0)
 
 
 def test_a_non_numeric_component_does_not_raise():
-    assert _encode_pending([{"Glucose": "n/a"}], ["Glucose"], [], {}, 1).tolist() == [[0.0]]
+    """It is dropped (and counted), not zero-filled, and never raises."""
+    assert _encode_pending([{"pH": "n/a"}], ["pH"], [], {}, 1) == (None, 1)
 
 
 # --- through the engine ----------------------------------------------------- #
@@ -229,7 +247,9 @@ def test_the_count_reflects_what_survived_encoding_not_what_was_passed():
         target="lipase_titer",
         pending=[{"Methanol": 3.9, "pH": 6.5}, {"Methanol": "n/a", "pH": None}],
     )
-    assert out["n_pending_considered"] == 2  # both encodable: blanks zero-fill
+    # The blank pH is unknown, not 0.0 (review H2): that run is dropped and counted.
+    assert out["n_pending_considered"] == 1
+    assert out["n_pending_dropped"] == 1
     assert out["proposals"]
 
 

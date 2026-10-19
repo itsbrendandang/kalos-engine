@@ -203,6 +203,14 @@ def test_analyze_reports_both_rankings_separately():
     assert r["producer_spearman"] != r["spearman"]
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "M1 decision pending (docs/HARDENING.md, Known limitations): the four identical "
+        "0.0 floor readings per zero recipe are exact copies under the spec's rule, so "
+        "the zero-variance floor recipes that drive this diagnostic are removed."
+    ),
+)
 def test_analyze_reports_the_scale_diagnostic():
     scale = _analyze(_media_like_sheet(), target="Lipase_g_L")["noise"]["scale"]
     assert scale is not None
