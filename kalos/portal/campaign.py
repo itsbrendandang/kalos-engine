@@ -896,15 +896,22 @@ class CampaignStore:
             )
 
     def prune_audit_log(self, retention_days: int, *, now: float | None = None) -> int:
-        """Delete audit rows older than `retention_days`, for every tenant (a
-        maintenance operation, not a tenant request). Returns the rows removed.
-        Run at startup and daily (kalos/portal/app.py, KALOS_AUDIT_RETENTION_DAYS)."""
+        """Delete audit rows older than `retention_days`, for every tenant. Returns
+        the rows removed. A maintenance pass, run at startup and daily
+        (kalos/portal/app.py, KALOS_AUDIT_RETENTION_DAYS). It goes tenant by
+        tenant so every statement that touches a tenant table names its tenant."""
         if retention_days < 1:
             raise ValueError("retention_days must be at least 1")
         cutoff = (time.time() if now is None else now) - retention_days * 86_400.0
+        removed = 0
         with self._txn(write=True) as conn:
-            cur = conn.execute("DELETE FROM audit_log WHERE ts < ?", (cutoff,))
-            return int(cur.rowcount or 0)
+            tenants = [row[0] for row in conn.execute("SELECT DISTINCT tenant FROM audit_log")]
+            for tenant in tenants:
+                cur = conn.execute(
+                    "DELETE FROM audit_log WHERE tenant = ? AND ts < ?", (tenant, cutoff),
+                )
+                removed += int(cur.rowcount or 0)
+        return removed
 
     def audit_entries(self, *, tenant: str, limit: int = 100) -> list[dict[str, Any]]:
         """`tenant`'s most recent audit entries, newest first."""
