@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Honest one-paragraph read.
     print("Honest read:")
-    for name, noise, s, saved in lines_for_verdict:
+    for name, noise, s, _saved in lines_for_verdict:
         bo = s["per_strategy"]["bo"]["final_simple_regret"]
         lhs = s["per_strategy"]["lhs"]["final_simple_regret"]
         edge = lhs - bo  # positive: BO's regret is lower (better) than LHS

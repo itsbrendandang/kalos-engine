@@ -82,7 +82,12 @@ from kalos.normalize.units import base_unit_label, canonical_suffix
 
 from .evaluation import leave_one_scale_out_report
 from .features import GeometryAssumptions, PowerNumberAssumption, VantRietParams
-from .transfer import DEFAULT_SCALE_FEATURE_CONFIG, ScaleFeatureConfig, ScaleUpTransferModel, build_feature_matrix
+from .transfer import (
+    DEFAULT_SCALE_FEATURE_CONFIG,
+    ScaleFeatureConfig,
+    ScaleUpTransferModel,
+    build_feature_matrix,
+)
 
 # --- named constants (every one of these is printed in the readout's ----- #
 # --- provenance section - see Code Quality review finding 1). ----------- #

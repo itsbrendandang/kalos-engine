@@ -35,7 +35,13 @@ from scipy.stats import qmc
 from kalos.core.optimize import propose
 from kalos.core.surrogate import Surrogate
 
-from .objectives import MixedObjective, Objective, ackley, bioprocess_like, gaussian_bump
+from .objectives import (
+    MixedObjective,
+    Objective,
+    ackley,
+    bioprocess_like,
+    gaussian_bump,
+)
 
 # ---- Fixed design constants (docs/BENCHMARK.md sections 3-5) ---------------------
 

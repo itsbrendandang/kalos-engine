@@ -9,7 +9,12 @@ import pandas as pd
 import pytest
 
 from kalos.scale.features import PHYSICS_FEATURE_COLUMNS, SCALE_ONLY_FEATURE_COLUMNS
-from kalos.scale.transfer import DEFAULT_SCALE_FEATURE_CONFIG, ScaleFeatureConfig, ScaleUpTransferModel, build_feature_matrix
+from kalos.scale.transfer import (
+    DEFAULT_SCALE_FEATURE_CONFIG,
+    ScaleFeatureConfig,
+    ScaleUpTransferModel,
+    build_feature_matrix,
+)
 
 _RNG = np.random.default_rng(20260825)
 

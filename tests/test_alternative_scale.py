@@ -38,7 +38,6 @@ pytest.importorskip("torch")
 
 from kalos.portal.analysis import _alternative_scale_block, _analyze  # noqa: E402
 
-
 # --- fixtures ----------------------------------------------------------------- #
 
 

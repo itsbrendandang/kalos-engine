@@ -87,7 +87,7 @@ def make_splits(
     if stratify is None:
         stratify = _is_imbalanced(y_arr)
     if n_splits > n_groups:
-        warnings.warn(f"n_splits={n_splits} > n_groups={n_groups}; reducing to {n_groups}.")
+        warnings.warn(f"n_splits={n_splits} > n_groups={n_groups}; reducing to {n_groups}.", stacklevel=2)
         n_splits = n_groups
 
     use_strat = bool(stratify) and y_arr.dtype.kind in "iubO" and len(pd.unique(y_arr)) >= 2
@@ -97,7 +97,8 @@ def make_splits(
         warnings.warn(
             "n_splits < 2 after small-data guards: too few groups for a "
             "leakage-free split. Returning no splits (cross-validation "
-            "unavailable) rather than a train==validation dummy."
+            "unavailable) rather than a train==validation dummy.",
+            stacklevel=2,
         )
         return []
 

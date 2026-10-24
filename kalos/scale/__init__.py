@@ -44,7 +44,12 @@ from .features import (
     superficial_gas_velocity_proxy,
     tank_geometry_proxy,
 )
-from .transfer import DEFAULT_SCALE_FEATURE_CONFIG, ScaleFeatureConfig, ScaleUpTransferModel, build_feature_matrix
+from .transfer import (
+    DEFAULT_SCALE_FEATURE_CONFIG,
+    ScaleFeatureConfig,
+    ScaleUpTransferModel,
+    build_feature_matrix,
+)
 
 __all__ = [
     "GeometryAssumptions",

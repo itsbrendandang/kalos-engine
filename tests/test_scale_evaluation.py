@@ -8,7 +8,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kalos.scale.evaluation import leave_one_scale_out_report, _direction, _naive_carry_small_scale_mean
+from kalos.scale.evaluation import (
+    _direction,
+    _naive_carry_small_scale_mean,
+    leave_one_scale_out_report,
+)
 
 _RNG = np.random.default_rng(20260825)
 _SCALES = [1.0, 10.0, 100.0, 1000.0]

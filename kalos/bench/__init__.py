@@ -10,8 +10,8 @@ regret is measurable and the whole thing is reproducible from committed code),
 while sweeping observation noise - the same measurement noise that governs
 whether the model helps at all on real, noisy assay data.
 """
-from .objectives import MixedObjective, Objective, ackley, gaussian_bump, mixed_bump  # noqa: F401
 from .benchmark import run_benchmark, run_mixed_one, run_one, summarize  # noqa: F401
+from .objectives import MixedObjective, Objective, ackley, gaussian_bump, mixed_bump  # noqa: F401
 
 __all__ = [
     "Objective",

@@ -1099,7 +1099,9 @@ def parse_upload(
     # `target="1"` and would mix types in every name list downstream.
     parsed.df.columns = parsed.df.columns.map(str)
     if parsed.sheet_used is not None:
-        from kalos.data.anonymizer import _hash  # deferred: keep uploads' imports minimal
+        from kalos.data.anonymizer import (
+            _hash,  # deferred: keep uploads' imports minimal
+        )
 
         parsed.sheet_index = parsed.sheets.index(parsed.sheet_used)
         parsed.sheet_hash = _hash(parsed.sheet_used)

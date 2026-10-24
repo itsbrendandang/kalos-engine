@@ -33,7 +33,6 @@ pytest.importorskip("botorch")
 
 from kalos.core.evaluation import grouped_cv_report  # noqa: E402
 
-
 # --- fixtures ----------------------------------------------------------- #
 
 

@@ -13,8 +13,8 @@ for a real parse by Compose itself, not just PyYAML; it skips cleanly where
 from __future__ import annotations
 
 import re
-import subprocess
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest

@@ -1,7 +1,7 @@
+from .conformal import conformal_interval, split_conformal
+from .drivers import bootstrap_spearman, rank_drivers, spearman_driver_matrix
 from .gates import GatesConfig, PromotionResult, check_gates
-from .splits import row_hash_groups, make_splits, assert_no_group_leakage
-from .drivers import spearman_driver_matrix, bootstrap_spearman, rank_drivers
-from .conformal import split_conformal, conformal_interval
+from .splits import assert_no_group_leakage, make_splits, row_hash_groups
 
 # `kalos.core` is torch-free except for three modules with top-level
 # torch/botorch/gpytorch imports (~220 MB of RSS): surrogate.py, optimize.py,

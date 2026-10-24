@@ -44,9 +44,16 @@ from kalos.portal.campaign import (
     CampaignStore,
     get_campaign_store,
 )
-from kalos.portal.campaign_routes import campaign_error_response, campaign_not_found_response
+from kalos.portal.campaign_routes import (
+    campaign_error_response,
+    campaign_not_found_response,
+)
 from kalos.portal.campaigns_api import CAMPAIGN_UPLOAD_PATH
-from kalos.portal.limits import RequestSizeLimitMiddleware, UploadAuthPrecheckMiddleware, route_path
+from kalos.portal.limits import (
+    RequestSizeLimitMiddleware,
+    UploadAuthPrecheckMiddleware,
+    route_path,
+)
 from kalos.portal.migrate import CAMPAIGN_ID_PATTERN
 from kalos.portal.pipeline import preflight_upload
 
@@ -250,7 +257,9 @@ async def submit_job(
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
     """Queue an analysis of this run sheet into this campaign. 202 + the job."""
-    from kalos.portal.app import upload_error_response  # deferred: app imports this module
+    from kalos.portal.app import (
+        upload_error_response,  # deferred: app imports this module
+    )
 
     job_id: str | None = None
     if not _valid_campaign_id(campaign_id):

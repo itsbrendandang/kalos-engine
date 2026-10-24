@@ -5,8 +5,8 @@ so the model never "predicts" titer from another measured output (leakage).
 """
 from __future__ import annotations
 
-import dataclasses
 import contextlib
+import dataclasses
 import functools
 import gc
 import re
@@ -18,9 +18,13 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
-from kalos.core.drivers import benjamini_hochberg, bootstrap_spearman, spearman_driver_matrix
 from kalos import __version__ as ENGINE_VERSION
 from kalos.core.conformal import q_from_residuals
+from kalos.core.drivers import (
+    benjamini_hochberg,
+    bootstrap_spearman,
+    spearman_driver_matrix,
+)
 from kalos.core.gp_shape import gp_shape_report
 from kalos.core.replicates import (
     aggregate_replicates,
@@ -36,16 +40,6 @@ from kalos.domains import (
     Dimension,
     DomainProfile,
 )
-from kalos.portal.uploads import (
-    MAX_FIT_ROWS,
-    MIN_FIT_ROWS,
-    ParsedUpload,
-    UploadRejected,
-    _ERR_TOO_MANY_FIT_ROWS,
-    clip_name,
-    numeric_columns,
-)
-from kalos.portal.config import validation_mode_setting
 from kalos.portal.cells import (
     BLANK,
     CENSORED,
@@ -58,10 +52,20 @@ from kalos.portal.cells import (
     classify_cells,
     is_null_label,
 )
+from kalos.portal.config import validation_mode_setting
+from kalos.portal.uploads import (
+    _ERR_TOO_MANY_FIT_ROWS,
+    MAX_FIT_ROWS,
+    MIN_FIT_ROWS,
+    ParsedUpload,
+    UploadRejected,
+    clip_name,
+    numeric_columns,
+)
 from kalos.portal.validate import column_provenance, provenance_dicts
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
-from kalos.validation.report import Finding, ValidationReport, build_report
 from kalos.validation.bounds import DIMENSION_BOUNDS, infer_dimension
+from kalos.validation.report import Finding, ValidationReport, build_report
 from kalos.validation.target import TargetVariation, assess_target_variation
 
 # NOTE: `kalos.core.evaluation` (which imports `kalos.core.surrogate`),
@@ -1142,13 +1146,17 @@ def _analyze_body(
             producer_only_spearman,
             top_k_overlap,
         )
-        from kalos.core.feasibility import FeasibilityClassifier, feasibility_cv_report, feasible_labels
+        from kalos.core.feasibility import (
+            FeasibilityClassifier,
+            feasibility_cv_report,
+            feasible_labels,
+        )
         from kalos.core.gates import GatesConfig, check_gates
         from kalos.core.optimize import MAX_MIXED_COMBOS, propose_batch
         from kalos.core.surrogate import FitError, Surrogate
         from kalos.portal.viz_utils import (
-            _embedding_pca,
             _correlation_spearman,
+            _embedding_pca,
             _response_surface_gp,
         )
 
@@ -1419,7 +1427,7 @@ def _analyze_body(
     dims: list[Dimension] = []
     cont_arr = Xc_zf.to_numpy(float) if cont_feats else np.empty((len(y), 0))
     box_exclusions: list[dict] = []
-    for j, c in enumerate(cont_feats):
+    for c in cont_feats:
         # The box is built from OBSERVED cells only: blanks (absent-zero columns
         # only) are counted, not read as values.
         raw_col = Xc_raw[c].to_numpy(float)

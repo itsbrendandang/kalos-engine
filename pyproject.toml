@@ -71,9 +71,12 @@ testpaths = ["tests"]
 # findings in kalos/ alone (UP/B/SIM/FURB/PL/RUF/I), which is what broke CI on
 # 2026-07-24. These four are ruff's classic defaults and the set this codebase
 # was written against; both 0.15 and 0.16 are clean under them.
-# Adopting the wider set is a real cleanup worth doing on its own branch -- most
+# B and I (bugbear, import sorting) were adopted 2026-10; the rest of the wider set is a real cleanup worth doing on its own branch -- most
 # of it is `ruff check --fix`-able -- but it is not a lint-config change.
-select = ["E4", "E7", "E9", "F"]
+select = ["E4", "E7", "E9", "F", "B", "I"]
+# B008: FastAPI's Depends()/Query() in defaults is the framework idiom.
+# B905: zip(strict=) needs a py3.10 floor audit; adopt separately.
+ignore = ["B008", "B905"]
 
 [tool.mypy]
 python_version = "3.12"

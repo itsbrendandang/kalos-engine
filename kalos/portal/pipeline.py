@@ -29,7 +29,12 @@ from typing import Any
 
 import pandas as pd
 
-from kalos.portal.uploads import ParsedUpload, UploadRejected, parse_upload, scrubbed_failure
+from kalos.portal.uploads import (
+    ParsedUpload,
+    UploadRejected,
+    parse_upload,
+    scrubbed_failure,
+)
 
 log = logging.getLogger("kalos.portal")
 

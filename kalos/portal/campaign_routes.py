@@ -20,9 +20,8 @@ from fastapi.responses import JSONResponse
 from pydantic import AllowInfNan, BaseModel, ConfigDict, Field, StringConstraints
 from pydantic import Strict as _Strict
 
-from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_in_slot
-
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
+from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_in_slot
 from kalos.portal.campaign import (
     CampaignArchived,
     CampaignConflict,
@@ -31,7 +30,12 @@ from kalos.portal.campaign import (
     CampaignStore,
     get_campaign_store,
 )
-from kalos.portal.uploads import MAX_COLUMNS, UploadRejected, rejection_counts, scrubbed_failure
+from kalos.portal.uploads import (
+    MAX_COLUMNS,
+    UploadRejected,
+    rejection_counts,
+    scrubbed_failure,
+)
 
 log = logging.getLogger("kalos.portal")
 

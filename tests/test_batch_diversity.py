@@ -24,9 +24,9 @@ import kalos.core.optimize as optimize  # noqa: E402
 from kalos.core.optimize import (  # noqa: E402
     NEAR_DUPLICATE_TOL,
     _is_distinct,
+    proposal_separation,
     propose,
     propose_batch,
-    proposal_separation,
 )
 from kalos.core.surrogate import Surrogate, sanitize_bounds  # noqa: E402
 

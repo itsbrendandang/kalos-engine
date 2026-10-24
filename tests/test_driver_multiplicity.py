@@ -37,7 +37,6 @@ from kalos.portal.analysis import (  # noqa: E402
     _analyze,
 )
 
-
 # --- the BH primitive ------------------------------------------------------- #
 
 

@@ -1,10 +1,10 @@
 """Kalos platform: BoTorch Bayesian optimization for bioprocess development, with
 NVIDIA BioNeMo / ESM-2 protein features and a FastAPI portal.
 """
-from .core.gates import GatesConfig, PromotionResult, check_gates
-from .core.splits import row_hash_groups, make_splits, assert_no_group_leakage
-from .core.drivers import bootstrap_spearman, rank_drivers
 from .core.conformal import split_conformal
+from .core.drivers import bootstrap_spearman, rank_drivers
+from .core.gates import GatesConfig, PromotionResult, check_gates
+from .core.splits import assert_no_group_leakage, make_splits, row_hash_groups
 from .data.anonymizer import Anonymizer
 
 __version__ = "0.1.0"

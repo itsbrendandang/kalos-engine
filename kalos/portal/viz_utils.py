@@ -11,8 +11,12 @@ This matches the existing `cv_logo` / `alternative_scale` pattern.
 """
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 from scipy.stats import spearmanr
+
+logger = logging.getLogger(__name__)
 
 
 def _embedding_pca(
@@ -95,6 +99,7 @@ def _embedding_pca(
             "points": [[round(float(pc1[i]), 4), round(float(pc2[i]), 4), round(float(y[i]), 4)] for i in range(n)],
         }
     except Exception:
+        logger.exception("viz computation failed")
         return {"reason": "PCA computation failed"}
 
 
@@ -172,6 +177,7 @@ def _correlation_spearman(
             "matrix": matrix,
         }
     except Exception:
+        logger.exception("viz computation failed")
         return {"reason": "Spearman correlation computation failed"}
 
 
@@ -274,4 +280,5 @@ def _response_surface_gp(
             "incumbent_basis": incumbent_basis,
         }
     except Exception:
+        logger.exception("viz computation failed")
         return {"reason": "Response surface computation failed"}

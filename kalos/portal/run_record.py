@@ -175,11 +175,11 @@ def build(
     those bytes, not over a re-serialized frame."""
     if kind not in KINDS:
         raise ValueError(f"unknown run kind {kind!r}")
-    from kalos.portal.uploads import MAX_FIT_ROWS  # deferred, as for validation_mode
     # Deferred: kalos.portal.analysis imports cleanly without torch, but this
     # module should not pull the analysis stack in at import time. Reading the
     # mode through analysis.validation_mode keeps one definition of the rule.
     from kalos.portal.analysis import validation_mode
+    from kalos.portal.uploads import MAX_FIT_ROWS  # deferred, as for validation_mode
 
     roles: dict[str, Any] | None = None
     if roles_json.strip():

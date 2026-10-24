@@ -38,7 +38,6 @@ pytest.importorskip("torch")
 
 from kalos.portal.analysis import _analyze  # noqa: E402
 
-
 # --- the primitive: an explicit key beats re-deriving one from values -------- #
 
 

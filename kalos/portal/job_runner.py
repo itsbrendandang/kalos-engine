@@ -42,8 +42,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from kalos.portal import busy, jobs
-from kalos.portal.limits import upload_read_timeout_s
 from kalos.portal.busy import AnalysisLimiter, Lease, limiter
+from kalos.portal.limits import upload_read_timeout_s
 
 if TYPE_CHECKING:
     from kalos.portal.campaign import CampaignStore

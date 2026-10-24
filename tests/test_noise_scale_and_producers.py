@@ -40,7 +40,6 @@ pytest.importorskip("torch")
 
 from kalos.portal.analysis import _analyze  # noqa: E402
 
-
 # --- producer-only ranking --------------------------------------------------- #
 
 

@@ -77,7 +77,11 @@ from numpy.typing import ArrayLike, NDArray
 
 from kalos.core.surrogate import Surrogate
 
-from .candidates import MultiFidelitySurrogate, PhysicsMeanSurrogate, ScaleCandidateModel
+from .candidates import (
+    MultiFidelitySurrogate,
+    PhysicsMeanSurrogate,
+    ScaleCandidateModel,
+)
 from .features import (
     DEFAULT_GEOMETRY,
     DEFAULT_POWER_NUMBER,

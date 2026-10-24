@@ -51,7 +51,6 @@ from kalos.portal.analysis import (  # noqa: E402
     _analyze,
 )
 
-
 # --- a known case: a calibrated coin, checked at the metric level ----------- #
 
 

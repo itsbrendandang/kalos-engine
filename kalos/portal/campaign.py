@@ -57,9 +57,11 @@ import pandas as pd
 from kalos.portal.migrate import (
     CAMPAIGN_ID_PATTERN,
     DB_FILENAME,
-    campaigns_table_is_v1_compatible as _campaigns_table_is_compatible,
     connect,
     ensure_schema,
+)
+from kalos.portal.migrate import (
+    campaigns_table_is_v1_compatible as _campaigns_table_is_compatible,
 )
 from kalos.portal.tenancy import validate_tenant_id
 
@@ -527,7 +529,9 @@ class CampaignStore:
         `on_commit(conn, new_generation)`, run inside the SAME transaction
         after the write; if it raises, nothing is written.
         """
-        from kalos.portal.serialization import _json_safe_records  # local: avoids a cycle at import time
+        from kalos.portal.serialization import (
+            _json_safe_records,  # local: avoids a cycle at import time
+        )
 
         self._check(tenant, campaign_id)
         if base_rows is None:

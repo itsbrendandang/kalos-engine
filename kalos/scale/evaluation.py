@@ -73,7 +73,11 @@ from kalos.core.evaluation import logo_report
 from kalos.core.surrogate import Surrogate
 
 from .candidates import ScaleCandidateModel
-from .transfer import DEFAULT_SCALE_FEATURE_CONFIG, ScaleFeatureConfig, build_feature_matrix
+from .transfer import (
+    DEFAULT_SCALE_FEATURE_CONFIG,
+    ScaleFeatureConfig,
+    build_feature_matrix,
+)
 
 _MIN_SPEARMAN_N = 3
 # Below three points a rank correlation is not a measurement (matches

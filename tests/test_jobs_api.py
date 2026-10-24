@@ -26,8 +26,8 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from kalos.portal import busy, job_worker, jobs, jobs_api  # noqa: E402
 from kalos.portal import app as portal_module  # noqa: E402
+from kalos.portal import busy, job_worker, jobs, jobs_api  # noqa: E402
 from kalos.portal import campaign as campaign_module  # noqa: E402
 from kalos.portal.app import app  # noqa: E402
 from kalos.portal.auth import Principal  # noqa: E402

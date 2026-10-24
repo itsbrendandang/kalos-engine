@@ -31,8 +31,8 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("torch")
 
-from kalos.portal.analysis import _analyze, identifier_pattern  # noqa: E402
 from kalos.domains import BIOPROCESS_PROFILE  # noqa: E402
+from kalos.portal.analysis import _analyze, identifier_pattern  # noqa: E402
 
 # Compound identifier headers a real client sheet actually carries.
 _COMPOUND_IDS = [

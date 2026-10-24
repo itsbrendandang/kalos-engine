@@ -24,10 +24,10 @@ import functools
 import logging
 import os
 import re
-from typing import Any
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -37,8 +37,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
-
-from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively, run_in_slot
 
 from kalos.portal.analysis import _analyze, _annotate
 from kalos.portal.auth import (
@@ -50,48 +48,56 @@ from kalos.portal.auth import (
     require_scope,
 )
 from kalos.portal.auth_errors import JwtConfigError
-from kalos.portal.jwt_auth import log_config_error_once
+from kalos.portal.busy import (
+    RETRY_AFTER_SECONDS,
+    AnalysisBusy,
+    run_exclusively,
+    run_in_slot,
+)
+from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_store
+from kalos.portal.campaign_routes import audit as _audit
+from kalos.portal.campaign_routes import campaign_error_response
+from kalos.portal.campaign_routes import router as _campaign_router
+from kalos.portal.campaigns_api import router as _campaigns_router
 from kalos.portal.config import (
     ProductionConfigError,
     assert_production_posture,
     cors_config,
     deployment_env,
-    is_production,
     is_local_client,
+    is_production,
     log_security_posture,
     open_access_explicitly_allowed,
 )
-from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_store
+from kalos.portal.jobs_api import JobUploadAuthPrecheck, JobUploadSizeLimit
+from kalos.portal.jobs_api import router as _jobs_router
+from kalos.portal.jwt_auth import log_config_error_once
 from kalos.portal.limits import (
     MULTIPART_OVERHEAD_BYTES,
     max_request_bytes,
-    upload_read_timeout_s,
     route_path,
+    upload_read_timeout_s,
 )
 from kalos.portal.migrate import legacy_latest_filename
-from kalos.portal.tenancy import validate_tenant_id
-from kalos.portal.campaign_routes import audit as _audit
-from kalos.portal.campaign_routes import campaign_error_response
-from kalos.portal.campaign_routes import router as _campaign_router
-from kalos.portal.campaigns_api import router as _campaigns_router
-from kalos.portal.jobs_api import JobUploadAuthPrecheck, JobUploadSizeLimit
-from kalos.portal.jobs_api import router as _jobs_router
 from kalos.portal.pipeline import compute_upload_analysis, publish_upload_analysis
 from kalos.portal.scale_routes import router as _scale_router
+from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.uploads import (
+    _ERR_FIT,
+    _ERR_PARSE,
+    _ERR_TOO_MANY_FIT_ROWS,
     MAX_COLUMNS,
     MAX_CSV_ROWS,
     MAX_UPLOAD_BYTES,
     MAX_XLSX_CELLS,
     UploadRejected,
-    _ERR_FIT,
-    _ERR_PARSE,
-    _ERR_TOO_MANY_FIT_ROWS,
     _parse_upload,
     parse_upload,
-    rejection_counts as _rejection_counts,
     safe_context,
     scrubbed_failure,
+)
+from kalos.portal.uploads import (
+    rejection_counts as _rejection_counts,
 )
 from kalos.providers import provider_status
 
@@ -568,7 +574,10 @@ def _single_compute(rounds: int, q: int) -> dict:
 
 
 def _multi_compute(rounds: int, q: int) -> dict:
-    from kalos.core.multiobjective import MultiObjectiveSurrogate, propose_multiobjective
+    from kalos.core.multiobjective import (
+        MultiObjectiveSurrogate,
+        propose_multiobjective,
+    )
     from kalos.core.surrogate import DEVICE, DTYPE
 
     _ensure_torch_threads()

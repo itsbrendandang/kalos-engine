@@ -396,7 +396,7 @@ def classify_latest_files(
             candidates.append((path, stem, False))
 
     # hex files first, so they win any collision with an old-style file
-    for path, tenant, is_hex in sorted(candidates, key=lambda c: not c[2]):
+    for path, tenant, _is_hex in sorted(candidates, key=lambda c: not c[2]):
         if tenant in imports:
             skipped.append(LatestSkip(path.name, f"superseded by {imports[tenant].filename}"))
             continue

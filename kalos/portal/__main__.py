@@ -20,10 +20,9 @@ from typing import IO
 
 import uvicorn
 
+from kalos.envconfig import ConfigError
 from kalos.portal import engine_lock
 from kalos.portal.auth import AuthConfigError, get_authenticator
-from kalos.envconfig import ConfigError
-from kalos.portal.job_runner import RunnerLocked, check_startup_config
 from kalos.portal.config import (
     InsecureBindError,
     ProductionConfigError,
@@ -31,6 +30,7 @@ from kalos.portal.config import (
     assert_safe_exposure,
     check_env_settings,
 )
+from kalos.portal.job_runner import RunnerLocked, check_startup_config
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8050

@@ -9,8 +9,8 @@ import hashlib
 import json
 import os
 import re
-import subprocess
 import sqlite3
+import subprocess
 import sys
 import threading
 import time
@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kalos.portal import busy, jobs, job_runner, job_worker
+from kalos.portal import busy, job_runner, job_worker, jobs
 from kalos.portal.campaign import CampaignConflict, CampaignStore
 from kalos.portal.job_runner import JobRunner, ThreadWorker
 from kalos.portal.uploads import MAX_UPLOAD_BYTES

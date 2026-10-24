@@ -76,7 +76,7 @@ def test_the_recipes_carry_pseudonyms_not_the_level_values():
     })
     out = _analyze(_people_sheet(), target="lipase_titer", roles=roles, anonymize=True)
     for row in out["proposals"]:
-        for key, value in row["recipe"].items():
+        for _key, value in row["recipe"].items():
             if isinstance(value, str):
                 assert value not in _NAMES
                 assert value.startswith("level_")

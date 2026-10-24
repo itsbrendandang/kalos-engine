@@ -7,7 +7,11 @@ import numpy as np
 import pandas as pd
 
 from kalos.bench.pool import pool_from_frame, run_pool
-from kalos.core.replicates import aggregate_replicates, estimate_noise_floor, noise_report
+from kalos.core.replicates import (
+    aggregate_replicates,
+    estimate_noise_floor,
+    noise_report,
+)
 from kalos.core.surrogate import Surrogate
 
 

@@ -31,6 +31,7 @@ pytest.importorskip("torch")
 pytest.importorskip("botorch")
 
 import torch  # noqa: E402
+from botorch.acquisition.logei import qLogNoisyExpectedImprovement  # noqa: E402
 
 import kalos.portal.analysis as analysis_mod  # noqa: E402
 from kalos.core.feasibility import FeasibilityClassifier, feasible_labels  # noqa: E402
@@ -41,8 +42,6 @@ from kalos.core.optimize import (  # noqa: E402
 )
 from kalos.core.surrogate import Surrogate  # noqa: E402
 from kalos.portal.analysis import GATE_MIN_N_INFEASIBLE, _analyze  # noqa: E402
-
-from botorch.acquisition.logei import qLogNoisyExpectedImprovement  # noqa: E402
 
 
 def _zero_inflated_sheet(seed: int = 42, n: int = 100) -> pd.DataFrame:
