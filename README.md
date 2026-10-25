@@ -126,7 +126,7 @@ Current and planned request flows: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md
 
 ## Local development
 
-Python 3.11 or later is needed. CI uses Python 3.12. All tools are free and open source.
+Python 3.11 or later is needed. All tools are free and open source.
 
 ```bash
 python -m pip install -e .               # core, torch-free
@@ -252,7 +252,7 @@ This section compares Kalos's proposal path with these methods. They are random 
 The protocol was committed in [`docs/BENCHMARK.md`](docs/BENCHMARK.md) before the run. It covers tasks, seeds, budgets, batch and pending settings, endpoints, and statistics. Raw results are in [`benchmarks/results/`](benchmarks/results/).
 
 **Setup.** Each cell uses 30 seeds (1000-1029). Bootstrap intervals (a resampling method) are computed over seeds.
-Three synthetic cells use a 4-D Gaussian bump and a 4-D Ackley. Each is run at 0% and 15% noise. The runs are sequential (batch 1), with 5 initial points and 18 experiments.
+Four synthetic cells use a 4-D Gaussian bump and a 4-D Ackley. Each is run at 0% and 15% noise. The runs are sequential (batch 1), with 5 initial points and 18 experiments.
 One mixed "bioprocess-like" surface is also used. It has 3 numeric and 2 categorical factors (input variables), with 15% noise. It is a made-up surface, not process data. It uses batches of 4, with 8 initial points and 20 experiments. In each batch, 2 points are still in flight while the next batch is proposed.
 Locked stack: torch 2.13.0, BoTorch 0.18.1, Optuna 5.0.0, Ax 1.3.1. The core pins are in `uv.lock`. Hardware: Apple M3 Pro, 11 cores. Wall time was about 16 minutes.
 
@@ -318,7 +318,6 @@ The deploy pack in `deploy/` has a container image for each service, a `compose.
 By default, the engine binds to loopback. It refuses to serve unauthenticated on any other interface.
 Auth uses bearer tokens. Set them with `KALOS_AUTH_TOKENS`. Copy `deploy/.env.example` and fill it in.
 The runbook says what is and is not verified. A first deployment on 2026-09-10 ran the stack end to end. However, the runbook's own "NOT verified" list still says that no image was built and no container was run. The backup drill was not exercised.
-CI builds the engine image and waits for its healthcheck on every push.
 TLS is out of scope. Put a reverse proxy in front. Full steps are in [`deploy/RUNBOOK.md`](deploy/RUNBOOK.md).
 
 **Warning:** the web UI has no login. Treat any deployment as private-network only.
