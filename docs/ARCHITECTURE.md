@@ -19,7 +19,7 @@ sequenceDiagram
 ```
 
 - Identity: operator-provisioned bearer tokens (`kalos/portal/auth.py`), plus engine-side verification of EdDSA engine JWTs (`kalos/portal/jwt_auth.py`, `docs/ENGINE_TOKEN.md`). Tenant = a string on the token or the JWT `tenant` claim.
-- Persistence: `<KALOS_STATE_DIR>/portal.db` (default `~/.kalos`, schema v2), several campaigns per tenant (`kalos/portal/campaign.py`, `docs/CAMPAIGNS_API.md`); the legacy routes act on one default campaign per tenant. Latest analysis in memory plus a per-tenant JSON cache.
+- Persistence: `<KALOS_STATE_DIR>/portal.db` (default `~/.kalos`, schema v3), several campaigns per tenant (`kalos/portal/campaign.py`, `docs/CAMPAIGNS_API.md`); the legacy routes act on one default campaign per tenant. Latest analysis in memory plus a per-tenant JSON cache.
 - Compute: the GP fit runs in the request, or as a background job in a local worker process (`kalos/portal/jobs.py`, `docs/JOBS.md`). A second concurrent synchronous upload gets a 503 busy answer (`kalos/portal/busy.py`).
 
 ## Planned web side (engine side is built)
