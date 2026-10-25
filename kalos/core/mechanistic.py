@@ -17,7 +17,8 @@ is only touched inside `fit`), keeping `kalos.core.mechanistic` cheap to import.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Protocol, Sequence, runtime_checkable
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -81,8 +82,9 @@ class ODEModel:
                 if sol.success:
                     v = float(self.readout(sol.t, sol.y))
                     out[i] = v if np.isfinite(v) else np.nan
-            except Exception:  # noqa: BLE001 - user callbacks (rhs, mapping, readout) can raise anything
-                pass  # leave NaN: this row has no mechanistic prediction (contract: never raises)
+            except Exception:  # noqa: BLE001, S110 - user callbacks (rhs, mapping, readout) can raise anything
+                # Leave NaN: this row has no mechanistic prediction (the contract is: never raises).
+                pass
         return out
 
 
@@ -108,7 +110,7 @@ class HybridSurrogate:
     the GP prior mean), or None (falls back to the current plain-GP behavior).
     """
 
-    def __init__(self, mechanistic: "MechanisticModel | Callable | None" = None) -> None:
+    def __init__(self, mechanistic: MechanisticModel | Callable | None = None) -> None:
         if mechanistic is None:
             mechanistic = _NoMechanism()
         elif not isinstance(mechanistic, MechanisticModel):
@@ -129,7 +131,7 @@ class HybridSurrogate:
             )
         return np.where(np.isfinite(m), m, 0.0)
 
-    def fit(self, X, y, bounds, **kwargs) -> "HybridSurrogate":
+    def fit(self, X, y, bounds, **kwargs) -> HybridSurrogate:
         from kalos.core.surrogate import Surrogate
 
         Xa = np.atleast_2d(np.asarray(X, float))

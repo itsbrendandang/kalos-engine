@@ -8,10 +8,22 @@ import numpy as np
 import pytest
 
 from kalos.bench.real_data import (
-    DATASET_0, RealDataMapping, compare, indpensim_path, load_indpensim_pool,
-    load_real_frame, plotly_html, run_pool_bo, write_report,
+    DATASET_0,
+    RealDataMapping,
+    compare,
+    indpensim_path,
+    load_indpensim_pool,
+    load_real_frame,
+    plotly_html,
+    run_pool_bo,
+    write_report,
 )
-from kalos.core.mechanistic import HybridSurrogate, MechanisticModel, ODEModel, monod_example
+from kalos.core.mechanistic import (
+    HybridSurrogate,
+    MechanisticModel,
+    ODEModel,
+    monod_example,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "examples/datasets/dataset_0.csv"
@@ -152,7 +164,7 @@ def test_large_pool_supports_a_claim():
 
 def test_report_has_no_nan_curves_for_skipped_arm(tmp_path):
     out = {"arms": {"x": {"skipped": "tiny", "n_rows": 3}}}
-    jp, hp = write_report(out, tmp_path)
+    _jp, hp = write_report(out, tmp_path)
     assert "Plotly.newPlot" in hp.read_text()
 
 
@@ -191,8 +203,8 @@ def test_bo_and_random_share_initial_design_and_are_repeatable():
 
 
 def test_gp_is_only_fit_on_already_measured_rows(monkeypatch):
-    from kalos.core.surrogate import Surrogate
     from kalos.bench.real_data import _normalize
+    from kalos.core.surrogate import Surrogate
 
     calls = []
     real_fit = Surrogate.fit

@@ -15,7 +15,11 @@ sys.path.insert(0, str(ROOT))
 
 from kalos.bench.pool import pool_from_frame  # noqa: E402
 from kalos.bench.real_data import (  # noqa: E402
-    DATASET_0, compare, frame_to_pool, load_real_frame, write_report,
+    DATASET_0,
+    compare,
+    frame_to_pool,
+    load_real_frame,
+    write_report,
 )
 
 
