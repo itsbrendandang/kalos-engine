@@ -33,7 +33,7 @@ portal = ["fastapi>=0.143.0", "uvicorn[standard]>=0.29", "python-multipart>=0.0.
 # as a transitive dependency of `anthropic` and is not listed separately.
 # The torch-free deterministic core (units/synonyms/plan/apply) and the
 # offline fallback in llm.py need none of this.
-normalize = ["anthropic>=1.5.0"]
+normalize = ["anthropic>=2.1.0"]
 # `httpx` is the transport `starlette.testclient.TestClient` (used across the
 # portal tests) needs. It is not pulled in transitively by fastapi/starlette, so
 # a fresh `pip install -e ".[...,dev]"` (what CI does) leaves it absent and every
@@ -47,7 +47,7 @@ normalize = ["anthropic>=1.5.0"]
 # it in `dev` keeps that path genuinely covered instead of silently skipped.
 dev = [
   "pytest>=9.1.1", "ruff>=0.6", "mypy>=1.11", "pandas-stubs", "scipy-stubs",
-  "httpx>=0.27,<1", "anthropic>=1.5.0",
+  "httpx>=0.27,<1", "anthropic>=2.1.0",
 ]
 
 [tool.setuptools.packages.find]
