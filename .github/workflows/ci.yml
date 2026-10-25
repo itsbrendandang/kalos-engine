@@ -12,12 +12,41 @@ jobs:
       # against real FastAPI types; dev brings ruff, mypy, and the type stubs.
       # bench brings the optional Optuna and Ax comparators so the head-to-head
       # arms in kalos/bench/vs_baselines.py are exercised (tests/test_vs_baselines.py).
+      # Fails if uv.lock is stale relative to pyproject.toml (e.g. a dependency
+      # floor was raised without re-locking). Resolves against the lock only.
+      - run: python -m pip install -q uv
+      - run: uv lock --check
       - run: python -m pip install -e ".[ml,portal,bench,dev]"
       # Lint the whole tree, not just kalos/: an unused import and a dead local
       # sat in examples/ for months because CI only ever looked at the package.
       - run: ruff check kalos/ tests/ examples/
       - run: mypy   # config in pyproject [tool.mypy]
       - run: python -m pytest -q   # ESM-2 test skipped unless KALOS_TEST_ESM is set
+
+  # Supply-chain gate for the image's dependency set. constraints.txt is the
+  # exact set the engine image installs (deploy/engine/Containerfile), so
+  # auditing it audits what ships. Two checks: the file still matches uv.lock
+  # (so pip-audit is auditing the lock, not a stale copy), and pip-audit reports
+  # no known vulnerabilities. --no-deps/--disable-pip because every entry is
+  # already pinned; no environment is built.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      - run: python -m pip install -q uv pip-audit
+      - name: constraints.txt is generated from uv.lock
+        run: |
+          diff <(grep -v '^#' deploy/engine/constraints.txt) \
+               <(uv export --frozen --extra ml --extra portal --no-emit-project --no-hashes | grep -v '^ *#' | grep -vi '^torch==')
+      - name: Image's torch version matches uv.lock
+        run: |
+          want="$(uv export --frozen --extra ml --no-emit-project --no-hashes | sed -n 's/^torch==\([^ ;]*\).*/\1/p')"
+          have="$(sed -n 's/^ARG TORCH_VERSION=//p' deploy/engine/Containerfile)"
+          [ -n "$want" ] && [ "$want" = "$have" ] || { echo "torch: uv.lock=$want Containerfile=$have"; exit 1; }
+      - name: pip-audit the image's pinned dependencies
+        run: pip-audit --no-deps --disable-pip -r deploy/engine/constraints.txt
 
   docker-build:
     runs-on: ubuntu-latest

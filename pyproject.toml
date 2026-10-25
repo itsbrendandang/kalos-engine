@@ -7,7 +7,7 @@ name = "kalos"
 version = "0.1.0"
 description = "Kalos: a domain-neutral Bayesian-optimization platform for sequential experiment design, built on BoTorch. Ships a bioprocess domain (NVIDIA BioNeMo / ESM-2 protein features) and supports mixed continuous/categorical design spaces."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 dependencies = [
   "numpy>=2.2.6",
@@ -64,6 +64,11 @@ include = ["kalos*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.ruff]
+# Floor matches requires-python (ax-platform needs 3.11). Explicit so ruff does not
+# infer it, and so a future floor bump is one line here.
+target-version = "py311"
+
 [tool.ruff.lint]
 # Pin the ruleset explicitly. With no [tool.ruff] section ruff applies whatever
 # its current release defaults to, so a ruff upgrade CI never asked for can turn
@@ -73,12 +78,12 @@ testpaths = ["tests"]
 # changes what is checked only through this file.
 # B and I were adopted 2026-10; UP, SIM and RUF were adopted after the existing
 # findings were fixed (safe `ruff check --fix` plus reviewed manual edits).
-# ruff targets py3.10 via requires-python, so the UP rules never suggest 3.11+ syntax.
+# ruff targets py311 (target-version above), matching requires-python.
 select = ["E4", "E7", "E9", "F", "B", "I", "UP", "SIM", "RUF"]
 ignore = [
     # B008: FastAPI's Depends()/Query() in defaults is the framework idiom.
     "B008",
-    # B905: zip(strict=) needs a py3.10 floor audit; adopt separately.
+    # B905: zip(strict=) is available on the 3.11 floor now; adopt separately.
     "B905",
     # RUF046: int(round(x)) is an explicit coercion to a Python int; round() on
     # numpy/custom scalars is not guaranteed to return int, so the rewrite is unsafe.
