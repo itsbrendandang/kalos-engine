@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -60,6 +61,32 @@ DATASET_0 = RealDataMapping(
     contamination="contamination",
     data_type="data_type",
 )
+
+
+DATASET_0_FILENAME = "dataset_0.csv"
+DATASET_DIR_ENV = "KALOS_DATASET_DIR"
+
+
+def resolve_dataset_0(explicit: str | Path | None = None) -> Path:
+    """Locate dataset_0.csv. The file is NOT shipped with this repo (its redistribution
+    status is an owner decision). Order: an explicit file path, then
+    ``$KALOS_DATASET_DIR/dataset_0.csv``. Raises FileNotFoundError with the fix; callers
+    skip (tests) or exit cleanly (example)."""
+    if explicit:
+        p = Path(explicit).expanduser()
+        if not p.is_file():
+            raise FileNotFoundError(f"dataset not found: {p}")
+        return p.resolve()
+    d = os.environ.get(DATASET_DIR_ENV, "").strip()
+    if not d:
+        raise FileNotFoundError(
+            f"{DATASET_0_FILENAME} is not shipped with this repo. Set {DATASET_DIR_ENV} to the folder "
+            "that contains it, or pass --data PATH (see examples/datasets/README.md)."
+        )
+    p = Path(d).expanduser() / DATASET_0_FILENAME
+    if not p.is_file():
+        raise FileNotFoundError(f"{DATASET_0_FILENAME} not found at {p} (from {DATASET_DIR_ENV})")
+    return p.resolve()
 
 
 def load_real_frame(
@@ -324,8 +351,6 @@ INDPENSIM_RECIPE_COLS = (
 
 def indpensim_path(explicit: str | Path | None = None) -> Path | None:
     """Explicit path, else $KALOS_INDPENSIM_PATH, else a CSV under $KALOS_MEDIA_DATA."""
-    import os
-
     cand = explicit or os.environ.get("KALOS_INDPENSIM_PATH")
     if cand:
         p = Path(cand).expanduser().resolve()

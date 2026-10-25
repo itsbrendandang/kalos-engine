@@ -2,7 +2,9 @@
 """Replay a 10-round, q=2 BO loop on the real fermentation sheet and compare its
 convergence with the synthetic fixture. Writes a summary JSON and a Plotly HTML.
 
-Run:  python examples/real_data_validation.py [--out reports/real_data] [--include-contaminated]
+Run:  KALOS_DATASET_DIR=/path/to/dir python examples/real_data_validation.py [--out reports/real_data] [--include-contaminated]
+
+dataset_0.csv is NOT shipped with this repo; see examples/datasets/README.md.
 """
 from __future__ import annotations
 
@@ -19,13 +21,15 @@ from kalos.bench.real_data import (  # noqa: E402
     compare,
     frame_to_pool,
     load_real_frame,
+    resolve_dataset_0,
     write_report,
 )
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--data", default=str(ROOT / "examples/datasets/dataset_0.csv"))
+    ap.add_argument("--data", default=None,
+                    help="path to dataset_0.csv (default: $KALOS_DATASET_DIR/dataset_0.csv)")
     ap.add_argument("--out", default=str(ROOT / "reports/real_data"))
     ap.add_argument("--rounds", type=int, default=10)
     ap.add_argument("-q", type=int, default=2)
@@ -35,18 +39,15 @@ def main() -> int:
 
     import pandas as pd
 
-    if not Path(a.data).is_file():
-        print(
-            f"dataset not found: {a.data}\n"
-            "dataset_0.csv is the 715-row Kaggle 'Fermentation optimization' set (Apache-2.0; only the first "
-            "~20 source runs are measured). Download it and pass --data PATH.",
-            file=sys.stderr,
-        )
+    try:
+        data = resolve_dataset_0(a.data)
+    except FileNotFoundError as e:
+        print(str(e), file=sys.stderr)
         return 2
     kw = dict(exclude_contaminated=not a.include_contaminated)
-    all_rows = pd.read_csv(a.data)
-    semi = load_real_frame(a.data, DATASET_0, **kw)
-    real = load_real_frame(a.data, DATASET_0, real_only=True, **kw)
+    all_rows = pd.read_csv(data)
+    semi = load_real_frame(data, DATASET_0, **kw)
+    real = load_real_frame(data, DATASET_0, real_only=True, **kw)
     syn_df = pd.read_csv(ROOT / "examples/synthetic_bioprocess/synthetic_bioprocess.csv")
     Xs, ys, _ = pool_from_frame(syn_df, "titer_g_L")
 

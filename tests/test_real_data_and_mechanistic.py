@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +18,7 @@ from kalos.bench.real_data import (
     load_indpensim_pool,
     load_real_frame,
     plotly_html,
+    resolve_dataset_0,
     run_pool_bo,
     write_report,
 )
@@ -26,22 +30,27 @@ from kalos.core.mechanistic import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "examples/datasets/dataset_0.csv"
-needs_data = pytest.mark.skipif(not DATA.exists(), reason="dataset_0.csv not present")
+
+
+@pytest.fixture
+def dataset_0_csv() -> Path:
+    """dataset_0.csv is not shipped; tests that need it skip with the reason."""
+    try:
+        return resolve_dataset_0()
+    except FileNotFoundError as e:
+        pytest.skip(str(e))
 
 
 # ---- real-data module ----------------------------------------------------
 
-@needs_data
-def test_load_excludes_contaminated_by_default():
-    all_rows = load_real_frame(DATA, exclude_contaminated=False)
-    clean = load_real_frame(DATA)
+def test_load_excludes_contaminated_by_default(dataset_0_csv):
+    all_rows = load_real_frame(dataset_0_csv, exclude_contaminated=False)
+    clean = load_real_frame(dataset_0_csv)
     assert len(all_rows) == 715
     assert 0 < len(clean) < len(all_rows)
     assert (clean["contamination"] == "N").all()
 
 
-@needs_data
 def test_column_roles_mapping():
     roles = DATASET_0.to_column_roles()
     assert roles.target == "max_yield_fpu_ml"
@@ -168,10 +177,9 @@ def test_report_has_no_nan_curves_for_skipped_arm(tmp_path):
     assert "Plotly.newPlot" in hp.read_text()
 
 
-@needs_data
-def test_real_only_filters_to_measured_rows_and_excludes_min_do():
-    allr = load_real_frame(DATA, exclude_contaminated=False)
-    real = load_real_frame(DATA, exclude_contaminated=False, real_only=True)
+def test_real_only_filters_to_measured_rows_and_excludes_min_do(dataset_0_csv):
+    allr = load_real_frame(dataset_0_csv, exclude_contaminated=False)
+    real = load_real_frame(dataset_0_csv, exclude_contaminated=False, real_only=True)
     assert 0 < len(real) < 25 < len(allr)
     assert (real["data_type"] == "Real").all()
     assert "min_do_pct" not in DATASET_0.features  # measured minimum, not a setpoint
@@ -290,12 +298,40 @@ def test_hybrid_rejects_scalar_and_wrong_shape_output(bad):
         HybridSurrogate(bad).fit(X, X.sum(1), np.array([[0, 0], [1, 1]], float))
 
 
-def test_script_exits_cleanly_when_dataset_missing(tmp_path):
-    import subprocess
-    import sys
+def _example_env(**extra: str) -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if k != "KALOS_DATASET_DIR"}
+    env.update(extra)
+    return env
 
+
+def test_resolve_dataset_0_uses_env_dir_and_explicit_path(tmp_path, monkeypatch):
+    monkeypatch.delenv("KALOS_DATASET_DIR", raising=False)
+    with pytest.raises(FileNotFoundError, match="KALOS_DATASET_DIR"):
+        resolve_dataset_0()
+    monkeypatch.setenv("KALOS_DATASET_DIR", str(tmp_path))
+    with pytest.raises(FileNotFoundError, match="not found at"):
+        resolve_dataset_0()
+    f = tmp_path / "dataset_0.csv"
+    f.write_text("a,b\n1,2\n")
+    assert resolve_dataset_0() == f.resolve()
+    other = tmp_path / "elsewhere.csv"
+    other.write_text("a,b\n1,2\n")
+    assert resolve_dataset_0(other) == other.resolve()
+    with pytest.raises(FileNotFoundError, match="dataset not found"):
+        resolve_dataset_0(tmp_path / "nope.csv")
+
+
+def test_script_exits_cleanly_when_dataset_missing(tmp_path):
     r = subprocess.run(
         [sys.executable, str(ROOT / "examples/real_data_validation.py"), "--data", str(tmp_path / "nope.csv")],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, timeout=120, env=_example_env(),
     )
     assert r.returncode == 2 and "dataset not found" in r.stderr and "Traceback" not in r.stderr
+
+
+def test_script_names_the_env_var_when_no_dataset_is_configured():
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "examples/real_data_validation.py")],
+        capture_output=True, text=True, timeout=120, env=_example_env(),
+    )
+    assert r.returncode == 2 and "KALOS_DATASET_DIR" in r.stderr and "Traceback" not in r.stderr

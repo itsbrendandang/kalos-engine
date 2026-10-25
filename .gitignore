@@ -19,3 +19,5 @@ models/
 .claude/worktrees/
 # host-mounted DB backups from deploy/compose.yaml (./backups:/backups); real data, never commit
 deploy/backups/
+# bundled-looking dataset copies: the owner has not cleared redistribution (see examples/datasets/README.md)
+examples/datasets/*.csv
