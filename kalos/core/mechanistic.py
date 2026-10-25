@@ -10,10 +10,11 @@ mean (in the simulated benchmark of examples/mechanistic_benchmark.py a badly wr
 ODE was no better than the plain GP in most seeds and worse in some). Judge a mechanistic model on held-out data before use.
 
 OPT-IN, OFF BY DEFAULT. Nothing in the portal or `propose` uses this module; a
-caller must construct a `HybridSurrogate` explicitly. The evidence for a
-mechanistic prior mean is thin: a single n=23 study (Richelle et al., CSBJ 2026,
-doi 10.34133/csbj.0078; cited from the project's literature notes, not independently
-checked). A simulated check (examples/mechanistic_benchmark.py; Monod fed-batch
+caller must construct a `HybridSurrogate` explicitly. Related work only: Richelle et
+al. (CSBJ 2026, doi 10.34133/csbj.0078; cited from the project's literature notes,
+not independently checked) is a single n=23 study of a hybrid ODE+ML CHO digital
+twin. It concerns hybrid mechanistic+ML models in general and does not test a GP
+prior mean. A simulated check (examples/mechanistic_benchmark.py; Monod fed-batch
 truth with Haldane inhibition, 10 seeds, one fixed held-out split per seed) is saved in
 examples/results/mechanistic_benchmark_10seeds.json: a correct or mildly wrong ODE
 reached 95% of the best response sooner than the plain GP in most seeds (the mild
