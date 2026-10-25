@@ -1,6 +1,5 @@
 # Kalos engine
 
-[![CI](https://github.com/itsbrendandang/kalos-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/itsbrendandang/kalos-engine/actions/workflows/ci.yml)
 
 > **Status: under development. Not a public SaaS.**
 > Kalos is a scientific optimization platform being built toward a public SaaS.
