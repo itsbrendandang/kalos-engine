@@ -1,8 +1,8 @@
 """Kalos portal - where a campaign is in its round, and the one next action.
 
 Pure and torch-free: derived from a `CampaignStore.summary()` dict plus two
-facts about the analysis on `/api/latest`, so the rules are unit testable with no
-store. The wording mirrors kalos-web's `lib/campaign-stage.ts` exactly.
+facts about that campaign's own published analysis (`stage_fields` takes the
+analysis itself), so the rules are unit testable with no store. The wording mirrors kalos-web's `lib/campaign-stage.ts` exactly.
 
 Rounds: the store counts re-analyses (`round`, 0 right after an upload). People
 count batches, so `stage.round` is `round + 1`.
@@ -28,7 +28,7 @@ def derive_stage(
 ) -> dict[str, Any]:
     """`{"stage": {...}, "next_action": {...}}` for a campaign summary.
 
-    `analysis_exists` says whether `/api/latest` holds an analysis; `n_proposed`
+    `analysis_exists` says whether the campaign holds an analysis; `n_proposed`
     is how many recipes it proposed (None when there is no analysis).
     """
     started = len(summary.get("pending", []))
