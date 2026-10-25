@@ -717,15 +717,15 @@ def environment() -> dict[str, Any]:
     cpu = platform.processor() or platform.machine()
     try:
         cpu = subprocess.run(
-            ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True, check=True
+            ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True, check=True  # noqa: S607 - fixed argv, executable resolved from PATH (ps/git)
         ).stdout.strip() or cpu
     except (OSError, subprocess.CalledProcessError):
         pass
     sha, dirty = None, None
     try:
-        sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,  # noqa: S607 - fixed argv, executable resolved from PATH (ps/git)
                              check=True).stdout.strip()
-        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--", "kalos", "docs"],
+        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--", "kalos", "docs"],  # noqa: S607 - fixed argv, executable resolved from PATH (ps/git)
                                     capture_output=True, text=True, check=True).stdout.strip())
     except (OSError, subprocess.CalledProcessError):
         pass

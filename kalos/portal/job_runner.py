@@ -255,7 +255,7 @@ def _command_line(pid: int) -> str | None:
         return None
     try:
         out = subprocess.run(  # noqa: S603 - fixed argv
-            ["ps", "-o", "command=", "-p", str(pid)],
+            ["ps", "-o", "command=", "-p", str(pid)],  # noqa: S607 - fixed argv, executable resolved from PATH (ps/git)
             capture_output=True, text=True, timeout=5, check=False,
         ).stdout
     except (OSError, subprocess.SubprocessError):

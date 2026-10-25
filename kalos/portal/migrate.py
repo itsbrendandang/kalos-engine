@@ -1049,7 +1049,7 @@ def _export_latest(
     ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     for tenant, cid in exports:
         row = conn.execute(
-            f'SELECT state FROM "{analyses_table}" WHERE campaign_id = ? AND tenant = ?',
+            f'SELECT state FROM "{analyses_table}" WHERE campaign_id = ? AND tenant = ?',  # noqa: S608 - identifiers are module constants or sqlite_master table names; values are bound parameters
             (cid, tenant),
         ).fetchone()
         if row is None:
@@ -1088,7 +1088,7 @@ def status(db_path: Path | str, *, latest_dir: Path | str | None = None) -> str:
         mode = ro.execute("PRAGMA journal_mode").fetchone()[0]
         lines.append(f"  schema version: v{version} (this code: v{SCHEMA_VERSION}); journal_mode={mode}")
         for table in sorted(_tables(ro)):
-            n = ro.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            n = ro.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]  # noqa: S608 - identifiers are module constants or sqlite_master table names; values are bound parameters
             lines.append(f"  table {table}: {n} row(s)")
         if version < SCHEMA_VERSION:
             lines.append("pending migration (dry run):")

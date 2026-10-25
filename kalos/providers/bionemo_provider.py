@@ -16,7 +16,7 @@ import os
 from kalos.providers.base import ProviderStatus
 
 _NVIDIA_API_KEY_ENV_VAR = "NVIDIA_API_KEY"
-_HF_TOKEN_ENV_VAR = "HF_TOKEN"
+_HF_TOKEN_ENV_VAR = "HF_TOKEN"  # noqa: S105 - name of an env var, not a secret
 
 _CAPABILITY = (
     "Real ESM-2 protein-sequence embeddings from a hosted NVIDIA BioNeMo "

@@ -294,7 +294,7 @@ def _rows(conn: sqlite3.Connection, sql: str, args: tuple[Any, ...]) -> list[dic
 
 
 def _one(conn: sqlite3.Connection, tenant: str, job_id: str) -> dict[str, Any] | None:
-    found = _rows(conn, f"SELECT {_COLUMNS} FROM jobs WHERE id = ? AND tenant = ?", (job_id, tenant))
+    found = _rows(conn, f"SELECT {_COLUMNS} FROM jobs WHERE id = ? AND tenant = ?", (job_id, tenant))  # noqa: S608 - identifiers are module constants or sqlite_master table names; values are bound parameters
     return found[0] if found else None
 
 
@@ -520,7 +520,7 @@ def list_jobs(
             raise CampaignNotFound()
         rows = _rows(
             conn,
-            f"SELECT {_COLUMNS} FROM jobs WHERE tenant = ? AND campaign_id = ? "
+            f"SELECT {_COLUMNS} FROM jobs WHERE tenant = ? AND campaign_id = ? "  # noqa: S608 - identifiers are module constants or sqlite_master table names; values are bound parameters
             "ORDER BY created_at DESC, id LIMIT ?",
             (tenant, campaign_id, max(1, min(int(limit), 200))),
         )
@@ -602,7 +602,7 @@ def claim(store: CampaignStore, *, tenant: str, runner_id: str) -> dict[str, Any
 def running_jobs(store: CampaignStore) -> list[dict[str, Any]]:
     """Every running job, any tenant (startup recovery only)."""
     with store._txn(write=False) as conn:
-        return _rows(conn, f"SELECT {_COLUMNS} FROM jobs WHERE state = 'running'", ())
+        return _rows(conn, f"SELECT {_COLUMNS} FROM jobs WHERE state = 'running'", ())  # noqa: S608 - identifiers are module constants or sqlite_master table names; values are bound parameters
 
 
 def live_input_paths(store: CampaignStore) -> set[str]:
@@ -690,7 +690,7 @@ def load_for_worker(store: CampaignStore, job_id: str) -> dict[str, Any] | None:
     if JOB_ID_PATTERN.fullmatch(job_id) is None:
         return None
     with store._txn(write=False) as conn:
-        found = _rows(conn, f"SELECT {_COLUMNS} FROM jobs WHERE id = ?", (job_id,))
+        found = _rows(conn, f"SELECT {_COLUMNS} FROM jobs WHERE id = ?", (job_id,))  # noqa: S608 - identifiers are module constants or sqlite_master table names; values are bound parameters
     return found[0] if found else None
 
 

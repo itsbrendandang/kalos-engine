@@ -475,6 +475,8 @@ def _ollama_generate(base_url: str, model: str, prompt: str, timeout: float = _O
     import urllib.request
 
     url = base_url.rstrip("/") + _OLLAMA_GENERATE_PATH
+    if not url.lower().startswith(("http://", "https://")):
+        return None  # never open file:/ftp:/custom schemes from operator config
     body = json.dumps(
         {
             "model": model,
@@ -484,7 +486,7 @@ def _ollama_generate(base_url: str, model: str, prompt: str, timeout: float = _O
             "options": {"temperature": _OLLAMA_TEMPERATURE},
         }
     ).encode("utf-8")
-    request = urllib.request.Request(
+    request = urllib.request.Request(  # noqa: S310 - scheme checked as http(s) just above; URL is operator config
         url, data=body, headers={"Content-Type": "application/json"}, method="POST"
     )
     try:

@@ -186,7 +186,7 @@ def is_loopback_bind(host: str | None) -> bool:
     if host is None:
         return False
     h = host.strip()
-    if h == "" or h in {"0.0.0.0", "::", "*"}:
+    if h == "" or h in {"0.0.0.0", "::", "*"}:  # noqa: S104 - comparison against wildcard hosts to REFUSE them, not a bind
         return False
     if h in {"localhost", "localhost.localdomain"}:
         return True
