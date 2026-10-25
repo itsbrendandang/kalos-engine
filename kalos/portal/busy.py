@@ -31,6 +31,7 @@ disconnected client's orphan keeps holding it and later requests are told
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from collections import Counter
@@ -38,6 +39,8 @@ from collections.abc import Callable
 from typing import Any
 
 from starlette.concurrency import run_in_threadpool
+
+log = logging.getLogger(__name__)
 
 _ERR_BUSY = (
     "An analysis is already running. This engine runs a limited number of analyses "
@@ -139,7 +142,7 @@ class AnalysisLimiter:
             try:
                 fn()
             except Exception:  # noqa: BLE001 - a listener must never break a release
-                pass
+                log.warning("busy-slot listener failed", exc_info=True)
 
     def set_waiting(self, tenants: frozenset[str] | set[str]) -> None:
         """Tenants that currently have a runnable queued job (the job runner

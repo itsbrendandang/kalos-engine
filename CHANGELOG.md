@@ -4,6 +4,11 @@ Newest first.
 
 ## Unreleased
 
+### Security - bandit (`S`) rules enabled in ruff (`chore/bandit-triage`)
+
+- Triaged every `ruff --select S` finding in `kalos/`. Real fixes: `normalize/llm.py` refuses non-http(s) Ollama URLs (S310); `portal/busy.py` logs a failing slot listener instead of swallowing it silently (S110).
+- Suppressed with per-site reasons: constant-identifier SQL f-strings (S608), `ps`/`git`/`sysctl` fixed argv (S607), the wildcard-host refusal list (S104), an env-var name (S105). `S101` (assert) is ignored globally: asserts state invariants and narrow types, and no request validation relies on them. Tests, examples and experiments are exempt from `S`.
+
 ### Refactor - split `kalos/portal/analysis.py` (`refactor/split-analysis`)
 
 - Behavior-preserving. `kalos/portal/analysis.py` (2,727 lines) keeps `_analyze`, `_analyze_body`

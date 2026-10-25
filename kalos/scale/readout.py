@@ -868,7 +868,7 @@ def _git_sha() -> str:
     repo_root = Path(__file__).resolve().parents[2]
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
+            ["git", "rev-parse", "--short", "HEAD"],  # noqa: S607 - fixed argv, executable resolved from PATH (ps/git)
             cwd=repo_root,
             capture_output=True,
             text=True,

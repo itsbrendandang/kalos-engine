@@ -263,7 +263,7 @@ class CampaignStore:
     @staticmethod
     def _row(conn: sqlite3.Connection, tenant: str, campaign_id: str) -> _Row | None:
         row = conn.execute(
-            f"SELECT {_ROW_COLUMNS} FROM campaigns WHERE id = ? AND tenant = ?",
+            f"SELECT {_ROW_COLUMNS} FROM campaigns WHERE id = ? AND tenant = ?",  # noqa: S608 - identifiers are module constants or sqlite_master table names; values are bound parameters
             (campaign_id, tenant),
         ).fetchone()
         return _Row(row) if row is not None else None
@@ -400,7 +400,7 @@ class CampaignStore:
     ) -> list[dict[str, Any]]:
         """`tenant`'s campaigns, newest first."""
         validate_tenant_id(tenant)
-        sql = f"SELECT {_ROW_COLUMNS} FROM campaigns WHERE tenant = ?"
+        sql = f"SELECT {_ROW_COLUMNS} FROM campaigns WHERE tenant = ?"  # noqa: S608 - identifiers are module constants or sqlite_master table names; values are bound parameters
         if not include_archived:
             sql += " AND archived_at IS NULL"
         sql += " ORDER BY updated_at DESC, id"

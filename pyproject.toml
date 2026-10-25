@@ -79,7 +79,7 @@ target-version = "py311"
 # B and I were adopted 2026-10; UP, SIM and RUF were adopted after the existing
 # findings were fixed (safe `ruff check --fix` plus reviewed manual edits).
 # ruff targets py311 (target-version above), matching requires-python.
-select = ["E4", "E7", "E9", "F", "B", "I", "UP", "SIM", "RUF"]
+select = ["E4", "E7", "E9", "F", "B", "I", "UP", "SIM", "RUF", "S"]
 ignore = [
     # B008: FastAPI's Depends()/Query() in defaults is the framework idiom.
     "B008",
@@ -97,9 +97,15 @@ ignore = [
     # RUF100: would strip noqa codes for rules not enabled here (BLE001, S*,
     # SLF001), deleting the comments that record why each exception is deliberate.
     "RUF100",
+    # S101: assert here states internal invariants and narrows types for mypy; no
+    # request validation relies on it (those paths raise HTTPException/ValueError).
+    "S101",
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S"]
+"examples/**" = ["S"]
+"experiments/**" = ["S"]
 # __all__ is grouped by source module under a comment per group; sorting it
 # would scramble that grouping, and the order has no runtime meaning.
 "kalos/kit/__init__.py" = ["RUF022"]
