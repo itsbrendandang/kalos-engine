@@ -1,0 +1,175 @@
+{
+  "summary": {
+    "plain": {
+      "best_frac": {
+        "median": 1.0,
+        "q25": 0.9218309766251409,
+        "q75": 1.0,
+        "n": 10
+      },
+      "best_frac_early": {
+        "median": 0.8665976267544053,
+        "q25": 0.7593616976208242,
+        "q75": 0.9754696971459101,
+        "n": 10
+      },
+      "rmse_norm": {
+        "median": 0.30620676081870746,
+        "q25": 0.23979113379306038,
+        "q75": 0.3700631188610447,
+        "n": 10
+      },
+      "evals_to_95pct": {
+        "median": 7.0,
+        "q25": 6.0,
+        "q75": 8.0,
+        "n": 7,
+        "reach_rate": 0.7
+      }
+    },
+    "oracle": {
+      "best_frac": {
+        "median": 1.0,
+        "q25": 1.0,
+        "q75": 1.0,
+        "n": 10
+      },
+      "best_frac_early": {
+        "median": 1.0,
+        "q25": 1.0,
+        "q75": 1.0,
+        "n": 10
+      },
+      "rmse_norm": {
+        "median": 0.0,
+        "q25": 0.0,
+        "q75": 0.0,
+        "n": 10
+      },
+      "evals_to_95pct": {
+        "median": 5.0,
+        "q25": 5.0,
+        "q75": 5.0,
+        "n": 10,
+        "reach_rate": 1.0
+      }
+    },
+    "mild": {
+      "best_frac": {
+        "median": 1.0,
+        "q25": 1.0,
+        "q75": 1.0,
+        "n": 10
+      },
+      "best_frac_early": {
+        "median": 1.0,
+        "q25": 0.9890633762894793,
+        "q75": 1.0,
+        "n": 10
+      },
+      "rmse_norm": {
+        "median": 0.19272165767661975,
+        "q25": 0.1730389952981754,
+        "q75": 0.21307840190340707,
+        "n": 10
+      },
+      "evals_to_95pct": {
+        "median": 5.0,
+        "q25": 5.0,
+        "q75": 5.75,
+        "n": 10,
+        "reach_rate": 1.0
+      }
+    },
+    "severe": {
+      "best_frac": {
+        "median": 1.0,
+        "q25": 1.0,
+        "q75": 1.0,
+        "n": 10
+      },
+      "best_frac_early": {
+        "median": 0.8164470979308485,
+        "q25": 0.6704488490902221,
+        "q75": 0.9754696971459101,
+        "n": 10
+      },
+      "rmse_norm": {
+        "median": 0.3870448700344037,
+        "q25": 0.2687217218184341,
+        "q75": 0.46043193949461786,
+        "n": 10
+      },
+      "evals_to_95pct": {
+        "median": 7.5,
+        "q25": 5.75,
+        "q75": 9.0,
+        "n": 8,
+        "reach_rate": 0.8
+      }
+    },
+    "adversarial": {
+      "best_frac": {
+        "median": 1.0,
+        "q25": 0.9816022728594326,
+        "q75": 1.0,
+        "n": 10
+      },
+      "best_frac_early": {
+        "median": 0.7934225683313771,
+        "q25": 0.6893222605781015,
+        "q75": 0.9528185443833135,
+        "n": 10
+      },
+      "rmse_norm": {
+        "median": 0.28111221219800187,
+        "q25": 0.19503273426066495,
+        "q75": 0.3348858878842946,
+        "n": 10
+      },
+      "evals_to_95pct": {
+        "median": 8.5,
+        "q25": 6.0,
+        "q75": 10.5,
+        "n": 8,
+        "reach_rate": 0.8
+      }
+    }
+  },
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "hybrid_vs_plain_evals_to_95pct": {
+    "oracle": {
+      "better": 9,
+      "worse": 0,
+      "tied_or_both_missed": 1
+    },
+    "mild": {
+      "better": 9,
+      "worse": 0,
+      "tied_or_both_missed": 1
+    },
+    "severe": {
+      "better": 3,
+      "worse": 1,
+      "tied_or_both_missed": 6
+    },
+    "adversarial": {
+      "better": 1,
+      "worse": 2,
+      "tied_or_both_missed": 7
+    }
+  },
+  "pool_size": 169,
+  "notes": "evals_to_95pct spread is over seeds that reached 95%; see reach_rate. One fixed held-out split per seed for rmse_norm."
+}
