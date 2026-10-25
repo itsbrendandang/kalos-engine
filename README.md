@@ -55,7 +55,7 @@ Open PRs are listed as in-progress, not as implemented.
 | `feature_ranges` in analysis output; GP-default guardrail | in progress, open PRs [#80](https://github.com/itsbrendandang/kalos-engine/pull/80), [#79](https://github.com/itsbrendandang/kalos-engine/pull/79) | not on `main` |
 | Repo hygiene (CODEOWNERS, SECURITY.md, PR template) and loopback-by-default compose bind | in progress, open PR [#83](https://github.com/itsbrendandang/kalos-engine/pull/83) (merge conflicts with `main`) and draft PR [#84](https://github.com/itsbrendandang/kalos-engine/pull/84) | not on `main` |
 | Verifying short-lived internal JWTs from the web app (EdDSA), engine side | IMPLEMENTED (kalos-web does not issue them yet) | `kalos/portal/jwt_auth.py`, `docs/ENGINE_TOKEN.md`, `tests/test_jwt_auth.py`; PRs [#88](https://github.com/itsbrendandang/kalos-engine/pull/88), [#96](https://github.com/itsbrendandang/kalos-engine/pull/96) |
-| Organisations as tenants, with membership | PLANNED | tenants today are strings on operator-provisioned tokens |
+| Organisations as tenants, with membership | PLANNED | the engine only reads a `tenant` string (from an operator-provisioned token or an engine JWT claim); no organisation model or membership exists in the engine |
 | Multiple campaigns per tenant | IMPLEMENTED | `kalos/portal/campaigns_api.py`, `docs/CAMPAIGNS_API.md`, `tests/test_cross_tenant_isolation.py`; PRs [#89](https://github.com/itsbrendandang/kalos-engine/pull/89), [#90](https://github.com/itsbrendandang/kalos-engine/pull/90) |
 | Background analysis jobs with a local worker process (`/api/campaigns/{id}/jobs`) | IMPLEMENTED | `kalos/portal/jobs.py`, `job_runner.py`, `job_worker.py`, `docs/JOBS.md`, `tests/test_jobs.py`, `tests/test_jobs_api.py`; PR [#91](https://github.com/itsbrendandang/kalos-engine/pull/91). The synchronous routes still answer 503 busy when the analysis slot is taken |
 | Sparse/variational surrogate beyond 2,000 rows | PLANNED | `docs/HARDENING.md` Phase 2 |
@@ -70,20 +70,22 @@ Solid arrows and boxes exist on `main`. Dashed arrows and boxes are planned and 
 flowchart LR
   B[Browser] --> W["kalos-web: Next.js UI + server-side proxy"]
   W -->|"static bearer token (today)"| E["kalos-engine: FastAPI"]
-  E --> S[("SQLite: per-tenant campaign")]
+  E --> S[("SQLite: per-tenant campaigns")]
   E --> M["GP surrogate (BoTorch)"]
+  E --> V["EdDSA JWT verification (built; kalos-web does not issue yet)"]
+  E --> J["local job workers"]
   B -.->|"planned: login"| A["Better Auth session in web"]
   A -.-> W
   W -.->|"planned: EdDSA JWT, iss kalos-web, aud kalos-engine, 120s max"| E
-  E -.-> V["planned: verify JWT independently; org = tenant; multi-campaign"]
-  E -.->|"planned"| J["local job workers"]
+  E -.-> O["planned: organisations as tenants, membership"]
   classDef planned stroke-dasharray: 5 5,color:#666;
-  class A,J,V planned;
+  class A,O planned;
 ```
 
 Today the browser talks to the Next.js app, whose server-side proxy forwards to this engine using one configured bearer token.
 The web app has **no user login**, so anyone who can reach the proxy acts as that token's tenant.
-The planned design adds a Better Auth session in the web app, a short-lived EdDSA-signed internal JWT (issuer `kalos-web`, audience `kalos-engine`, lifetime of at most 120 seconds) that the engine verifies on its own, organisations as tenants, multiple campaigns per organisation, and local job workers.
+Built on the engine side: verification of short-lived EdDSA-signed internal JWTs (issuer `kalos-web`, audience `kalos-engine`, lifetime of at most 120 seconds) that the engine checks on its own, multiple campaigns per tenant, and background analysis jobs run by local worker processes.
+Still planned: the Better Auth session and JWT issuance in the web app, and organisations as tenants with membership.
 Current and planned request flows: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Campaign loop details: [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md).
 
 ## Local development
@@ -263,7 +265,7 @@ python -m kalos.bench --vs-baselines --quick   # smoke test, 2 seeds, writes not
 - **MVP (toward a public beta, not started unless noted):**
   IMPLEMENTED: upload, analysis, campaign loop, scale readout, token auth, tenant-keyed store, multi-campaign API, background jobs, engine-side JWT verification.
   IN PROGRESS (open PRs): #76-#81, #83, #84.
-  PLANNED: web login (Better Auth), organisations as tenants, a rate limit.
+  PLANNED: web login (Better Auth), web-side JWT issuance, organisations as tenants, a rate limit.
 - **Later (PLANNED):** sparse/variational surrogate, metrics and alerting, server-side PDF readouts (`TODOS.md`), independent validation on real data, an external security review.
 - **EXPERIMENTAL:** mechanistic priors, alternative surrogates (must beat the GP on published datasets first; PR #79).
 

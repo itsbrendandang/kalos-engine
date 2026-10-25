@@ -1480,4 +1480,3 @@ skill could be both contaminated and overstated at small n. Fixed the confirmed 
 ## Older entries
 
 Entries dated before 2026-07-01 are in [`docs/CHANGELOG_ARCHIVE.md`](docs/CHANGELOG_ARCHIVE.md), moved there unchanged and in the same order.
-
