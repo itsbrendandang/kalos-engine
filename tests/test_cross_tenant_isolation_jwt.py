@@ -484,7 +484,8 @@ def test_b_reanalyze_with_no_campaign_of_its_own_is_its_own_error(main):
     nobody = Who(KEY_A, KID, tenant="nobody", sub="user-nobody", sid="sess-nobody")
     r = main.request("POST", "/api/campaign/reanalyze", auth=nobody)
     assert r.status_code == 400 and "no active campaign" in r.json()["error"]
-    assert main.request("GET", "/api/campaign", auth=nobody).json() == {"has_campaign": False}
+    body = main.request("GET", "/api/campaign", auth=nobody).json()
+    assert body["has_campaign"] is False and body["stage"]["current"] == "setup"
 
 
 # --- rejection matrix: every refused token is the same generic 401 -------------- #
