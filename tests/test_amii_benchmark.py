@@ -2,12 +2,20 @@
 (the real datasets are not redistributed and are never read here)."""
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from kalos.bench.amii import (
-    REGISTRY, amii_data_dir, benchmark_dataset, load_amii_pool, paired_comparison, run_trial, runs_to_top,
+    REGISTRY,
+    amii_data_dir,
+    benchmark_dataset,
+    load_amii_pool,
+    paired_comparison,
+    run_trial,
+    runs_to_top,
 )
 
 
@@ -74,7 +82,7 @@ def test_trial_shared_init_repeatable_and_labels_hidden(monkeypatch):
     assert {arm: len(c) for arm, c in a.items()} == {"bo": 14, "random": 14, "lhs": 14}
     assert a["bo"][5] == a["random"][5] == a["lhs"][5]  # same initial design
     for c in a.values():
-        assert all(q2 >= q1 for q1, q2 in zip(c, c[1:]))
+        assert all(q2 >= q1 for q1, q2 in itertools.pairwise(c))
 
 
 def test_benchmark_requires_five_seeds_and_reports_spread():
