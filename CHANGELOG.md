@@ -4,6 +4,14 @@ Newest first.
 
 ## Unreleased
 
+### Added - the campaign says where it is and what to do next (PR #69, re-implemented on main)
+
+- `GET /api/campaign`, the `campaign` object from `POST /api/campaign/reanalyze`, and `summary` on `GET /api/campaigns/{id}` now carry `stage` and `next_action`, derived server-side from that campaign's own analysis, so every client shows the same round state.
+- `stage` has the 1-based round (null in `setup`), the current stage (`setup`, `plan`, `run`, `record`, `learn`), the started count and five ordered steps with a state and a detail line. `next_action` is `{stage, action, reason}`.
+- `POST /api/campaigns/{id}/reanalyze` and `POST /api/campaign/reanalyze` report the campaign they reanalyzed. The legacy reanalyze response now also reports `analysis_in_sync: true` for the fresh analysis (it reported `false` before).
+- Each pending run reports `round`, the round it was started in (`null` for older runs).
+- All existing fields are unchanged.
+
 ### Added - `feature_ranges` in the analysis output (`feat/feature-ranges`)
 
 - `_analyze` now returns `feature_ranges`: `{feature: [lower, upper]}` for every continuous input. It is the **search box** the optimizer uses (the observed range, widened to include 0 for absent-as-zero columns), not the raw observed min/max. Clients can flag a proposal sitting on the edge of it. Categorical inputs are omitted; keys are aliased when `anonymize=True`.

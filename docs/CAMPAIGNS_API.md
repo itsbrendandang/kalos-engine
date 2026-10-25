@@ -50,13 +50,23 @@ below), which the first legacy upload creates. A campaign made with
 |---|---|---|---|
 | GET | `/api/campaigns?include_archived=false` | read | List the tenant's campaigns, newest first: `{"campaigns": [<campaign>...]}`. |
 | POST | `/api/campaigns` | write | Create a campaign. Body: `{"name": str}`. `201` and the campaign. |
-| GET | `/api/campaigns/{id}` | read | `{"campaign": <campaign>, "summary": <loop summary>}`. The summary has the same shape as `GET /api/campaign`, scoped to this campaign, including `analysis_in_sync`. |
+| GET | `/api/campaigns/{id}` | read | `{"campaign": <campaign>, "summary": <loop summary>}`. The summary has the same shape as `GET /api/campaign`, scoped to this campaign, including `analysis_in_sync`, `stage` and `next_action` (see "Stage" below). |
 | PATCH | `/api/campaigns/{id}` | write (+admin for `archived`) | Body: `{"name"?: str, "archived"?: bool}`, at least one of the two. Returns the campaign. |
 | POST | `/api/campaigns/{id}/upload` | write | Upload a run sheet into this campaign (multipart; `replace=true` confirms replacing the campaign's runs, see below). Same contract as `/api/run`. |
 | GET | `/api/campaigns/{id}/analysis` | read | This campaign's published analysis, in the `/api/latest` shape (`{"has_data": false}` before the first upload). |
 | POST | `/api/campaigns/{id}/runs` | write | Start runs from a proposed batch. Same body and bounds as `/api/campaign/start`. Returns `{"started": [...]}`. |
 | POST | `/api/campaigns/{id}/runs/{run_id}/result` | write | Body: `{"value": number}`. Records the measured outcome and returns the run. |
-| POST | `/api/campaigns/{id}/reanalyze` | write | Fold measured runs, re-run the engine and publish the new analysis. Returns `{"analysis": ..., "campaign": <summary>}`. |
+| POST | `/api/campaigns/{id}/reanalyze` | write | Fold measured runs, re-run the engine and publish the new analysis. Returns `{"analysis": ..., "campaign": <summary>}`, where `campaign` is this campaign's summary with `stage` and `next_action`. |
+
+### Stage
+
+`summary` (on `GET /api/campaigns/{id}`, and `campaign` on `POST .../reanalyze`) carries
+`stage` and `next_action`, exactly as `GET /api/campaign` does (docs/CAMPAIGN_LOOP.md,
+"GET /api/campaign response"). They are derived from this campaign's own pending runs
+and its own published analysis, never from another campaign or the tenant's default.
+A campaign that was created but never uploaded reads `stage.current: "setup"`.
+Each pending run carries `round`, the 0-based round it was started in (`null` for runs
+started before the field existed).
 
 ### Name validation
 
@@ -128,7 +138,7 @@ Reanalyze has the same transactional contract as `/api/campaign/reanalyze`
 - `409` when the campaign changed during the analysis, or is archived.
 - `503` when the analysis slot is busy.
 
-The new analysis is labelled `campaign round <n>`.
+The new analysis is labelled `campaign round <n>`. The response's `campaign` is this campaign, never the tenant's default one.
 
 ### Background jobs
 
