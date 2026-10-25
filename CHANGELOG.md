@@ -4,6 +4,10 @@ Newest first.
 
 ## Unreleased
 
+### Fixed - stale torch extension lock hung multi-objective requests (`fix/fused-kernel-hang`)
+
+- BoTorch JIT-compiles its fused qLogEHVI kernel on first use. On torch 2.13 (the version `uv.lock` and the image pin) that load waits on a plain `lock` file with no timeout, so a compile killed mid-way left a lock that blocked every later `/api/multi` call until the 120 s demo timeout. Reproduced with a stale lock and no built `.so`. torch 2.14 fixes this upstream (OS-level `FileLock`, pytorch#189245); `kalos/core/torch_ext.py` removes a lock older than 5 minutes before the first load, so the pinned torch is protected. A young lock (a real concurrent compile) is left alone. Numerics are unchanged: the fused kernel still loads.
+
 ### Security - bandit (`S`) rules enabled in ruff (`chore/bandit-triage`)
 
 - Triaged every `ruff --select S` finding in `kalos/`. Real fixes: `normalize/llm.py` refuses non-http(s) Ollama URLs (S310); `portal/busy.py` logs a failing slot listener instead of swallowing it silently (S110).

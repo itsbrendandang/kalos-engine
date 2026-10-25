@@ -26,6 +26,7 @@ from botorch.utils.multi_objective.pareto import is_non_dominated
 from gpytorch.mlls import SumMarginalLogLikelihood
 
 from .surrogate import DEVICE, DTYPE, _fit_mll_with_retry, sanitize_bounds
+from .torch_ext import clear_stale_extension_lock
 
 
 class MultiObjectiveSurrogate:
@@ -133,6 +134,7 @@ def propose_multiobjective(
     rp = torch.as_tensor(rp, dtype=DTYPE, device=DEVICE)
 
     def _run_acqf_optimization() -> torch.Tensor:
+        clear_stale_extension_lock()  # an abandoned JIT lock would block the fused-kernel load
         acq = qLogNoisyExpectedHypervolumeImprovement(
             model=surrogate.model,
             ref_point=rp,
