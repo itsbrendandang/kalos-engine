@@ -1,6 +1,6 @@
 """Guard: `kalos.kit` must stay importable without ever loading torch.
 
-`kalos.kit` is the torch-free facade a sibling repo (voyager-brain-rebuild,
+`kalos.kit` is the torch-free facade a sibling repo (the earlier engine,
 deliberately torch-free) is meant to import instead of keeping its own copies
 of these primitives. torch IS installed in this venv (it is a normal test
 dependency via the `ml` extra), so the check below runs in a fresh

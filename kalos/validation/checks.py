@@ -796,8 +796,8 @@ _MIN_N_FOR_RHO = 12
 # than noise. At ordinary sheet sizes (n ~ 30-100) a null (label-shuffled)
 # Spearman rho already wanders past +-0.3 with non-trivial probability by
 # chance alone, so 0.35 sits with real margin above that noise floor - while
-# staying far below the -0.835 the owner's real Cytena clone-funnel data
-# actually showed (voyager-brain-rebuild/docs/ml-review.md, finding P0.1).
+# staying far below the -0.835 that a real clone-funnel dataset actually
+# showed (earlier engine docs/ml-review.md, finding P0.1).
 # This check exists to catch that class of signal, not to flag every faint
 # wobble in a small sheet.
 _MISSINGNESS_RHO_WARN = 0.35
@@ -816,8 +816,8 @@ def check_informative_missingness(df: pd.DataFrame, target: str | None) -> list[
 
     `check_missingness` reports how much of a column or row is blank; this asks
     a different question - whether being blank is itself informative, i.e.
-    correlated with the outcome, rather than happening at random. On the
-    owner's real Cytena clone-funnel data, per-row missing-fraction vs titer
+    correlated with the outcome, rather than happening at random. On a
+    real clone-funnel dataset, per-row missing-fraction vs titer
     had Spearman rho = -0.835, and non-producers were 66.7% missing vs 37.0%
     for producers: "no measurement" was the human culling decision on low
     performers, not benign absence. `kalos`'s GP path zero-fills blanks before
@@ -946,12 +946,12 @@ def check_constant_within_group(df: pd.DataFrame, *, group_hint: Pattern[str]) -
     across the whole sheet (so `check_constant_columns` says nothing) but has
     exactly one value inside every group - so within any single group it
     carries zero information, and whatever it appears to predict is actually
-    just "which group this row is in." On the owner's real Cytena
-    clone-funnel data, 4 of 6 candidate features had exactly one unique value
+    just "which group this row is in." On a real clone-funnel dataset,
+    4 of 6 candidate features had exactly one unique value
     within every campaign; they were campaign identity in disguise, and they
     inflated a within-population score to ~0.86 when the campaign-mean anchor
     alone - which uses no per-clone information whatsoever - already scored
-    ~0.75 (voyager-brain-rebuild/docs/ml-review.md, finding P0.2). A model fit
+    ~0.75 (earlier engine docs/ml-review.md, finding P0.2). A model fit
     on such a column mostly learns "which group," not the thing the group
     label is standing in for.
 
