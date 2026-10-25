@@ -321,7 +321,8 @@ class ProposalBatch:
     `X` has `returned <= requested` rows; every pair of rows is at least
     `min_separation` apart (`proposal_separation`). `near_duplicates_replaced`
     counts rows of the jointly-optimized batch that collapsed onto another row
-    and were replaced by sequential, pending-aware selection. `notice` is None
+    and were replaced by sequential, pending-aware selection (with linear
+    constraints, rows that break one are replaced the same way). `notice` is None
     when the full batch was returned, else a machine- and human-readable dict
     explaining why fewer rows came back.
     """
