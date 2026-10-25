@@ -4,6 +4,15 @@ Newest first.
 
 ## Unreleased
 
+### Refactor - split `kalos/portal/analysis.py` (`refactor/split-analysis`)
+
+- Behavior-preserving. `kalos/portal/analysis.py` (2,727 lines) keeps `_analyze`, `_analyze_body`
+  and the seeded-RNG scope, which hold the monkeypatch points the tests use. Helpers moved to
+  `kalos/portal/analysis_parts/`: `policy` (named constants, `validation_mode`), `identifiers`,
+  `anonymize`, `columns`, `ranges`, `noise_blocks`, `refusals`, `diagnostics`, `proposals`.
+  Every public name, and every private name a test or caller imports, is still importable from
+  `kalos.portal.analysis`; no import changes. Unreferenced private helpers now live in `analysis_parts`.
+
 ### Fixed - API and ops review (`fix/review-api`)
 
 - **Unknown `KALOS_*` enum values refuse to start (H3).** `KALOS_VALIDATION_MODE=stict` used to select `warn` silently, and a `KALOS_LLM_PROVIDER` typo fell back to the live Anthropic path. One helper (`kalos/envconfig.py`) now raises; `python -m kalos.portal` checks every enum and bounded setting before it binds and exits 2 with one line. `strict` stays out of the templates (docs/HARDENING.md).
