@@ -30,6 +30,7 @@ from kalos.portal.campaign import (
     CampaignStore,
     get_campaign_store,
 )
+from kalos.portal.campaign_stage import stage_fields
 from kalos.portal.uploads import (
     MAX_COLUMNS,
     UploadRejected,
@@ -77,6 +78,22 @@ def campaign_not_found_response() -> JSONResponse:
     headers), so existence can never be probed. Used by
     `kalos.portal.campaigns_api` and by `_reanalyze` below."""
     return JSONResponse(_NOT_FOUND_BODY, status_code=404)
+
+
+def campaign_view(
+    store: CampaignStore, tenant: str, campaign_id: str | None = None
+) -> dict[str, Any]:
+    """The loop summary of ONE campaign (its default when `campaign_id` is None),
+    with `stage` and `next_action` derived from that campaign's own published
+    analysis. The single source for every response that describes a campaign:
+    `GET /api/campaign`, `POST /api/campaign/reanalyze` and
+    `GET /api/campaigns/{id}`. Raises `CampaignNotFound` for another tenant's id."""
+    analysis = store.load_analysis(tenant=tenant, campaign_id=campaign_id) or {}
+    summary = store.summary(
+        tenant=tenant, campaign_id=campaign_id,
+        analysis_generation=analysis.get("campaign_generation"),
+    )
+    return {**summary, **stage_fields(summary, analysis)}
 
 
 def campaign_error_response(exc: CampaignError) -> JSONResponse:
@@ -150,20 +167,11 @@ def get_campaign(
     """The caller's tenant's campaign summary for the `/decide` view, or
     `{"has_campaign": false}` before any upload has ever seeded one.
 
-    Joins in the campaign stamp `/api/latest` was published with so the summary
-    can report `analysis_in_sync` — whether the analysis `/results` renders and
-    this campaign provably describe the same run sheet. The join lives here
-    rather than in `CampaignStore` so the store stays free of any `_LATEST`
-    knowledge; `_load_latest` is imported inside the function for the same
-    circular-import reason as `reanalyze_campaign` below.
+    Describes the tenant's DEFAULT campaign (`campaign_view`): `stage` and
+    `next_action` come from that campaign's own analysis, and
+    `analysis_in_sync` says whether it provably matches the run sheet.
     """
-    from kalos.portal.app import _load_latest
-
-    latest = _load_latest(principal.tenant, store=store) or {}
-    return store.summary(
-        tenant=principal.tenant,
-        analysis_generation=latest.get("campaign_generation"),
-    )
+    return campaign_view(store, principal.tenant)
 
 
 @router.post("/api/campaign/start")
@@ -336,9 +344,6 @@ async def _reanalyze(
     return JSONResponse(
         {
             "analysis": {"has_data": True, **saved},
-            "campaign": store.summary(
-                tenant=tenant, campaign_id=campaign_id,
-                analysis_generation=saved.get("campaign_generation"),
-            ) if campaign_id is not None else store.summary(tenant=tenant),
+            "campaign": campaign_view(store, tenant, campaign_id),
         }
     )

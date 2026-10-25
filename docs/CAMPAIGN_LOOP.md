@@ -99,10 +99,10 @@ A fresh upload starts a fresh campaign (new base, empty pending, round 0).
 
 | Method | Path | Body | Does |
 | --- | --- | --- | --- |
-| GET | `/api/campaign` | - | Campaign summary for the `/decide` view (below), or `{"has_campaign": false}` before any upload. |
+| GET | `/api/campaign` | - | Campaign summary for the `/decide` view (below), or `{"has_campaign": false, ...}` before any upload. Carries `stage` and `next_action`. |
 | POST | `/api/campaign/start` | `{"recipes": [{recipe, pred, std, mode, reason}]}` | Append each recipe as a pending awaiting run. Returns the appended runs with ids. |
 | POST | `/api/campaign/result` | `{"id": "...", "value": 3.2}` | Set the measured outcome on a pending run. 400 on unknown id or non-finite value. |
-| POST | `/api/campaign/reanalyze` | - | Fold every measured pending run into base rows, run `_analyze` on the grown dataset, and commit + `_save_latest`. Returns `{analysis, campaign}`. Awaiting runs stay pending, and are passed to the acquisition as in-flight points so the new batch does not re-propose them. `400` if there is nothing new to fold; `409` if the campaign was reseeded mid-analysis (retry). See below. |
+| POST | `/api/campaign/reanalyze` | - | Fold every measured pending run into base rows, run `_analyze` on the grown dataset, and commit + `_save_latest`. Returns `{analysis, campaign}`, where `campaign` is the same summary `GET /api/campaign` returns (with `stage` and `next_action`). Awaiting runs stay pending, and are passed to the acquisition as in-flight points so the new batch does not re-propose them. `400` if there is nothing new to fold; `409` if the campaign was reseeded mid-analysis (retry). See below. |
 
 `GET /api/campaign` response:
 
@@ -118,10 +118,17 @@ A fresh upload starts a fresh campaign (new base, empty pending, round 0).
               { "round": 1, "best": 5.2, "n_base": 42 },
               { "round": 2, "best": 5.9, "n_base": 45 }],
   "pending": [{ "id": "...", "recipe": {...}, "pred": 1.58, "std": 0.33,
-               "mode": "explore", "reason": "...", "result": null, "awaiting": true }],
+               "mode": "explore", "reason": "...", "result": null, "awaiting": true, "round": 2 }],
   "n_awaiting": 3,
   "n_measured": 0,
-  "analysis_in_sync": true
+  "analysis_in_sync": true,
+  "stage": { "round": 3, "current": "run", "started": 3,
+             "steps": [{ "key": "setup", "state": "done", "detail": "Run sheet analyzed" },
+                       { "key": "plan", "state": "done", "detail": "3 runs started" },
+                       { "key": "run", "state": "current", "detail": "3 awaiting results" },
+                       { "key": "record", "state": "upcoming", "detail": "Nothing recorded yet" },
+                       { "key": "learn", "state": "upcoming", "detail": "" }] },
+  "next_action": { "stage": "record", "action": "Record 3 results", "reason": "..." }
 }
 ```
 
@@ -129,6 +136,13 @@ A fresh upload starts a fresh campaign (new base, empty pending, round 0).
 `history` is the progress trajectory: one `{round, best, n_base}` point per round (round 0 = the seeded base, then one per re-analyze), so the frontend can plot best-so-far converging.
 Because base rows only grow, `best` is non-decreasing across the trajectory.
 `analysis_in_sync` reports whether the analysis currently on `/api/latest` provably describes this campaign's dataset - see "Analysis/campaign coherence" below.
+`stage` and `next_action` say where the campaign is in its round and the one thing to do next, derived server-side (`kalos/portal/campaign_stage.py`) from the campaign's `summary` and ITS OWN published analysis (`store.load_analysis` for the same campaign id), so a named campaign never reads the default campaign's stage.
+They are also present on the `{"has_campaign": false}` response (stage `setup`), on the `campaign` object returned by `POST /api/campaign/reanalyze`, and on the `summary` of `GET /api/campaigns/{id}` (docs/CAMPAIGNS_API.md). The same helper builds all of them (`campaign_routes.campaign_view`).
+`stage.current` is one of `setup`, `plan`, `run`, `record`, `learn`, and `stage.steps` always lists all five in that order with exactly one `current`.
+`stage.round` is 1-based (the batch people are working on) and null only in `setup` (no analysis and no runs yet), while the top-level `round` stays 0-based (re-analyses so far).
+`stage.started` is the number of pending runs.
+While any run awaits a result the round stays in `run` and `next_action` is `record`.
+`pending[].round` is the 0-based round a run was started in, and null for runs started before it was stamped.
 
 ## Analysis/campaign coherence
 

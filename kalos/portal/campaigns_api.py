@@ -53,6 +53,7 @@ from kalos.portal.campaign_routes import (
     _StartBody,
     campaign_error_response,
     campaign_not_found_response,
+    campaign_view,
 )
 from kalos.portal.limits import (
     RequestSizeLimitMiddleware,
@@ -237,16 +238,13 @@ def get_campaign(
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
     """One campaign: its info plus the loop summary (the `GET /api/campaign`
-    shape, scoped to this campaign)."""
+    shape, scoped to this campaign, with `stage` and `next_action` from this
+    campaign's own analysis: `campaign_view`)."""
     if not _valid_campaign_id(campaign_id):
         return campaign_not_found_response()
     try:
         info = store.campaign_info(tenant=principal.tenant, campaign_id=campaign_id)
-        analysis = store.load_analysis(tenant=principal.tenant, campaign_id=campaign_id) or {}
-        summary = store.summary(
-            tenant=principal.tenant, campaign_id=campaign_id,
-            analysis_generation=analysis.get("campaign_generation"),
-        )
+        summary = campaign_view(store, principal.tenant, campaign_id)
     except CampaignNotFound:
         return campaign_not_found_response()
     return JSONResponse({"campaign": info, "summary": summary})
