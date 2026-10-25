@@ -20,7 +20,7 @@ dependencies = [
 # The BoTorch/GPyTorch GP surrogate, optimizer, and grouped-CV evaluation. The
 # torch-free `kalos.kit` primitives (splits, drivers, conformal, gates,
 # anonymizer) do not need this extra.
-ml = ["torch>=2.2", "botorch>=0.11", "gpytorch>=1.11"]
+ml = ["torch>=2.2", "botorch>=0.11", "gpytorch>=1.15.2"]
 # Optional comparators for `python -m kalos.bench --vs-baselines` (docs/BENCHMARK.md).
 # Not needed by the engine. Versions are the ones the committed results were run with.
 bench = ["optuna>=5.0,<6", "ax-platform>=1.3.1,<1.4"]
