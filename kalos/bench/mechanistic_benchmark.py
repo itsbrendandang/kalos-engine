@@ -91,11 +91,12 @@ def run_seed(
     test = np.array(sorted(int(i) for i in order[:n_test]))
     cand = [int(i) for i in order[n_test:]]
     init = cand[:n_init]
+    ymax = float(y[cand].max())  # best REACHABLE value: the held-out split can never be evaluated
     pool = set(cand)
     out: dict[str, dict] = {}
     for kind in ("plain", *LEVELS):
         ev = list(init)
-        curve = [float(y[ev].max() / y.max())]
+        curve = [float(y[ev].max() / ymax)]
         while len(ev) < n_init + budget:
             rem = np.array(sorted(pool - set(ev)))
             mu, sd = _fit_predict(kind, X[ev], y[ev], X[rem], BOUNDS)
@@ -105,7 +106,7 @@ def run_seed(
             ei = (mu - best) * norm.cdf(z) + sd * norm.pdf(z)
             picks = [int(rem[j]) for j in np.argsort(-ei)[:q]]
             ev += picks
-            curve += [float(y[ev].max() / y.max())] * len(picks)
+            curve += [float(y[ev].max() / ymax)] * len(picks)
         mu, _ = _fit_predict(kind, X[ev], y[ev], X[test], BOUNDS)
         reached = next((n_init + i for i, c in enumerate(curve) if c >= 0.95), None)
         out[kind] = {

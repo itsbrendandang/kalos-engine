@@ -17,9 +17,10 @@ twin. It concerns hybrid mechanistic+ML models in general and does not test a GP
 prior mean. A simulated check (examples/mechanistic_benchmark.py; Monod fed-batch
 truth with Haldane inhibition, 10 seeds, one fixed held-out split per seed) is saved in
 examples/results/mechanistic_benchmark_10seeds.json: a correct or mildly wrong ODE
-reached 95% of the best response sooner than the plain GP in most seeds (the mild
-8-of-10 result is NOT significant after correcting for the four levels; only the
-oracle level, 9-0, is); a badly wrong or "adversarial" ODE showed no detectable
+reached 95% of the best reachable response sooner than the plain GP in 9 of 10 seeds
+(9-0, one tie, at both the oracle and mild levels; a two-sided sign test on the 9
+non-tied seeds gives p = 0.004, about 0.016 after Bonferroni over the four levels;
+"best reachable" excludes the held-out split no strategy can evaluate); a badly wrong or "adversarial" ODE showed no detectable
 difference (counts of better/worse/tied are in the JSON). This is a noise-free,
 2-D simulation whose truth shares the ODE's structure, so it says little about real
 processes, and it is not a validation of the method. Read the exact counts,
