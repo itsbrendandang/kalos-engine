@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import torch
 
-from kalos.core.optimize import propose
-from kalos.core.surrogate import Surrogate
+import kalos.core.optimize as optimize
+from kalos.core.optimize import proposal_separation, propose, propose_batch
+from kalos.core.surrogate import Surrogate, sanitize_bounds
 
 
 def _fit():
@@ -102,3 +104,91 @@ def test_fixed_seed_is_repeatable_with_constraints():
     a = propose(s, b, q=2, seed=11, linear_constraints=cons)
     c = propose(s, b, q=2, seed=11, linear_constraints=cons)
     assert np.allclose(a, c)
+
+
+# ---- near-duplicate repair under hard constraints --------------------------------
+
+
+def _monotonic(seed=3):
+    """Titer rises in both factors: the unconstrained optimum is the upper box corner."""
+    rng = np.random.default_rng(seed)
+    X = np.column_stack([rng.uniform(0, 3, 30).round(2), rng.uniform(5, 7, 30).round(2)])
+    y = 2.0 * X[:, 0] + 1.5 * X[:, 1] + rng.normal(0, 0.05, 30)
+    return X, y, np.vstack([X.min(0), X.max(0)])
+
+
+def _fit_seeded(X, y, bounds):
+    torch.manual_seed(1234)
+    np.random.seed(1234)
+    return Surrogate().fit(X, y, bounds=bounds)
+
+
+def _patch_joint(monkeypatch, rewrite):
+    """Rewrite only the JOINT (q>1) optimizer output, so the q=1 candidate-pool calls
+    stay real. Returns the list of kwargs of every `optimize_acqf` call."""
+    real = optimize.optimize_acqf
+    calls: list[dict] = []
+
+    def wrapped(*args, **kwargs):
+        calls.append(kwargs)
+        cands, vals = real(*args, **kwargs)
+        if kwargs.get("q", 1) > 1 and kwargs.get("return_best_only", True):
+            cands = rewrite(cands)
+        return cands, vals
+
+    monkeypatch.setattr(optimize, "optimize_acqf", wrapped)
+    return calls
+
+
+def _min_sep(X, bounds) -> float:
+    lo, hi = sanitize_bounds(bounds)
+    seps = [proposal_separation(X[i], X[j], lo, hi) for i in range(len(X)) for j in range(i + 1, len(X))]
+    return min(seps) if seps else float("inf")
+
+
+X_CAP = [([0], [-1.0], -2.0)]  # x0 <= 2; the unconstrained optimum sits at x0 = 3
+
+
+def test_constrained_near_duplicate_repair_never_violates(monkeypatch):
+    X, y, bounds = _monotonic()
+    s = _fit_seeded(X, y, bounds)
+    # Joint batch collapses onto its first row (the QA failure mode); that row is feasible.
+    _patch_joint(monkeypatch, lambda c: c[:1].expand(c.shape[0], -1).clone())
+    pb = propose_batch(s, bounds, q=5, seed=0, linear_constraints=X_CAP)
+    assert pb.returned == 5 and pb.notice is None
+    assert pb.near_duplicates_replaced == 4
+    assert (pb.X[:, 0] <= 2.0 + 1e-6).all(), pb.X
+    assert _min_sep(pb.X, bounds) >= optimize.NEAR_DUPLICATE_TOL
+    assert (bounds[0] - 1e-9 <= pb.X).all() and (bounds[1] + 1e-9 >= pb.X).all()
+
+
+def test_joint_rows_that_break_a_constraint_are_refilled_feasibly(monkeypatch):
+    X, y, bounds = _monotonic()
+    s = _fit_seeded(X, y, bounds)
+    # Every joint row is the infeasible box corner (x0 = 3 > 2): all are dropped, so the
+    # repair starts from an empty accepted set and must still return feasible rows.
+    _patch_joint(monkeypatch, lambda c: torch.as_tensor(bounds[1], dtype=c.dtype).expand(c.shape[0], -1).clone())
+    pb = propose_batch(s, bounds, q=5, seed=0, linear_constraints=X_CAP)
+    assert pb.returned == 5 and pb.notice is None
+    assert pb.near_duplicates_replaced == 5
+    assert (pb.X[:, 0] <= 2.0 + 1e-6).all(), pb.X
+    assert _min_sep(pb.X, bounds) >= optimize.NEAR_DUPLICATE_TOL
+
+
+def test_every_optimizer_call_receives_the_constraints(monkeypatch):
+    X, y, bounds = _monotonic()
+    s = _fit_seeded(X, y, bounds)
+    calls = _patch_joint(monkeypatch, lambda c: c[:1].expand(c.shape[0], -1).clone())
+    propose_batch(s, bounds, q=5, seed=0, linear_constraints=X_CAP)
+    assert any(k.get("return_best_only") is False for k in calls), "candidate-pool call never ran"
+    assert all(k.get("inequality_constraints") is not None for k in calls), [
+        k.get("q") for k in calls
+    ]
+
+
+def test_unconstrained_optimizer_calls_are_unchanged(monkeypatch):
+    X, y, bounds = _monotonic()
+    s = _fit_seeded(X, y, bounds)
+    calls = _patch_joint(monkeypatch, lambda c: c[:1].expand(c.shape[0], -1).clone())
+    propose_batch(s, bounds, q=5, seed=0)
+    assert calls and all(k.get("inequality_constraints") is None for k in calls)
