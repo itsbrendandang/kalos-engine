@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Install: ln -sf ../../scripts/pre-push .git/hooks/pre-push
+exec "$(git rev-parse --show-toplevel)/scripts/check.sh"
