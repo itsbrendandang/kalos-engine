@@ -45,7 +45,7 @@ Open PRs are listed as in-progress, not as implemented.
 | Bearer-token auth with `read`/`write`/`admin` scopes, hashed tokens | IMPLEMENTED | `kalos/portal/auth.py` |
 | Tenant-keyed campaign (SQLite) and latest-analysis store | IMPLEMENTED | `kalos/portal/campaign.py`, `docs/HARDENING.md` Phase 1b |
 | Upload caps, loopback-only default, remote refusal when open | IMPLEMENTED | `kalos/portal/uploads.py`, `__main__.py`, `app.py` middleware |
-| Container deploy pack and CI image boot test | IMPLEMENTED (limited verification, see runbook) | `deploy/`, `.github/workflows/ci.yml` |
+| Container deploy pack | IMPLEMENTED (limited verification, see runbook; no CI runs today, use `scripts/check.sh`) | `deploy/` |
 | Optimizer beats LHS/random on synthetic surfaces | IMPLEMENTED as a benchmark; not validation | `BENCHMARK.md`, `python -m kalos.bench` |
 | Head-to-head vs random, LHS, Optuna TPE, Ax, vanilla GP-EI on synthetic tasks | IMPLEMENTED as a benchmark; not validation | [Benchmark vs other optimizers](#benchmark-vs-other-optimizers), `docs/BENCHMARK.md`, `benchmarks/results/` |
 | Mechanistic (Monod) prior mean | EXPERIMENTAL, open PRs [#76](https://github.com/itsbrendandang/kalos-engine/pull/76), [#81](https://github.com/itsbrendandang/kalos-engine/pull/81) | not on `main` |

@@ -2,7 +2,7 @@
 
 `check_missingness` already reports HOW blank a column or row is. This check
 asks a different question: whether blankness itself correlates with the
-outcome, the failure mode documented on a real clone-funnel
+outcome, the failure mode documented on real clone-funnel
 data (earlier engine docs/ml-review.md, finding P0.1) where per-row
 missing-fraction vs. titer had Spearman rho = -0.835 - "no measurement" was
 the human culling decision, not benign absence, and zero-filling before a GP
