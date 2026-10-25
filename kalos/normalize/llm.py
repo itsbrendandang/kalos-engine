@@ -441,8 +441,10 @@ def _check_ollama_server(base_url: str, timeout: float = _OLLAMA_HEALTH_TIMEOUT)
     import urllib.request
 
     url = base_url.rstrip("/") + _OLLAMA_HEALTH_PATH
+    if not url.lower().startswith(("http://", "https://")):
+        return False  # never open file:/ftp:/custom schemes from operator config
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - explicit, non-data URL
+        with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - scheme checked as http(s) just above
             return bool(response.status == 200)
     except Exception:  # noqa: BLE001 - any failure means "unreachable"
         return False
