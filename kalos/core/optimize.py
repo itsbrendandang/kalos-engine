@@ -256,6 +256,64 @@ def _is_distinct(
     return all(proposal_separation(x, a, lower, upper, cat_dims) >= tol for a in accepted)
 
 
+# Slack for float round-off in the linear-constraint check (from PR #78).
+_LIN_TOL = 1e-6
+
+
+def _validate_linear_constraints(constraints, lower: np.ndarray, upper: np.ndarray):
+    """Normalise and sanity-check `(indices, coefficients, rhs)` triples, and raise a
+    clear ValueError if they cannot all hold inside the box (checked by LP)."""
+    if not constraints:
+        return []
+    d = len(lower)
+    out = []
+    for k, c in enumerate(constraints):
+        try:
+            idx, coef, rhs = c
+        except (TypeError, ValueError):
+            raise ValueError(f"linear constraint {k} must be (indices, coefficients, rhs)") from None
+        try:
+            idx = [int(i) if float(i).is_integer() else -1 for i in idx]
+            coef = [float(x) for x in coef]
+            rhs = float(rhs)
+        except (TypeError, ValueError):
+            raise ValueError(f"linear constraint {k} must be (indices, coefficients, rhs) of numbers") from None
+        if not idx:
+            raise ValueError(f"linear constraint {k} has no indices")
+        if len(idx) != len(coef):
+            raise ValueError(f"linear constraint {k}: {len(idx)} indices but {len(coef)} coefficients")
+        if any(i < 0 or i >= d for i in idx):
+            raise ValueError(f"linear constraint {k}: indices must be in [0, {d - 1}] (negative indices are not allowed)")
+        if len(set(idx)) != len(idx):
+            raise ValueError(f"linear constraint {k}: repeated index")
+        if not np.isfinite(coef).all() or not np.isfinite(float(rhs)):
+            raise ValueError(f"linear constraint {k}: coefficients and rhs must be finite")
+        if not any(coef):
+            raise ValueError(f"linear constraint {k}: all coefficients are zero")
+        out.append((idx, coef, float(rhs)))
+    from scipy.optimize import linprog
+
+    a = np.zeros((len(out), d))
+    for r, (idx, coef, _) in enumerate(out):
+        a[r, idx] = coef
+    b = np.array([rhs for _, _, rhs in out])
+    # sum(coef*x) >= rhs   <=>   -sum(coef*x) <= -rhs
+    res = linprog(np.zeros(d), A_ub=-a, b_ub=-b, bounds=list(zip(lower, upper)), method="highs")
+    if res.status == 2:
+        raise ValueError("linear constraints are infeasible within the bounds: no recipe can satisfy them")
+    return out
+
+
+def _linear_ok(X: np.ndarray, lin) -> np.ndarray:
+    """Boolean mask over the rows of `X`: True where every constraint in `lin` holds
+    (to `_LIN_TOL`). A NaN row is False. With no constraints every row is True."""
+    ok = np.ones(X.shape[0], dtype=bool)
+    for idx, coef, rhs in lin:
+        lhs = X[:, idx] @ np.asarray(coef)
+        ok &= lhs >= rhs - _LIN_TOL * max(1.0, abs(rhs))
+    return ok
+
+
 @dataclass(frozen=True)
 class ProposalBatch:
     """A proposed batch plus an honest account of how distinct it is.
@@ -321,6 +379,7 @@ def propose(
     feasibility_classifier: FeasibilityClassifier | None = None,
     constraint_surrogate: Surrogate | None = None,
     constraint_floor: float | None = None,
+    linear_constraints: list[tuple[list[int], list[float], float]] | None = None,
 ) -> np.ndarray:
     """The proposed points only (`propose_batch(...).X`); see `propose_batch`.
 
@@ -341,6 +400,7 @@ def propose(
         feasibility_classifier=feasibility_classifier,
         constraint_surrogate=constraint_surrogate,
         constraint_floor=constraint_floor,
+        linear_constraints=linear_constraints,
     ).X
 
 
@@ -359,6 +419,7 @@ def propose_batch(
     constraint_surrogate: Surrogate | None = None,
     constraint_floor: float | None = None,
     min_separation: float = NEAR_DUPLICATE_TOL,
+    linear_constraints: list[tuple[list[int], list[float], float]] | None = None,
 ) -> ProposalBatch:
     """Propose up to `q` DISTINCT points maximizing qLogNEI, with an account of
     the batch's distinctness (`ProposalBatch`).
@@ -444,6 +505,15 @@ def propose_batch(
 
     Both compositions are independent and stack: gating and constraining can be
     combined by passing both.
+
+    `linear_constraints` are HARD linear inequalities on the design in raw units
+    (BoTorch's `inequality_constraints`): each `(indices, coefficients, rhs)`
+    requires `sum(coefficients[k] * x[indices[k]]) >= rhs` (flip the signs for a
+    `<=`; e.g. total supplement mass <= 12 g/L is `([i, j, k], [-1, -1, -1], -12)`).
+    Box limits are `bounds`. They are enforced in every optimizer call, on the
+    candidate pool, and on every returned row, including rows refilled by the
+    near-duplicate repair; a set that is infeasible within the box raises
+    `ValueError` up front. Not supported together with categorical dimensions.
     """
     assert surrogate.model is not None and surrogate._X is not None, "fit the surrogate first"
     if (constraint_surrogate is None) != (constraint_floor is None):
@@ -452,6 +522,13 @@ def propose_batch(
             "(a floor with no model, or a model with no floor, is not a constraint)"
         )
     lower, upper = sanitize_bounds(bounds)
+    if linear_constraints and cat_dims:
+        raise ValueError("linear_constraints are not supported together with categorical dimensions")
+    lin = _validate_linear_constraints(linear_constraints, lower, upper)
+    ineq = [
+        (torch.as_tensor(idx, dtype=torch.long), torch.as_tensor(coef, dtype=DTYPE), rhs)
+        for idx, coef, rhs in lin
+    ] or None
     b = torch.stack(
         [
             torch.as_tensor(lower, dtype=DTYPE, device=DEVICE),
@@ -538,6 +615,7 @@ def propose_batch(
             q=q,
             num_restarts=num_restarts,
             raw_samples=raw_samples,
+            inequality_constraints=ineq,
         )
         return candidates
 
@@ -561,6 +639,7 @@ def propose_batch(
                 num_restarts=num_restarts,
                 raw_samples=raw_samples,
                 return_best_only=False,
+                inequality_constraints=ineq,
             )
             parts.append(_finish(local))
         n_combos = int(np.prod(cards)) if cats else 1
@@ -577,7 +656,10 @@ def propose_batch(
                 unit = (sob_np[:, j] - lower[j]) / max(upper[j] - lower[j], 1e-12)
                 sob_np[:, j] = np.clip(np.floor(unit * k), 0, k - 1)
             parts.append(_finish(torch.as_tensor(sob_np)))
-        return np.vstack(parts)
+        pool = np.vstack(parts)
+        # Hard constraints: a candidate that breaks a linear constraint (the
+        # local optima after the clip, or a Sobol / enumerated point) never fills a slot.
+        return pool[_linear_ok(pool, lin)]
 
     def _score(acq: AcquisitionFunction, pool: np.ndarray) -> np.ndarray:
         vals: list[np.ndarray] = []
@@ -592,8 +674,12 @@ def propose_batch(
     def _next_distinct(accepted: list[np.ndarray]) -> np.ndarray | None:
         """Best-acquisition candidate at least `min_separation` from every accepted
         row, with the accepted rows treated as pending (fantasised) points."""
-        acc = torch.as_tensor(np.vstack(accepted), dtype=DTYPE, device=DEVICE)
-        pend = acc if X_pending is None else torch.cat([X_pending, acc], dim=0)
+        pend: torch.Tensor | None
+        if accepted:
+            acc = torch.as_tensor(np.vstack(accepted), dtype=DTYPE, device=DEVICE)
+            pend = acc if X_pending is None else torch.cat([X_pending, acc], dim=0)
+        else:  # every joint row was dropped: only the in-flight runs are pending
+            pend = X_pending
         acq = _build_acq(pend)
         pool = _candidate_pool(acq)
         scores = _score(acq, pool)
@@ -609,14 +695,16 @@ def propose_batch(
     def _run() -> ProposalBatch:
         out = _finish(_run_acqf_optimization())
         accepted: list[np.ndarray] = []
-        for row in out:
-            if _is_distinct(row, accepted + pending_rows, lower, upper, cat_dims, min_separation):
+        feasible = _linear_ok(out, lin)
+        for row, ok in zip(out, feasible):
+            if ok and _is_distinct(row, accepted + pending_rows, lower, upper, cat_dims, min_separation):
                 accepted.append(row)
         if len(accepted) == out.shape[0]:
             return ProposalBatch(out, q, 0, float(min_separation), None)
         n_collapsed = out.shape[0] - len(accepted)
         logger.info(
-            "joint batch had %d near-duplicate row(s); refilling by sequential selection",
+            "joint batch had %d row(s) that were near-duplicates or broke a linear constraint; "
+            "refilling by sequential selection",
             n_collapsed,
         )
         n_replaced = 0
@@ -626,18 +714,29 @@ def propose_batch(
                 break
             accepted.append(nxt)
             n_replaced += 1
-        X = np.vstack(accepted)
+        X = np.vstack(accepted) if accepted else np.empty((0, len(lower)))
         notice = None if X.shape[0] >= q else _fewer_notice(q, X.shape[0], min_separation)
         return ProposalBatch(X, q, n_replaced, float(min_separation), notice)
 
-    if seed is None:
-        return _run()
-    # devices=[] restricts the fork to CPU RNG state (DEVICE is always CPU
-    # here), avoiding an unnecessary and potentially warning-raising probe
-    # of CUDA RNG state on machines without a GPU.
-    with torch.random.fork_rng(devices=[]):
-        torch.manual_seed(seed)
-        return _run()
+    def _attempt(attempt: int) -> ProposalBatch:
+        if seed is None:
+            return _run()
+        # devices=[] restricts the fork to CPU RNG state (DEVICE is always CPU
+        # here), avoiding an unnecessary and potentially warning-raising probe
+        # of CUDA RNG state on machines without a GPU.
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(seed + attempt)
+            return _run()
+
+    if not lin:
+        return _attempt(0)
+    # Every stage above filters on the constraints, so this check is a guard over
+    # the final batch, repaired rows included: retry with a different draw, then fail loudly.
+    for attempt in range(4):
+        batch = _attempt(attempt)
+        if _linear_ok(batch.X, lin).all():
+            return batch
+    raise RuntimeError("could not find proposals satisfying the linear constraints")
 
 
 def _resolve_cardinalities(
