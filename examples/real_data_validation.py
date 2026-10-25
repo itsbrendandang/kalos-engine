@@ -31,8 +31,6 @@ def main() -> int:
     ap.add_argument("-q", type=int, default=2)
     ap.add_argument("--seeds", type=int, default=5)
     ap.add_argument("--include-contaminated", action="store_true")
-    ap.add_argument("--indpensim", nargs="?", const="env", default=None,
-                    help="also benchmark IndPenSim (CSV path, or omit value to use KALOS_INDPENSIM_PATH/KALOS_MEDIA_DATA)")
     a = ap.parse_args()
 
     import pandas as pd
