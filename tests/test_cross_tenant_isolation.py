@@ -752,3 +752,88 @@ def test_no_foreign_names_in_bodies_or_logs(env, caplog):
     # and acme's activity never logs acme's own campaign name either
     assert A_SECRET not in server_log
     assert all(e["tenant"] == "acme" for e in store.audit_entries(tenant="acme"))
+
+
+# --- 11. stage and next_action are per tenant, per campaign -------------------- #
+
+
+def test_stage_is_scoped_to_the_caller_and_the_campaign(env):
+    tc, store = env
+    b_cid, _ = _globex_campaign(store)  # globex: analysis + one awaiting run
+    assert tc.get(f"/api/campaigns/{b_cid}", headers=H("b-admin")).json()["summary"]["stage"]["current"] == "run"
+
+    # acme has no campaign: its legacy view reads setup, not globex's run stage
+    body = tc.get("/api/campaign", headers=H("a-read")).json()
+    assert body["has_campaign"] is False
+    assert body["stage"]["current"] == "setup"
+    assert body["next_action"]["stage"] == "setup"
+
+    # globex's campaign reads back as the same 404 a missing id gets, and its
+    # stage is never echoed to acme
+    foreign = tc.get(f"/api/campaigns/{b_cid}", headers=H("a-read"))
+    missing = tc.get(f"/api/campaigns/{_missing_id()}", headers=H("a-read"))
+    assert foreign.status_code == 404
+    assert _raw(foreign) == _raw(missing)
+    assert "stage" not in foreign.text and "next_action" not in foreign.text
+
+
+def test_campaign_detail_reports_stage_through_one_round(env):
+    tc, _store = env
+    cid = tc.post("/api/campaigns", json={"name": A_SECRET}, headers=H("a-write")).json()["id"]
+
+    def detail() -> dict:
+        r = tc.get(f"/api/campaigns/{cid}", headers=H("a-read"))
+        assert r.status_code == 200, r.text
+        return r.json()["summary"]
+
+    # created but never uploaded: no analysis, nothing started
+    assert detail()["stage"]["current"] == "setup"
+    assert detail()["stage"]["round"] is None
+
+    r = tc.post(f"/api/campaigns/{cid}/upload",
+                files={"file": ("acme.csv", _csv(_df(10, 1)), "text/csv")},
+                data={"target": "lipase_titer"}, headers=H("a-write"))
+    assert r.status_code == 200, r.text
+    s = detail()
+    assert s["stage"]["current"] == "plan" and s["stage"]["round"] == 1
+    assert s["next_action"]["action"] == "Review and start round 1"
+
+    recipes = [_recipe(2.5, 6.2), _recipe(3.0, 6.0)]
+    started = tc.post(f"/api/campaigns/{cid}/runs", json={"recipes": recipes},
+                      headers=H("a-write")).json()["started"]
+    s = detail()
+    assert s["stage"]["current"] == "run" and s["stage"]["started"] == 2
+    assert s["next_action"]["stage"] == "record"
+    assert all(p["round"] == 0 for p in s["pending"])
+
+    for run in started:
+        assert tc.post(f"/api/campaigns/{cid}/runs/{run['id']}/result", json={"value": 5.0},
+                       headers=H("a-write")).status_code == 200
+    s = detail()
+    assert s["stage"]["current"] == "learn" and s["stage"]["round"] == 1
+    assert s["next_action"]["action"] == "Learn from round 1"
+
+
+def test_explicit_campaign_reanalyze_reports_that_campaign_not_the_default(env):
+    tc, store = env
+    store.seed(_df(8, 2), "lipase_titer", ["Methanol", "pH"], tenant="acme")  # the default
+    cid = tc.post("/api/campaigns", json={"name": A_SECRET}, headers=H("a-write")).json()["id"]
+    store.seed(_df(8, 1), "lipase_titer", ["Methanol", "pH"], tenant="acme", campaign_id=cid)
+    run = tc.post(f"/api/campaigns/{cid}/runs", json={"recipes": [_recipe(2.5, 6.2)]},
+                  headers=H("a-write")).json()["started"][0]
+    assert tc.post(f"/api/campaigns/{cid}/runs/{run['id']}/result", json={"value": 4.2},
+                   headers=H("a-write")).status_code == 200
+
+    r = tc.post(f"/api/campaigns/{cid}/reanalyze", headers=H("a-write"))
+    assert r.status_code == 200, r.text
+    campaign = r.json()["campaign"]
+    assert campaign["n_base"] == 9 and campaign["round"] == 1
+    assert campaign["stage"]["round"] == 2 and campaign["analysis_in_sync"] is True
+    # the response is the requested campaign's summary, the same one a GET returns
+    assert campaign == tc.get(f"/api/campaigns/{cid}", headers=H("a-read")).json()["summary"]
+
+    # the default campaign is untouched, and its stage comes from its own analysis
+    # (none: it was seeded without one), not from the campaign just reanalyzed
+    legacy = tc.get("/api/campaign", headers=H("a-read")).json()
+    assert legacy["n_base"] == 8 and legacy["round"] == 0
+    assert legacy["stage"]["current"] == "setup"

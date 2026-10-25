@@ -8,6 +8,8 @@ is never touched either way.
 """
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -69,7 +71,9 @@ def client(store, tmp_path, monkeypatch):
 def test_get_campaign_before_any_seed_has_campaign_false(client):
     resp = client.get("/api/campaign")
     assert resp.status_code == 200
-    assert resp.json() == {"has_campaign": False}
+    body = resp.json()
+    assert body["has_campaign"] is False
+    assert set(body) == {"has_campaign", "stage", "next_action"}
 
 
 def test_seed_then_get_campaign_has_campaign_true(store, client):
@@ -525,3 +529,100 @@ def test_reanalyze_republishes_a_matching_stamp(store, client):
 
     assert client.post("/api/campaign/reanalyze").status_code == 200
     assert client.get("/api/campaign").json()["analysis_in_sync"] is True
+
+
+# --- stage / next_action (kalos/portal/campaign_stage.py) ------------------- #
+
+_RECIPES = [
+    {"recipe": {"Methanol": 2.0, "pH": 6.0}, "pred": 5.1, "std": 0.4, "mode": "explore", "reason": "a"},
+    {"recipe": {"Methanol": 3.0, "pH": 6.5}, "pred": 6.2, "std": 0.2, "mode": "exploit", "reason": "b"},
+]
+
+
+def test_get_campaign_without_campaign_carries_setup_stage(client):
+    body = client.get("/api/campaign").json()
+    assert body["has_campaign"] is False
+    assert body["stage"]["current"] == "setup"
+    assert body["stage"]["round"] is None
+    assert body["next_action"]["action"] == "Upload a run sheet"
+
+
+def test_seeded_campaign_without_an_analysis_reports_setup_stage(store, client):
+    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
+
+    body = client.get("/api/campaign").json()
+    assert body["has_campaign"] is True
+    assert body["stage"]["current"] == "setup"
+    assert body["stage"]["round"] is None
+    assert body["analysis_in_sync"] is False
+
+
+def test_stage_is_derived_from_the_default_campaigns_own_analysis(store, client):
+    """A named campaign's analysis must never drive the default campaign's
+    stage: the default is seeded without an analysis, so it stays in setup
+    even though another campaign of the same tenant has a proposed batch."""
+    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
+    cid = client.post("/api/campaigns", json={"name": "other"}).json()["id"]
+    assert client.post(
+        f"/api/campaigns/{cid}/upload",
+        files={"file": ("runs.csv", _tiny_df(n=10).to_csv(index=False), "text/csv")},
+        data={"target": "lipase_titer"},
+    ).status_code == 200
+    assert client.get(f"/api/campaigns/{cid}").json()["summary"]["stage"]["current"] == "plan"
+
+    assert client.get("/api/campaign").json()["stage"]["current"] == "setup"
+
+
+def test_stage_advances_through_start_result_reanalyze(client):
+    assert _upload(client, _tiny_df(n=10)).status_code == 200
+    assert client.get("/api/campaign").json()["stage"]["current"] == "plan"
+
+    started = client.post("/api/campaign/start", json={"recipes": _RECIPES}).json()["started"]
+    body = client.get("/api/campaign").json()
+    assert body["stage"]["current"] == "run"
+    assert body["stage"]["started"] == 2
+    assert body["next_action"]["stage"] == "record"
+
+    for run in started:
+        client.post("/api/campaign/result", json={"id": run["id"], "value": 6.0})
+    body = client.get("/api/campaign").json()
+    assert body["stage"]["current"] == "learn"
+    assert body["stage"]["round"] == 1
+
+    resp = client.post("/api/campaign/reanalyze")
+    assert resp.status_code == 200, resp.text
+    for body in (resp.json()["campaign"], client.get("/api/campaign").json()):
+        assert body["stage"]["current"] == "plan"
+        assert body["stage"]["round"] == 2
+        assert body["round"] == 1  # top-level round stays 0-based
+        assert body["analysis_in_sync"] is True
+
+
+def test_existing_fields_unchanged(store, client):
+    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
+    body = client.get("/api/campaign").json()
+    assert set(body) - {"stage", "next_action"} == {
+        "has_campaign", "target", "features", "n_base", "best", "round",
+        "history", "pending", "n_awaiting", "n_measured", "analysis_in_sync",
+    }
+
+
+def test_start_stamps_run_round(store, client):
+    store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
+    client.post("/api/campaign/start", json={"recipes": _RECIPES[:1]})
+    assert client.get("/api/campaign").json()["pending"][0]["round"] == 0
+
+    # A run persisted before `round` was stamped reads null. Rewrite the
+    # default campaign's state blob without the key (as an old row would be).
+    cid = store.default_campaign_id(tenant="default")
+    state = store.get(tenant="default", campaign_id=cid)
+    assert state is not None
+    del state["pending"][0]["round"]
+    state.pop("generation", None)
+    with store._conn:
+        store._conn.execute(
+            "UPDATE campaigns SET state = ? WHERE id = ? AND tenant = ?",
+            (json.dumps(state), cid, "default"),
+        )
+    assert client.get("/api/campaign").json()["pending"][0]["round"] is None
+
