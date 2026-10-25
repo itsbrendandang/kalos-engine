@@ -53,11 +53,11 @@ Open PRs are listed as in-progress, not as implemented.
 | Pool-replay benchmark on published media datasets | EXPERIMENTAL, open PR [#77](https://github.com/itsbrendandang/kalos-engine/pull/77) | not on `main` |
 | Hard linear constraints on proposals | EXPERIMENTAL, open PR [#78](https://github.com/itsbrendandang/kalos-engine/pull/78) | not on `main` |
 | `feature_ranges` in analysis output; GP-default guardrail | in progress, open PRs [#80](https://github.com/itsbrendandang/kalos-engine/pull/80), [#79](https://github.com/itsbrendandang/kalos-engine/pull/79) | not on `main` |
-| Repo hygiene (CODEOWNERS, SECURITY.md) and loopback-by-default compose bind | in progress, open PRs [#83](https://github.com/itsbrendandang/kalos-engine/pull/83), [#84](https://github.com/itsbrendandang/kalos-engine/pull/84) | not on `main` |
-| Verifying short-lived internal JWTs from the web app (EdDSA) | PLANNED | design only; no code |
-| Organisations as tenants, with membership | PLANNED | tenants today are strings on operator-provisioned tokens |
-| Multiple campaigns per tenant | PLANNED | one campaign row per tenant today |
-| Local background job workers (long GP fits off the request path) | PLANNED | `docs/HARDENING.md` Phase 2; today a concurrent upload gets a 503 busy answer |
+| Repo hygiene (CODEOWNERS, SECURITY.md, PR template) and loopback-by-default compose bind | in progress, open PR [#83](https://github.com/itsbrendandang/kalos-engine/pull/83) (merge conflicts with `main`) and draft PR [#84](https://github.com/itsbrendandang/kalos-engine/pull/84) | not on `main` |
+| Verifying short-lived internal JWTs from the web app (EdDSA), engine side | IMPLEMENTED (kalos-web does not issue them yet) | `kalos/portal/jwt_auth.py`, `docs/ENGINE_TOKEN.md`, `tests/test_jwt_auth.py`; PRs [#88](https://github.com/itsbrendandang/kalos-engine/pull/88), [#96](https://github.com/itsbrendandang/kalos-engine/pull/96) |
+| Organisations as tenants, with membership | PLANNED | the engine only reads a `tenant` string (from an operator-provisioned token or an engine JWT claim); no organisation model or membership exists in the engine |
+| Multiple campaigns per tenant | IMPLEMENTED | `kalos/portal/campaigns_api.py`, `docs/CAMPAIGNS_API.md`, `tests/test_cross_tenant_isolation.py`; PRs [#89](https://github.com/itsbrendandang/kalos-engine/pull/89), [#90](https://github.com/itsbrendandang/kalos-engine/pull/90) |
+| Background analysis jobs with a local worker process (`/api/campaigns/{id}/jobs`) | IMPLEMENTED | `kalos/portal/jobs.py`, `job_runner.py`, `job_worker.py`, `docs/JOBS.md`, `tests/test_jobs.py`, `tests/test_jobs_api.py`; PR [#91](https://github.com/itsbrendandang/kalos-engine/pull/91). The synchronous routes still answer 503 busy when the analysis slot is taken |
 | Sparse/variational surrogate beyond 2,000 rows | PLANNED | `docs/HARDENING.md` Phase 2 |
 | Metrics, structured logging, alert hooks | PLANNED | `docs/HARDENING.md` Phase 3 |
 | Scientific validation on independent real wet-lab data | PLANNED | not done; see below |
@@ -70,20 +70,22 @@ Solid arrows and boxes exist on `main`. Dashed arrows and boxes are planned and 
 flowchart LR
   B[Browser] --> W["kalos-web: Next.js UI + server-side proxy"]
   W -->|"static bearer token (today)"| E["kalos-engine: FastAPI"]
-  E --> S[("SQLite: per-tenant campaign")]
+  E --> S[("SQLite: per-tenant campaigns")]
   E --> M["GP surrogate (BoTorch)"]
+  E --> V["EdDSA JWT verification (built; kalos-web does not issue yet)"]
+  E --> J["local job workers"]
   B -.->|"planned: login"| A["Better Auth session in web"]
   A -.-> W
   W -.->|"planned: EdDSA JWT, iss kalos-web, aud kalos-engine, 120s max"| E
-  E -.-> V["planned: verify JWT independently; org = tenant; multi-campaign"]
-  E -.->|"planned"| J["local job workers"]
+  E -.-> O["planned: organisations as tenants, membership"]
   classDef planned stroke-dasharray: 5 5,color:#666;
-  class A,J,V planned;
+  class A,O planned;
 ```
 
 Today the browser talks to the Next.js app, whose server-side proxy forwards to this engine using one configured bearer token.
 The web app has **no user login**, so anyone who can reach the proxy acts as that token's tenant.
-The planned design adds a Better Auth session in the web app, a short-lived EdDSA-signed internal JWT (issuer `kalos-web`, audience `kalos-engine`, lifetime of at most 120 seconds) that the engine verifies on its own, organisations as tenants, multiple campaigns per organisation, and local job workers.
+Built on the engine side: verification of short-lived EdDSA-signed internal JWTs (issuer `kalos-web`, audience `kalos-engine`, lifetime of at most 120 seconds) that the engine checks on its own, multiple campaigns per tenant, and background analysis jobs run by local worker processes.
+Still planned: the Better Auth session and JWT issuance in the web app, and organisations as tenants with membership.
 Current and planned request flows: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Campaign loop details: [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md).
 
 ## Local development
@@ -141,7 +143,7 @@ In open mode (no tokens configured, loopback only) every caller is an anonymous 
 
 Contracts: [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md), [`docs/SCALE_READOUT.md`](docs/SCALE_READOUT.md), [`docs/UPLOADS.md`](docs/UPLOADS.md).
 FastAPI also serves its generated OpenAPI docs at `/docs` when the service runs.
-Open PR [#76](https://github.com/itsbrendandang/kalos-engine/pull/76) changes `/readyz` to stop returning exception text; on `main` it still returns it.
+On `main`, `/readyz` returns a fixed generic reason and never exception text (`kalos/portal/app.py`).
 
 ## Security model
 
@@ -159,8 +161,7 @@ What is missing or limited:
 
 - **The web app has no user login, and its proxy is unauthenticated.** Do not expose kalos-web or this engine to the public internet.
 - Tenants are strings in operator-provisioned tokens. There is no user directory, organisation membership, or self-service token issuance.
-- The planned web-to-engine JWT scheme does not exist yet; the engine accepts only static bearer tokens.
-- `/readyz` on `main` returns exception text (fix in open PR #76).
+- The engine verifies EdDSA engine tokens (`kalos/portal/jwt_auth.py`), but kalos-web does not issue them yet; the web app still sends one static bearer token.
 - No rate limiting, audit log, or encryption at rest. TLS is out of scope; use a reverse proxy.
 - `/api/single`, `/api/multi`, and `/healthz` are not tenant-scoped (they hold no tenant data).
 - The deploy pack has been exercised once end to end; its runbook still lists unverified items (backup drill).
@@ -254,17 +255,17 @@ python -m kalos.bench --vs-baselines --quick   # smoke test, 2 seeds, writes not
 ## Current limitations
 
 - No validated real-data win; no independent wet-lab confirmation.
-- Single campaign per tenant; no user or organisation management.
-- Exact GP only; capped at 2,000 fit rows. Analysis runs on the request path and a concurrent upload gets 503 busy.
+- No user or organisation management. The legacy `/api/campaign*` routes act on one default campaign per tenant; the multi-campaign API is under `/api/campaigns`.
+- Exact GP only; capped at 2,000 fit rows. Synchronous analysis runs on the request path (a concurrent sync upload gets 503 busy); background jobs are the alternative (`docs/JOBS.md`).
 - Scale-up readout evidence is synthetic.
 - State is local files and SQLite; no HA, no managed backups beyond the compose sidecar (its drill was not exercised).
 
 ## Roadmap
 
 - **MVP (toward a public beta, not started unless noted):**
-  IMPLEMENTED: upload, analysis, campaign loop, scale readout, token auth, tenant-keyed store.
+  IMPLEMENTED: upload, analysis, campaign loop, scale readout, token auth, tenant-keyed store, multi-campaign API, background jobs, engine-side JWT verification.
   IN PROGRESS (open PRs): #76-#81, #83, #84.
-  PLANNED: web login (Better Auth), engine-side JWT verification, organisations as tenants, multiple campaigns, local job workers, a rate limit.
+  PLANNED: web login (Better Auth), web-side JWT issuance, organisations as tenants, a rate limit.
 - **Later (PLANNED):** sparse/variational surrogate, metrics and alerting, server-side PDF readouts (`TODOS.md`), independent validation on real data, an external security review.
 - **EXPERIMENTAL:** mechanistic priors, alternative surrogates (must beat the GP on published datasets first; PR #79).
 
@@ -276,7 +277,7 @@ Auth is bearer tokens configured with `KALOS_AUTH_TOKENS`; copy `deploy/.env.exa
 The runbook says what is and is not verified: a first deployment on 2026-09-10 ran the stack end to end, but its own "NOT verified" list still says no image was built and no container was run, and the backup drill was not exercised.
 CI builds the engine image and waits for its healthcheck on every push.
 TLS is out of scope: put a reverse proxy in front. Full steps: [`deploy/RUNBOOK.md`](deploy/RUNBOOK.md).
-Because the web UI has no login, treat any deployment as private-network only. Open PR #84 makes the web port loopback by default.
+Because the web UI has no login, treat any deployment as private-network only. Draft PR #84 would make the web port loopback by default (the compose file on `main` still publishes it on all interfaces).
 
 ## Extending to other domains
 

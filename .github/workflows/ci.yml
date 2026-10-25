@@ -48,6 +48,23 @@ jobs:
       - name: pip-audit the image's pinned dependencies
         run: pip-audit --no-deps --disable-pip -r deploy/engine/constraints.txt
 
+  # experiments/leadgene_pipeline is a standalone prototype with its own
+  # requirements.txt (no torch, no kalos package) and 24 tests that run in about
+  # 30 s, so CI runs them. It is not part of the kalos package and is not
+  # linted by the root ruff/mypy steps. Run from its own directory because it
+  # imports its own `pipeline` package.
+  leadgene-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: experiments/leadgene_pipeline
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      - run: python -m pip install -q -r requirements.txt
+      - run: python -m pytest -q tests
+
   docker-build:
     runs-on: ubuntu-latest
     # This job exists because the 2026-09-10 deploy pack session found three

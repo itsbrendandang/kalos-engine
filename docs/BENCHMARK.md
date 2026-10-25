@@ -6,7 +6,7 @@
 | Protocol written | 2026-10-18 (UTC) |
 | Scope | Synthetic objectives with known optima. No real wet-lab data. |
 | Harness | `kalos/bench/vs_baselines.py`, run with `python -m kalos.bench --vs-baselines` |
-| Results | `benchmarks/results/vs_baselines.csv`, `benchmarks/results/vs_baselines.json` |
+| Results | `benchmarks/results/vs_baselines_runs.csv`, `benchmarks/results/vs_baselines.json` |
 | Deviations | Section 12, dated, with the reason. Nothing is changed silently. |
 
 This is a fixed, written-down comparison, not a tuned one. Kalos runs with its production defaults. Every other method runs with its library defaults plus only the arguments listed below. No method is tuned on the benchmark seeds.
