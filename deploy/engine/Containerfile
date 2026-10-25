@@ -93,8 +93,8 @@ COPY --from=builder /opt/venv /opt/venv
 
 # The commit this image was built from. Recorded in every analysis's `run`
 # block (kalos/portal/run_record.py) as `build_sha`, so a stored result can be
-# traced to the code that produced it. CI passes `--build-arg
-# KALOS_BUILD_SHA=${{ github.sha }}` (.github/workflows/ci.yml); a local build
+# traced to the code that produced it. Pass `--build-arg
+# KALOS_BUILD_SHA=$(git rev-parse HEAD)` when building; a build
 # without the arg records "unknown" rather than pretending to a commit.
 ARG KALOS_BUILD_SHA=unknown
 ENV KALOS_BUILD_SHA=${KALOS_BUILD_SHA}
