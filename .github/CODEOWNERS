@@ -1,0 +1,8 @@
+# Default owner for everything.
+*                         @itsbrendandang
+
+# Security-sensitive paths (auth, uploads, config), listed explicitly so they stay owned
+# even if the default rule changes.
+/kalos/portal/auth.py     @itsbrendandang
+/kalos/portal/uploads.py  @itsbrendandang
+/kalos/portal/config.py   @itsbrendandang
