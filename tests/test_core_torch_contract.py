@@ -50,9 +50,12 @@ def _top_level_torch_import(path: Path) -> str | None:
             for alias in node.names:
                 if alias.name.split(".")[0] in _TORCH_ROOTS:
                     return alias.name
-        elif isinstance(node, ast.ImportFrom):
-            if node.module is not None and node.module.split(".")[0] in _TORCH_ROOTS:
-                return node.module
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and node.module.split(".")[0] in _TORCH_ROOTS
+        ):
+            return node.module
     return None
 
 

@@ -4,6 +4,23 @@ Newest first.
 
 ## Unreleased
 
+### Refactor - split `kalos/portal/analysis.py` (`refactor/split-analysis`)
+
+- Behavior-preserving. `kalos/portal/analysis.py` (2,727 lines) keeps `_analyze`, `_analyze_body`
+  and the seeded-RNG scope, which hold the monkeypatch points the tests use. Helpers moved to
+  `kalos/portal/analysis_parts/`: `policy` (named constants, `validation_mode`), `identifiers`,
+  `anonymize`, `columns`, `ranges`, `noise_blocks`, `refusals`, `diagnostics`, `proposals`.
+  Every public name, and every private name a test or caller imports, is still importable from
+  `kalos.portal.analysis`; the public surface used by callers and tests is unchanged, but `analysis.__all__` no longer lists every moved name (e.g. `ParsedUpload`, `build_report`). Unreferenced private helpers now live in `analysis_parts`.
+
+### Build - lock, image pins, supply-chain gate (`chore/lock-pinned-image`)
+
+- **`requires-python` is `>=3.11`** (was `>=3.10`). `ax-platform` 1.3.1 (the `bench` extra) needs 3.11, so the 3.10 floor made the lock unresolvable. `[tool.ruff] target-version = "py311"` is explicit; README updated.
+- **`uv.lock` is current.** It pinned fastapi 0.139 while pyproject asked for `>=0.143`. `uv lock --check` now passes, and CI runs it.
+- **The engine image installs the locked transitive set.** `deploy/engine/constraints.txt` is `uv export --frozen --extra ml --extra portal` minus torch; `deploy/engine/Containerfile` installs with `pip install -c constraints.txt`. Torch is pinned by `ARG TORCH_VERSION` (2.13.0, the lock's version) on the CPU index. Before this the image resolved torch 2.14.1, which the benchmark notes already flagged as giving different BO results.
+- **Two CVE bumps in the lock:** filelock 3.29.7 -> 4.2.4 (CVE-2026-112940/112913/112907, fixed in 4.2.1) and setuptools 83.0.0 -> 84.2.1 (GHSA-xmj3-9gf7-h52w, fixed in 84.1.0).
+- **CI:** `test` runs `uv lock --check`. New `audit` job checks that `constraints.txt` and the Containerfile torch pin match `uv.lock`, then runs `pip-audit --no-deps --disable-pip -r deploy/engine/constraints.txt`.
+
 ### Fixed - API and ops review (`fix/review-api`)
 
 - **Unknown `KALOS_*` enum values refuse to start (H3).** `KALOS_VALIDATION_MODE=stict` used to select `warn` silently, and a `KALOS_LLM_PROVIDER` typo fell back to the live Anthropic path. One helper (`kalos/envconfig.py`) now raises; `python -m kalos.portal` checks every enum and bounded setting before it binds and exits 2 with one line. `strict` stays out of the templates (docs/HARDENING.md).

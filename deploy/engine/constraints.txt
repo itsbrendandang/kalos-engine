@@ -1,0 +1,79 @@
+# Generated from uv.lock by the command below - do not edit by hand.
+# torch is excluded: deploy/engine/Containerfile installs the CPU wheel first.
+# Regenerate after any uv.lock change; CI's `audit` job fails if this file is stale.
+#   uv export --frozen --extra ml --extra portal --no-emit-project --no-hashes | grep -v '^ *#' | grep -vi '^torch=='
+annotated-doc==0.0.4
+annotated-types==0.7.0
+anyio==4.14.2
+botorch==0.18.1
+cffi==2.1.1 ; platform_python_implementation != 'PyPy'
+click==8.4.2
+colorama==0.4.6 ; sys_platform == 'win32'
+cryptography==50.0.2
+cuda-bindings==13.3.1 ; python_full_version < '3.15' and sys_platform == 'linux'
+cuda-pathfinder==1.5.6 ; python_full_version < '3.15' and sys_platform == 'linux'
+cuda-toolkit==13.0.3.0 ; sys_platform == 'linux'
+et-xmlfile==2.0.0
+fastapi==0.162.0
+filelock==4.2.4
+fsspec==2026.6.0
+gpytorch==1.15.2
+h11==0.16.0
+httptools==0.8.0
+idna==3.18
+jinja2==3.1.6
+joblib==1.5.3
+linear-operator==0.6.1
+markupsafe==3.0.3
+mpmath==1.3.0
+multipledispatch==1.0.0
+mypy-extensions==1.1.0
+narwhals==2.24.0
+networkx==3.6.1
+ninja==1.13.0
+numpy==2.4.6 ; python_full_version < '3.12'
+numpy==2.5.1 ; python_full_version >= '3.12'
+nvidia-cublas==13.1.1.3 ; sys_platform == 'linux'
+nvidia-cuda-cupti==13.0.85 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-cuda-nvrtc==13.0.88 ; sys_platform == 'linux'
+nvidia-cuda-runtime==13.0.96 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-cudnn-cu13==9.20.0.48 ; sys_platform == 'linux'
+nvidia-cufft==12.0.0.61 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-cufile==1.15.1.6 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-curand==10.4.0.35 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-cusolver==12.0.4.66 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-cusparse==12.6.3.3 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-cusparselt-cu13==0.8.1 ; sys_platform == 'linux'
+nvidia-nccl-cu13==2.29.7 ; sys_platform == 'linux'
+nvidia-nvjitlink==13.3.33 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-nvshmem-cu13==3.4.5 ; sys_platform == 'linux'
+nvidia-nvtx==13.0.85 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+openpyxl==3.1.5
+opentelemetry-api==1.45.1
+pandas==3.0.3
+pycparser==3.11 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
+pydantic==2.13.4
+pydantic-core==2.46.4
+pyjwt==2.15.1
+pyre-extensions==0.0.32
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.2
+python-multipart==0.0.32
+pyyaml==6.0.3
+scikit-learn==1.9.0
+scipy==1.17.1 ; python_full_version < '3.12'
+scipy==1.18.0 ; python_full_version >= '3.12'
+setuptools==84.2.1
+six==1.17.0
+starlette==1.3.1
+sympy==1.14.0
+threadpoolctl==3.6.0
+triton==3.7.1 ; python_full_version < '3.15' and sys_platform == 'linux'
+typing-extensions==4.16.0
+typing-inspect==0.9.0
+typing-inspection==0.4.2
+tzdata==2026.3 ; sys_platform == 'emscripten' or sys_platform == 'win32'
+uvicorn==0.51.0
+uvloop==0.22.1 ; platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'
+watchfiles==1.2.0
+websockets==16.1

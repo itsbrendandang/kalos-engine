@@ -55,7 +55,8 @@ instead of a pile of if/elif chains: adding a unit means adding one row.
 from __future__ import annotations
 
 import re
-from typing import Callable, NamedTuple
+from collections.abc import Callable
+from typing import NamedTuple
 
 # --- unit registry -------------------------------------------------------- #
 
@@ -241,4 +242,4 @@ def convert(value: float, unit_token: str | None) -> tuple[float, str]:
     return unit_def.to_base(value), unit_def.suffix
 
 
-__all__ = ["parse_value", "convert", "canonical_suffix", "is_known_unit", "base_unit_label"]
+__all__ = ["base_unit_label", "canonical_suffix", "convert", "is_known_unit", "parse_value"]

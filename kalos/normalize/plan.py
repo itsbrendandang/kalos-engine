@@ -114,7 +114,7 @@ class NormalizationPlan:
         )
 
     @classmethod
-    def from_json(cls, raw: str) -> "NormalizationPlan":
+    def from_json(cls, raw: str) -> NormalizationPlan:
         """Rebuild a `NormalizationPlan` from `to_json`'s output."""
         data: dict[str, Any] = json.loads(raw)
         columns = [ColumnPlan(**col) for col in data["columns"]]

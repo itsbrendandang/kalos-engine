@@ -24,10 +24,10 @@ import functools
 import logging
 import os
 import re
-from typing import Any
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -37,8 +37,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
-
-from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_exclusively, run_in_slot
 
 from kalos.portal.analysis import _analyze, _annotate
 from kalos.portal.auth import (
@@ -50,48 +48,56 @@ from kalos.portal.auth import (
     require_scope,
 )
 from kalos.portal.auth_errors import JwtConfigError
-from kalos.portal.jwt_auth import log_config_error_once
+from kalos.portal.busy import (
+    RETRY_AFTER_SECONDS,
+    AnalysisBusy,
+    run_exclusively,
+    run_in_slot,
+)
+from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_store
+from kalos.portal.campaign_routes import audit as _audit
+from kalos.portal.campaign_routes import campaign_error_response
+from kalos.portal.campaign_routes import router as _campaign_router
+from kalos.portal.campaigns_api import router as _campaigns_router
 from kalos.portal.config import (
     ProductionConfigError,
     assert_production_posture,
     cors_config,
     deployment_env,
-    is_production,
     is_local_client,
+    is_production,
     log_security_posture,
     open_access_explicitly_allowed,
 )
-from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_store
+from kalos.portal.jobs_api import JobUploadAuthPrecheck, JobUploadSizeLimit
+from kalos.portal.jobs_api import router as _jobs_router
+from kalos.portal.jwt_auth import log_config_error_once
 from kalos.portal.limits import (
     MULTIPART_OVERHEAD_BYTES,
     max_request_bytes,
-    upload_read_timeout_s,
     route_path,
+    upload_read_timeout_s,
 )
 from kalos.portal.migrate import legacy_latest_filename
-from kalos.portal.tenancy import validate_tenant_id
-from kalos.portal.campaign_routes import audit as _audit
-from kalos.portal.campaign_routes import campaign_error_response
-from kalos.portal.campaign_routes import router as _campaign_router
-from kalos.portal.campaigns_api import router as _campaigns_router
-from kalos.portal.jobs_api import JobUploadAuthPrecheck, JobUploadSizeLimit
-from kalos.portal.jobs_api import router as _jobs_router
 from kalos.portal.pipeline import compute_upload_analysis, publish_upload_analysis
 from kalos.portal.scale_routes import router as _scale_router
+from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.uploads import (
+    _ERR_FIT,
+    _ERR_PARSE,
+    _ERR_TOO_MANY_FIT_ROWS,
     MAX_COLUMNS,
     MAX_CSV_ROWS,
     MAX_UPLOAD_BYTES,
     MAX_XLSX_CELLS,
     UploadRejected,
-    _ERR_FIT,
-    _ERR_PARSE,
-    _ERR_TOO_MANY_FIT_ROWS,
     _parse_upload,
     parse_upload,
-    rejection_counts as _rejection_counts,
     safe_context,
     scrubbed_failure,
+)
+from kalos.portal.uploads import (
+    rejection_counts as _rejection_counts,
 )
 from kalos.providers import provider_status
 
@@ -121,7 +127,9 @@ UPLOAD_PATHS = frozenset({"/api/run", "/api/scale/readout"})
 # The value and the pin live in `kalos.portal.pipeline` (shared with the
 # background-job worker process); re-exported under the historical names.
 from kalos.portal.pipeline import TORCH_THREADS as _TORCH_THREADS  # noqa: E402,F401
-from kalos.portal.pipeline import ensure_torch_threads as _ensure_torch_threads  # noqa: E402
+from kalos.portal.pipeline import (  # noqa: E402
+    ensure_torch_threads as _ensure_torch_threads,
+)
 
 # --- deployment environment (KALOS_ENV) --------------------------------------- #
 # Decided once, at startup. KALOS_ENV=production (docs/HARDENING.md):
@@ -543,14 +551,14 @@ def _single_compute(rounds: int, q: int) -> dict:
     rng = np.random.default_rng(0)
     X = rng.uniform(0, 1, (6, 3))
     y = _titer(X)
-    traj = [{"round": 0, "best": float(y.max()), "n": int(len(y))}]
+    traj = [{"round": 0, "best": float(y.max()), "n": len(y)}]
     proposals: list = []
     for r in range(rounds):
         s = Surrogate().fit(X, y, bounds=BOUNDS)
         nxt = propose(s, BOUNDS, q=q)
         X = np.vstack([X, nxt])
         y = np.concatenate([y, _titer(nxt)])
-        traj.append({"round": r + 1, "best": float(y.max()), "n": int(len(y))})
+        traj.append({"round": r + 1, "best": float(y.max()), "n": len(y)})
     # annotate the last proposed batch with predicted value + uncertainty + why
     # best before this batch was measured; len(nxt), not q: a batch can come
     # back short when the space has fewer than q distinct candidates
@@ -568,7 +576,10 @@ def _single_compute(rounds: int, q: int) -> dict:
 
 
 def _multi_compute(rounds: int, q: int) -> dict:
-    from kalos.core.multiobjective import MultiObjectiveSurrogate, propose_multiobjective
+    from kalos.core.multiobjective import (
+        MultiObjectiveSurrogate,
+        propose_multiobjective,
+    )
     from kalos.core.surrogate import DEVICE, DTYPE
 
     _ensure_torch_threads()
@@ -585,7 +596,7 @@ def _multi_compute(rounds: int, q: int) -> dict:
         Y = np.vstack([Y, _objectives(nxt)])
         _, py = s.pareto()
         traj.append(
-            {"round": r + 1, "pareto": int(len(py)), "best_titer": float(Y[:, 0].max()), "best_purity": float(Y[:, 1].max())}
+            {"round": r + 1, "pareto": len(py), "best_titer": float(Y[:, 0].max()), "best_purity": float(Y[:, 1].max())}
         )
         last_batch = nxt
     s = MultiObjectiveSurrogate().fit(X, Y, bounds=BOUNDS)
@@ -643,7 +654,7 @@ async def _run_demo(fn, principal: Principal, *args) -> JSONResponse:
     task.add_done_callback(lambda _t: locked.abandon())
     try:
         result = await asyncio.wait_for(asyncio.shield(task), timeout=DEMO_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.warning("demo route exceeded %ss; answered 504", DEMO_TIMEOUT_SECONDS)
         return JSONResponse(
             {"error": "the demo computation timed out", "code": "engine_timeout"}, status_code=504
@@ -778,7 +789,7 @@ async def _run_uploaded(
     # unless the caller confirmed it. The generation seen here guards the publish below.
     expected_generation: Any = _NO_GUARD
     try:
-        target_id, generation, awaiting, measured = _upload_target(
+        _target_id, generation, awaiting, measured = _upload_target(
             store, tenant=tenant, campaign_id=campaign_id,
         )
     except CampaignError as exc:
@@ -996,10 +1007,6 @@ async def _unhandled_error(request: Request, exc: Exception) -> JSONResponse:
 app.include_router(_scale_router)
 
 __all__ = [
-    "app",
-    "get_campaign_store",
-    "_analyze",
-    "UploadRejected",
     "MAX_COLUMNS",
     "MAX_CSV_ROWS",
     "MAX_UPLOAD_BYTES",
@@ -1007,6 +1014,10 @@ __all__ = [
     "_ERR_FIT",
     "_ERR_PARSE",
     "_ERR_TOO_MANY_FIT_ROWS",
+    "UploadRejected",
+    "_analyze",
     "_parse_upload",
+    "app",
+    "get_campaign_store",
     "parse_upload",
 ]

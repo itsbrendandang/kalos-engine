@@ -17,8 +17,8 @@ import pytest
 
 pytest.importorskip("torch")
 
-from kalos.domains import ColumnRoles  # noqa: E402
-from kalos.portal.analysis import _analyze, is_identifier_name  # noqa: E402
+from kalos.domains import ColumnRoles
+from kalos.portal.analysis import _analyze, is_identifier_name
 
 _PEOPLE_COLUMNS = ["Donor_Name_1", "Operator", "Analyst", "Technician", "Lab_Tech", "email"]
 _NAMES = ["Jane Smith 0", "alice_secret_op", "Bob Jones 1", "carol_secret_op"]
@@ -76,7 +76,7 @@ def test_the_recipes_carry_pseudonyms_not_the_level_values():
     })
     out = _analyze(_people_sheet(), target="lipase_titer", roles=roles, anonymize=True)
     for row in out["proposals"]:
-        for key, value in row["recipe"].items():
+        for _key, value in row["recipe"].items():
             if isinstance(value, str):
                 assert value not in _NAMES
                 assert value.startswith("level_")

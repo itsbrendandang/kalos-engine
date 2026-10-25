@@ -18,17 +18,17 @@ import pytest
 pytest.importorskip("torch")
 pytest.importorskip("botorch")
 
-import torch  # noqa: E402
+import torch
 
-import kalos.core.optimize as optimize  # noqa: E402
-from kalos.core.optimize import (  # noqa: E402
+import kalos.core.optimize as optimize
+from kalos.core.optimize import (
     NEAR_DUPLICATE_TOL,
     _is_distinct,
+    proposal_separation,
     propose,
     propose_batch,
-    proposal_separation,
 )
-from kalos.core.surrogate import Surrogate, sanitize_bounds  # noqa: E402
+from kalos.core.surrogate import Surrogate, sanitize_bounds
 
 
 def _pairwise_min(X, bounds, cat_dims=None) -> float:
@@ -106,7 +106,7 @@ def test_box_edge_optimum_batch_is_distinct_and_in_bounds():
     pb = propose_batch(s, bounds, q=5, seed=0)
     assert pb.returned == 5 and pb.notice is None
     assert _pairwise_min(pb.X, bounds) >= NEAR_DUPLICATE_TOL
-    assert (pb.X >= bounds[0] - 1e-9).all() and (pb.X <= bounds[1] + 1e-9).all()
+    assert (bounds[0] - 1e-9 <= pb.X).all() and (bounds[1] + 1e-9 >= pb.X).all()
     # the plain `propose` wrapper returns the same rows
     np.testing.assert_allclose(propose(s, bounds, q=5, seed=0), pb.X)
 
@@ -118,7 +118,7 @@ def test_a_collapsed_joint_batch_is_refilled_not_jittered(collapse_joint_batch):
     assert pb.returned == 5 and pb.notice is None
     assert pb.near_duplicates_replaced == 4
     assert _pairwise_min(pb.X, bounds) >= NEAR_DUPLICATE_TOL
-    assert (pb.X >= bounds[0] - 1e-9).all() and (pb.X <= bounds[1] + 1e-9).all()
+    assert (bounds[0] - 1e-9 <= pb.X).all() and (bounds[1] + 1e-9 >= pb.X).all()
     # deterministic: the repair is a selection, not random noise
     again = propose_batch(s, bounds, q=5, seed=0)
     np.testing.assert_allclose(again.X, pb.X)

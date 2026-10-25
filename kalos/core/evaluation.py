@@ -9,7 +9,7 @@ more precise than it is, so `grouped_cv_report` is the number to quote.
 """
 from __future__ import annotations
 
-from typing import Iterator, Sequence, Tuple
+from collections.abc import Iterator, Sequence
 
 import numpy as np
 import pandas as pd
@@ -19,7 +19,7 @@ from .splits import make_splits, row_hash_groups
 from .surrogate import Surrogate
 
 
-def grouped_folds(groups: Sequence, n_splits: int = 5) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
+def grouped_folds(groups: Sequence, n_splits: int = 5) -> Iterator[tuple[np.ndarray, np.ndarray]]:
     """Leakage-checked grouped folds. Kept for compatibility; delegates to the
     one splitter in `splits.make_splits`, so there is a single grouping code path.
     Yields nothing when there are too few groups for an honest split (the old
@@ -218,8 +218,8 @@ def grouped_cv_report(
     return {
         "spearman": point,
         "ci95": (lo, hi),
-        "n_oof": int(len(preds[0])),
-        "n_groups": int(len(np.unique(grps[0]))),
+        "n_oof": len(preds[0]),
+        "n_groups": len(np.unique(grps[0])),
         "n_folds": int(n_folds0),
         "oof_actual": actuals[0].tolist(),
         "oof_pred": preds[0].tolist(),
@@ -430,14 +430,14 @@ def logo_report(X, y, groups, *, bounds=None, cat_dims=None) -> dict:
     X_arr = np.asarray(X, float)
     g_arr = np.asarray(groups)
     g_str = np.asarray(pd.Series(g_arr).astype(str).values) if len(g_arr) else g_arr
-    n_groups = int(len(np.unique(g_str))) if len(g_str) else 0
+    n_groups = len(np.unique(g_str)) if len(g_str) else 0
     if n_groups < 2:
         return {"spearman": float("nan"), "n_groups": n_groups, "n_oof": 0}
     pred, _sd, actual, _grp, _n_folds = _oof(X_arr, y, g_arr, n_groups, bounds, cat_dims=cat_dims)
     return {
         "spearman": _spearman(pred, actual),
         "n_groups": n_groups,
-        "n_oof": int(len(pred)),
+        "n_oof": len(pred),
     }
 
 
@@ -479,7 +479,7 @@ def top_k_overlap(oof_actual, oof_pred, k: int) -> dict:
     usable = np.isfinite(actual) & np.isfinite(pred)
     actual = actual[usable]
     pred = pred[usable]
-    n = int(len(actual))
+    n = len(actual)
 
     if k_int <= 0:
         return {"overlap": float("nan"), "k": k_int, "n": n, "evaluable": False,
@@ -579,14 +579,14 @@ def group_mean_baseline_spearman(y, groups) -> dict:
 
 
 __all__ = [
-    "grouped_cv_spearman",
-    "grouped_cv_report",
-    "grouped_folds",
-    "producer_only_spearman",
-    "interval_calibration",
-    "logo_report",
-    "top_k_overlap",
-    "group_mean_baseline_spearman",
     "CALIBRATION_LEVELS",
     "MIN_CALIBRATION_N",
+    "group_mean_baseline_spearman",
+    "grouped_cv_report",
+    "grouped_cv_spearman",
+    "grouped_folds",
+    "interval_calibration",
+    "logo_report",
+    "producer_only_spearman",
+    "top_k_overlap",
 ]

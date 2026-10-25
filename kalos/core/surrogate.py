@@ -149,7 +149,7 @@ class Surrogate:
         # Recorded so the acquisition path knows which dims to enumerate.
         self._cat_dims: list[int] | None = None
 
-    def fit(self, X, y, bounds, *, noise=None, cat_dims=None) -> "Surrogate":
+    def fit(self, X, y, bounds, *, noise=None, cat_dims=None) -> Surrogate:
         """Fit on (X, y). `bounds` (2 x d) ties input normalization to the fixed
         design box rather than the training-data envelope; it is required so a
         caller can never fall into the training-envelope normalization footgun.

@@ -142,4 +142,4 @@ def load_config() -> NormalizeConfig:
     )
 
 
-__all__ = ["NormalizeConfig", "Provider", "load_config", "credentials_available"]
+__all__ = ["NormalizeConfig", "Provider", "credentials_available", "load_config"]

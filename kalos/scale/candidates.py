@@ -66,7 +66,8 @@ passed, exactly as before this file existed.
 """
 from __future__ import annotations
 
-from typing import Protocol, Sequence, runtime_checkable
+from collections.abc import Sequence
+from typing import Protocol, runtime_checkable
 
 import gpytorch
 import numpy as np
@@ -94,7 +95,7 @@ class ScaleCandidateModel(Protocol):
 
     def fit(
         self, X: ArrayLike, y: ArrayLike, *, bounds: ArrayLike, noise: ArrayLike | float | None = None
-    ) -> "ScaleCandidateModel": ...
+    ) -> ScaleCandidateModel: ...
 
     def posterior(
         self, X: ArrayLike, *, observation_noise: bool = False
@@ -228,7 +229,7 @@ class PhysicsMeanSurrogate:
 
     def fit(
         self, X: ArrayLike, y: ArrayLike, *, bounds: ArrayLike, noise: ArrayLike | float | None = None
-    ) -> "PhysicsMeanSurrogate":
+    ) -> PhysicsMeanSurrogate:
         Xa, ya, Xt, yt, box = _prep_fit_inputs(X, y, bounds)
         if Xa.shape[1] != len(self.feature_names):
             raise ValueError(
@@ -319,7 +320,7 @@ class MultiFidelitySurrogate:
 
     def fit(
         self, X: ArrayLike, y: ArrayLike, *, bounds: ArrayLike, noise: ArrayLike | float | None = None
-    ) -> "MultiFidelitySurrogate":
+    ) -> MultiFidelitySurrogate:
         Xa, ya, Xt, yt, box = _prep_fit_inputs(X, y, bounds)
         if Xa.shape[1] != len(self.feature_names):
             raise ValueError(
@@ -345,9 +346,9 @@ class MultiFidelitySurrogate:
 
 
 __all__ = [
-    "ScaleCandidateModel",
-    "DEFAULT_PHYSICS_MEAN_FEATURES",
-    "PhysicsMeanSurrogate",
     "DEFAULT_FIDELITY_FEATURE",
+    "DEFAULT_PHYSICS_MEAN_FEATURES",
     "MultiFidelitySurrogate",
+    "PhysicsMeanSurrogate",
+    "ScaleCandidateModel",
 ]

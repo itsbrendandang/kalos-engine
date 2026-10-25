@@ -98,7 +98,7 @@ def test_multiobjective_proposes_and_pareto():
     s = MultiObjectiveSurrogate().fit(X, Y, bounds=bounds)
     nxt = propose_multiobjective(s, bounds, q=2)
     assert nxt.shape == (2, 3) and (nxt >= 0).all() and (nxt <= 1).all()
-    px, py = s.pareto()
+    _px, py = s.pareto()
     assert py.shape[1] == 2 and len(py) >= 1
 
 

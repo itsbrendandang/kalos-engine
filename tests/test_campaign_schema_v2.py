@@ -190,7 +190,7 @@ def test_v1_migration_keeps_every_byte_of_campaign_state(tmp_path, caplog):
 
 
 def test_backup_is_written_and_restorable(tmp_path):
-    db, blobs = _standard_v1(tmp_path / "state")
+    _db, blobs = _standard_v1(tmp_path / "state")
     CampaignStore(tmp_path / "state")
     backups = list((tmp_path / "state").glob("portal.db.pre-v2-*"))
     assert len(backups) == 1
@@ -342,7 +342,7 @@ def test_dry_run_changes_nothing_and_prints_a_plan(tmp_path, capsys):
 
 
 def test_migration_is_idempotent(tmp_path):
-    db, blobs = _standard_v1(tmp_path)
+    db, _blobs = _standard_v1(tmp_path)
     first = migrate.migrate_up(db)
     assert first.action == "migrated" and first.backup_path is not None
     ids = _q(db, "SELECT id FROM campaigns ORDER BY id")
@@ -753,9 +753,8 @@ def test_startup_migrates_and_a_failed_backup_stops_the_app(tmp_path, monkeypatc
 
     with monkeypatch.context() as m:
         m.setattr(migrate, "_online_backup", _boom)
-        with pytest.raises(migrate.MigrationError):
-            with TestClient(portal_module.app):
-                pass
+        with pytest.raises(migrate.MigrationError), TestClient(portal_module.app):
+            pass
     assert _sha(db) == before and campaign_module._STORE is None
 
     with TestClient(portal_module.app) as tc:

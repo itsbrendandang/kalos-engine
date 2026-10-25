@@ -24,11 +24,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
-from numpy.typing import NDArray  # noqa: E402
+import numpy as np
+import pandas as pd
+from numpy.typing import NDArray
 
-from kalos.scale.transfer import DEFAULT_SCALE_FEATURE_CONFIG, build_feature_matrix  # noqa: E402
+from kalos.scale.transfer import DEFAULT_SCALE_FEATURE_CONFIG, build_feature_matrix
 
 CSV_PATH = Path(__file__).resolve().parent / "synthetic_scaleup.csv"
 PROCESS_COLUMNS = ["ph_setpoint", "temperature_C"]

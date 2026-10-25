@@ -33,7 +33,7 @@ that column is computed as if the numbers were all in the same unit.
 from __future__ import annotations
 
 import re
-from typing import Pattern
+from re import Pattern
 
 import numpy as np
 import pandas as pd
@@ -46,17 +46,17 @@ from .bounds import DIMENSION_BOUNDS, infer_dimension
 from .report import Finding, UnitConversion, cap_rows
 
 __all__ = [
-    "check_units_consistency",
-    "check_physical_bounds",
+    "check_constant_columns",
+    "check_constant_within_group",
+    "check_controls_present",
     "check_duplicate_rows",
+    "check_informative_missingness",
     "check_missingness",
     "check_outliers",
+    "check_physical_bounds",
     "check_provenance_metadata",
     "check_replicate_adequacy",
-    "check_controls_present",
-    "check_constant_columns",
-    "check_informative_missingness",
-    "check_constant_within_group",
+    "check_units_consistency",
 ]
 
 
@@ -927,7 +927,7 @@ def check_informative_missingness(df: pd.DataFrame, target: str | None) -> list[
                         "target": target,
                         "rho": float(rho),
                         "frac_blank": frac_blank_col,
-                        "n": int(len(indicator)),
+                        "n": len(indicator),
                     },
                 )
             )

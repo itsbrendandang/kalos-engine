@@ -204,4 +204,4 @@ def build_payload(
     return payload, dropped_identity
 
 
-__all__ = ["build_payload", "REDACTED"]
+__all__ = ["REDACTED", "build_payload"]

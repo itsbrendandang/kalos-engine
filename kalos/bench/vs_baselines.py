@@ -23,10 +23,11 @@ import platform
 import subprocess
 import time
 import warnings
+from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple, Union
+from typing import Any
 
 import numpy as np
 from scipy import stats
@@ -35,13 +36,19 @@ from scipy.stats import qmc
 from kalos.core.optimize import propose
 from kalos.core.surrogate import Surrogate
 
-from .objectives import MixedObjective, Objective, ackley, bioprocess_like, gaussian_bump
+from .objectives import (
+    MixedObjective,
+    Objective,
+    ackley,
+    bioprocess_like,
+    gaussian_bump,
+)
 
 # ---- Fixed design constants (docs/BENCHMARK.md sections 3-5) ---------------------
 
-CONFIRMATORY_SEEDS: Tuple[int, ...] = tuple(range(1000, 1030))
+CONFIRMATORY_SEEDS: tuple[int, ...] = tuple(range(1000, 1030))
 PILOT_SEED = 9001
-QUICK_SEEDS: Tuple[int, ...] = (9002, 9003)  # smoke test only; never written
+QUICK_SEEDS: tuple[int, ...] = (9002, 9003)  # smoke test only; never written
 BOOT_SEED = 20261018
 N_BOOT = 10_000
 TIE_TOL = 0.01  # normalised regret; |d| below this is a tie (section 7)
@@ -50,20 +57,20 @@ HEADLINE_TARGET = 0.90
 N_REF_SAMPLES_LOG2 = 16
 REF_SEED = 12345
 
-METHODS: Tuple[str, ...] = ("kalos", "random", "lhs", "optuna_tpe", "ax", "botorch_gp_ei")
-BASELINES: Tuple[str, ...] = tuple(m for m in METHODS if m != "kalos")
+METHODS: tuple[str, ...] = ("kalos", "random", "lhs", "optuna_tpe", "ax", "botorch_gp_ei")
+BASELINES: tuple[str, ...] = tuple(m for m in METHODS if m != "kalos")
 
 
 @dataclass(frozen=True)
 class Task:
     name: str
     index: int  # stream id for seeding; fixed, do not renumber
-    objective: Union[Objective, MixedObjective]
+    objective: Objective | MixedObjective
     n_init: int
     q: int
     rounds: int
     depth: int  # pending pipeline depth: points of each batch left in flight
-    noises: Tuple[float, ...]
+    noises: tuple[float, ...]
 
     @property
     def n_total(self) -> int:
@@ -79,12 +86,12 @@ class Task:
         return int(self.box.shape[1])
 
     @property
-    def cat_dims(self) -> List[int]:
+    def cat_dims(self) -> list[int]:
         obj = self.objective
         return obj.cat_dims if isinstance(obj, MixedObjective) else []
 
     @property
-    def cat_cardinalities(self) -> List[int]:
+    def cat_cardinalities(self) -> list[int]:
         obj = self.objective
         return list(obj.cat_cardinalities) if isinstance(obj, MixedObjective) else []
 
@@ -97,7 +104,7 @@ class Task:
         return float(self.objective.optimum)
 
 
-TASKS: Dict[str, Task] = {
+TASKS: dict[str, Task] = {
     "gaussian_4d": Task("gaussian_4d", 0, gaussian_bump(4), 5, 1, 18, 0, (0.0, 0.15)),
     "ackley_4d": Task("ackley_4d", 1, ackley(4), 5, 1, 18, 0, (0.0, 0.15)),
     "bioprocess_like_mixed": Task(
@@ -166,7 +173,7 @@ def _reference_median(task: Task) -> float:
     return float(np.median(true_value(task, X)))
 
 
-_F_MED_CACHE: Dict[str, float] = {}
+_F_MED_CACHE: dict[str, float] = {}
 
 
 def f_med(task: Task) -> float:
@@ -210,8 +217,8 @@ class _KalosArm(_Arm):
 
     def __init__(self, task: Task, seed: int) -> None:
         super().__init__(task, seed)
-        self.X: List[np.ndarray] = []
-        self.y: List[float] = []
+        self.X: list[np.ndarray] = []
+        self.y: list[float] = []
 
     def tell(self, X: np.ndarray, y: np.ndarray) -> None:
         self.X.extend(list(np.asarray(X, float)))
@@ -264,7 +271,7 @@ class _LHSArm(_Arm):
         return out
 
 
-def _match(open_rows: List[Tuple[np.ndarray, Any]], x: np.ndarray) -> int:
+def _match(open_rows: list[tuple[np.ndarray, Any]], x: np.ndarray) -> int:
     for i, (row, _) in enumerate(open_rows):
         if np.allclose(row, x, rtol=0.0, atol=1e-9):
             return i
@@ -283,7 +290,7 @@ class _OptunaArm(_Arm):
         self.study = optuna.create_study(
             direction="maximize", sampler=optuna.samplers.TPESampler(seed=seed)
         )
-        self.dists: Dict[str, Any] = {}
+        self.dists: dict[str, Any] = {}
         for j in range(task.dim):
             if j in task.cat_dims:
                 k = task.cat_cardinalities[task.cat_dims.index(j)]
@@ -292,9 +299,9 @@ class _OptunaArm(_Arm):
                 self.dists[f"x{j}"] = optuna.distributions.FloatDistribution(
                     float(task.box[0, j]), float(task.box[1, j])
                 )
-        self.open: List[Tuple[np.ndarray, Any]] = []
+        self.open: list[tuple[np.ndarray, Any]] = []
 
-    def _vec(self, params: Dict[str, Any]) -> np.ndarray:
+    def _vec(self, params: dict[str, Any]) -> np.ndarray:
         return np.array([float(params[f"x{j}"]) for j in range(self.task.dim)])
 
     def tell(self, X: np.ndarray, y: np.ndarray) -> None:
@@ -335,7 +342,7 @@ class _AxArm(_Arm):
         for name in ("ax", "ax.api.client"):
             logging.getLogger(name).setLevel(logging.WARNING)
 
-        params: List[Any] = []
+        params: list[Any] = []
         for j in range(task.dim):
             if j in task.cat_dims:
                 k = task.cat_cardinalities[task.cat_dims.index(j)]
@@ -357,9 +364,9 @@ class _AxArm(_Arm):
         # with its Sobol initialisation seeded. Without this the Ax arm was not
         # reproducible (see the deviation log, 2026-10-18).
         self.client.configure_generation_strategy(method="fast", initialization_random_seed=seed)
-        self.open: List[Tuple[np.ndarray, int]] = []
+        self.open: list[tuple[np.ndarray, int]] = []
 
-    def _vec(self, p: Dict[str, Any]) -> np.ndarray:
+    def _vec(self, p: dict[str, Any]) -> np.ndarray:
         return np.array([float(p[f"x{j}"]) for j in range(self.task.dim)])
 
     def tell(self, X: np.ndarray, y: np.ndarray) -> None:
@@ -378,7 +385,7 @@ class _AxArm(_Arm):
 
         self.round += 1
         torch.manual_seed(self.seed * 100 + self.round)  # BoTorch's acquisition restarts
-        rows: List[np.ndarray] = []
+        rows: list[np.ndarray] = []
         guard = 0
         while len(rows) < q:
             out = self.client.get_next_trials(max_trials=q - len(rows))
@@ -401,8 +408,8 @@ class _BoTorchGPEIArm(_Arm):
 
     def __init__(self, task: Task, seed: int) -> None:
         super().__init__(task, seed)
-        self.X: List[np.ndarray] = []
-        self.y: List[float] = []
+        self.X: list[np.ndarray] = []
+        self.y: list[float] = []
 
     def tell(self, X: np.ndarray, y: np.ndarray) -> None:
         self.X.extend(list(np.asarray(X, float)))
@@ -467,7 +474,7 @@ def _first_reach(curve: np.ndarray, target: float, n_total: int) -> int:
     return int(hit[0]) + 1 if hit.size else n_total + 1
 
 
-def run_unit(task_name: str, method: str, eta: float, seed: int) -> Dict[str, Any]:
+def run_unit(task_name: str, method: str, eta: float, seed: int) -> dict[str, Any]:
     """One (task, method, noise, seed) run, following the protocol in docs/BENCHMARK.md."""
     task = get_task(task_name)
     N = task.n_total
@@ -477,12 +484,12 @@ def run_unit(task_name: str, method: str, eta: float, seed: int) -> Dict[str, An
     lo_ref = f_med(task)
     gap = task.f_star - lo_ref
 
-    measured_true: List[float] = []
-    measured_obs: List[float] = []
-    measured_X: List[np.ndarray] = []
-    errors: List[str] = []
+    measured_true: list[float] = []
+    measured_obs: list[float] = []
+    measured_X: list[np.ndarray] = []
+    errors: list[str] = []
     fallback_steps = 0
-    ask_times: List[float] = []
+    ask_times: list[float] = []
 
     def measure(X: np.ndarray, k0: int) -> np.ndarray:
         yt = true_value(task, X)
@@ -556,7 +563,7 @@ def run_unit(task_name: str, method: str, eta: float, seed: int) -> Dict[str, An
     }
 
 
-def _worker(args: Tuple[str, str, float, int]) -> Dict[str, Any]:
+def _worker(args: tuple[str, str, float, int]) -> dict[str, Any]:
     return run_unit(*args)
 
 
@@ -566,8 +573,8 @@ def run_all(
     tasks: Sequence[str] = tuple(TASKS),
     methods: Sequence[str] = METHODS,
     workers: int | None = None,
-) -> List[Dict[str, Any]]:
-    units: List[Tuple[str, str, float, int]] = []
+) -> list[dict[str, Any]]:
+    units: list[tuple[str, str, float, int]] = []
     for t in tasks:
         for eta in get_task(t).noises:
             for m in methods:
@@ -586,7 +593,7 @@ def run_all(
 # ---- Analysis ----------------------------------------------------------------------
 
 
-def bootstrap_mean_ci(x: np.ndarray, rng: np.random.Generator) -> Tuple[float, float, float]:
+def bootstrap_mean_ci(x: np.ndarray, rng: np.random.Generator) -> tuple[float, float, float]:
     x = np.asarray(x, float)
     idx = rng.integers(0, x.size, size=(N_BOOT, x.size))
     means = x[idx].mean(axis=1)
@@ -594,10 +601,10 @@ def bootstrap_mean_ci(x: np.ndarray, rng: np.random.Generator) -> Tuple[float, f
     return float(x.mean()), float(lo), float(hi)
 
 
-def _holm(pvals: Dict[str, float]) -> Dict[str, float]:
+def _holm(pvals: dict[str, float]) -> dict[str, float]:
     items = sorted(pvals.items(), key=lambda kv: kv[1])
     m = len(items)
-    out: Dict[str, float] = {}
+    out: dict[str, float] = {}
     running = 0.0
     for rank, (name, p) in enumerate(items):
         running = max(running, min(1.0, (m - rank) * p))
@@ -605,25 +612,25 @@ def _holm(pvals: Dict[str, float]) -> Dict[str, float]:
     return out
 
 
-def _by_seed(runs: List[Dict[str, Any]], task: str, eta: float, method: str) -> Dict[int, Dict[str, Any]]:
+def _by_seed(runs: list[dict[str, Any]], task: str, eta: float, method: str) -> dict[int, dict[str, Any]]:
     return {
         r["seed"]: r for r in runs
         if r["task"] == task and r["eta"] == eta and r["method"] == method
     }
 
 
-def analyse(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+def analyse(runs: list[dict[str, Any]]) -> dict[str, Any]:
     """Summaries per cell and method, plus paired comparisons with Kalos."""
     rng = np.random.default_rng(BOOT_SEED)
-    cells: List[Tuple[str, float]] = []
+    cells: list[tuple[str, float]] = []
     for r in runs:
         key = (r["task"], r["eta"])
         if key not in cells:
             cells.append(key)
-    out: Dict[str, Any] = {"cells": []}
+    out: dict[str, Any] = {"cells": []}
     for task_name, eta in cells:
-        cell: Dict[str, Any] = {"task": task_name, "eta": eta, "methods": {}, "paired_vs_kalos": {}}
-        per_method: Dict[str, Dict[int, Dict[str, Any]]] = {}
+        cell: dict[str, Any] = {"task": task_name, "eta": eta, "methods": {}, "paired_vs_kalos": {}}
+        per_method: dict[str, dict[int, dict[str, Any]]] = {}
         for m in METHODS:
             per_method[m] = _by_seed(runs, task_name, eta, m)
         seeds = sorted(set(per_method["kalos"]))
@@ -660,10 +667,10 @@ def analyse(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
                     [r["ask_seconds_p95"] for r in ordered], 95
                 )),
             }
-        if "kalos" in per_method and per_method["kalos"]:
+        if per_method.get("kalos"):
             kal = np.array([per_method["kalos"][s]["regret_norm"] for s in seeds])
-            pvals: Dict[str, float] = {}
-            comps: Dict[str, Dict[str, Any]] = {}
+            pvals: dict[str, float] = {}
+            comps: dict[str, dict[str, Any]] = {}
             for m in BASELINES:
                 if m not in per_method or not all(s in per_method[m] for s in seeds):
                     continue
@@ -706,7 +713,7 @@ def _pkg_version(name: str) -> str | None:
         return None
 
 
-def environment() -> Dict[str, Any]:
+def environment() -> dict[str, Any]:
     cpu = platform.processor() or platform.machine()
     try:
         cpu = subprocess.run(
@@ -735,8 +742,8 @@ def environment() -> Dict[str, Any]:
     }
 
 
-def _write_outputs(out_dir: Path, runs: List[Dict[str, Any]], summary: Dict[str, Any],
-                   meta: Dict[str, Any]) -> None:
+def _write_outputs(out_dir: Path, runs: list[dict[str, Any]], summary: dict[str, Any],
+                   meta: dict[str, Any]) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     flat_keys = [k for k in runs[0] if k != "curve_p" and k != "errors"]
     with open(out_dir / "vs_baselines_runs.csv", "w", newline="") as fh:
@@ -754,12 +761,12 @@ def _write_outputs(out_dir: Path, runs: List[Dict[str, Any]], summary: Dict[str,
         json.dump({**meta, "summary": summary}, fh, indent=2, default=float)
 
 
-def _fmt_ci(t: Tuple[float, float, float], digits: int = 3) -> str:
+def _fmt_ci(t: tuple[float, float, float], digits: int = 3) -> str:
     return f"{t[0]:.{digits}f} [{t[1]:.{digits}f}, {t[2]:.{digits}f}]"
 
 
-def render_markdown(summary: Dict[str, Any]) -> str:
-    lines: List[str] = []
+def render_markdown(summary: dict[str, Any]) -> str:
+    lines: list[str] = []
     for cell in summary["cells"]:
         tname, eta = cell["task"], cell["eta"]
         lines.append(f"### {tname}, noise {int(round(eta * 100))}%\n")
@@ -812,6 +819,14 @@ def run_vs_baselines(argv: Sequence[str], out_dir: Path) -> int:
 
 
 __all__ = [
-    "BASELINES", "CONFIRMATORY_SEEDS", "METHODS", "PILOT_SEED", "TASKS", "analyse",
-    "run_all", "run_unit", "run_vs_baselines", "render_markdown",
+    "BASELINES",
+    "CONFIRMATORY_SEEDS",
+    "METHODS",
+    "PILOT_SEED",
+    "TASKS",
+    "analyse",
+    "render_markdown",
+    "run_all",
+    "run_unit",
+    "run_vs_baselines",
 ]

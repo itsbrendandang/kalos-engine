@@ -9,7 +9,12 @@ import pandas as pd
 import pytest
 
 from kalos.scale.features import PHYSICS_FEATURE_COLUMNS, SCALE_ONLY_FEATURE_COLUMNS
-from kalos.scale.transfer import DEFAULT_SCALE_FEATURE_CONFIG, ScaleFeatureConfig, ScaleUpTransferModel, build_feature_matrix
+from kalos.scale.transfer import (
+    DEFAULT_SCALE_FEATURE_CONFIG,
+    ScaleFeatureConfig,
+    ScaleUpTransferModel,
+    build_feature_matrix,
+)
 
 _RNG = np.random.default_rng(20260825)
 
@@ -98,7 +103,7 @@ def test_fit_accepts_explicit_bounds_spanning_the_target_scale():
 
     # Explicit bounds wide enough to cover the eventual large-scale target,
     # as the module docstring recommends for genuine extrapolation.
-    X_train, names = build_feature_matrix(train, _PROCESS_COLUMNS)
+    X_train, _names = build_feature_matrix(train, _PROCESS_COLUMNS)
     X_test, _ = build_feature_matrix(test, _PROCESS_COLUMNS)
     combined = np.vstack([X_train, X_test])
     bounds = np.vstack([combined.min(axis=0), combined.max(axis=0)])

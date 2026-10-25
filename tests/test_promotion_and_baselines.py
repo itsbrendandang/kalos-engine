@@ -43,14 +43,13 @@ from kalos.core.feasibility import feasibility_cv_report
 pytest.importorskip("fastapi")
 pytest.importorskip("botorch")
 
-from kalos.core.splits import assert_no_group_leakage, make_splits  # noqa: E402
-from kalos.portal.analysis import (  # noqa: E402
+from kalos.core.splits import assert_no_group_leakage, make_splits
+from kalos.portal.analysis import (
     CV_TOPK_K,
     GROUP_MEAN_BASELINE_MIN_GROUPS,
     LOGO_MAX_GROUPS,
     _analyze,
 )
-
 
 # --- a known case: a calibrated coin, checked at the metric level ----------- #
 

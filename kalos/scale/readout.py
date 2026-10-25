@@ -68,8 +68,10 @@ a number baked into a comparison.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from dataclasses import dataclass, fields
-from typing import Any, Literal, Sequence
+from datetime import UTC
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -82,7 +84,12 @@ from kalos.normalize.units import base_unit_label, canonical_suffix
 
 from .evaluation import leave_one_scale_out_report
 from .features import GeometryAssumptions, PowerNumberAssumption, VantRietParams
-from .transfer import DEFAULT_SCALE_FEATURE_CONFIG, ScaleFeatureConfig, ScaleUpTransferModel, build_feature_matrix
+from .transfer import (
+    DEFAULT_SCALE_FEATURE_CONFIG,
+    ScaleFeatureConfig,
+    ScaleUpTransferModel,
+    build_feature_matrix,
+)
 
 # --- named constants (every one of these is printed in the readout's ----- #
 # --- provenance section - see Code Quality review finding 1). ----------- #
@@ -835,9 +842,9 @@ def _utc_now_iso() -> str:
     """Current UTC time, ISO 8601, seconds precision (no microseconds - a
     render timestamp does not need sub-second precision, and dropping it
     keeps every rendered number on the page decimal-free)."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def _git_sha() -> str:
@@ -1022,7 +1029,7 @@ def build_readout(
         "pooled_naive_mean_mae": ladder_result.pooled_naive_mean_mae,
         "pooled_naive_nn_mae": ladder_result.pooled_naive_nn_mae,
         "pooled_beats_both": ladder_result.pooled_beats_both,
-        "n_residuals": int(len(ladder_result.residuals)),
+        "n_residuals": len(ladder_result.residuals),
     }
 
     if decision_result.decision in (REFUSAL, NUMBER_WITH_WARNING):
@@ -1044,30 +1051,30 @@ def build_readout(
 
 
 __all__ = [
-    "MIN_SCALES",
-    "MIN_RUNG_TRAIN_SCALES",
-    "MIN_RUNG_TRAIN_ROWS",
-    "MIN_RUNG_N_FOR_LICENSE",
-    "MAX_DROPPED_FRACTION",
-    "HARD_CAP_RATIO",
-    "WARN_RATIO_MULT",
-    "REFUSE_RATIO_MULT",
     "ALPHA",
-    "MIN_RESIDUALS",
     "CANDIDATE",
     "CONSTANTS",
+    "HARD_CAP_RATIO",
+    "MAX_DROPPED_FRACTION",
+    "MIN_RESIDUALS",
+    "MIN_RUNG_N_FOR_LICENSE",
+    "MIN_RUNG_TRAIN_ROWS",
+    "MIN_RUNG_TRAIN_SCALES",
+    "MIN_SCALES",
     "NUMBER",
     "NUMBER_WITH_WARNING",
     "REFUSAL",
-    "TargetSpec",
+    "REFUSE_RATIO_MULT",
+    "WARN_RATIO_MULT",
+    "DecisionResult",
     "GateResult",
+    "LadderResult",
     "RungResult",
     "SkippedRung",
-    "LadderResult",
-    "DecisionResult",
+    "TargetSpec",
+    "build_readout",
+    "decide",
+    "format_liters_plain",
     "gate",
     "ladder",
-    "decide",
-    "build_readout",
-    "format_liters_plain",
 ]

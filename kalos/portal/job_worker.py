@@ -38,7 +38,12 @@ from typing import Any
 import pandas as pd
 
 from kalos.portal import jobs
-from kalos.portal.campaign import CampaignArchived, CampaignConflict, CampaignError, CampaignNotFound
+from kalos.portal.campaign import (
+    CampaignArchived,
+    CampaignConflict,
+    CampaignError,
+    CampaignNotFound,
+)
 from kalos.portal.migrate import JOB_ID_PATTERN
 from kalos.portal.pipeline import compute_upload_analysis, publish_upload_analysis
 from kalos.portal.uploads import UploadRejected

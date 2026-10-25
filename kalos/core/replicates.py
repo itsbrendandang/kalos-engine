@@ -15,7 +15,7 @@ explicitly instead of inferring from scratch on a handful of points.
 """
 from __future__ import annotations
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import numpy as np
 from scipy.stats import spearmanr
@@ -23,7 +23,7 @@ from scipy.stats import spearmanr
 # Per-row recipe keys. An ndarray is included because `kalos.core.splits.
 # row_hash_groups` - the canonical grouper callers should be passing - returns
 # one; iterating either type yields the per-row key.
-GroupKeys = Union[Sequence[object], np.ndarray]
+GroupKeys = Sequence[object] | np.ndarray
 
 MIN_REPLICATED_FOR_HETERO = 4
 # Replicated recipes needed before variance-versus-mean is called a measurement.
@@ -43,7 +43,7 @@ ICC_GAIN_FLOOR = 0.05
 # the signal-to-noise verdict; below that, changing the scale every reported
 # number lives on is not worth it.
 
-__all__ = ["aggregate_replicates", "estimate_noise_floor", "noise_report", "heteroscedasticity_report"]
+__all__ = ["aggregate_replicates", "estimate_noise_floor", "heteroscedasticity_report", "noise_report"]
 
 
 def _group_indices_from_keys(keys: GroupKeys) -> list[np.ndarray]:

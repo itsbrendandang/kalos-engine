@@ -7,7 +7,11 @@ import numpy as np
 import pandas as pd
 
 from kalos.bench.pool import pool_from_frame, run_pool
-from kalos.core.replicates import aggregate_replicates, estimate_noise_floor, noise_report
+from kalos.core.replicates import (
+    aggregate_replicates,
+    estimate_noise_floor,
+    noise_report,
+)
 from kalos.core.surrogate import Surrogate
 
 
@@ -40,7 +44,7 @@ def test_aggregate_replicates_known_duplicates():
 def test_aggregate_replicates_rounding_merges_near_duplicates():
     X = np.array([[1.000000, 2.0], [1.0000001, 2.0], [9.0, 9.0]])
     y = np.array([1.0, 3.0, 100.0])
-    X_unique, y_mean, y_var, n_reps = aggregate_replicates(X, y, decimals=6)
+    X_unique, y_mean, _y_var, n_reps = aggregate_replicates(X, y, decimals=6)
     assert X_unique.shape == (2, 2)
     assert n_reps.tolist() == [2, 1]
     np.testing.assert_allclose(y_mean, [2.0, 100.0])
@@ -162,6 +166,6 @@ def test_pool_from_frame_default_does_not_aggregate():
         "NaCl": [1.0, 1.0, 2.0],
         "Titer_g_L": [5.0, 7.0, 10.0],
     })
-    X, y, feats = pool_from_frame(df, target="Titer_g_L")
+    X, y, _feats = pool_from_frame(df, target="Titer_g_L")
     assert X.shape == (3, 2)
     assert len(y) == 3

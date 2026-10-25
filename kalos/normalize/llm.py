@@ -40,12 +40,12 @@ value observed from data.
 """
 from __future__ import annotations
 
-from dataclasses import replace
-
 import json
 import logging
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from dataclasses import replace
+from typing import Any
 
 import pandas as pd
 

@@ -9,8 +9,8 @@ Spearman ~0.37-0.52), and the noise level is a large part of why.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Tuple
 
 import numpy as np
 
@@ -26,7 +26,7 @@ class Objective:
 
     def evaluate(
         self, X, noise: float = 0.0, rng: np.random.Generator | None = None
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Return (y_true, y_obs): the noiseless truth and a noisy observation.
 
         `noise` is a FRACTION of the objective's output scale, so `noise=0.15`
@@ -95,7 +95,7 @@ class MixedObjective:
 
     name: str
     cont_bounds: np.ndarray  # (2, n_cont): [lower_row, upper_row] over the continuous dims
-    cat_cardinalities: Tuple[int, ...]  # level count per categorical dim
+    cat_cardinalities: tuple[int, ...]  # level count per categorical dim
     optimum: float
     scale: float
     _f: Callable[[np.ndarray], np.ndarray]
@@ -119,7 +119,7 @@ class MixedObjective:
 
     def evaluate(
         self, X, noise: float = 0.0, rng: np.random.Generator | None = None
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Return `(y_true, y_obs)`; `noise` is a fraction of `scale` (see `Objective`)."""
         X = np.atleast_2d(np.asarray(X, dtype=float))
         y_true = np.asarray(self._f(X), dtype=float).reshape(-1)

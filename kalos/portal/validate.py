@@ -15,9 +15,10 @@ regexes/thresholds `_analyze` uses, and never logs raw column names or values.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 from collections.abc import Callable
-from typing import Literal, Pattern
+from dataclasses import asdict, dataclass
+from re import Pattern
+from typing import Literal
 
 import pandas as pd
 

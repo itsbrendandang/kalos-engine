@@ -61,7 +61,7 @@ claim that scale-dependent ranking is unlearnable in general.
 """
 from __future__ import annotations
 
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -73,7 +73,11 @@ from kalos.core.evaluation import logo_report
 from kalos.core.surrogate import Surrogate
 
 from .candidates import ScaleCandidateModel
-from .transfer import DEFAULT_SCALE_FEATURE_CONFIG, ScaleFeatureConfig, build_feature_matrix
+from .transfer import (
+    DEFAULT_SCALE_FEATURE_CONFIG,
+    ScaleFeatureConfig,
+    build_feature_matrix,
+)
 
 _MIN_SPEARMAN_N = 3
 # Below three points a rank correlation is not a measurement (matches
@@ -146,7 +150,7 @@ def _bucket_metrics(
 ) -> dict:
     nn_finite = np.isfinite(naive_nn)
     out = {
-        "n": int(len(actual)),
+        "n": len(actual),
         "mae": float(mean_absolute_error(actual, pred)) if len(actual) else float("nan"),
         "spearman": _spearman(pred, actual),
         "naive_mean_mae": float(mean_absolute_error(actual, naive_mean)) if len(actual) else float("nan"),
@@ -395,17 +399,17 @@ def leave_one_scale_out_report(
         # pooled arrays, not an independent cross-check - flagged as such.
         pooled_logo = {
             "spearman": _spearman(pred_arr, actual_arr),
-            "n_groups": int(len(unique_scales)),
-            "n_oof": int(len(pred_arr)),
+            "n_groups": len(unique_scales),
+            "n_oof": len(pred_arr),
             "independent_crosscheck": False,
         }
 
     report = {
         "model": model_label,
         "feature_names": names,
-        "n_rows_used": int(len(X)),
+        "n_rows_used": len(X),
         "n_rows_dropped": n_dropped,
-        "n_scales": int(len(unique_scales)),
+        "n_scales": len(unique_scales),
         "pooled_logo": pooled_logo,
         "per_scale": per_scale,
         "by_direction": by_direction,

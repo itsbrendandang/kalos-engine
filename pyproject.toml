@@ -7,7 +7,7 @@ name = "kalos"
 version = "0.1.0"
 description = "Kalos: a domain-neutral Bayesian-optimization platform for sequential experiment design, built on BoTorch. Ships a bioprocess domain (NVIDIA BioNeMo / ESM-2 protein features) and supports mixed continuous/categorical design spaces."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 dependencies = [
   "numpy>=2.2.6",
@@ -64,16 +64,45 @@ include = ["kalos*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.ruff]
+# Floor matches requires-python (ax-platform needs 3.11). Explicit so ruff does not
+# infer it, and so a future floor bump is one line here.
+target-version = "py311"
+
 [tool.ruff.lint]
 # Pin the ruleset explicitly. With no [tool.ruff] section ruff applies whatever
 # its current release defaults to, so a ruff upgrade CI never asked for can turn
 # the build red on untouched code: 0.16.0 widened the defaults and put 217 new
 # findings in kalos/ alone (UP/B/SIM/FURB/PL/RUF/I), which is what broke CI on
-# 2026-07-24. These four are ruff's classic defaults and the set this codebase
-# was written against; both 0.15 and 0.16 are clean under them.
-# Adopting the wider set is a real cleanup worth doing on its own branch -- most
-# of it is `ruff check --fix`-able -- but it is not a lint-config change.
-select = ["E4", "E7", "E9", "F"]
+# 2026-07-24. Every rule family below is selected on purpose; a ruff upgrade
+# changes what is checked only through this file.
+# B and I were adopted 2026-10; UP, SIM and RUF were adopted after the existing
+# findings were fixed (safe `ruff check --fix` plus reviewed manual edits).
+# ruff targets py311 (target-version above), matching requires-python.
+select = ["E4", "E7", "E9", "F", "B", "I", "UP", "SIM", "RUF"]
+ignore = [
+    # B008: FastAPI's Depends()/Query() in defaults is the framework idiom.
+    "B008",
+    # B905: zip(strict=) is available on the 3.11 floor now; adopt separately.
+    "B905",
+    # RUF046: int(round(x)) is an explicit coercion to a Python int; round() on
+    # numpy/custom scalars is not guaranteed to return int, so the rewrite is unsafe.
+    "RUF046",
+    # RUF005: `ndarray + [..]` broadcasts element-wise, and the rule cannot tell
+    # a list from an array, so its `[*a, b]` rewrite changes meaning for arrays.
+    "RUF005",
+    # SIM105: the try/except/pass sites carry per-site rationale comments (and
+    # BLE001 suppressions) that contextlib.suppress would silently drop.
+    "SIM105",
+    # RUF100: would strip noqa codes for rules not enabled here (BLE001, S*,
+    # SLF001), deleting the comments that record why each exception is deliberate.
+    "RUF100",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# __all__ is grouped by source module under a comment per group; sorting it
+# would scramble that grouping, and the order has no runtime meaning.
+"kalos/kit/__init__.py" = ["RUF022"]
 
 [tool.mypy]
 python_version = "3.12"

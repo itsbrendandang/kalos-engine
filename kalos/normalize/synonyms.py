@@ -14,7 +14,8 @@ Two independent jobs live here:
 from __future__ import annotations
 
 import re
-from typing import Literal, Sequence
+from collections.abc import Sequence
+from typing import Literal
 
 from kalos.data.anonymizer import DROP_EXACT, DROP_SUBSTR, HASH_EXACT, HASH_SUBSTR
 
@@ -107,7 +108,7 @@ def guess_role(header: str, *, is_numeric: bool, parse_rate: float) -> Role:
 
     `parse_rate` is the fraction of non-blank cells that parse as a plain
     number (0.0-1.0), matching the >=0.8 numeric threshold convention used
-    elsewhere in the repo (`kalos.portal.analysis._numeric_cols`).
+    elsewhere in the repo (`kalos.portal.analysis_parts.columns._numeric_cols`).
     """
     key = header.strip().lower()
     if key in DROP_EXACT or any(t in key for t in DROP_SUBSTR):
@@ -134,4 +135,4 @@ def preferred_target(candidates: Sequence[str]) -> str:
     return next((c for c in candidates if _TARGET_PREF.search(c)), candidates[0])
 
 
-__all__ = ["Role", "SYNONYMS", "snake_canonical", "guess_role", "preferred_target"]
+__all__ = ["SYNONYMS", "Role", "guess_role", "preferred_target", "snake_canonical"]

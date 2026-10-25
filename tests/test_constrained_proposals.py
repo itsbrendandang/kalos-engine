@@ -24,9 +24,9 @@ import pytest
 pytest.importorskip("torch")
 pytest.importorskip("botorch")
 
-from kalos.core.optimize import propose  # noqa: E402
-from kalos.core.surrogate import Surrogate  # noqa: E402
-from kalos.portal.analysis import CONSTRAINT_MIN_ROWS, _analyze  # noqa: E402
+from kalos.core.optimize import propose
+from kalos.core.surrogate import Surrogate
+from kalos.portal.analysis import CONSTRAINT_MIN_ROWS, _analyze
 
 
 def _anti_correlated_design(seed: int = 11, n: int = 60):

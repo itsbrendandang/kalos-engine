@@ -7,7 +7,13 @@ import pandas as pd
 import pytest
 
 from kalos.portal.campaign import CampaignError, CampaignStore
-from kalos.portal.recipe_values import CATEGORICAL, EMPTY, NUMERIC, check_recipe_values, column_kinds
+from kalos.portal.recipe_values import (
+    CATEGORICAL,
+    EMPTY,
+    NUMERIC,
+    check_recipe_values,
+    column_kinds,
+)
 
 
 def _df() -> pd.DataFrame:
@@ -115,7 +121,8 @@ def test_route_answers_400_with_the_store_message(tmp_path):
 
 # --- re-review: the store types columns the way the analysis does ------------- #
 
-from kalos.portal.recipe_values import MAX_PENDING_RUNS, NUMERIC as _NUM  # noqa: E402
+from kalos.portal.recipe_values import MAX_PENDING_RUNS  # noqa: E402
+from kalos.portal.recipe_values import NUMERIC as _NUM  # noqa: E402
 
 
 def test_a_mostly_numeric_column_with_one_text_cell_is_numeric():

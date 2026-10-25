@@ -18,7 +18,7 @@ engine.
 """
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import pandas as pd
 
@@ -40,7 +40,7 @@ from .checks import (
 )
 from .report import Finding, UnitConversion, ValidationReport, build_report
 
-__all__ = ["validate_frame", "apply_unit_conversions"]
+__all__ = ["apply_unit_conversions", "validate_frame"]
 
 
 def validate_frame(

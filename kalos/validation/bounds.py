@@ -252,4 +252,4 @@ def infer_dimension(column_name: str) -> str | None:
     return None
 
 
-__all__ = ["DimensionBounds", "DIMENSION_BOUNDS", "infer_dimension"]
+__all__ = ["DIMENSION_BOUNDS", "DimensionBounds", "infer_dimension"]

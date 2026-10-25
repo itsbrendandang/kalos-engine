@@ -161,7 +161,7 @@ def scrubbed_failure(exc: BaseException) -> str:
     return f"{type(exc).__name__}" + (f" at {where}" if where else "")
 
 
-def rejection_counts(rej: "UploadRejected") -> str:
+def rejection_counts(rej: UploadRejected) -> str:
     """A log suffix with only the numeric facts of a rejection (`n_rows=4
     min_rows=6`, list lengths as `n_<key>`), never names or values, so the
     server log carries no customer column or sheet names."""
@@ -1099,7 +1099,9 @@ def parse_upload(
     # `target="1"` and would mix types in every name list downstream.
     parsed.df.columns = parsed.df.columns.map(str)
     if parsed.sheet_used is not None:
-        from kalos.data.anonymizer import _hash  # deferred: keep uploads' imports minimal
+        from kalos.data.anonymizer import (
+            _hash,  # deferred: keep uploads' imports minimal
+        )
 
         parsed.sheet_index = parsed.sheets.index(parsed.sheet_used)
         parsed.sheet_hash = _hash(parsed.sheet_used)

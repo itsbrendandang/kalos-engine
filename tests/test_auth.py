@@ -103,8 +103,11 @@ def test_token_file_takes_precedence(monkeypatch, tmp_path):
     ]))
     auth = Authenticator()
     assert auth.principal_for("Bearer file-tok").subject == "from-file"
-    with pytest.raises(Exception):  # the env token is ignored when the file is set
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as ei:  # the env token is ignored when the file is set
         auth.principal_for("Bearer env-tok")
+    assert ei.value.status_code == 401
 
 
 # --- malformed config is a clear error, never a silent open --------------- #

@@ -57,9 +57,11 @@ import pandas as pd
 from kalos.portal.migrate import (
     CAMPAIGN_ID_PATTERN,
     DB_FILENAME,
-    campaigns_table_is_v1_compatible as _campaigns_table_is_compatible,
     connect,
     ensure_schema,
+)
+from kalos.portal.migrate import (
+    campaigns_table_is_v1_compatible as _campaigns_table_is_compatible,
 )
 from kalos.portal.tenancy import validate_tenant_id
 
@@ -80,9 +82,9 @@ __all__ = [
     "CampaignNotFound",
     "CampaignStore",
     "TenantCampaigns",
+    "_campaigns_table_is_compatible",
     "get_campaign_store",
     "validate_campaign_id",
-    "_campaigns_table_is_compatible",
 ]
 
 
@@ -147,8 +149,16 @@ def _clip(value: str | None, limit: int = MAX_AUDIT_FIELD_CHARS) -> str | None:
 class _Row:
     """One `campaigns` row as read inside a transaction."""
 
-    __slots__ = ("id", "name", "state_text", "generation", "created_by",
-                 "created_at", "updated_at", "archived_at")
+    __slots__ = (
+        "archived_at",
+        "created_at",
+        "created_by",
+        "generation",
+        "id",
+        "name",
+        "state_text",
+        "updated_at",
+    )
 
     def __init__(self, row: tuple[Any, ...]) -> None:
         (self.id, self.name, self.state_text, self.generation, self.created_by,
@@ -527,7 +537,9 @@ class CampaignStore:
         `on_commit(conn, new_generation)`, run inside the SAME transaction
         after the write; if it raises, nothing is written.
         """
-        from kalos.portal.serialization import _json_safe_records  # local: avoids a cycle at import time
+        from kalos.portal.serialization import (
+            _json_safe_records,  # local: avoids a cycle at import time
+        )
 
         self._check(tenant, campaign_id)
         if base_rows is None:

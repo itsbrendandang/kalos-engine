@@ -33,9 +33,8 @@ from kalos.core.evaluation import (
 
 pytest.importorskip("botorch")
 
-from kalos.core.evaluation import grouped_cv_report  # noqa: E402
-from kalos.core.surrogate import Surrogate  # noqa: E402
-
+from kalos.core.evaluation import grouped_cv_report
+from kalos.core.surrogate import Surrogate
 
 # --- the metric ------------------------------------------------------------- #
 

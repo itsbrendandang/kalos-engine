@@ -18,8 +18,8 @@ import pytest
 
 pytest.importorskip("torch")
 
-from kalos.domains import BIOPROCESS_PROFILE  # noqa: E402
-from kalos.portal.analysis import _analyze, is_identifier_name  # noqa: E402
+from kalos.domains import BIOPROCESS_PROFILE
+from kalos.portal.analysis import _analyze, is_identifier_name
 
 
 def _medium_sheet() -> pd.DataFrame:

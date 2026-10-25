@@ -36,7 +36,15 @@ from kalos.portal.uploads import (
     rejection_counts,
     scrubbed_failure,
 )
-from kalos.scale.readout import MIN_RESIDUALS, MIN_RUNG_N_FOR_LICENSE, NUMBER, NUMBER_WITH_WARNING, REFUSAL, TargetSpec, build_readout
+from kalos.scale.readout import (
+    MIN_RESIDUALS,
+    MIN_RUNG_N_FOR_LICENSE,
+    NUMBER,
+    NUMBER_WITH_WARNING,
+    REFUSAL,
+    TargetSpec,
+    build_readout,
+)
 from kalos.scale.readout import format_liters_plain as _format_liters_plain
 
 log = logging.getLogger("kalos.portal")
@@ -529,4 +537,4 @@ async def scale_readout(
     return HTMLResponse(render_readout_html(readout), status_code=200)
 
 
-__all__ = ["router", "render_readout_html", "INTENDED_USE_STATEMENT"]
+__all__ = ["INTENDED_USE_STATEMENT", "render_readout_html", "router"]

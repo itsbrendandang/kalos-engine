@@ -7,8 +7,8 @@ import pandas as pd
 import pytest
 
 from kalos import bootstrap_spearman, rank_drivers, split_conformal
+from kalos.core.splits import assert_no_group_leakage, make_splits, row_hash_groups
 from kalos.data.anonymizer import Anonymizer
-from kalos.core.splits import row_hash_groups, make_splits, assert_no_group_leakage
 
 
 def test_anonymize_meta_drops_identity_and_hashes_grouping_ids():
@@ -60,7 +60,7 @@ def test_splits_group_replicates_and_tripwire():
     assert_no_group_leakage(splits, g)   # passes
     # a hand-built leaky split must raise
     bad = [(np.array([0, 1]), np.array([2, 3]))]  # group 0 on both sides
-    with pytest.raises(AssertionError, match="(?i)leakage"):
+    with pytest.raises(AssertionError, match=r"(?i)leakage"):
         assert_no_group_leakage(bad, g)
 
 

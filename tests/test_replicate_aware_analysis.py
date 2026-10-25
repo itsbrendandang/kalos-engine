@@ -12,7 +12,7 @@ import pytest
 
 pytest.importorskip("botorch")
 
-from kalos.portal.analysis import _analyze  # noqa: E402
+from kalos.portal.analysis import _analyze
 
 
 def _replicated_sheet(n_recipes: int = 10, reps: int = 3, noise_sd: float = 1.2, seed: int = 0):

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, TypeGuard
+from typing import Any, TypeGuard
 
 
 @dataclass
@@ -24,8 +24,8 @@ class GatesConfig:
 @dataclass
 class PromotionResult:
     passed: bool
-    failures: List[str] = field(default_factory=list)
-    metrics: Dict[str, float] = field(default_factory=dict)
+    failures: list[str] = field(default_factory=list)
+    metrics: dict[str, float] = field(default_factory=dict)
     summary: str = ""
 
 
@@ -34,13 +34,13 @@ def _finite(x: Any) -> TypeGuard[float]:
     return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
 
 
-def check_gates(stats: Dict[str, Any], config: GatesConfig | None = None) -> PromotionResult:
+def check_gates(stats: dict[str, Any], config: GatesConfig | None = None) -> PromotionResult:
     cfg = config or GatesConfig()
     if not cfg.enabled:
         return PromotionResult(True, [], {}, "promotion gates disabled")
 
-    f: List[str] = []
-    m: Dict[str, float] = {}
+    f: list[str] = []
+    m: dict[str, float] = {}
 
     def floor(key: str, lo: float) -> None:
         v = stats.get(key)

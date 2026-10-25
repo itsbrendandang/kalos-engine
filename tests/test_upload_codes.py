@@ -72,7 +72,10 @@ def test_every_size_refusal_site_in_uploads_has_a_code():
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "UploadRejected":
             first = node.args[0] if node.args else None
-            if isinstance(first, ast.Name) and first.id in {"_ERR_TOO_LARGE", "_ERR_TOO_MANY_COLUMNS"}:
-                if not any(k.arg == "code" for k in node.keywords):
-                    bare.append(node.lineno)
+            if (
+                isinstance(first, ast.Name)
+                and first.id in {"_ERR_TOO_LARGE", "_ERR_TOO_MANY_COLUMNS"}
+                and not any(k.arg == "code" for k in node.keywords)
+            ):
+                bare.append(node.lineno)
     assert bare == []

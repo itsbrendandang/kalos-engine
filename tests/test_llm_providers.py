@@ -86,7 +86,7 @@ class _FakeHTTPResponse:
     def read(self) -> bytes:
         return self._body
 
-    def __enter__(self) -> "_FakeHTTPResponse":
+    def __enter__(self) -> _FakeHTTPResponse:
         return self
 
     def __exit__(self, *exc_info: object) -> None:

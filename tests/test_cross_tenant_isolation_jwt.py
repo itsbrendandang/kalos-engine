@@ -37,14 +37,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
+import jwt
 import pytest
-
-import httpx  # noqa: E402
-import jwt  # noqa: E402
-
-from cryptography.hazmat.primitives import serialization  # noqa: E402
-from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: E402
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VECTORS = json.loads((Path(__file__).parent / "vectors" / "engine-token.json").read_text())
@@ -767,7 +765,7 @@ def test_production_does_not_register_demo_routes_even_with_a_valid_token(main, 
 def test_engine_logs_never_contain_a_token_or_its_segments(main, world):
     """Every token sent to this server, and each of its three segments, must be
     absent from the complete log; the log must still show the refusals."""
-    for name, make, reason in MATRIX[:: max(1, len(MATRIX) // 15)]:
+    for _name, make, _reason in MATRIX[:: max(1, len(MATRIX) // 15)]:
         token = make()
         _SENT.append(token)
         main.request("GET", "/api/latest", auth=token)
