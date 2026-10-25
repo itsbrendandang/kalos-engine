@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Dict, List, Protocol
+from typing import Protocol
 
 import numpy as np
 import pandas as pd
@@ -145,11 +145,11 @@ class ESM2Embedder:
 
 
 def build_feature_table(
-    products: Dict[str, str], embedder: ProteinEmbedder, prefix: str = "prot_emb_"
+    products: dict[str, str], embedder: ProteinEmbedder, prefix: str = "prot_emb_"
 ) -> pd.DataFrame:
     """One embedding row per product. Join onto run data on `product` to add the
     protein embedding as extra surrogate features."""
-    rows: List[dict] = []
+    rows: list[dict] = []
     for name, seq in products.items():
         e = embedder.embed(seq)
         rows.append({"product": name, **{f"{prefix}{i}": float(e[i]) for i in range(len(e))}})

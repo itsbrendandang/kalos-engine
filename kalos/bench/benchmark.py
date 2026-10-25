@@ -7,7 +7,7 @@ the noiseless truth at the queried points. Results are averaged over seeds.
 """
 from __future__ import annotations
 
-from typing import Dict, Iterable, List
+from collections.abc import Iterable
 
 import numpy as np
 from scipy.stats import qmc
@@ -63,7 +63,7 @@ def run_one(
     # up front (what a scientist without a model would run), evaluated in order.
     lhs_pool = _lhs(n_init + budget, obj.bounds, np.random.default_rng(seed + 10_000))
 
-    traj: List[float] = list(np.maximum.accumulate(y_true))
+    traj: list[float] = list(np.maximum.accumulate(y_true))
     best = float(traj[-1])
 
     for step in range(budget):
@@ -134,7 +134,7 @@ def run_mixed_one(
 
     X = _sample_mixed(n_init, obj, rng)
     y_true, y_obs = obj.evaluate(X, noise, rng)
-    traj: List[float] = list(np.maximum.accumulate(y_true))
+    traj: list[float] = list(np.maximum.accumulate(y_true))
 
     for _ in range(budget):
         if strategy == "bo":
@@ -164,10 +164,10 @@ def run_benchmark(
     n_init: int = 5,
     noise: float = 0.0,
     seeds: Iterable[int] = range(10),
-) -> Dict[str, dict]:
+) -> dict[str, dict]:
     """Race the strategies over many seeds; return per-strategy mean/std curves."""
     seeds = list(seeds)
-    out: Dict[str, dict] = {}
+    out: dict[str, dict] = {}
     for strat in strategies:
         trajs = np.vstack([
             run_one(obj, strat, budget=budget, n_init=n_init, noise=noise, seed=s)
@@ -181,7 +181,7 @@ def run_benchmark(
     return out
 
 
-def summarize(result: Dict[str, dict], obj: Objective, n_init: int = 5) -> dict:
+def summarize(result: dict[str, dict], obj: Objective, n_init: int = 5) -> dict:
     """Reduce a benchmark result to the numbers that answer the question.
 
     Returns, per strategy: final simple regret (optimum - mean best, lower better).

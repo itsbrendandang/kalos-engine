@@ -19,12 +19,12 @@ import pandas as pd
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from kalos.portal import app as portal_module  # noqa: E402
-from kalos.portal import campaign as campaign_module  # noqa: E402
-from kalos.portal.campaign import CampaignStore, get_campaign_store  # noqa: E402
-from kalos.portal.uploads import (  # noqa: E402
+from kalos.portal import app as portal_module
+from kalos.portal import campaign as campaign_module
+from kalos.portal.campaign import CampaignStore, get_campaign_store
+from kalos.portal.uploads import (
     MIN_FIT_ROWS,
     UploadRejected,
     parse_upload,

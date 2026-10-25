@@ -21,10 +21,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
+import numpy as np
+import pandas as pd
 
-from kalos.bench.pool import pool_from_frame  # noqa: E402
+from kalos.bench.pool import pool_from_frame
 
 CSV_PATH = Path(__file__).resolve().parent / "synthetic_bioprocess.csv"
 TARGET = "titer_g_L"

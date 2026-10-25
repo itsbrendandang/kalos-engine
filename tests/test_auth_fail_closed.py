@@ -11,11 +11,11 @@ from __future__ import annotations
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi import HTTPException  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
-from kalos.portal.app import app  # noqa: E402
-from kalos.portal.auth import Authenticator, require_principal  # noqa: E402
+from kalos.portal.app import app
+from kalos.portal.auth import Authenticator, require_principal
 
 
 @pytest.fixture(autouse=True)

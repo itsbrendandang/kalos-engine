@@ -9,7 +9,8 @@ neither sign nor confidence).
 from __future__ import annotations
 
 import warnings
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from collections.abc import Sequence
+from typing import cast
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -22,8 +23,8 @@ def _ensure_2d(Z: np.ndarray) -> np.ndarray:
 
 
 def spearman_driver_matrix(
-    Z: np.ndarray, signal: ArrayLike, feature_names: Optional[Sequence[str]] = None
-) -> Dict[str, object]:
+    Z: np.ndarray, signal: ArrayLike, feature_names: Sequence[str] | None = None
+) -> dict[str, object]:
     """Per-feature Spearman rho + p-value vs. a signal."""
     Z = _ensure_2d(Z)
     y = np.asarray(signal, dtype=float).reshape(-1)
@@ -93,8 +94,8 @@ def benjamini_hochberg(pvals: ArrayLike, q: float = 0.05) -> np.ndarray:
 
 def bootstrap_spearman(
     Z: np.ndarray, signal: ArrayLike, B: int = 200, random_state: int = 42,
-    ci: float = 0.95, feature_names: Optional[Sequence[str]] = None,
-) -> Dict[str, object]:
+    ci: float = 0.95, feature_names: Sequence[str] | None = None,
+) -> dict[str, object]:
     """Bootstrap Spearman per feature: mean, std, and percentile CI bounds.
 
     A resample draw can be degenerate for a feature (e.g. the bootstrap indices
@@ -154,7 +155,7 @@ def bootstrap_spearman(
     return {"mean": mean, "std": std, "lo": lo, "hi": hi, "feature_names": names}
 
 
-def rank_drivers(summary: Dict[str, object], top_k: int = 5, direction: str = "abs") -> List[Tuple[str, float]]:
+def rank_drivers(summary: dict[str, object], top_k: int = 5, direction: str = "abs") -> list[tuple[str, float]]:
     """Rank features by bootstrap mean rho (or raw rho). direction: abs|pos|neg."""
     names = list(cast(Sequence[str], summary["feature_names"]))
     scores = np.asarray(summary.get("mean", summary.get("rho")), dtype=float)
@@ -169,4 +170,4 @@ def rank_drivers(summary: Dict[str, object], top_k: int = 5, direction: str = "a
     return [(names[i], float(scores[i])) for i in order[:top_k]]
 
 
-__all__ = ["spearman_driver_matrix", "bootstrap_spearman", "rank_drivers", "benjamini_hochberg"]
+__all__ = ["benjamini_hochberg", "bootstrap_spearman", "rank_drivers", "spearman_driver_matrix"]

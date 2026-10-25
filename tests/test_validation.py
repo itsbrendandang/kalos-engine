@@ -52,7 +52,7 @@ def test_units_consistency_flags_genuinely_inconsistent_mixed_concentration():
 
 def test_units_consistency_flags_mixed_temperature_and_converts_to_celsius():
     df = pd.DataFrame({"temp": ["34.6 C", "94.3 F", "35.0 C"]})
-    findings, conversions = check_units_consistency(df)
+    findings, _conversions = check_units_consistency(df)
     errors = [f for f in findings if f.severity == "error"]
     assert len(errors) == 1
     assert errors[0].column == "temp"

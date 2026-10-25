@@ -29,10 +29,10 @@ from kalos.portal.config import (
 )
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from kalos.portal.app import app  # noqa: E402
-from kalos.portal.auth import get_authenticator  # noqa: E402
+from kalos.portal.app import app
+from kalos.portal.auth import get_authenticator
 
 
 @pytest.fixture(autouse=True)

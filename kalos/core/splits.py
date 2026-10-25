@@ -10,7 +10,7 @@ explicit recipe/strain id is available (identical feature rows are replicates).
 from __future__ import annotations
 
 import warnings
-from typing import List, Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -19,7 +19,7 @@ from sklearn.model_selection import GroupKFold, StratifiedGroupKFold
 
 
 def row_hash_groups(
-    X: pd.DataFrame, feature_names: Optional[Sequence[str]] = None, decimals: int = 6
+    X: pd.DataFrame, feature_names: Sequence[str] | None = None, decimals: int = 6
 ) -> np.ndarray:
     """Replicate-aware group ids: rows with identical (rounded) feature vectors
     share a group. Deterministic via pandas.factorize over a stringified row."""
@@ -54,10 +54,10 @@ def make_splits(
     y: ArrayLike,
     groups: ArrayLike,
     n_splits: int = 5,
-    stratify: Optional[bool] = None,
+    stratify: bool | None = None,
     random_state: int = 42,
     shuffle: bool = False,
-) -> List[Tuple[np.ndarray, np.ndarray]]:
+) -> list[tuple[np.ndarray, np.ndarray]]:
     """Group-aware CV splits with small-data guards, verified leakage-free.
 
     `random_state` always bites on the stratified path (it needs a discrete `y`,
@@ -102,7 +102,7 @@ def make_splits(
         )
         return []
 
-    splits: List[Tuple[np.ndarray, np.ndarray]] = []
+    splits: list[tuple[np.ndarray, np.ndarray]] = []
     if use_strat:
         cv = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
         for tr, va in cv.split(np.zeros(n), y_arr, groups=g_arr):
@@ -119,7 +119,7 @@ def make_splits(
     return splits
 
 
-def assert_no_group_leakage(splits: Sequence[Tuple[np.ndarray, np.ndarray]], groups: ArrayLike) -> None:
+def assert_no_group_leakage(splits: Sequence[tuple[np.ndarray, np.ndarray]], groups: ArrayLike) -> None:
     """Raise AssertionError if any fold shares a group between train and val."""
     g = np.asarray(pd.Series(groups).astype(str).values)
     for i, (tr, va) in enumerate(splits):
@@ -128,4 +128,4 @@ def assert_no_group_leakage(splits: Sequence[Tuple[np.ndarray, np.ndarray]], gro
             raise AssertionError(f"Group leakage in split {i}: {sorted(overlap)[:5]}")
 
 
-__all__ = ["row_hash_groups", "make_splits", "assert_no_group_leakage"]
+__all__ = ["assert_no_group_leakage", "make_splits", "row_hash_groups"]

@@ -20,10 +20,10 @@ import pytest
 
 pytest.importorskip("fastapi")
 
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from kalos.portal import busy  # noqa: E402
-from kalos.portal.busy import AnalysisBusy, run_exclusively  # noqa: E402
+from kalos.portal import busy
+from kalos.portal.busy import AnalysisBusy, run_exclusively
 
 
 def test_slot_serializes_and_releases_in_the_worker():

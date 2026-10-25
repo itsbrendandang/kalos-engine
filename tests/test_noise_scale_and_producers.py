@@ -38,7 +38,7 @@ from kalos.core.replicates import (
 pytest.importorskip("fastapi")
 pytest.importorskip("torch")
 
-from kalos.portal.analysis import _analyze  # noqa: E402
+from kalos.portal.analysis import _analyze
 
 # --- producer-only ranking --------------------------------------------------- #
 

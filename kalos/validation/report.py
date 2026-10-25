@@ -224,12 +224,12 @@ def report_dict(report: ValidationReport) -> dict:
 
 
 __all__ = [
-    "Severity",
+    "ROW_CAP",
     "Finding",
+    "Severity",
     "UnitConversion",
     "ValidationReport",
-    "ROW_CAP",
-    "cap_rows",
     "build_report",
+    "cap_rows",
     "report_dict",
 ]

@@ -22,11 +22,21 @@ _LAZY = {
 }
 
 __all__ = [
-    "Surrogate", "propose", "MultiObjectiveSurrogate", "propose_multiobjective",
-    "GatesConfig", "PromotionResult", "check_gates", "grouped_cv_spearman",
-    "row_hash_groups", "make_splits", "assert_no_group_leakage",
-    "bootstrap_spearman", "rank_drivers", "split_conformal",
     "Anonymizer",
+    "GatesConfig",
+    "MultiObjectiveSurrogate",
+    "PromotionResult",
+    "Surrogate",
+    "assert_no_group_leakage",
+    "bootstrap_spearman",
+    "check_gates",
+    "grouped_cv_spearman",
+    "make_splits",
+    "propose",
+    "propose_multiobjective",
+    "rank_drivers",
+    "row_hash_groups",
+    "split_conformal",
 ]
 
 

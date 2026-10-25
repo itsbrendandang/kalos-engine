@@ -16,8 +16,8 @@ import pytest
 
 pytest.importorskip("torch")
 
-from kalos.portal import analysis  # noqa: E402
-from kalos.portal.analysis import ANALYZE_SEED, _analyze  # noqa: E402
+from kalos.portal import analysis
+from kalos.portal.analysis import ANALYZE_SEED, _analyze
 
 
 def _sheet() -> pd.DataFrame:

@@ -36,7 +36,7 @@ from kalos.core.replicates import aggregate_replicates, noise_report
 pytest.importorskip("fastapi")
 pytest.importorskip("torch")
 
-from kalos.portal.analysis import _analyze  # noqa: E402
+from kalos.portal.analysis import _analyze
 
 # --- the primitive: an explicit key beats re-deriving one from values -------- #
 

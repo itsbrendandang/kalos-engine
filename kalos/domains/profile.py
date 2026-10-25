@@ -24,7 +24,8 @@ torch/botorch/gpytorch stack.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Pattern
+from re import Pattern
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -72,7 +73,7 @@ class ColumnRoles:
     sparse: tuple[str, ...] = ()
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ColumnRoles":
+    def from_dict(cls, data: dict) -> ColumnRoles:
         """Parse a roles object (e.g. from a JSON request body).
 
         `target` is required and must be a non-empty string. List fields accept
@@ -249,10 +250,10 @@ def build_design_space(
 
 
 __all__ = [
+    "ColumnRoles",
+    "DesignSpace",
+    "Dimension",
     "DimensionKind",
     "DomainProfile",
-    "ColumnRoles",
-    "Dimension",
-    "DesignSpace",
     "build_design_space",
 ]

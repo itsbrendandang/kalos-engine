@@ -68,8 +68,9 @@ behind the explicit `candidate` constructor parameter below.
 """
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Literal, Sequence
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -241,7 +242,7 @@ class ScaleUpTransferModel:
         *,
         bounds: ArrayLike | None = None,
         noise: ArrayLike | float | None = None,
-    ) -> "ScaleUpTransferModel":
+    ) -> ScaleUpTransferModel:
         """Fit on `df_small_scales`. Rows with a non-finite process column,
         physics feature (see `kalos.scale.features` - a missing
         `agitation_rpm`/`airflow_L_per_min` column, or a NaN value in one
@@ -315,8 +316,8 @@ class ScaleUpTransferModel:
 
 
 __all__ = [
-    "ScaleFeatureConfig",
     "DEFAULT_SCALE_FEATURE_CONFIG",
-    "build_feature_matrix",
+    "ScaleFeatureConfig",
     "ScaleUpTransferModel",
+    "build_feature_matrix",
 ]

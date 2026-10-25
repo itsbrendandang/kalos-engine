@@ -31,7 +31,7 @@ from kalos.core.splits import assert_no_group_leakage, make_splits
 
 pytest.importorskip("botorch")
 
-from kalos.core.evaluation import grouped_cv_report  # noqa: E402
+from kalos.core.evaluation import grouped_cv_report
 
 # --- fixtures ----------------------------------------------------------- #
 

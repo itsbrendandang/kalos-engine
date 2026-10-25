@@ -30,7 +30,7 @@ from kalos.core.drivers import benjamini_hochberg
 pytest.importorskip("fastapi")
 pytest.importorskip("torch")
 
-from kalos.portal.analysis import (  # noqa: E402
+from kalos.portal.analysis import (
     CONFORMAL_ALPHA,
     DRIVER_FDR_Q,
     DRIVER_TOP_K,

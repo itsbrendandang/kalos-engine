@@ -78,7 +78,7 @@ def _embedding_pca(
         X_centered = X_enc - X_enc.mean(axis=0)
 
         # Deterministic SVD
-        U, S, Vt = np.linalg.svd(X_centered, full_matrices=False)
+        U, S, _Vt = np.linalg.svd(X_centered, full_matrices=False)
 
         # Fixed sign convention: first column of U has positive sum
         signs = np.sign(U[:, 0].sum())

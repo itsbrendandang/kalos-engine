@@ -24,9 +24,9 @@ import torch
 pytest.importorskip("torch")
 pytest.importorskip("botorch")
 
-from kalos.core.multiobjective import MultiObjectiveSurrogate, propose_multiobjective  # noqa: E402
-from kalos.core.optimize import propose  # noqa: E402
-from kalos.core.surrogate import Surrogate  # noqa: E402
+from kalos.core.multiobjective import MultiObjectiveSurrogate, propose_multiobjective
+from kalos.core.optimize import propose
+from kalos.core.surrogate import Surrogate
 
 
 def _fitted_single(seed: int = 0, d: int = 2, n: int = 12):

@@ -25,9 +25,9 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("torch")
 
-from kalos.envconfig import ConfigError  # noqa: E402
-from kalos.portal.analysis import _analyze, validation_mode  # noqa: E402
-from kalos.portal.uploads import UploadRejected  # noqa: E402
+from kalos.envconfig import ConfigError
+from kalos.portal.analysis import _analyze, validation_mode
+from kalos.portal.uploads import UploadRejected
 
 # Absolute zero in Celsius. Nothing below this is a temperature.
 _ABSOLUTE_ZERO_C = -273.15

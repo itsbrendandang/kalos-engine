@@ -14,13 +14,13 @@ import pandas as pd
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from kalos.core.surrogate import FitError  # noqa: E402
-from kalos.data.anonymizer import _hash, default_salt  # noqa: E402
-from kalos.portal import analysis as portal_analysis  # noqa: E402
-from kalos.portal import app as portal  # noqa: E402
-from kalos.portal.app import (  # noqa: E402
+from kalos.core.surrogate import FitError
+from kalos.data.anonymizer import _hash, default_salt
+from kalos.portal import analysis as portal_analysis
+from kalos.portal import app as portal
+from kalos.portal.app import (
     _ERR_FIT,
     _ERR_PARSE,
     _ERR_TOO_MANY_FIT_ROWS,

@@ -14,13 +14,13 @@ import pytest
 import torch
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
-from starlette.datastructures import UploadFile  # noqa: E402
+from fastapi.testclient import TestClient
+from starlette.datastructures import UploadFile
 
-from kalos.core.optimize import propose  # noqa: E402
-from kalos.core.surrogate import Surrogate, sanitize_bounds  # noqa: E402
-from kalos.portal import app as portal  # noqa: E402
-from kalos.portal.app import (  # noqa: E402
+from kalos.core.optimize import propose
+from kalos.core.surrogate import Surrogate, sanitize_bounds
+from kalos.portal import app as portal
+from kalos.portal.app import (
     MAX_COLUMNS,
     MAX_CSV_ROWS,
     MAX_UPLOAD_BYTES,
@@ -400,7 +400,7 @@ def test_oversized_xlsx_rejected_before_materialization(monkeypatch):
     # 400 WITHOUT pd.read_excel ever materializing the full frame. "SF" is column
     # 500 (within the 512-column cap), so this trips the CELL cap, not the column
     # cap: 500 * 1048576 cells >> MAX_XLSX_CELLS.
-    assert 500 * 1_048_576 > MAX_XLSX_CELLS and 500 <= MAX_COLUMNS
+    assert MAX_XLSX_CELLS < 500 * 1_048_576 and MAX_COLUMNS >= 500
 
     called = {"read_excel": False}
     real_read_excel = pd.read_excel

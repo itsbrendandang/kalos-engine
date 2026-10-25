@@ -12,8 +12,8 @@ import gc
 import re
 import threading
 import time
-from collections.abc import Iterator, Mapping, Sequence
-from typing import Any, Callable
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -1183,7 +1183,7 @@ def _analyze_body(
             code="too_few_columns",
             context={"n_columns": n_columns},
         )
-    n_data_rows = int(len(df.dropna(axis=0, how="all")))
+    n_data_rows = len(df.dropna(axis=0, how="all"))
     if n_data_rows < MIN_FIT_ROWS:
         raise _too_few_rows(n_data_rows)
     requested_target = roles.target if roles is not None else target
@@ -1363,7 +1363,7 @@ def _analyze_body(
             code="too_few_complete_rows",
             context={
                 "min_rows": MIN_FIT_ROWS,
-                "n_rows": int(len(fit_pos)),
+                "n_rows": len(fit_pos),
                 "n_dropped_incomplete": n_rows_dropped,
                 "n_censored_excluded": n_censored_rows,
             },
@@ -1470,7 +1470,7 @@ def _analyze_body(
     # runs). `X`'s rows are 1:1 with `keep_index` at this point (both were
     # finalized before `X` was assembled above), so a boolean mask read off
     # `df.loc[keep_index, constraint_col]` lines up with `X`'s rows directly.
-    constraint_surrogate: "Surrogate | None" = None
+    constraint_surrogate: Surrogate | None = None
     constraint_col: str | None = None
     constraint_floor_val: float | None = None
     constraint_applied = False
@@ -1797,7 +1797,7 @@ def _analyze_body(
             ),
         }
     else:
-        n_logo_groups = int(len(np.unique(np.asarray(pd.Series(groups).astype(str).values))))
+        n_logo_groups = len(np.unique(np.asarray(pd.Series(groups).astype(str).values)))
         if n_logo_groups > LOGO_MAX_GROUPS:
             cv_logo = {
                 "spearman": None,
@@ -1923,7 +1923,7 @@ def _analyze_body(
     # an exact no-op, so unreplicated uploads are unchanged.
     drv: list[dict[str, Any]] = []
     n_tested = len(cont_feats)
-    n_driver_units = int(len(y))
+    n_driver_units = len(y)
     if cont_feats:
         names = [str(c) for c in cont_feats]
         Xr, yr, _rv, _rn = aggregate_replicates(X, y, groups=recipe_key)
@@ -2204,7 +2204,7 @@ def _analyze_body(
         proposal_optimizer = "mixed_exact" if n_combos <= MAX_MIXED_COMBOS else "mixed_alternating"
 
     result = {
-        "n": int(len(y)), "d": len(kept_features), "target": str(target), "group_col": gcol,
+        "n": len(y), "d": len(kept_features), "target": str(target), "group_col": gcol,
         "targets": [str(c) for c in candidate_targets], "features": kept_features,
         "categorical_features": [str(c) for c in kept_cats],
         "n_dropped_incomplete": n_rows_dropped,
@@ -2256,7 +2256,7 @@ def _analyze_body(
             # against. On an unreplicated sheet the two are equal.
             "unit": "recipe",
             "n_units": n_driver_units,
-            "n_rows": int(len(y)),
+            "n_rows": len(y),
         },
         "reliability": reliability,
         # Fail-closed promotion verdict, REPORTED not enforced (see the block
@@ -2350,7 +2350,7 @@ def _analyze_body(
 
 
 def _encode_pending(
-    pending: "pd.DataFrame | Sequence[Mapping[str, Any]] | None",
+    pending: pd.DataFrame | Sequence[Mapping[str, Any]] | None,
     cont_feats: list,
     kept_cats: list,
     code_maps: dict,
@@ -2411,7 +2411,7 @@ def _encode_pending(
     n_dropped = int(len(frame) - usable.sum())
     arr = arr[usable]
     if arr.shape[1] != width:
-        return None, int(len(frame))
+        return None, len(frame)
     if arr.shape[0] == 0:
         return None, n_dropped
     return arr, n_dropped

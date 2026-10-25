@@ -14,8 +14,8 @@ from .benchmark import run_benchmark, run_mixed_one, run_one, summarize  # noqa:
 from .objectives import MixedObjective, Objective, ackley, gaussian_bump, mixed_bump  # noqa: F401
 
 __all__ = [
-    "Objective",
     "MixedObjective",
+    "Objective",
     "ackley",
     "gaussian_bump",
     "mixed_bump",

@@ -358,9 +358,8 @@ def test_a_cancel_requested_before_the_commit_rolls_the_publish_back(store):
     job = _submit(store)
     jobs.claim(store, tenant="acme", runner_id="t")  # now running
     jobs.request_cancel(store, tenant="acme", job_id=job["id"])
-    with pytest.raises(jobs.JobCancelled):
-        with store._txn(write=True) as conn:
-            jobs.mark_succeeded(conn, tenant="acme", job_id=job["id"], generation="g")
+    with pytest.raises(jobs.JobCancelled), store._txn(write=True) as conn:
+        jobs.mark_succeeded(conn, tenant="acme", job_id=job["id"], generation="g")
     assert jobs.get_job(store, tenant="acme", job_id=job["id"])["state"] == "running"
 
 

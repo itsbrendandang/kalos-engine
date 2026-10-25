@@ -77,7 +77,7 @@ def acquire_engine_lock(state_dir: Path | None = None) -> IO[str]:
     directory = Path(state_dir) if state_dir is not None else default_state_dir()
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / LOCK_FILENAME
-    handle = open(path, "a+", encoding="utf-8")
+    handle = open(path, "a+", encoding="utf-8")  # noqa: SIM115 - returned open; the flock lasts as long as the handle
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:

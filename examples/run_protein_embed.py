@@ -11,9 +11,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # run without installing
 
-import numpy as np  # noqa: E402
+import numpy as np
 
-from kalos.features import ESM2Embedder, build_feature_table  # noqa: E402
+from kalos.features import ESM2Embedder, build_feature_table
 
 # illustrative product protein fragments (public sequences)
 PRODUCTS = {

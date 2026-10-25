@@ -537,4 +537,4 @@ async def scale_readout(
     return HTMLResponse(render_readout_html(readout), status_code=200)
 
 
-__all__ = ["router", "render_readout_html", "INTENDED_USE_STATEMENT"]
+__all__ = ["INTENDED_USE_STATEMENT", "render_readout_html", "router"]

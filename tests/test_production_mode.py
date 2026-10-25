@@ -18,7 +18,7 @@ import pytest
 
 pytest.importorskip("fastapi")
 
-from kalos.portal.config import (  # noqa: E402
+from kalos.portal.config import (
     ProductionConfigError,
     assert_production_posture,
     deployment_env,

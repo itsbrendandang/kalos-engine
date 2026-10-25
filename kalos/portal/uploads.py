@@ -161,7 +161,7 @@ def scrubbed_failure(exc: BaseException) -> str:
     return f"{type(exc).__name__}" + (f" at {where}" if where else "")
 
 
-def rejection_counts(rej: "UploadRejected") -> str:
+def rejection_counts(rej: UploadRejected) -> str:
     """A log suffix with only the numeric facts of a rejection (`n_rows=4
     min_rows=6`, list lengths as `n_<key>`), never names or values, so the
     server log carries no customer column or sheet names."""

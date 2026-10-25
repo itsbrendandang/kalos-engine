@@ -13,10 +13,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # run without installing
 
-import numpy as np  # noqa: E402
+import numpy as np
 
-from kalos.core.optimize import propose  # noqa: E402
-from kalos.core.surrogate import Surrogate  # noqa: E402
+from kalos.core.optimize import propose
+from kalos.core.surrogate import Surrogate
 
 OPT = np.array([0.7, 0.3, 0.5])  # the (unknown) optimum of the synthetic surface
 

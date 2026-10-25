@@ -35,7 +35,7 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("torch")
 
-from kalos.portal.analysis import _analyze  # noqa: E402
+from kalos.portal.analysis import _analyze
 
 N_RECIPES = 20
 N_REPS = 3

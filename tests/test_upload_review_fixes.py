@@ -26,12 +26,12 @@ from kalos.portal.uploads import (
 from kalos.validation.target import assess_target_variation
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from kalos.portal import app as portal_module  # noqa: E402
-from kalos.portal import campaign as campaign_module  # noqa: E402
-from kalos.portal.analysis import _analyze  # noqa: E402
-from kalos.portal.campaign import CampaignStore, get_campaign_store  # noqa: E402
+from kalos.portal import app as portal_module
+from kalos.portal import campaign as campaign_module
+from kalos.portal.analysis import _analyze
+from kalos.portal.campaign import CampaignStore, get_campaign_store
 
 
 @pytest.fixture

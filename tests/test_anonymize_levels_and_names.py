@@ -17,8 +17,8 @@ import pytest
 
 pytest.importorskip("torch")
 
-from kalos.domains import ColumnRoles  # noqa: E402
-from kalos.portal.analysis import _analyze, is_identifier_name  # noqa: E402
+from kalos.domains import ColumnRoles
+from kalos.portal.analysis import _analyze, is_identifier_name
 
 _PEOPLE_COLUMNS = ["Donor_Name_1", "Operator", "Analyst", "Technician", "Lab_Tech", "email"]
 _NAMES = ["Jane Smith 0", "alice_secret_op", "Bob Jones 1", "carol_secret_op"]

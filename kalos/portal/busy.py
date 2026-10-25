@@ -34,7 +34,8 @@ from __future__ import annotations
 import os
 import threading
 from collections import Counter
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from starlette.concurrency import run_in_threadpool
 
@@ -77,7 +78,7 @@ class AnalysisBusy(Exception):
 class Lease:
     """One held slot. `release()` is idempotent."""
 
-    __slots__ = ("_limiter", "tenant", "_released", "_lock")
+    __slots__ = ("_limiter", "_lock", "_released", "tenant")
 
     def __init__(self, limiter: AnalysisLimiter, tenant: str) -> None:
         self._limiter = limiter
@@ -211,7 +212,7 @@ class Exclusive:
     win: once the work has started, `abandon()` is a no-op and the thread alone
     releases the slot; once `abandon()` has won, the work is skipped."""
 
-    __slots__ = ("_fn", "_lease", "_guard", "_started", "_abandoned")
+    __slots__ = ("_abandoned", "_fn", "_guard", "_lease", "_started")
 
     def __init__(self, fn: Callable[[], Any], lease: Lease) -> None:
         self._fn = fn

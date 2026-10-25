@@ -47,8 +47,9 @@ report's `unmodeled` list rather than left to the reader.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -283,17 +284,16 @@ def gp_shape_report(
     # measurement rather than on a second opinion invented here: the same
     # `cv_spearman` and 0.20 floor the reliability verdict already uses. One
     # authority, applied consistently.
-    if cv_spearman is not None:
-        if cv_spearman != cv_spearman or cv_spearman < rho_floor:
-            shown = "nan" if cv_spearman != cv_spearman else f"{cv_spearman:.3f}"
-            return GPShapeReport(
-                False,
-                f"out-of-fold Spearman ({shown}) does not clear the {rho_floor:.2f} "
-                "floor, so this model has not shown it can predict held-out runs "
-                "and the shape of its fitted response is not a finding",
-                "incumbent",
-                d,
-            )
+    if cv_spearman is not None and (cv_spearman != cv_spearman or cv_spearman < rho_floor):
+        shown = "nan" if cv_spearman != cv_spearman else f"{cv_spearman:.3f}"
+        return GPShapeReport(
+            False,
+            f"out-of-fold Spearman ({shown}) does not clear the {rho_floor:.2f} "
+            "floor, so this model has not shown it can predict held-out runs "
+            "and the shape of its fitted response is not a finding",
+            "incumbent",
+            d,
+        )
     unmodeled = _UNMODELED
     if cv_spearman is None:
         # Never silently imply the shapes were validated when no skill measure
@@ -390,13 +390,13 @@ def gp_shape_report(
 
 
 __all__ = [
+    "FLAT_FRACTION",
+    "GRID_POINTS",
+    "NEGLIGIBLE_RELEVANCE_SHARE",
+    "PEAK_SD_MULTIPLE",
     "FeatureShape",
     "GPShapeReport",
     "Shape",
     "ard_lengthscales",
     "gp_shape_report",
-    "GRID_POINTS",
-    "PEAK_SD_MULTIPLE",
-    "FLAT_FRACTION",
-    "NEGLIGIBLE_RELEVANCE_SHARE",
 ]
