@@ -1427,6 +1427,15 @@ def _analyze_body(
         # batch. Closes the interior-optimum blind spot in the rank drivers.
         "gp_shapes": gp_shapes,
         "proposal_features": show,
+        # The SEARCH BOX of every continuous input (`design.dims`: the observed range
+        # widened to include 0 for absent-as-zero columns, see `_physical_range`), so a
+        # client can flag a proposal sitting on the edge of what was tried. Categorical
+        # inputs are omitted.
+        "feature_ranges": {
+            dim.name: [round(float(dim.lower), 6), round(float(dim.upper), 6)]
+            for dim in design.dims
+            if not dim.is_categorical
+        },
         # None when the full batch came back; otherwise
         # `{code: "fewer_distinct_candidates", requested, returned, min_separation,
         # message}` explaining why `proposals` is shorter than requested.

@@ -57,6 +57,8 @@ def _anonymize_result(
     for key in ("targets", "features", "categorical_features", "proposal_features"):
         if isinstance(out.get(key), list):
             out[key] = [alias(str(c)) for c in out[key]]
+    if isinstance(out.get("feature_ranges"), dict):
+        out["feature_ranges"] = {alias(str(k)): v for k, v in out["feature_ranges"].items()}
     shapes = out.get("gp_shapes")
     if isinstance(shapes, dict) and isinstance(shapes.get("features"), list):
         out["gp_shapes"] = {

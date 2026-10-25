@@ -4,6 +4,10 @@ Newest first.
 
 ## Unreleased
 
+### Added - `feature_ranges` in the analysis output (`feat/feature-ranges`)
+
+- `_analyze` now returns `feature_ranges`: `{feature: [lower, upper]}` for every continuous input. It is the **search box** the optimizer uses (the observed range, widened to include 0 for absent-as-zero columns), not the raw observed min/max. Clients can flag a proposal sitting on the edge of it. Categorical inputs are omitted; keys are aliased when `anonymize=True`.
+
 ### Fixed - stale torch extension lock hung multi-objective requests (`fix/fused-kernel-hang`)
 
 - BoTorch JIT-compiles its fused qLogEHVI kernel on first use. On torch 2.13 (the version `uv.lock` and the image pin) that load waits on a plain `lock` file with no timeout, so a compile killed mid-way left a lock that blocked every later `/api/multi` call until the 120 s demo timeout. Reproduced with a stale lock and no built `.so`. torch 2.14 fixes this upstream (OS-level `FileLock`, pytorch#189245); `kalos/core/torch_ext.py` removes a lock older than 5 minutes before the first load, so the pinned torch is protected. A young lock (a real concurrent compile) is left alone. Numerics are unchanged: the fused kernel still loads.
