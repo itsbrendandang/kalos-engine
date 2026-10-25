@@ -127,7 +127,9 @@ UPLOAD_PATHS = frozenset({"/api/run", "/api/scale/readout"})
 # The value and the pin live in `kalos.portal.pipeline` (shared with the
 # background-job worker process); re-exported under the historical names.
 from kalos.portal.pipeline import TORCH_THREADS as _TORCH_THREADS  # noqa: E402,F401
-from kalos.portal.pipeline import ensure_torch_threads as _ensure_torch_threads  # noqa: E402
+from kalos.portal.pipeline import (  # noqa: E402
+    ensure_torch_threads as _ensure_torch_threads,
+)
 
 # --- deployment environment (KALOS_ENV) --------------------------------------- #
 # Decided once, at startup. KALOS_ENV=production (docs/HARDENING.md):

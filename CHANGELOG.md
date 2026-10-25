@@ -11,7 +11,7 @@ Newest first.
   `kalos/portal/analysis_parts/`: `policy` (named constants, `validation_mode`), `identifiers`,
   `anonymize`, `columns`, `ranges`, `noise_blocks`, `refusals`, `diagnostics`, `proposals`.
   Every public name, and every private name a test or caller imports, is still importable from
-  `kalos.portal.analysis`; no import changes. Unreferenced private helpers now live in `analysis_parts`.
+  `kalos.portal.analysis`; the public surface used by callers and tests is unchanged, but `analysis.__all__` no longer lists every moved name (e.g. `ParsedUpload`, `build_report`). Unreferenced private helpers now live in `analysis_parts`.
 
 ### Fixed - API and ops review (`fix/review-api`)
 

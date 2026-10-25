@@ -35,7 +35,7 @@ BIOPROCESS_PROFILE = DomainProfile(
     ),
     # Names that MAY be a replicate/leakage grouping. Used as the CV group only
     # when it is declared in roles, or when each of its levels is confounded with
-    # a single recipe (see `kalos.portal.analysis._auto_group_column`).
+    # a single recipe (see `kalos.portal.analysis_parts.columns._auto_group_column`).
     group_hint=re.compile(r"medium|strain|recipe|batch|campaign|group|lot", re.I),
 )
 

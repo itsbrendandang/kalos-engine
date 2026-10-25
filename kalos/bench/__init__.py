@@ -11,7 +11,13 @@ while sweeping observation noise - the same measurement noise that governs
 whether the model helps at all on real, noisy assay data.
 """
 from .benchmark import run_benchmark, run_mixed_one, run_one, summarize  # noqa: F401
-from .objectives import MixedObjective, Objective, ackley, gaussian_bump, mixed_bump  # noqa: F401
+from .objectives import (  # noqa: F401
+    MixedObjective,
+    Objective,
+    ackley,
+    gaussian_bump,
+    mixed_bump,
+)
 
 __all__ = [
     "MixedObjective",

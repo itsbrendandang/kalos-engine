@@ -26,7 +26,9 @@ jwt = pytest.importorskip("jwt")
 
 from cryptography.hazmat.primitives import serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import ec, rsa  # noqa: E402
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: E402
+    Ed25519PrivateKey,
+)
 from fastapi import HTTPException  # noqa: E402
 
 from kalos.portal.auth import (  # noqa: E402
