@@ -88,7 +88,7 @@ Current and planned request flows: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md
 
 ## Local development
 
-Python 3.10+ (CI uses 3.12). All tools are free and open source.
+Python 3.11+ (CI uses 3.12). All tools are free and open source.
 
 ```bash
 python -m pip install -e .               # core, torch-free

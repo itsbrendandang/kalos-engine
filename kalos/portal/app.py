@@ -654,7 +654,7 @@ async def _run_demo(fn, principal: Principal, *args) -> JSONResponse:
     task.add_done_callback(lambda _t: locked.abandon())
     try:
         result = await asyncio.wait_for(asyncio.shield(task), timeout=DEMO_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.warning("demo route exceeded %ss; answered 504", DEMO_TIMEOUT_SECONDS)
         return JSONResponse(
             {"error": "the demo computation timed out", "code": "engine_timeout"}, status_code=504

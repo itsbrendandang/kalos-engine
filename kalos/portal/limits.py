@@ -190,7 +190,7 @@ class RequestSizeLimitMiddleware:
                     deadline = loop.time() + timeout
                 try:
                     message = await asyncio.wait_for(receive(), max(deadline - loop.time(), 0.0))
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     log.warning("upload to %s not received within %.0f s; answered 408", path, timeout)
                     timed_out = True
                     over_cap = True

@@ -24,10 +24,10 @@ WORKDIR /build
 
 # Only the inputs `pip install -e .` (well, a real install, not editable -
 # see below) actually needs: package metadata + the package itself. Not
-# uv.lock - pip does not read it, and kalos does not vendor a requirements
-# lock for pip today; this Containerfile pins nothing beyond what pyproject.toml
-# pins, which is the same story a fresh `pip install kalos[ml,portal]` tells
-# an operator outside Docker.
+# uv.lock - pip does not read it. Instead the image installs every transitive
+# dependency at the exact version uv.lock resolved, via deploy/engine/constraints.txt
+# (generated from the lock; see the comment on the COPY below). pyproject.toml
+# still supplies the direct dependencies and their floors.
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
@@ -46,13 +46,22 @@ ENV PATH="/opt/venv/bin:$PATH"
 # and re-downloaded the wheel - found the first time the image was rebuilt for
 # a real fix. Now a source change only reruns the (much smaller) package
 # install below.
+# TORCH_VERSION must equal the torch pin in uv.lock: constraints.txt excludes
+# torch on purpose (it comes from the CPU index), so this is the one place the
+# image's torch version is set. CI's `audit` job fails if the two disagree.
+ARG TORCH_VERSION=2.13.0
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+    && pip install --no-cache-dir "torch==${TORCH_VERSION}" --index-url https://download.pytorch.org/whl/cpu
 
+# constraints.txt is generated from uv.lock (its header has the command), minus
+# torch, which is installed above from the CPU index. `-c` pins every transitive
+# dependency to the locked version without adding any requirement of its own,
+# so the image cannot drift from the lock the way an unpinned `pip install` does.
+COPY deploy/engine/constraints.txt ./
 COPY pyproject.toml README.md ./
 COPY kalos ./kalos
 
-RUN pip install --no-cache-dir ".[ml,portal]"
+RUN pip install --no-cache-dir -c constraints.txt ".[ml,portal]"
 
 # ---------------------------------------------------------------------------
 # runtime

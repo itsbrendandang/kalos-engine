@@ -70,6 +70,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, fields
+from datetime import UTC
 from typing import Any, Literal
 
 import numpy as np
@@ -841,9 +842,9 @@ def _utc_now_iso() -> str:
     """Current UTC time, ISO 8601, seconds precision (no microseconds - a
     render timestamp does not need sub-second precision, and dropping it
     keeps every rendered number on the page decimal-free)."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def _git_sha() -> str:
