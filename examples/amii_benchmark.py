@@ -18,7 +18,6 @@ sys.path.insert(0, str(ROOT))
 
 from kalos.bench.amii import REGISTRY, benchmark_dataset, load_amii_pool  # noqa: E402
 
-
 N_INIT = 10
 
 
