@@ -17,7 +17,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from typing import Literal, Pattern
+from re import Pattern
+from typing import Literal
 
 import pandas as pd
 

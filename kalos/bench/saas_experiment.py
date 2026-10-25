@@ -43,8 +43,9 @@ from __future__ import annotations
 
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 import torch
@@ -187,7 +188,7 @@ class _SaasFit:
         self._X: torch.Tensor | None = None
         self._y: np.ndarray | None = None
 
-    def fit(self, X, y, bounds, *, noise=None) -> "_SaasFit":
+    def fit(self, X, y, bounds, *, noise=None) -> _SaasFit:
         Xa = np.asarray(X, float)
         ya = np.asarray(y, float).reshape(-1)
         Xt = torch.as_tensor(Xa, dtype=DTYPE, device=DEVICE)

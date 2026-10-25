@@ -17,12 +17,12 @@ from .profile import (
 )
 
 __all__ = [
+    "BIOPROCESS_PROFILE",
+    "GENERIC_PROFILE",
     "ColumnRoles",
     "DesignSpace",
     "Dimension",
     "DimensionKind",
     "DomainProfile",
     "build_design_space",
-    "BIOPROCESS_PROFILE",
-    "GENERIC_PROFILE",
 ]

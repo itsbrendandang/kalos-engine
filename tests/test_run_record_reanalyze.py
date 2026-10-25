@@ -16,13 +16,13 @@ import pandas as pd
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from kalos.portal import app as portal_module  # noqa: E402
-from kalos.portal import campaign as campaign_module  # noqa: E402
-from kalos.portal import run_record  # noqa: E402
-from kalos.portal.app import app  # noqa: E402
-from kalos.portal.campaign import CampaignStore, get_campaign_store  # noqa: E402
+from kalos.portal import app as portal_module
+from kalos.portal import campaign as campaign_module
+from kalos.portal import run_record
+from kalos.portal.app import app
+from kalos.portal.campaign import CampaignStore, get_campaign_store
 
 
 def _df(n: int = 8, seed: int = 0) -> pd.DataFrame:

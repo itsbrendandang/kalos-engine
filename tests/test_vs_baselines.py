@@ -15,7 +15,7 @@ torch = pytest.importorskip("torch")  # the Kalos and GP-EI arms need the ml ext
 
 
 def test_seed_lists_are_fixed_and_disjoint():
-    assert vb.CONFIRMATORY_SEEDS == tuple(range(1000, 1030))
+    assert tuple(range(1000, 1030)) == vb.CONFIRMATORY_SEEDS
     assert len(vb.CONFIRMATORY_SEEDS) >= 30
     assert vb.PILOT_SEED not in vb.CONFIRMATORY_SEEDS
     assert not set(vb.QUICK_SEEDS) & set(vb.CONFIRMATORY_SEEDS)
@@ -55,7 +55,7 @@ def test_f_med_and_f_star_are_consistent():
 class _SpyArm(vb._Arm):
     """Random proposals that record the pending set they were given."""
 
-    seen_pending: list = []
+    seen_pending: list = []  # noqa: RUF012 - class-level log the test reads back via _SpyArm.seen_pending
 
     def tell(self, X, y):
         return None

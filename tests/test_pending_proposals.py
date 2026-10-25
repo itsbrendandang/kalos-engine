@@ -29,10 +29,10 @@ import pytest
 pytest.importorskip("torch")
 pytest.importorskip("fastapi")
 
-from kalos.core.optimize import propose  # noqa: E402
-from kalos.core.surrogate import Surrogate  # noqa: E402
-from kalos.portal.analysis import _analyze, _encode_pending  # noqa: E402
-from kalos.portal.campaign import CampaignStore  # noqa: E402
+from kalos.core.optimize import propose
+from kalos.core.surrogate import Surrogate
+from kalos.portal.analysis import _analyze, _encode_pending
+from kalos.portal.campaign import CampaignStore
 
 # A re-proposal landing within this normalized distance of an in-flight recipe is
 # the same experiment for any practical purpose: the scientist would be pipetting

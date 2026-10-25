@@ -36,4 +36,4 @@ def get(name: str) -> Provider | None:
     return None
 
 
-__all__ = ["all_providers", "provider_status", "get"]
+__all__ = ["all_providers", "get", "provider_status"]

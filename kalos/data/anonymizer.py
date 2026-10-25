@@ -15,7 +15,6 @@ import hashlib
 import logging
 import os
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
 
 log = logging.getLogger("kalos.anonymizer")
 
@@ -97,15 +96,15 @@ class Anonymizer:
     # shared with ingest/feed.py). `salt` defaults to the env-configured salt.
     drop_meta_keys: frozenset[str] = DROP_EXACT
     hash_meta_keys: frozenset[str] = HASH_EXACT
-    salt: Optional[str] = None
-    _drop_substr: Tuple[str, ...] = DROP_SUBSTR
-    _hash_substr: Tuple[str, ...] = HASH_SUBSTR
+    salt: str | None = None
+    _drop_substr: tuple[str, ...] = DROP_SUBSTR
+    _hash_substr: tuple[str, ...] = HASH_SUBSTR
 
     def _salt(self) -> str:
         return self.salt if self.salt is not None else default_salt()
 
-    def anonymize_meta(self, meta: Optional[Dict] = None) -> Dict:
-        clean: Dict = {}
+    def anonymize_meta(self, meta: dict | None = None) -> dict:
+        clean: dict = {}
         salt = self._salt()
         for k, v in dict(meta or {}).items():
             lk = str(k).strip().lower()
@@ -120,12 +119,12 @@ class Anonymizer:
 
 
 __all__ = [
-    "Anonymizer",
-    "_hash",
-    "salt_configured",
-    "default_salt",
     "DROP_EXACT",
     "DROP_SUBSTR",
     "HASH_EXACT",
     "HASH_SUBSTR",
+    "Anonymizer",
+    "_hash",
+    "default_salt",
+    "salt_configured",
 ]

@@ -19,11 +19,11 @@ from kalos.providers.bionemo_provider import BioNemoProvider
 from kalos.providers.registry import all_providers, get, provider_status
 
 __all__ = [
-    "Provider",
-    "ProviderStatus",
     "AnthropicProvider",
     "BioNemoProvider",
+    "Provider",
+    "ProviderStatus",
     "all_providers",
-    "provider_status",
     "get",
+    "provider_status",
 ]

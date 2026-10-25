@@ -36,7 +36,7 @@ class MultiObjectiveSurrogate:
         self._X: torch.Tensor | None = None
         self._Y: torch.Tensor | None = None
 
-    def fit(self, X, Y, bounds) -> "MultiObjectiveSurrogate":
+    def fit(self, X, Y, bounds) -> MultiObjectiveSurrogate:
         """Fit one GP per objective. `bounds` (2 x d) is required so input
         normalization is always tied to the fixed design box, never the
         training-data envelope (the same footgun the single-objective fit closes)."""

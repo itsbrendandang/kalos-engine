@@ -82,9 +82,9 @@ __all__ = [
     "CampaignNotFound",
     "CampaignStore",
     "TenantCampaigns",
+    "_campaigns_table_is_compatible",
     "get_campaign_store",
     "validate_campaign_id",
-    "_campaigns_table_is_compatible",
 ]
 
 
@@ -149,8 +149,16 @@ def _clip(value: str | None, limit: int = MAX_AUDIT_FIELD_CHARS) -> str | None:
 class _Row:
     """One `campaigns` row as read inside a transaction."""
 
-    __slots__ = ("id", "name", "state_text", "generation", "created_by",
-                 "created_at", "updated_at", "archived_at")
+    __slots__ = (
+        "archived_at",
+        "created_at",
+        "created_by",
+        "generation",
+        "id",
+        "name",
+        "state_text",
+        "updated_at",
+    )
 
     def __init__(self, row: tuple[Any, ...]) -> None:
         (self.id, self.name, self.state_text, self.generation, self.created_by,

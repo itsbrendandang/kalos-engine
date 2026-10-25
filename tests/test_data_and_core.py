@@ -60,7 +60,7 @@ def test_splits_group_replicates_and_tripwire():
     assert_no_group_leakage(splits, g)   # passes
     # a hand-built leaky split must raise
     bad = [(np.array([0, 1]), np.array([2, 3]))]  # group 0 on both sides
-    with pytest.raises(AssertionError, match="(?i)leakage"):
+    with pytest.raises(AssertionError, match=r"(?i)leakage"):
         assert_no_group_leakage(bad, g)
 
 

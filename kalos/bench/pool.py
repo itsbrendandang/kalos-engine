@@ -14,7 +14,7 @@ result on the combined media DoE.
 from __future__ import annotations
 
 import re
-from typing import Dict, Iterable, List, Tuple
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -35,7 +35,7 @@ _ID_HINT = re.compile(r"^(sample|well|plate|position|revvity|experiment|medium|s
 
 def pool_from_frame(
     df: pd.DataFrame, target: str, *, aggregate: bool = False
-) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """Return (X, y, feature_names): process-input features and the target titer.
 
     Features are numeric, varying columns that are not the target, not another
@@ -51,7 +51,7 @@ def pool_from_frame(
     """
     y_all = pd.to_numeric(df[target], errors="coerce")
     keep = y_all.notna()
-    feats: List[str] = []
+    feats: list[str] = []
     for c in df.columns:
         if c == target or _OUTPUT_HINT.search(str(c)) or _ID_HINT.match(str(c).strip()):
             continue
@@ -101,7 +101,7 @@ def run_pool_one(
     evaluated = list(order[:n_init])
     remaining = set(order[n_init:])
     best = float(y[evaluated].max())
-    traj: List[float] = list(np.maximum.accumulate(y[evaluated]))
+    traj: list[float] = list(np.maximum.accumulate(y[evaluated]))
 
     for _ in range(budget):
         if not remaining:
@@ -157,7 +157,7 @@ def run_pool(
     X: np.ndarray, y: np.ndarray, *, strategies: Iterable[str] = ("bo", "random"),
     n_init: int = 8, budget: int = 40, seeds: Iterable[int] = range(20),
     noise: float | None = None,
-) -> Dict[str, dict]:
+) -> dict[str, dict]:
     """Run each strategy's retrospective trial across `seeds`.
 
     `noise`, when given, is forwarded to `run_pool_one` as a fixed
@@ -165,7 +165,7 @@ def run_pool(
     bo/random behavior unchanged.
     """
     seeds = list(seeds)
-    out: Dict[str, dict] = {}
+    out: dict[str, dict] = {}
     L = None
     for strat in strategies:
         trajs = [

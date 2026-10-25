@@ -549,14 +549,14 @@ def _single_compute(rounds: int, q: int) -> dict:
     rng = np.random.default_rng(0)
     X = rng.uniform(0, 1, (6, 3))
     y = _titer(X)
-    traj = [{"round": 0, "best": float(y.max()), "n": int(len(y))}]
+    traj = [{"round": 0, "best": float(y.max()), "n": len(y)}]
     proposals: list = []
     for r in range(rounds):
         s = Surrogate().fit(X, y, bounds=BOUNDS)
         nxt = propose(s, BOUNDS, q=q)
         X = np.vstack([X, nxt])
         y = np.concatenate([y, _titer(nxt)])
-        traj.append({"round": r + 1, "best": float(y.max()), "n": int(len(y))})
+        traj.append({"round": r + 1, "best": float(y.max()), "n": len(y)})
     # annotate the last proposed batch with predicted value + uncertainty + why
     # best before this batch was measured; len(nxt), not q: a batch can come
     # back short when the space has fewer than q distinct candidates
@@ -594,7 +594,7 @@ def _multi_compute(rounds: int, q: int) -> dict:
         Y = np.vstack([Y, _objectives(nxt)])
         _, py = s.pareto()
         traj.append(
-            {"round": r + 1, "pareto": int(len(py)), "best_titer": float(Y[:, 0].max()), "best_purity": float(Y[:, 1].max())}
+            {"round": r + 1, "pareto": len(py), "best_titer": float(Y[:, 0].max()), "best_purity": float(Y[:, 1].max())}
         )
         last_batch = nxt
     s = MultiObjectiveSurrogate().fit(X, Y, bounds=BOUNDS)
@@ -787,7 +787,7 @@ async def _run_uploaded(
     # unless the caller confirmed it. The generation seen here guards the publish below.
     expected_generation: Any = _NO_GUARD
     try:
-        target_id, generation, awaiting, measured = _upload_target(
+        _target_id, generation, awaiting, measured = _upload_target(
             store, tenant=tenant, campaign_id=campaign_id,
         )
     except CampaignError as exc:
@@ -1005,10 +1005,6 @@ async def _unhandled_error(request: Request, exc: Exception) -> JSONResponse:
 app.include_router(_scale_router)
 
 __all__ = [
-    "app",
-    "get_campaign_store",
-    "_analyze",
-    "UploadRejected",
     "MAX_COLUMNS",
     "MAX_CSV_ROWS",
     "MAX_UPLOAD_BYTES",
@@ -1016,6 +1012,10 @@ __all__ = [
     "_ERR_FIT",
     "_ERR_PARSE",
     "_ERR_TOO_MANY_FIT_ROWS",
+    "UploadRejected",
+    "_analyze",
     "_parse_upload",
+    "app",
+    "get_campaign_store",
     "parse_upload",
 ]

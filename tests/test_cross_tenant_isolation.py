@@ -40,16 +40,16 @@ import pandas as pd
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from kalos.portal import app as portal_module  # noqa: E402
-from kalos.portal import busy  # noqa: E402
-from kalos.portal import campaign as campaign_module  # noqa: E402
-from kalos.portal.app import app  # noqa: E402
-from kalos.portal.auth import AUTH_STATIC  # noqa: E402
-from kalos.portal.campaign import CampaignStore, get_campaign_store  # noqa: E402
-from kalos.portal.campaigns_api import MAX_NAME_CHARS, CampaignUploadSizeLimit  # noqa: E402
-from kalos.portal.uploads import MAX_UPLOAD_BYTES  # noqa: E402
+from kalos.portal import app as portal_module
+from kalos.portal import busy
+from kalos.portal import campaign as campaign_module
+from kalos.portal.app import app
+from kalos.portal.auth import AUTH_STATIC
+from kalos.portal.campaign import CampaignStore, get_campaign_store
+from kalos.portal.campaigns_api import MAX_NAME_CHARS, CampaignUploadSizeLimit
+from kalos.portal.uploads import MAX_UPLOAD_BYTES
 
 A_SECRET = "ACME-SECRET-Project-Zeus"
 B_SECRET = "GLOBEX-SECRET-Project-Hera"

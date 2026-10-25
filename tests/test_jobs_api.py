@@ -24,16 +24,16 @@ import pandas as pd
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from kalos.portal import app as portal_module  # noqa: E402
-from kalos.portal import busy, job_worker, jobs, jobs_api  # noqa: E402
-from kalos.portal import campaign as campaign_module  # noqa: E402
-from kalos.portal.app import app  # noqa: E402
-from kalos.portal.auth import Principal  # noqa: E402
-from kalos.portal.campaign import CampaignStore, get_campaign_store  # noqa: E402
-from kalos.portal.job_runner import JobRunner, ThreadWorker  # noqa: E402
-from kalos.portal.uploads import MAX_UPLOAD_BYTES  # noqa: E402
+from kalos.portal import app as portal_module
+from kalos.portal import busy, job_worker, jobs, jobs_api
+from kalos.portal import campaign as campaign_module
+from kalos.portal.app import app
+from kalos.portal.auth import Principal
+from kalos.portal.campaign import CampaignStore, get_campaign_store
+from kalos.portal.job_runner import JobRunner, ThreadWorker
+from kalos.portal.uploads import MAX_UPLOAD_BYTES
 
 
 def _sha(t: str) -> str:
@@ -186,7 +186,7 @@ def test_a_bad_sheet_is_refused_synchronously_and_queues_nothing(env):
 
 
 def test_cancel_a_queued_job_over_http_is_immediate_and_idempotent(env):
-    tc, store = env
+    tc, _store = env
     cid = _campaign(tc, "a-write")
     job = _submit(tc, "a-write", cid).json()["job"]
     r = tc.post(f"/api/jobs/{job['id']}/cancel", headers=H("a-write"))
@@ -359,7 +359,7 @@ def test_upload_over_the_engine_cap_is_413_before_the_route(env):
 
 
 def test_jobs_disabled_answers_503_and_status_still_reads(env, monkeypatch):
-    tc, store = env
+    tc, _store = env
     cid = _campaign(tc, "a-write")
     job = _submit(tc, "a-write", cid).json()["job"]
     monkeypatch.setenv("KALOS_JOBS_ENABLED", "0")
@@ -464,7 +464,7 @@ def test_job_listings_and_audit_rows_are_scoped_to_the_caller(env):
     tc, store = env
     acme_cid = _campaign(tc, "a-write")
     acme_job = _submit(tc, "a-write", acme_cid).json()["job"]["id"]
-    gcid, globex_job = _globex_job(tc, store)
+    _gcid, globex_job = _globex_job(tc, store)
 
     acme_list = tc.get(f"/api/campaigns/{acme_cid}/jobs", headers=H("a-read")).json()["jobs"]
     assert [j["id"] for j in acme_list] == [acme_job]
@@ -503,7 +503,7 @@ def test_each_tenants_job_publishes_only_into_its_own_campaign(env):
 def test_lifespan_starts_and_stops_the_runner_unless_disabled(env, monkeypatch):
     from kalos.portal import job_runner
 
-    tc, _store = env
+    _tc, _store = env
     with TestClient(app):
         assert job_runner._runner is not None
         assert job_runner._runner.runner_id
@@ -519,25 +519,23 @@ def test_lifespan_refuses_to_boot_when_another_process_runs_the_jobs(env):
     by this engine and never be run."""
     from kalos.portal import job_runner
 
-    tc, store = env
+    _tc, store = env
     lock = store.state_dir / job_runner.RUNNER_LOCK_NAME
     fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
     fcntl.flock(fd, fcntl.LOCK_EX)  # held by "another engine process" (this one, another fd)
     try:
-        with pytest.raises(job_runner.RunnerLocked):
-            with TestClient(app):
-                pass
+        with pytest.raises(job_runner.RunnerLocked), TestClient(app):
+            pass
     finally:
         os.close(fd)
     assert job_runner._runner is None
 
 
 def test_lifespan_refuses_to_boot_on_a_malformed_job_setting(env, monkeypatch):
-    tc, _store = env
+    _tc, _store = env
     monkeypatch.setenv("KALOS_JOB_QUEUE_DEPTH", "-1")
-    with pytest.raises(ValueError, match="KALOS_JOB_QUEUE_DEPTH"):
-        with TestClient(app):
-            pass
+    with pytest.raises(ValueError, match="KALOS_JOB_QUEUE_DEPTH"), TestClient(app):
+        pass
 
 
 class _GatedUpload:
@@ -661,7 +659,7 @@ def test_readyz_is_503_when_jobs_are_expected_but_the_runner_did_not_start(env, 
     ready: its job submissions would never run. The reason is fixed text."""
     from kalos.portal import job_runner
 
-    tc, _store = env
+    _tc, _store = env
 
     def broken_start(_store):
         raise RuntimeError("scheduler exploded")
@@ -676,14 +674,13 @@ def test_readyz_is_503_when_jobs_are_expected_but_the_runner_did_not_start(env, 
 def test_the_lifespan_refuses_a_malformed_limit_even_with_jobs_disabled(env, monkeypatch):
     """D2: KALOS_JOB_WORKERS also sizes the sync analysis limiter, so a bad value fails the
     boot whether or not the queue is enabled."""
-    tc, _store = env
+    _tc, _store = env
     # Scoped, so the value is gone before the fixture resets the limiter from the environment.
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("KALOS_JOBS_ENABLED", "0")
         mp.setenv("KALOS_JOB_WORKERS", "0")
-        with pytest.raises(ValueError, match="KALOS_JOB_WORKERS"):
-            with TestClient(app):
-                pass
+        with pytest.raises(ValueError, match="KALOS_JOB_WORKERS"), TestClient(app):
+            pass
 
 
 def test_a_plain_upload_to_a_campaign_with_runs_is_refused_until_replace_is_confirmed(env):

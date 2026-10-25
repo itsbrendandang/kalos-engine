@@ -19,8 +19,8 @@ import numpy as np
 import pandas as pd
 
 __all__ = [
-    "TARGET_CONSTANT_RTOL",
     "MIN_DISTINCT_TARGET_VALUES",
+    "TARGET_CONSTANT_RTOL",
     "TargetVariation",
     "assess_target_variation",
 ]

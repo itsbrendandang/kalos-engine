@@ -20,13 +20,13 @@ import pytest
 pytest.importorskip("torch")
 pytest.importorskip("botorch")
 
-from kalos.core.gp_shape import (  # noqa: E402
+from kalos.core.gp_shape import (
     NEGLIGIBLE_RELEVANCE_SHARE,
     PEAK_SD_MULTIPLE,
     ard_lengthscales,
     gp_shape_report,
 )
-from kalos.core.surrogate import Surrogate  # noqa: E402
+from kalos.core.surrogate import Surrogate
 
 _NAMES = ["pH", "Methanol", "noise"]
 
@@ -87,7 +87,7 @@ def test_ard_ranks_the_real_driver_above_noise():
     # shares are normalized
     assert sum(f.relevance for f in report.features) == pytest.approx(1.0, abs=1e-3)
     # and the report is ordered most-relevant first
-    assert [f.name for f in report.features][0] == "pH"
+    assert next(f.name for f in report.features) == "pH"
 
 
 def test_monotonic_feature_is_monotonic_and_not_flagged():

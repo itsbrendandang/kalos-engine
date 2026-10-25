@@ -319,7 +319,7 @@ class _Child:
     slot it holds, and the outcome to record once the worker is gone. The child
     stays registered, and keeps its slot, until that outcome is recorded."""
 
-    __slots__ = ("job_id", "tenant", "worker", "lease", "deadline", "outcome")
+    __slots__ = ("deadline", "job_id", "lease", "outcome", "tenant", "worker")
 
     def __init__(self, job_id: str, tenant: str, worker: Worker | None, lease: Lease, deadline: float) -> None:
         self.job_id = job_id

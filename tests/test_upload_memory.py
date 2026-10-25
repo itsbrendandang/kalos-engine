@@ -74,13 +74,13 @@ def test_row_cap_boundary_with_a_group_label_header(monkeypatch):
 
 def test_blank_lines_are_not_counted_as_rows(monkeypatch):
     monkeypatch.setattr(uploads, "MAX_CSV_ROWS", 5)
-    raw = ("a,b\n\n1,2\n\n3,4\n\n5,6\n\n7,8\n\n9,10\n\n").encode()
+    raw = (b"a,b\n\n1,2\n\n3,4\n\n5,6\n\n7,8\n\n9,10\n\n")
     assert len(parse_upload(raw, filename="b.csv").df) == 5
 
 
 def test_a_quoted_newline_is_one_row(monkeypatch):
     monkeypatch.setattr(uploads, "MAX_CSV_ROWS", 5)
-    raw = ('a,b\n"multi\nline",1\n2,2\n3,3\n4,4\n5,5\n').encode()
+    raw = (b'a,b\n"multi\nline",1\n2,2\n3,3\n4,4\n5,5\n')
     assert len(parse_upload(raw, filename="q.csv").df) == 5
 
 

@@ -302,7 +302,7 @@ def campaigns_table_is_v1_compatible(conn: sqlite3.Connection) -> bool:
         return False
     names = {str(row[1]) for row in info}
     pk_columns = [str(row[1]) for row in info if row[5]]
-    return _V1_REQUIRED_COLUMNS <= names and pk_columns == [_V1_CONFLICT_COLUMN]
+    return names >= _V1_REQUIRED_COLUMNS and pk_columns == [_V1_CONFLICT_COLUMN]
 
 
 def _assert_v2_shape(conn: sqlite3.Connection, version: int | None = None) -> None:
@@ -313,7 +313,7 @@ def _assert_v2_shape(conn: sqlite3.Connection, version: int | None = None) -> No
     expected = _V2_TABLES + (_V3_TABLES if v >= 3 else ())
     missing = [t for t in expected if t not in tables]
     cols = {str(r[1]) for r in _columns(conn, "campaigns")}
-    if missing or not _V2_CAMPAIGN_COLUMNS <= cols:
+    if missing or not cols >= _V2_CAMPAIGN_COLUMNS:
         raise SchemaError(
             f"portal.db records schema v{v} but its tables do not have the v{v} shape "
             f"(missing tables: {missing or 'none'}); refusing to start. "
@@ -509,7 +509,7 @@ def _parse_state(state: Any) -> dict[str, Any] | None:
 def _describe_repair(conn: sqlite3.Connection) -> str:
     old_columns = sorted(str(r[1]) for r in _columns(conn, "campaigns"))
     backup = _free_backup_table(conn)
-    salvageable = _V1_REQUIRED_COLUMNS <= set(old_columns)
+    salvageable = set(old_columns) >= _V1_REQUIRED_COLUMNS
     return (
         f"campaigns table was incompatible (columns {old_columns}); "
         f"renamed to {backup} and recreated, "
@@ -531,7 +531,7 @@ def _free_backup_table(conn: sqlite3.Connection) -> str:
 
 def _salvageable_rows(conn: sqlite3.Connection) -> list[tuple[str, str, float]]:
     cols = {str(r[1]) for r in _columns(conn, "campaigns")}
-    if not _V1_REQUIRED_COLUMNS <= cols:
+    if not cols >= _V1_REQUIRED_COLUMNS:
         return []
     # One row per tenant: the newest. A bare column next to MAX() comes from the
     # row that produced the max in SQLite, which is exactly the row wanted.

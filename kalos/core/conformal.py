@@ -8,7 +8,7 @@ surrogate: pass `surrogate.posterior(X)[0]` (the mean) as the prediction.
 """
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 
@@ -42,4 +42,4 @@ def conformal_interval(mean: np.ndarray, q: float) -> np.ndarray:
     return np.column_stack([m - q, m + q])
 
 
-__all__ = ["q_from_residuals", "split_conformal", "conformal_interval"]
+__all__ = ["conformal_interval", "q_from_residuals", "split_conformal"]

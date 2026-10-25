@@ -132,7 +132,7 @@ def test_propose_plan_offline_when_no_credentials(monkeypatch):
     assert result.frame["temperature_c"].tolist() == pytest.approx([34.6, 34.8, 35.0, 34.9, 35.1, 34.7])
 
     # group column hashed to a stable pseudonym, not the raw campaign label
-    group_col = [c for c in plan.columns if c.raw_name == "Campaign"][0]
+    group_col = next(c for c in plan.columns if c.raw_name == "Campaign")
     hashed_name = group_col.canonical_name
     assert hashed_name in result.frame.columns
     assert not result.frame[hashed_name].isin(["C-100", "C-101"]).any()

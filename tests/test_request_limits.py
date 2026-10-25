@@ -8,19 +8,19 @@ import pandas as pd
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi import FastAPI, Request  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
 
-from kalos.portal import app as portal  # noqa: E402
-from kalos.portal import campaign as campaign_module  # noqa: E402
-from kalos.portal.app import app, get_campaign_store  # noqa: E402
-from kalos.portal.campaign import CampaignStore  # noqa: E402
-from kalos.portal.limits import (  # noqa: E402
+from kalos.portal import app as portal
+from kalos.portal import campaign as campaign_module
+from kalos.portal.app import app, get_campaign_store
+from kalos.portal.campaign import CampaignStore
+from kalos.portal.limits import (
     DEFAULT_MAX_REQUEST_BYTES,
     RequestSizeLimitMiddleware,
     max_request_bytes,
 )
-from kalos.portal.uploads import MAX_UPLOAD_BYTES  # noqa: E402
+from kalos.portal.uploads import MAX_UPLOAD_BYTES
 
 
 @pytest.fixture(autouse=True)
@@ -183,7 +183,7 @@ def test_recipe_values_and_keys_are_bounded(client, store, recipe):
 @pytest.mark.parametrize("raw", ['NaN', 'Infinity', '-Infinity'])
 def test_non_finite_recipe_numbers_are_refused(client, store, raw):
     store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
-    body = '{"recipes": [{"recipe": {"Methanol": %s}}]}' % raw
+    body = f'{{"recipes": [{{"recipe": {{"Methanol": {raw}}}}}]}}'
     r = client.post("/api/campaign/start", content=body, headers={"content-type": "application/json"})
     assert r.status_code == 400
 

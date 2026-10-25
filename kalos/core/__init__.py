@@ -24,12 +24,24 @@ _LAZY = {
 }
 
 __all__ = [
-    "Surrogate", "propose", "MultiObjectiveSurrogate", "propose_multiobjective",
-    "GatesConfig", "PromotionResult", "check_gates",
-    "grouped_cv_spearman", "grouped_cv_report", "grouped_folds",
-    "row_hash_groups", "make_splits", "assert_no_group_leakage",
-    "spearman_driver_matrix", "bootstrap_spearman", "rank_drivers",
-    "split_conformal", "conformal_interval",
+    "GatesConfig",
+    "MultiObjectiveSurrogate",
+    "PromotionResult",
+    "Surrogate",
+    "assert_no_group_leakage",
+    "bootstrap_spearman",
+    "check_gates",
+    "conformal_interval",
+    "grouped_cv_report",
+    "grouped_cv_spearman",
+    "grouped_folds",
+    "make_splits",
+    "propose",
+    "propose_multiobjective",
+    "rank_drivers",
+    "row_hash_groups",
+    "spearman_driver_matrix",
+    "split_conformal",
 ]
 
 

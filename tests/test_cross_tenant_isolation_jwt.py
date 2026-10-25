@@ -37,12 +37,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import httpx  # noqa: E402
-import jwt  # noqa: E402
+import httpx
+import jwt
 import pytest
-from cryptography.hazmat.primitives import serialization  # noqa: E402
-from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: E402
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VECTORS = json.loads((Path(__file__).parent / "vectors" / "engine-token.json").read_text())

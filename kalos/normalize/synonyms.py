@@ -14,7 +14,8 @@ Two independent jobs live here:
 from __future__ import annotations
 
 import re
-from typing import Literal, Sequence
+from collections.abc import Sequence
+from typing import Literal
 
 from kalos.data.anonymizer import DROP_EXACT, DROP_SUBSTR, HASH_EXACT, HASH_SUBSTR
 
@@ -134,4 +135,4 @@ def preferred_target(candidates: Sequence[str]) -> str:
     return next((c for c in candidates if _TARGET_PREF.search(c)), candidates[0])
 
 
-__all__ = ["Role", "SYNONYMS", "snake_canonical", "guess_role", "preferred_target"]
+__all__ = ["SYNONYMS", "Role", "guess_role", "preferred_target", "snake_canonical"]

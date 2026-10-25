@@ -15,12 +15,12 @@ import pandas as pd
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from kalos.portal.app import app, get_campaign_store  # noqa: E402
-from kalos.portal.auth import READ, WRITE  # noqa: E402
-from kalos.portal.campaign import CampaignStore  # noqa: E402
-from kalos.portal.scale_routes import INTENDED_USE_STATEMENT  # noqa: E402
+from kalos.portal.app import app, get_campaign_store
+from kalos.portal.auth import READ, WRITE
+from kalos.portal.campaign import CampaignStore
+from kalos.portal.scale_routes import INTENDED_USE_STATEMENT
 
 _DEMO_CSV = "examples/synthetic_scaleup/synthetic_scaleup.csv"
 

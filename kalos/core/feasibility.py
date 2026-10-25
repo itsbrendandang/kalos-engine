@@ -57,7 +57,7 @@ class FeasibilityClassifier:
         self._pipeline: Pipeline | None = None
         self._fallback: bool = True
 
-    def fit(self, X: np.ndarray, y_binary: np.ndarray) -> "FeasibilityClassifier":
+    def fit(self, X: np.ndarray, y_binary: np.ndarray) -> FeasibilityClassifier:
         """Fit on binary labels, or fall back to the no-gate state (see class docstring)."""
         Xa = np.asarray(X, dtype=float)
         ya = np.asarray(y_binary, dtype=int).reshape(-1)
@@ -260,7 +260,7 @@ def feasibility_cv_report(
     splits = min(n_splits, minority_count)
     g = None if groups is None else np.asarray(groups)
     if g is not None:
-        splits = min(splits, int(len(np.unique(g))))
+        splits = min(splits, len(np.unique(g)))
     if splits < 2:
         return _unavailable()
 
@@ -297,7 +297,7 @@ def feasibility_cv_report(
         "auc": auc,
         "brier": brier,
         "ece": ece,
-        "n": int(len(y_true)),
+        "n": len(y_true),
         "n_feasible": int((y_true == 1).sum()),
         "n_infeasible": int((y_true == 0).sum()),
         "evaluable": True,
@@ -328,7 +328,7 @@ def feasibility_cv_auc(
 
 __all__ = [
     "FeasibilityClassifier",
-    "feasible_labels",
     "feasibility_cv_auc",
     "feasibility_cv_report",
+    "feasible_labels",
 ]

@@ -11,7 +11,7 @@ import pytest
 
 pytest.importorskip("torch")
 
-from kalos.portal.analysis import _analyze  # noqa: E402
+from kalos.portal.analysis import _analyze
 
 
 def _sheet() -> pd.DataFrame:
@@ -27,13 +27,13 @@ def _sheet() -> pd.DataFrame:
 
 @pytest.mark.parametrize("floor", [float("nan"), float("inf"), float("-inf"), "95", True, None])
 def test_a_non_finite_or_non_numeric_floor_is_a_value_error(floor):
-    with pytest.raises(ValueError, match="constraint.floor"):
+    with pytest.raises(ValueError, match=r"constraint.floor"):
         _analyze(_sheet(), target="titer", constraint={"column": "purity", "floor": floor})
 
 
 @pytest.mark.parametrize("column", ["", None, 3])
 def test_a_bad_constraint_column_is_a_value_error(column):
-    with pytest.raises(ValueError, match="constraint.column"):
+    with pytest.raises(ValueError, match=r"constraint.column"):
         _analyze(_sheet(), target="titer", constraint={"column": column, "floor": 95.0})
 
 

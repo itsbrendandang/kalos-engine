@@ -92,7 +92,7 @@ AUTH_JWT = "jwt"
 DENY_VAR = "KALOS_AUTH_DENY_SUBJECTS"
 
 # The one body every bad/expired/revoked token gets: no hint of which check failed.
-_INVALID_TOKEN_DETAIL = "invalid or expired token"
+_INVALID_TOKEN_DETAIL = "invalid or expired token"  # noqa: S105 - response detail text, not a credential
 
 
 @dataclass(frozen=True)

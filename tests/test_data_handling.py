@@ -29,15 +29,15 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("torch")
 
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from kalos.domains import GENERIC_PROFILE, ColumnRoles  # noqa: E402
-from kalos.portal import app as portal_module  # noqa: E402
-from kalos.portal import campaign as campaign_module  # noqa: E402
-from kalos.portal.analysis import _analyze  # noqa: E402
-from kalos.portal.campaign import CampaignStore, get_campaign_store  # noqa: E402
-from kalos.portal.pipeline import compute_upload_analysis  # noqa: E402
-from kalos.portal.uploads import UploadRejected, parse_upload  # noqa: E402
+from kalos.domains import GENERIC_PROFILE, ColumnRoles
+from kalos.portal import app as portal_module
+from kalos.portal import campaign as campaign_module
+from kalos.portal.analysis import _analyze
+from kalos.portal.campaign import CampaignStore, get_campaign_store
+from kalos.portal.pipeline import compute_upload_analysis
+from kalos.portal.uploads import UploadRejected, parse_upload
 
 N = 24
 
@@ -352,7 +352,7 @@ def test_a_headerless_sheet_is_refused_with_its_detected_columns():
         parse(raw, filename="runs.xlsx")
     rej = info.value
     assert rej.code == "ambiguous_header"
-    assert "columns" in rej.context and rej.context["columns"]
+    assert rej.context.get("columns")
     assert "Unnamed" not in rej.message and not any("Unnamed" in c for c in rej.context["columns"])
 
 

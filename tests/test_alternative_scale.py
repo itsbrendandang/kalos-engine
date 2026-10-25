@@ -36,7 +36,7 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("torch")
 
-from kalos.portal.analysis import _alternative_scale_block, _analyze  # noqa: E402
+from kalos.portal.analysis import _alternative_scale_block, _analyze
 
 # --- fixtures ----------------------------------------------------------------- #
 

@@ -28,11 +28,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
+import numpy as np
+import pandas as pd
 
-from kalos.bench.pool import pool_from_frame, run_pool  # noqa: E402
-from kalos.core.replicates import estimate_noise_floor, noise_report  # noqa: E402
+from kalos.bench.pool import pool_from_frame, run_pool
+from kalos.core.replicates import estimate_noise_floor, noise_report
 
 TARGET = "Lipase_g.L"
 STRATEGIES = ("bo", "bo_feas_clean", "random")

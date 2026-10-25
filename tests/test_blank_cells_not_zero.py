@@ -16,8 +16,8 @@ import pytest
 
 pytest.importorskip("torch")
 
-from kalos.domains import ColumnRoles  # noqa: E402
-from kalos.portal.analysis import (  # noqa: E402
+from kalos.domains import ColumnRoles
+from kalos.portal.analysis import (
     _absent_is_zero_columns,
     _analyze,
     _physical_range,
