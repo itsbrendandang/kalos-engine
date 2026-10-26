@@ -289,10 +289,8 @@ so it stays a pure liveness check. `docker compose ps` shows `healthy` /
       engine is compose-internal only (wave 2 - the web server proxies to
       it). Confirm with `docker compose ps` - no other service should show
       a `PORTS` column entry.
-- [ ] Exactly one `engine` replica. `kalos/runner/singleton.py`'s
-      `runner.lock` and the store's single-writer assumption
-      (`kalos/store/sqlite_store.py`'s own docstring: "there is never more
-      than one writer at a time by design") are not safe under
+- [ ] Exactly one `engine` replica. `kalos/portal/engine_lock.py`'s
+      engine lock and the store's single-writer assumption are not safe under
       `docker compose up --scale engine=N` for N>1. This compose file does
       not set `deploy.replicas`, so this is the default, but it is worth
       stating as a hard constraint rather than an accident of the current

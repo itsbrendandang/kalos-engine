@@ -76,7 +76,7 @@ Absent that evidence, kalos's current zero-fill remains the right default, and t
 ## Reproduce
 
 ```
-cd /Users/brendandang/Documents/GitHub/kalos && source .venv/bin/activate
+cd <repo root> && source .venv/bin/activate
 python experiments/missingness_indicator/run.py
 ```
 

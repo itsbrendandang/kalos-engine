@@ -32,7 +32,7 @@ The phases are ordered by hard dependency: you cannot isolate data per tenant wi
 
 ### Phase 1 - Foundation: identity and durable, tenant-scoped state
 
-**1a. Authentication + authorization (in progress).**
+**1a. Authentication + authorization (implemented; see below for follow-ups).**
 A general in-house token layer (`kalos/portal/auth.py`): a bearer token resolves to a `Principal` (subject, tenant, scopes).
 Tokens are provisioned by the operator and stored as SHA-256 hashes (never plaintext, never logged); the presented token is hashed and constant-time compared.
 With no tokens configured the layer returns an anonymous principal on a `default` tenant with read+write scope, preserving today's behavior and logging a startup warning.
@@ -45,10 +45,12 @@ The campaign is now a SQLite row per tenant in `<state_dir>/portal.db` (`campaig
 So two tenants can never see or overwrite each other's campaign or analysis.
 Follow-up: move the `latest` cache into the same SQLite store as a row, and add an `owner`/`created_by` column for finer-grained authorization. (Both done by schema v2, see docs/MIGRATIONS.md.)
 
-**1c. Transport + secrets (in progress).**
+**1c. Transport + secrets (implemented; follow-ups below).**
 CORS is now an explicit allowlist when `KALOS_CORS_ORIGINS` is set (the production posture) and the permissive localhost regex otherwise (`kalos/portal/config.py`); the effective security posture (auth + CORS) is logged once at startup, with a warning when the portal is not locked down.
 TLS is terminated by a reverse proxy in front of the app (deployment note below); the app speaks plain HTTP on the loopback to the proxy.
 Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a file/Vault instead of the environment, and tightening CORS methods/headers from `*` to the minimum the client needs.
+
+**Forwarded headers:** `python -m kalos.portal` ignores `X-Forwarded-For` unless `KALOS_TRUSTED_PROXIES` (comma-separated proxy IPs) is set. Without this, uvicorn would trust a same-host proxy's header and an unauthenticated (open-mode) portal could not tell remote callers from loopback. With tokens configured, auth is enforced either way.
 
 **Deployment (transport):** run the app behind a TLS-terminating reverse proxy (nginx/Caddy/an ALB). The proxy holds the certificate and forwards to the app over loopback; set `KALOS_CORS_ORIGINS` to the exact browser origin(s) the proxy serves.
 
@@ -197,7 +199,7 @@ A review of progress against the readiness scorecard surfaced that campaign + la
 
 - **P1 - Tenant-scope + auth-gate the experiments store: DONE** (`feat/hardening-experiments-tenancy`). `kalos/store/sqlite_store.py` gains a `tenant` column (+ index + one-time backfill migration) and every query filters by it; `kalos/portal/experiments.py` routes require `read`/`write` and pass `Principal.tenant`; `LocalStoreAdapter` is tenant-bound so the runner only touches the caller's experiments. Remote-runner `/result` still operates on the `default` tenant (machine channel, off by default) - multi-tenant remote runners are a follow-up.
 - **P2 - Observability**: `/healthz` (liveness) + `/readyz` (`SELECT 1` against the DBs), a request-id + JSON logging middleware that never logs bodies/tokens, optional `/metrics`. Moves the Operational-maturity dimension off BLOCKING; low cost, high review value.
-- **P3 - Async job queue for `_analyze`: in review** (`feat/background-jobs`, docs/JOBS.md). A `jobs` table (schema v3) and a submit/poll/cancel API for upload analyses. Reanalyze is not a job yet.
+- **P3 - Async job queue for `_analyze`: merged** (`feat/background-jobs`, docs/JOBS.md). A `jobs` table (schema v3) and a submit/poll/cancel API for upload analyses. Reanalyze is not a job yet.
 - **P4 - Move `_LATEST` into SQLite: DONE by schema v2** (`feat/campaign-schema-v2`, docs/MIGRATIONS.md): an `analyses` row per campaign, written in the fold's transaction. Original plan: a `latest(tenant, state, updated_at)` row in `portal.db`, retiring the per-tenant file cache; lets the reanalyze latest-write carry a generation stamp in one transaction, closing the documented sub-ms race. Prerequisite for P5 (one DB file = complete tenant state).
 - **P5 - Backups + restore/DR**: scheduled SQLite online `.backup()` into `KALOS_BACKUP_DIR` + a documented restore runbook. Do P4 first so a snapshot captures all state.
 
@@ -378,8 +380,8 @@ These are judgement calls for the science owner; the code is unchanged.
 - Phase 1c transport/CORS: **done** on `feat/hardening-1c` - CORS allowlist via `KALOS_CORS_ORIGINS`, startup security-posture logging, TLS-via-proxy deployment note. Secrets-provider abstraction deferred.
 - P1 experiments store tenant-scope + auth-gate: **done** on `feat/hardening-experiments-tenancy` - closes the cross-tenant leak the review found; the tenancy guarantee now covers all three stores (campaign, latest, experiments).
 - P0 engine hardening: **done** on `security/p0-engine-hardening` - tenant-id validation + injective latest-cache names, required `tenant` keyword on the stores, `KALOS_ENV=production`, async `/healthz` and generic `/readyz` reason, body-size cap + bounded campaign bodies. Per-tenant concurrency is out of scope (design pending).
-- Background jobs (P3, `feat/background-jobs`, docs/JOBS.md): **in review** - a persistent `jobs` table (schema v3), a worker process per job, a runner that admits jobs through the shared per-tenant and global limiter, status/cancel routes, per-job timeouts, per-tenant queue depth and upload limits, restart recovery, and cross-tenant isolation tests. Per-tenant concurrency, which the P0 entry above left out of scope, is now bounded by `KALOS_JOB_PER_TENANT`.
-- Run record (provenance, `feat/run-record`): **in review** - every analysis carries a versioned `run` block (input hash, sheet, target, roles, seed, thread count, build sha, library versions, validation mode, shape). Anonymized runs keep no filename or sheet. docs/CAMPAIGNS_API.md, "Run record". Engine state-directory lock (`engine.lock`) in the same branch.
+- Background jobs (P3, `feat/background-jobs`, docs/JOBS.md): **merged** - a persistent `jobs` table (schema v3), a worker process per job, a runner that admits jobs through the shared per-tenant and global limiter, status/cancel routes, per-job timeouts, per-tenant queue depth and upload limits, restart recovery, and cross-tenant isolation tests. Per-tenant concurrency, which the P0 entry above left out of scope, is now bounded by `KALOS_JOB_PER_TENANT`.
+- Run record (provenance, `feat/run-record`): **merged** - every analysis carries a versioned `run` block (input hash, sheet, target, roles, seed, thread count, build sha, library versions, validation mode, shape). Anonymized runs keep no filename or sheet. docs/CAMPAIGNS_API.md, "Run record". Engine state-directory lock (`engine.lock`) in the same branch.
 - Background jobs review (PR #91), HIGH1: the runner registers a worker before its pid is written; a failed start or pid write kills the worker and fails the job (`worker_unavailable`), a failed claim leaves the job queued, and a slot is released only after the outcome is recorded (docs/JOBS.md, "Start failure").
 - Background jobs review (PR #91), MED5: every worker exit, including a worker that exits on its own, kills its process group (docs/JOBS.md, "Cancellation and timeouts").
 - Background jobs review (PR #91), MED4: each worker gets a wall-clock deadline (time limit + 60 s) and a watchdog ends it when the deadline passes or its engine is gone (docs/JOBS.md, "Worker lifetime").
@@ -412,4 +414,4 @@ These are judgement calls for the science owner; the code is unchanged.
 - Background jobs review (PR #91), sync slot leak: a dispatch cancelled before its worker thread starts released no analysis slot, so later requests got 503. Every dispatcher (`/api/run`, the campaign reanalyze, the scale readout, the demo routes) now releases the slot on cancellation at any point (`kalos/portal/busy.py`, `run_in_slot`).
 - P2 observability, P4 latest->SQLite, P5 backups: planned, not started (see "Next backbone" above). P4 is done by schema v2; see the entries above.
 - E2 engine-token verification: **merged** to `main` (#88): EdDSA JWTs minted by kalos-web, verified against a JWKS file by `kid` (docs/ENGINE_TOKEN.md); `Principal` gains `auth_method`/`session_id`/`token_id`; deny-list revocation; production restricts static tokens to service accounts.
-- Schema v2 (multi-campaign storage): **in review** on `feat/campaign-schema-v2` - `portal.db` gains `schema_migrations`, multi-campaign `campaigns` (`cmp_` ids, `UNIQUE(id, tenant)`), `analyses` (replacing `_LATEST` and `latest/*.json`), `tenant_defaults` (the legacy routes act on the tenant default) and `audit_log`; WAL, `foreign_keys`, `busy_timeout`; every store write is `BEGIN IMMEDIATE` + generation compare-and-swap; explicit, backed-up, reversible migration (`python -m kalos.portal.migrate up|down|status`). Runbook: docs/MIGRATIONS.md.
+- Schema v2 (multi-campaign storage): **merged** (`feat/campaign-schema-v2`) - `portal.db` gains `schema_migrations`, multi-campaign `campaigns` (`cmp_` ids, `UNIQUE(id, tenant)`), `analyses` (replacing `_LATEST` and `latest/*.json`), `tenant_defaults` (the legacy routes act on the tenant default) and `audit_log`; WAL, `foreign_keys`, `busy_timeout`; every store write is `BEGIN IMMEDIATE` + generation compare-and-swap; explicit, backed-up, reversible migration (`python -m kalos.portal.migrate up|down|status`). Runbook: docs/MIGRATIONS.md.

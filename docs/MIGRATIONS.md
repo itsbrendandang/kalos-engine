@@ -8,7 +8,8 @@ an audit log. Its schema is versioned in `schema_migrations`. The code is
 | Version | Shape | Code |
 | --- | --- | --- |
 | v1 | `campaigns(tenant PRIMARY KEY, state, updated_at)`, one campaign per tenant; analyses in memory plus `latest/*.json` | before `feat/campaign-schema-v2` |
-| v2 | `schema_migrations`, `campaigns`, `analyses`, `tenant_defaults`, `audit_log` (below) | `feat/campaign-schema-v2` and later |
+| v2 | `schema_migrations`, `campaigns`, `analyses`, `tenant_defaults`, `audit_log` (below) | `feat/campaign-schema-v2` |
+| v3 | adds the `jobs` table (background jobs, `docs/JOBS.md`) | current (`SCHEMA_VERSION = 3`) |
 
 A v1 database has no `schema_migrations` table.
 
@@ -143,7 +144,7 @@ explicitly with the engine stopped:
 
 ```sh
 python -m kalos.portal.migrate up
-python -m kalos.portal.migrate status    # expect: schema version: v2; journal_mode=wal
+python -m kalos.portal.migrate status    # expect: schema version: v3; journal_mode=wal
 ```
 
 Keep `portal.db.pre-v2-<ts>` until the release is accepted.

@@ -75,11 +75,11 @@ Latin hypercube sampling (LHS) spreads random points evenly across the design sp
 | Container deploy pack | IMPLEMENTED (limited verification, see runbook; no CI runs today, use `scripts/check.sh`) | `deploy/` |
 | Optimizer beats LHS/random on synthetic surfaces | IMPLEMENTED as a benchmark; not validation | `BENCHMARK.md`, `python -m kalos.bench` |
 | Head-to-head against random, LHS, Optuna TPE, Ax, and vanilla GP-EI on synthetic tasks | IMPLEMENTED as a benchmark; not validation | [Benchmark vs other optimizers](#benchmark-vs-other-optimizers), `docs/BENCHMARK.md`, `benchmarks/results/` |
-| Mechanistic (Monod) prior mean | EXPERIMENTAL, open PRs [#76](https://github.com/itsbrendandang/kalos-engine/pull/76), [#81](https://github.com/itsbrendandang/kalos-engine/pull/81) | not on `main` |
-| Pool-replay benchmark (the optimizer picks from a fixed pool of measured rows) on published media datasets | EXPERIMENTAL, open PR [#77](https://github.com/itsbrendandang/kalos-engine/pull/77) | not on `main` |
-| Hard linear constraints on proposals | EXPERIMENTAL, open PR [#78](https://github.com/itsbrendandang/kalos-engine/pull/78) | not on `main` |
-| `feature_ranges` in analysis output. GP-default guardrail | in progress, open PRs [#80](https://github.com/itsbrendandang/kalos-engine/pull/80), [#79](https://github.com/itsbrendandang/kalos-engine/pull/79) | not on `main` |
-| Repository hygiene (CODEOWNERS, SECURITY.md, PR template). Loopback-by-default compose bind | in progress, open PR [#83](https://github.com/itsbrendandang/kalos-engine/pull/83) (has merge conflicts with `main`) and draft PR [#84](https://github.com/itsbrendandang/kalos-engine/pull/84) | not on `main` |
+| Mechanistic (Monod) prior mean | EXPERIMENTAL, opt-in, simulation benchmark only | `kalos/core/mechanistic.py`, `examples/mechanistic_benchmark.py` |
+| Pool-replay benchmark (the optimizer picks from a fixed pool of measured rows) on published media datasets | EXPERIMENTAL; datasets are private and not in the repo | `kalos/bench/amii.py`, `examples/amii_benchmark.py` |
+| Hard linear constraints on proposals | IMPLEMENTED in the core API only (`propose_batch`); the HTTP API and portal do not expose them yet | `kalos/core/optimize.py`, `tests/test_linear_constraints.py` |
+| `feature_ranges` in analysis output. GP-default guardrail | IMPLEMENTED | `kalos/portal/analysis.py`, `tests/test_feature_ranges.py` |
+| Repository hygiene (CODEOWNERS, SECURITY.md, PR template). Loopback-by-default compose bind | IMPLEMENTED | `SECURITY.md`, `.github/CODEOWNERS`, `deploy/compose.yaml` |
 | Engine-side verification of short-lived internal JSON Web Tokens (JWTs) from the web app (EdDSA) | IMPLEMENTED (kalos-web does not issue them yet) | `kalos/portal/jwt_auth.py`, `docs/ENGINE_TOKEN.md`, `tests/test_jwt_auth.py`; PRs [#88](https://github.com/itsbrendandang/kalos-engine/pull/88), [#96](https://github.com/itsbrendandang/kalos-engine/pull/96) |
 | Organizations as tenants, with membership | PLANNED | the engine only reads a `tenant` string (from an operator-provisioned token or an engine JWT claim). No organization model or membership exists in the engine |
 | Multiple campaigns per tenant | IMPLEMENTED | `kalos/portal/campaigns_api.py`, `docs/CAMPAIGNS_API.md`, `tests/test_cross_tenant_isolation.py`; PRs [#89](https://github.com/itsbrendandang/kalos-engine/pull/89), [#90](https://github.com/itsbrendandang/kalos-engine/pull/90) |
@@ -204,7 +204,7 @@ These controls are missing or limited:
 - The deploy pack has been exercised once end to end. Its runbook still lists unverified items (backup drill).
 - No independent security review or penetration test has been done. No compliance claims are made. HARDENING.md puts 21 CFR Part 11, GAMP 5, SOC 2, and ISO 27001 out of scope for this repo.
 
-Report vulnerabilities privately. A `SECURITY.md` is proposed in open PR #83.
+Report vulnerabilities privately. See `SECURITY.md`.
 
 ## Scientific methodology and benchmark limitations
 
@@ -213,7 +213,7 @@ Report vulnerabilities privately. A `SECURITY.md` is proposed in open PR #83.
 - **Method.** GP surrogate model with an expected-improvement-family acquisition function (BoTorch). Expected improvement is one type of acquisition function. The method also uses grouped CV, split-conformal intervals, and fail-closed promotion gates.
 - **Synthetic benchmarks (on `main`).** The `BENCHMARK.md` result below uses synthetic surfaces with known optima. The optimizer is free to exploit them. A noise-free 2-D simulation does not validate anything about real processes.
 - **Hybrid dataset (not shipped).** A Kaggle "Fermentation optimization" dataset is used by `examples/real_data_validation.py` as a smoke test only. The dataset is `dataset_0.csv`: 696 of 715 rows flagged synthetic, 19 real, Real flag unverified. The data is kept private. It is not in this repository. Set `KALOS_DATASET_DIR` to a folder that contains it (see `examples/datasets/README.md`). Tests skip when it is absent. A pool-replay result on it was weak (Spearman rank correlation 0.048). So it is not evidence.
-- **Amii published-media benchmark (open PR [#77](https://github.com/itsbrendandang/kalos-engine/pull/77)).** This is pool replay on published media datasets. After review, the author retracted the earlier "2 faster / 2 slower" summary. A paired sign test with Holm correction (a method that adjusts for multiple tests) found no detectable difference from random. This was a smoke run with 8 seeds. The caveats are these:
+- **Amii published-media benchmark (PR [#77](https://github.com/itsbrendandang/kalos-engine/pull/77), merged; datasets are not in the repo).** This is pool replay on published media datasets. After review, the author retracted the earlier "2 faster / 2 slower" summary. A paired sign test with Holm correction (a method that adjusts for multiple tests) found no detectable difference from random. This was a smoke run with 8 seeds. The caveats are these:
   - The BO arm is pool EI (expected improvement), not qLogNEI.
   - The pools come from earlier optimization campaigns. Random is strong on them.
   - One dataset mixes information sources.
@@ -307,10 +307,10 @@ python -m kalos.bench --vs-baselines --quick   # smoke test, 2 seeds, writes not
 
 - **MVP (toward a public beta, not started unless noted):**
   - IMPLEMENTED: upload, analysis, campaign loop, scale readout, token auth, tenant-keyed store, multi-campaign API, background jobs, engine-side JWT verification.
-  - IN PROGRESS (open PRs): #76-#81, #83, #84.
+  - IN PROGRESS: none open.
   - PLANNED: web login (Better Auth), web-side JWT issuance, organizations as tenants, a rate limit.
 - **Later (PLANNED):** sparse or variational surrogate model, metrics and alerting, server-side PDF readouts (`TODOS.md`), independent validation on real data, an external security review.
-- **EXPERIMENTAL:** mechanistic priors, and alternative surrogate models. Alternatives must beat the GP on published datasets first (PR #79).
+- **EXPERIMENTAL:** mechanistic priors, and alternative surrogate models. Alternatives must beat the GP on published datasets first.
 
 ## Deploy and operate
 
@@ -321,7 +321,7 @@ The runbook says what is and is not verified. A first deployment on 2026-09-10 r
 TLS is out of scope. Put a reverse proxy in front. Full steps are in [`deploy/RUNBOOK.md`](deploy/RUNBOOK.md).
 
 **Warning:** the web UI has no login. Treat any deployment as private-network only.
-Draft PR #84 would make the web port loopback by default. The compose file on `main` still publishes it on all interfaces.
+The web port is published on loopback (`127.0.0.1`) by default in the compose file.
 
 ## Extending to other domains
 
@@ -339,7 +339,7 @@ The anonymizer (`anonymize=true` on upload) is opt-in.
 
 ## Stack and cost
 
-The whole stack is free and open source: Python, FastAPI, BoTorch/PyTorch, SQLite, Next.js, GitHub Actions. Local development needs no paid service. Optional external-provider slots (`/api/providers`) and the optional LLM header-normalization tier (`normalize` extra) use paid APIs only if you supply keys. Neither is required.
+The whole stack is free and open source: Python, FastAPI, BoTorch/PyTorch, SQLite, Next.js. Local development needs no paid service. Optional external-provider slots (`/api/providers`) and the optional LLM header-normalization tier (`normalize` extra) use paid APIs only if you supply keys. Neither is required.
 
 ## Repository layout
 
