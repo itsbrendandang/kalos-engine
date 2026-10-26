@@ -21,3 +21,10 @@ models/
 deploy/backups/
 # bundled-looking dataset copies: the owner has not cleared redistribution (see examples/datasets/README.md)
 examples/datasets/*.csv
+
+# benchmark outputs and copied private data folders
+amii_benchmark.json
+reports/
+examples/datasets/Data/
+examples/datasets/*.tsv
+examples/datasets/*.xlsx
