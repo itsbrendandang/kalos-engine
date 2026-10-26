@@ -48,7 +48,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 # install below.
 # TORCH_VERSION must equal the torch pin in uv.lock: constraints.txt excludes
 # torch on purpose (it comes from the CPU index), so this is the one place the
-# image's torch version is set. CI's `audit` job fails if the two disagree.
+# image's torch version is set. check it with `uv lock --check` and `scripts/check.sh` (there is no CI).
 ARG TORCH_VERSION=2.13.0
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir "torch==${TORCH_VERSION}" --index-url https://download.pytorch.org/whl/cpu

@@ -94,7 +94,15 @@ def main() -> None:
         print(f"kalos portal: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
 
-    uvicorn.run("kalos.portal.app:app", host=host, port=port, log_level="warning")
+    # uvicorn trusts X-Forwarded-For from loopback by default, which would make a
+    # same-host reverse proxy turn every remote caller into a "loopback" peer and defeat
+    # the open-mode remote guard. Ignore forwarded headers unless the operator names the
+    # trusted proxy addresses explicitly.
+    trusted = os.environ.get("KALOS_TRUSTED_PROXIES", "").strip()
+    uvicorn.run(
+        "kalos.portal.app:app", host=host, port=port, log_level="warning",
+        proxy_headers=bool(trusted), forwarded_allow_ips=trusted or None,
+    )
 
 
 if __name__ == "__main__":

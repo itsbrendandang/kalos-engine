@@ -158,8 +158,9 @@ def is_local_client(host: str | None) -> bool:
     remote caller. This is not a spoofing hole: `request.client.host` comes from
     the transport layer, not from a request header, so a remote TCP peer always
     presents a parseable address and cannot present `testclient`. (The one way to
-    influence it is running behind a proxy with forwarded-header parsing enabled,
-    which is an explicit deployment choice and is called out in docs/HARDENING.md.)
+    influence it is running behind a proxy with forwarded-header parsing enabled.
+    `python -m kalos.portal` turns that parsing OFF unless `KALOS_TRUSTED_PROXIES`
+    is set; see docs/HARDENING.md.)
     """
     if not host:
         # No peer information at all: an in-process or socket transport.
