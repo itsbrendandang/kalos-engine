@@ -449,7 +449,7 @@ def generate(
     )
 
 
-def _jsonable_state(state: dict[str, Any]) -> dict[str, Any]:
+def _jsonable_state(state: Any) -> dict[str, Any]:
     """`PCG64.state` as JSON (its 128-bit ints as decimal strings)."""
     inner = state.get("state", {})
     return {

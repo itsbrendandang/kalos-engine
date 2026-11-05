@@ -114,7 +114,8 @@ class OriginArray(np.ndarray):
             self.kalos_origin = getattr(obj, "kalos_origin", Origin.MEASURED)
 
     def __reduce__(self) -> Any:  # keep the origin through pickle / copy
-        ctor, args, state = super().__reduce__()  # type: ignore[misc]
+        reduced: Any = super().__reduce__()
+        ctor, args, state = reduced
         return ctor, args, (state, str(self.kalos_origin))
 
     def __setstate__(self, state: Any) -> None:
