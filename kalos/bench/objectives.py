@@ -198,3 +198,32 @@ def bioprocess_like() -> MixedObjective:
     return MixedObjective(
         "bioprocess_like_mixed", cont_bounds, (4, 3), optimum, amp, f
     )
+
+
+def cho_fed_batch() -> Objective:
+    """Mechanistic CHO fed-batch surface (`kalos.bench.cho_sim`): ODE kinetics,
+    interior optimum in feed / glucose / pH. Lazy import: the ODE module loads
+    only when this objective is built."""
+    from .cho_sim import cho_objective
+
+    return cho_objective()
+
+
+# The benchmark objective registry: name -> zero-argument factory. Bench
+# harnesses and CLIs look objectives up here instead of importing each builder.
+OBJECTIVES: dict[str, Callable[[], Objective | MixedObjective]] = {
+    "gaussian_bump_4d": lambda: gaussian_bump(4),
+    "ackley_4d": lambda: ackley(4),
+    "mixed_bump_2c3k": lambda: mixed_bump(2, 3),
+    "bioprocess_like_mixed": bioprocess_like,
+    "cho_fed_batch_4d": cho_fed_batch,
+}
+
+
+def get_objective(name: str) -> Objective | MixedObjective:
+    """Build a registered objective by name (`OBJECTIVES`)."""
+    try:
+        factory = OBJECTIVES[name]
+    except KeyError:
+        raise KeyError(f"unknown objective {name!r}; registered: {sorted(OBJECTIVES)}") from None
+    return factory()
