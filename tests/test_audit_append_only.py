@@ -139,7 +139,7 @@ def test_v3_copy_migrates_up_with_a_backup_and_keeps_every_audit_row(tmp_path):
     shutil.copy2(source, copy)
 
     plan = migrate.migrate_up(copy, dry_run=True).plan_text
-    assert "schema v3 -> v5" in plan and "triggers" in plan
+    assert "schema v3 -> v6" in plan and "triggers" in plan
     assert _triggers(copy) == set()  # a dry run changes nothing
 
     result = migrate.migrate_up(copy)
@@ -149,7 +149,7 @@ def test_v3_copy_migrates_up_with_a_backup_and_keeps_every_audit_row(tmp_path):
     assert result.backup_path.exists()
     assert _audit_rows(result.backup_path) == before_rows  # the pre-v4 backup is a real copy
 
-    assert _q(copy, "SELECT version FROM schema_migrations ORDER BY version") == [(2,), (3,), (4,), (5,)]
+    assert _q(copy, "SELECT version FROM schema_migrations ORDER BY version") == [(2,), (3,), (4,), (5,), (6,)]
     assert {"audit_log_no_update", "audit_log_no_delete"} <= _triggers(copy)
     assert _audit_rows(copy) == before_rows
     assert _q(copy, "SELECT id, tenant, name FROM campaigns ORDER BY id") == before_campaigns
@@ -234,7 +234,7 @@ def test_down_from_v4_with_a_newer_schema_is_refused(tmp_path):
     CampaignStore(tmp_path).close()
     db = tmp_path / "portal.db"
     conn = sqlite3.connect(str(db))
-    conn.execute("INSERT INTO schema_migrations VALUES (6, 'future', 0)")
+    conn.execute("INSERT INTO schema_migrations VALUES (?, 'future', 0)", (migrate.SCHEMA_VERSION + 1,))
     conn.commit()
     conn.close()
     with pytest.raises(migrate.SchemaError, match="newer"):
@@ -244,5 +244,5 @@ def test_down_from_v4_with_a_newer_schema_is_refused(tmp_path):
 def test_invalid_down_target_is_refused(tmp_path):
     CampaignStore(tmp_path).close()
     db = tmp_path / "portal.db"
-    with pytest.raises(migrate.MigrationError, match=r"valid targets are 1\.\.4"):
-        migrate.migrate_down(db, target=5)
+    with pytest.raises(migrate.MigrationError, match=r"valid targets are 1\.\.5"):
+        migrate.migrate_down(db, target=6)

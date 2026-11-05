@@ -40,6 +40,12 @@ the database level. No row changes when the triggers are created. `down` drops
 them (v4 -> v3); a v3 engine runs on the result. Its startup no longer deletes
 audit rows (see docs/HARDENING.md, "Audit retention").
 
+Schema v6 is additive: `virtual_runs`, the append-only store of simulated and
+synthetic rows (kalos/twin, docs/VIRTUAL_RUNS.md), with the same two-trigger
+guard as `audit_log` and `run_results`. It never holds measured data: a CHECK
+limits `origin` to 'simulated'/'synthetic'. `down` (v6 -> v5) drops its triggers
+and renames it to `virtual_runs_v6_rolledback`; nothing is dropped.
+
 This module is torch-free and FastAPI-free on purpose: the CLI must run on a
 box where the engine itself is stopped.
 """
@@ -63,15 +69,17 @@ from kalos.portal.tenancy import is_valid_tenant_id
 
 log = logging.getLogger("kalos.portal")
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 V2 = 2  # the multi-campaign schema; v1 <-> v2 code below is keyed on it
 V3 = 3  # the background-job queue
 V4 = 4  # the append-only audit log
 V5 = 5  # the append-only result history
+V6 = 6  # the append-only virtual (simulated/synthetic) runs
 V2_NAME = "multi-campaign storage"
 V3_NAME = "background jobs"
 V4_NAME = "append-only audit log"
 V5_NAME = "append-only result history"
+V6_NAME = "append-only virtual runs"
 BUSY_TIMEOUT_MS = 5000
 DB_FILENAME = "portal.db"
 
@@ -81,7 +89,9 @@ CAMPAIGN_ID_PATTERN = re.compile(r"cmp_[0-9a-f]{32}")
 
 # Tables that hold tenant data. Every statement the store issues against these
 # carries `tenant = ?` (tests/test_campaign_schema_v2.py enforces it).
-TENANT_TABLES = ("campaigns", "analyses", "tenant_defaults", "audit_log", "jobs", "run_results")
+TENANT_TABLES = (
+    "campaigns", "analyses", "tenant_defaults", "audit_log", "jobs", "run_results", "virtual_runs",
+)
 
 # A job id is `job_` + uuid4().hex (kalos/portal/jobs.py), validated the same way.
 JOB_ID_PATTERN = re.compile(r"job_[0-9a-f]{32}")
@@ -278,6 +288,63 @@ _V4_DDL: tuple[str, ...] = (
     CREATE TRIGGER audit_log_no_delete BEFORE DELETE ON audit_log
     BEGIN
         SELECT RAISE(ABORT, 'audit_log is append-only: DELETE is rejected');
+    END
+    """,
+)
+
+# Schema v6: simulated and synthetic rows (kalos/twin, docs/VIRTUAL_RUNS.md). One
+# row per generated run, never updated or deleted (the same two-trigger guard).
+# `origin` can never be 'measured' (CHECK), and a simulated row must name the
+# process model (twin) version that produced it while a synthetic row must not.
+# `batch_id` is the generation request ("job"); `seed_entropy` is the JSON list
+# `[tenant, campaign, twin_version, job]` the SeedSequence was built from, and
+# `k` is the row's index in the batch. Every JSON column is written by
+# `kalos.portal.virtual_runs` with sorted keys.
+VIRTUAL_ORIGINS_SQL = ("simulated", "synthetic")
+_V6_TRIGGERS = ("virtual_runs_no_update", "virtual_runs_no_delete")
+_V6_TABLES = ("virtual_runs",)
+_V6_INDEXES = ("virtual_runs_tenant_campaign_idx",)
+_V6_DDL: tuple[str, ...] = (
+    f"""
+    CREATE TABLE virtual_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant TEXT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        batch_id TEXT NOT NULL,
+        k INTEGER NOT NULL CHECK (k >= 0),
+        origin TEXT NOT NULL CHECK (origin IN ({", ".join(repr(o) for o in VIRTUAL_ORIGINS_SQL)})),
+        generator_id TEXT NOT NULL,
+        generator_version TEXT NOT NULL,
+        params_json TEXT NOT NULL,
+        params_sha256 TEXT NOT NULL CHECK (length(params_sha256) = 64),
+        seed_entropy TEXT NOT NULL,
+        pcg64_state TEXT NOT NULL,
+        solver_json TEXT NOT NULL,
+        library_versions TEXT NOT NULL,
+        twin_version_id TEXT,
+        design_json TEXT NOT NULL,
+        design_sha256 TEXT NOT NULL CHECK (length(design_sha256) = 64),
+        outcome_json TEXT NOT NULL,
+        requested_by TEXT NOT NULL CHECK (length(trim(requested_by)) > 0),
+        auth_method TEXT,
+        created_at REAL NOT NULL,
+        UNIQUE (tenant, campaign_id, batch_id, k),
+        CHECK ((origin = 'synthetic' AND twin_version_id IS NULL)
+               OR (origin = 'simulated' AND twin_version_id IS NOT NULL)),
+        FOREIGN KEY (campaign_id, tenant) REFERENCES campaigns (id, tenant)
+    )
+    """,
+    "CREATE INDEX virtual_runs_tenant_campaign_idx ON virtual_runs (tenant, campaign_id, id)",
+    """
+    CREATE TRIGGER virtual_runs_no_update BEFORE UPDATE ON virtual_runs
+    BEGIN
+        SELECT RAISE(ABORT, 'virtual_runs is append-only: UPDATE is rejected');
+    END
+    """,
+    """
+    CREATE TRIGGER virtual_runs_no_delete BEFORE DELETE ON virtual_runs
+    BEGIN
+        SELECT RAISE(ABORT, 'virtual_runs is append-only: DELETE is rejected');
     END
     """,
 )
@@ -486,6 +553,9 @@ def _assert_v2_shape(conn: sqlite3.Connection, version: int | None = None) -> No
     if v >= V5:
         missing += [t for t in _V5_TABLES if t not in tables]
         missing += [f"trigger {t}" for t in _V5_TRIGGERS if t not in triggers]
+    if v >= V6:
+        missing += [t for t in _V6_TABLES if t not in tables]
+        missing += [f"trigger {t}" for t in _V6_TRIGGERS if t not in triggers]
     cols = {str(r[1]) for r in _columns(conn, "campaigns")}
     missing_cols = sorted(_V2_CAMPAIGN_COLUMNS - cols)
     if missing or missing_cols:
@@ -618,6 +688,8 @@ class UpPlan:
                 lines.append("  triggers: audit_log rejects UPDATE and DELETE (append-only); no row changes")
             if self.from_version < V5:
                 lines.append("  create: run_results (append-only result history) with its UPDATE/DELETE triggers")
+            if self.from_version < V6:
+                lines.append("  create: virtual_runs (append-only simulated/synthetic runs) with its UPDATE/DELETE triggers")
             return "\n".join(lines)
         lines = [f"{self.db_path}: schema v{self.from_version} -> v{V2}"]
         if self.from_version > 0:
@@ -638,7 +710,7 @@ class UpPlan:
         for sk in self.latest_skipped:
             lines.append(f"  skip: latest/{sk.filename} ({sk.reason})")
         lines.append("  latest/ files are left in place")
-        lines.append(f"  then: schema v{V2} -> v{SCHEMA_VERSION} (create the jobs table; add the audit_log triggers; create run_results)")
+        lines.append(f"  then: schema v{V2} -> v{SCHEMA_VERSION} (create the jobs table; add the audit_log triggers; create run_results; create virtual_runs)")
         return "\n".join(lines)
 
 
@@ -840,6 +912,14 @@ def _apply_v5_in_txn(conn: sqlite3.Connection) -> None:
     _record_version(conn, V5, V5_NAME)
 
 
+def _apply_v6_in_txn(conn: sqlite3.Connection) -> None:
+    """v5 -> v6, inside the caller's BEGIN IMMEDIATE: create `virtual_runs` and its
+    triggers. Additive; no existing row is read or changed."""
+    for ddl in _V6_DDL:
+        conn.execute(ddl)
+    _record_version(conn, V6, V6_NAME)
+
+
 def _generation_of(state: str | None) -> str | None:
     parsed = _parse_state(state)
     gen = parsed.get("generation") if parsed else None
@@ -930,7 +1010,7 @@ def migrate_up(
     latest_dir: Path | str | None = None,
     dry_run: bool = False,
 ) -> MigrationResult:
-    """Bring `db_path` to the current schema (v5). Idempotent: a current database
+    """Bring `db_path` to the current schema (v6). Idempotent: a current database
     is a no-op. v0/v1 go through the v1 -> v2 migration and then v2 -> v3 -> v4 in
     the SAME transaction; a v2 or v3 database gets the remaining steps. The backup
     is labelled for the version it is taken FROM plus one (`pre-v2` from v1,
@@ -1000,6 +1080,8 @@ def migrate_up(
                 _apply_v4_in_txn(conn)
             if now_version < V5:
                 _apply_v5_in_txn(conn)
+            if now_version < V6:
+                _apply_v6_in_txn(conn)
             conn.execute("COMMIT")
         except BaseException:
             if conn.in_transaction:
@@ -1186,6 +1268,33 @@ def _render_down_v5(db_path: Path, conn: sqlite3.Connection) -> str:
     ])
 
 
+def _down_v6_in_txn(conn: sqlite3.Connection) -> None:
+    """v6 -> v5 inside the caller's transaction: drop the virtual_runs triggers and
+    index, rename the table aside (`virtual_runs_v6_rolledback`). Rows are kept."""
+    tables = _tables(conn)
+    for name in _V6_TRIGGERS:
+        conn.execute(f'DROP TRIGGER IF EXISTS "{name}"')
+    for idx in _V6_INDEXES:
+        conn.execute(f'DROP INDEX IF EXISTS "{idx}"')
+    for table in _V6_TABLES:
+        if table in tables:
+            new = _free_name(tables, f"{table}_v6_rolledback")
+            conn.execute(f'ALTER TABLE "{table}" RENAME TO "{new}"')
+            tables.add(new)
+    conn.execute("DELETE FROM schema_migrations WHERE version = ?", (V6,))
+
+
+def _render_down_v6(db_path: Path, conn: sqlite3.Connection) -> str:
+    n = 0
+    if "virtual_runs" in _tables(conn):
+        n = int(conn.execute("SELECT COUNT(*) FROM virtual_runs").fetchone()[0])
+    return "\n".join([
+        f"{db_path}: schema v{V6} -> v{V5}",
+        "  drop: virtual_runs UPDATE/DELETE triggers",
+        f"  rename: virtual_runs -> virtual_runs_v6_rolledback (kept, not dropped; {n} row(s))",
+    ])
+
+
 def _down_goal(version: int, target: int | None) -> int | None:
     """The version a rollback from `version` ends at, or None when there is
     nothing to roll back (a v0/v1 database). One step by default."""
@@ -1201,6 +1310,8 @@ def _down_goal(version: int, target: int | None) -> int | None:
 
 
 def _render_down_step(db_path: Path, conn: sqlite3.Connection, step_from: int) -> str:
+    if step_from == V6:
+        return _render_down_v6(db_path, conn)
     if step_from == V5:
         return _render_down_v5(db_path, conn)
     if step_from == V4:
@@ -1220,6 +1331,8 @@ def migrate_down(
     """Roll the database back, ONE version by default, or down to `target`
     (1 .. current - 1). Each step is listed in the plan:
 
+    v6 -> v5: drops the virtual_runs triggers and renames the table to
+    `virtual_runs_v6_rolledback` (kept).
     v5 -> v4: drops the run_results triggers and renames the table to
     `run_results_v5_rolledback` (kept). The campaign blobs keep current values.
     v4 -> v3: drops the two `audit_log` triggers. No row is touched.
@@ -1269,7 +1382,10 @@ def migrate_down(
         conn.execute("BEGIN IMMEDIATE")
         try:
             for step in range(version, goal, -1):
-                if step == V5:
+                if step == V6:
+                    parts.append(_render_down_v6(db, conn))
+                    _down_v6_in_txn(conn)
+                elif step == V5:
                     parts.append(_render_down_v5(db, conn))
                     _down_v5_in_txn(conn)
                 elif step == V4:
@@ -1410,7 +1526,7 @@ def _default_state_dir() -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m kalos.portal.migrate",
-        description="Inspect, apply or roll back the kalos portal.db schema migrations (v1 .. v5).",
+        description="Inspect, apply or roll back the kalos portal.db schema migrations (v1 .. v6).",
     )
     parser.add_argument("command", choices=["up", "down", "status"])
     parser.add_argument("--dry-run", action="store_true", help="print the plan; change nothing")
