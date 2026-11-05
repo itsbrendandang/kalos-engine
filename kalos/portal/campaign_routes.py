@@ -213,10 +213,13 @@ def log_campaign_result(
     `reason_required`). Append-only: each call adds a version (CampaignStore.set_result).
     An unmeasured or bad-value run must never silently become foldable into the base dataset."""
     try:
+        # audit=True: the campaign.result row (old value, new value, reason, actor)
+        # is written in the same transaction as the change.
         run = store.set_result(
             body.id, body.value, tenant=principal.tenant, reason=body.reason,
             actor=principal.subject,
             auth_method="anonymous" if principal.anonymous else "bearer",
+            audit=True,
         )
     except CampaignArchived as exc:
         audit(store, principal, "campaign.result", 409)
@@ -228,7 +231,6 @@ def log_campaign_result(
         log.warning("campaign result rejected: %s", exc)
         audit(store, principal, "campaign.result", 400)
         return JSONResponse({"error": str(exc), "code": "invalid_request"}, status_code=400)
-    audit(store, principal, "campaign.result", 200)
     return JSONResponse(run)
 
 

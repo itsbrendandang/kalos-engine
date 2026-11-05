@@ -782,6 +782,7 @@ class CampaignStore:
     def set_result(
         self, run_id: str, value: float, *, tenant: str, campaign_id: str | None = None,
         reason: str | None = None, actor: str | None = None, auth_method: str | None = None,
+        audit: bool = False,
     ) -> dict[str, Any]:
         """Record the measured outcome of a pending run. Raises `CampaignError`
         (never silently ignored) if `run_id` is unknown or `value` is not a
@@ -795,6 +796,12 @@ class CampaignStore:
         else `CampaignReasonRequired` and nothing is written. The run's current
         value in the campaign state is the latest. The history row and the state
         change commit in one transaction.
+
+        With `audit=True` the `campaign.result` audit row is inserted in the SAME
+        transaction, so a change that cannot be audited is not made. Its `detail` is
+        a JSON object with `run_id`, `version`, `old_value` (null for the first value),
+        `new_value`, `reason` (null if none) and `actor`. The route passes `audit=True`
+        on success.
 
         Returns the run with `result_version`, `previous_result`, `result_reason`,
         `result_actor` and `result_recorded_at` for THIS submission.
@@ -830,6 +837,17 @@ class CampaignStore:
                     run["result_version"] = version
                     state["updated_at"] = now
                     self._cas_write(conn, tenant, row, state, row.generation)
+                    if audit:
+                        detail = json.dumps({
+                            "run_id": run_id, "version": version, "old_value": prior,
+                            "new_value": value, "reason": reason_text or None,
+                            "actor": _clip(actor, 128),
+                        }, ensure_ascii=False, sort_keys=True)
+                        self._insert_audit(
+                            conn, tenant=tenant, action="campaign.result", outcome="ok",
+                            subject=actor, auth_method=auth_method, campaign_id=row.id,
+                            detail=detail, now=now,
+                        )
                     return {
                         **run,
                         "previous_result": prior,
@@ -1029,13 +1047,27 @@ class CampaignStore:
         never a token, a credential, or uploaded data. Every field is clipped."""
         validate_tenant_id(tenant)
         with self._txn(write=True) as conn:
-            conn.execute(
-                "INSERT INTO audit_log (ts, tenant, subject, auth_method, action, campaign_id, "
-                "job_id, outcome, request_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (time.time(), tenant, _clip(subject), _clip(auth_method), _clip(action, 64),
-                 _clip(campaign_id, 64), _clip(job_id, 64), _clip(outcome, 64),
-                 _clip(request_id, 128), _clip(detail)),
+            self._insert_audit(
+                conn, tenant=tenant, action=action, outcome=outcome, subject=subject,
+                auth_method=auth_method, campaign_id=campaign_id, job_id=job_id,
+                request_id=request_id, detail=detail, now=time.time(),
             )
+
+    @staticmethod
+    def _insert_audit(
+        conn: sqlite3.Connection, *, tenant: str, action: str, outcome: str,
+        subject: str | None = None, auth_method: str | None = None,
+        campaign_id: str | None = None, job_id: str | None = None,
+        request_id: str | None = None, detail: str | None = None, now: float,
+    ) -> None:
+        """One audit row, inside the caller's transaction."""
+        conn.execute(
+            "INSERT INTO audit_log (ts, tenant, subject, auth_method, action, campaign_id, "
+            "job_id, outcome, request_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (now, tenant, _clip(subject), _clip(auth_method), _clip(action, 64),
+             _clip(campaign_id, 64), _clip(job_id, 64), _clip(outcome, 64),
+             _clip(request_id, 128), _clip(detail)),
+        )
 
     def archive_audit_log(self, retention_days: int, *, now: float | None = None) -> int:
         """Copy audit rows older than `retention_days` into the archive, for every

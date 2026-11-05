@@ -393,12 +393,13 @@ def log_run_result(
         response = JSONResponse(_RUN_NOT_FOUND_BODY, status_code=404)
     else:
         try:
+            # audit=True: the campaign.result row is written in the change's transaction.
             run = store.set_result(
                 run_id, body.value, tenant=principal.tenant, campaign_id=campaign_id,
                 reason=body.reason, actor=principal.subject,
-                auth_method=_auth_method(principal),
+                auth_method=_auth_method(principal), audit=True,
             )
-            response = JSONResponse(run)
+            return JSONResponse(run)
         except CampaignError as exc:
             if type(exc) is CampaignError:
                 # Unknown run id / unseeded campaign. The store's message echoes
