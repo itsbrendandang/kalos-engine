@@ -13,9 +13,9 @@ import sqlite3
 import pandas as pd
 import pytest
 
+from kalos.portal import app as portal_module
 from kalos.portal import campaign as campaign_module
 from kalos.portal import migrate
-from kalos.portal import app as portal_module
 from kalos.portal.campaign import (
     CampaignReasonRequired,
     CampaignStore,
