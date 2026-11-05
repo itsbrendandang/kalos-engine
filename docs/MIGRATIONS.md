@@ -103,6 +103,30 @@ recovery. Nothing is repaired automatically. Recovery, with the engine stopped:
    directory) and import the campaign data. There is no import command yet: read
    the rows from the `campaigns_backup_N` table with `sqlite3` and re-enter them.
 
+## Schema v6: virtual runs
+
+Schema v6 adds one table, `virtual_runs`, for simulated and synthetic rows
+(docs/VIRTUAL_RUNS.md), with the same two-trigger guard as `audit_log`
+(`virtual_runs is append-only: UPDATE is rejected`, and DELETE).
+
+- One row per generated run: tenant, campaign, batch id, row index `k`, origin,
+  generator id and version, parameters and their SHA-256, seed entropy, PCG64
+  state, solver settings, library versions, twin version, design and its SHA-256,
+  outcome, `requested_by`, auth method, `created_at`.
+  `UNIQUE (tenant, campaign_id, batch_id, k)` and `FOREIGN KEY (campaign_id,
+  tenant)` to `campaigns`.
+- CHECKs: `origin IN ('simulated', 'synthetic')`; a simulated row has a twin
+  version and a synthetic row has none; `requested_by` is not blank.
+- No existing table or row changes. `up` from v5 takes a `pre-v6-<ts>` backup and
+  creates the table, its index and triggers in one transaction.
+- `down` (v6 -> v5) drops the triggers and index and renames the table to
+  `virtual_runs_v6_rolledback`. The rows are kept; the v5 engine does not read them.
+- The PostgreSQL backend (branch `postgres-backend`) keeps one DDL step per
+  version and refuses to start when the SQLite schema version has no PG step.
+  Whichever branch merges second adds the v6 PG step (identity id, `DOUBLE
+  PRECISION` for the times, the same CHECKs and FK, and UPDATE/DELETE/TRUNCATE
+  triggers).
+
 ## Schema v5: append-only result history
 
 Schema v5 adds one table, `run_results`, with the same two-trigger guard as

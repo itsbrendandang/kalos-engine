@@ -4,6 +4,14 @@ Newest first.
 
 ## Unreleased
 
+### Added - virtual runs (schema v6, `docs/VIRTUAL_RUNS.md`)
+
+- **Origin is a type**: `measured`, `simulated` or `synthetic` (`kalos/twin/origin.py`).
+- **Generator registry** (`kalos/twin/generators.py`): the bench surfaces, the fed-batch ODE and the synthetic scale-up generator, seeded from `[tenant, campaign, twin version, batch]`. A `kalos/bench` module can register itself with `@register_generator`.
+- **`virtual_runs` table** (schema v6): append-only, origin limited to simulated/synthetic, every row with generator version, parameter hash, seed, solver settings, library versions and who asked.
+- **The analysis and every model fit refuse simulated/synthetic rows** unless `allow_origins=` is passed (no HTTP route passes it). Uploads of such rows answer `400 virtual_data_refused`.
+- **Routes**: `POST/GET /api/campaigns/{id}/virtual-runs`, `GET /api/virtual-runs/generators`, and `GET /api/campaigns/{id}/virtual-runs/export` (one origin per file; mixed exports answer `409 mixed_export_refused`). Creating a batch writes its audit row in the same transaction.
+
 ### Changed - audit trail and recorded results (schema v5, `docs/MIGRATIONS.md`)
 
 - **Recorded results are append-only.** A re-submitted campaign result is a new `run_results` row (value, value replaced, reason, actor, server time). A correction needs a `reason` (`400 reason_required` without one). The run's current value is the latest. Response fields are added (`result_version`, `previous_result`, `result_reason`, `result_actor`, `result_recorded_at`); none is removed.
