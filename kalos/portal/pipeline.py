@@ -182,7 +182,9 @@ def compute_upload_analysis(
         sheet_hash=parsed.sheet_hash, torch_threads_actual=torch_threads_actual(),
         data_drops=run_record.drops_summary(result), header_row=result.get("header_row"),
     )
-    return parsed.df, {**result, **parsed.context(), "run": record.to_dict()}
+    run = record.to_dict()
+    return parsed.df, {**result, **parsed.context(), "run": run,
+                       "proposal_provenance": _provenance(run, result)}
 
 
 def attach_reanalyze_run(
@@ -202,7 +204,21 @@ def attach_reanalyze_run(
         torch_threads_actual=torch_threads_actual(),
         data_drops=run_record.drops_summary(result),
     )
-    return {**result, "run": record.to_dict()}
+    run = record.to_dict()
+    return {**result, "run": run, "proposal_provenance": _provenance(run, result)}
+
+
+def _provenance(run: dict, result: dict) -> dict:
+    """`proposal_provenance` (kalos/portal/run_record.py): engine and library
+    versions, seed, input hash, config hash and timestamp, stored with the
+    analysis and returned with it. No model artefact is stored."""
+    from kalos import __version__ as engine_version
+    from kalos.portal import run_record
+
+    return run_record.proposal_provenance(
+        run, engine_version=str(result.get("engine_version") or engine_version),
+        timestamp=result.get("timestamp"),
+    )
 
 
 _ANY = object()

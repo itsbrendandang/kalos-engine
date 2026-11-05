@@ -15,6 +15,9 @@ an identical block for the same bytes (both call the same function). Nothing in
 it is a timestamp or a process id; that is what makes "same bytes, same stack,
 same thread count -> same record" hold.
 
+The separate `proposal_provenance` block (`proposal_provenance` below) does
+carry a timestamp; its `provenance_sha256` excludes it.
+
 Stored inside the existing analyses JSON blob (no migration). Rows written
 before this block existed have no `run` key at all.
 
@@ -31,6 +34,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from importlib import metadata
 from typing import Any
 
@@ -229,3 +233,80 @@ def drops_summary(result: dict[str, Any]) -> dict[str, Any]:
         "cells_by_reason": dict(drops.get("cells_by_reason") or {}),
         "auto_categorical_count": len(result.get("auto_categorical") or []),
     }
+
+
+# --- proposal provenance (E5-lite) ---------------------------------------- #
+
+PROVENANCE_SCHEMA_VERSION = 1
+
+# The libraries named in the proposal provenance block. Versions only; nothing
+# is imported. No model artefact (weights, state_dict, pickle) is stored: every
+# analysis refits from the rows, so these fields plus the input bytes, the
+# config and the seed are what a refit needs.
+PROVENANCE_LIBRARIES: tuple[str, ...] = ("torch", "botorch", "gpytorch", "numpy", "pandas")
+
+# The run-record fields that configure the fit (not the data, not the stack).
+# `config_sha256` is the SHA-256 of these values as canonical JSON. The values
+# themselves are in the `run` block; only their names are repeated here.
+CONFIG_FIELDS: tuple[str, ...] = (
+    "kind", "target", "roles_declared", "profile", "anonymize", "seed",
+    "torch_threads", "max_fit_rows", "validation_mode", "sheet_index",
+    "header_row", "pending_runs",
+)
+
+
+def _canonical_sha256(value: Any) -> str:
+    blob = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def proposal_provenance(
+    run: dict[str, Any], *, engine_version: str, timestamp: int | float | None,
+) -> dict[str, Any]:
+    """The `proposal_provenance` block of an analysis result: what produced its
+    proposals. Built from the `run` block (`RunRecord.to_dict()`), so it repeats
+    the input hash and seed rather than recomputing them.
+
+    `provenance_sha256` hashes every field except `timestamp` and `created_at`:
+    the same input bytes, config, seed, engine and library versions give the
+    same value. It is a reproducibility key, not a signature.
+    """
+    libs: dict[str, str | None] = {}
+    for dist in PROVENANCE_LIBRARIES:
+        try:
+            libs[dist] = metadata.version(dist)
+        except metadata.PackageNotFoundError:
+            libs[dist] = None
+    config = {k: run.get(k) for k in CONFIG_FIELDS}
+    body: dict[str, Any] = {
+        "schema_version": PROVENANCE_SCHEMA_VERSION,
+        "engine_version": str(engine_version),
+        "build_sha": run.get("build_sha") or build_sha(),
+        "library_versions": libs,
+        "seed": run.get("seed"),
+        "input_sha256": run.get("input_sha256"),
+        "config_sha256": _canonical_sha256(config),
+        "config_fields": list(CONFIG_FIELDS),
+        "model_artifact_stored": False,
+    }
+    ts = int(timestamp) if timestamp is not None else None
+    return {
+        **body,
+        "provenance_sha256": _canonical_sha256(body),
+        "timestamp": ts,
+        "created_at": (
+            datetime.fromtimestamp(ts, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            if ts is not None else None
+        ),
+    }
+
+
+def provenance_ref(analysis: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The short reference a started run carries to the published analysis it was
+    started against: None when there is no analysis or it predates the block."""
+    block = (analysis or {}).get("proposal_provenance")
+    if not isinstance(block, dict):
+        return None
+    keys = ("provenance_sha256", "input_sha256", "config_sha256", "engine_version",
+            "seed", "timestamp")
+    return {k: block.get(k) for k in keys}

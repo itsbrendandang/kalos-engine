@@ -250,6 +250,37 @@ That is the only claim. A different torch or botorch version, or a different
 thread count, may legitimately change the numbers. Compare `run` before
 comparing proposals.
 
+### Proposal provenance
+
+Every analysis result also carries `proposal_provenance` (additive; built by
+`kalos.portal.run_record.proposal_provenance` on the upload, job and reanalyze
+paths). It is stored inside the analyses JSON blob with the result, and returned
+wherever the analysis is (`/api/run`, `/api/latest`, the campaign upload,
+reanalyze and job results). Analyses written before it existed have no such key.
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | `1`. |
+| `engine_version` | `kalos.__version__` (same as the top-level `engine_version`). |
+| `build_sha` | As `run.build_sha`. |
+| `library_versions` | `torch`, `botorch`, `gpytorch`, `numpy`, `pandas` (`null` if not installed). |
+| `seed` | The fit seed (as `run.seed`). |
+| `input_sha256` | As `run.input_sha256`. |
+| `config_sha256` | SHA-256 of the `run` fields named in `config_fields`, as canonical JSON (sorted keys, no spaces). |
+| `config_fields` | `kind`, `target`, `roles_declared`, `profile`, `anonymize`, `seed`, `torch_threads`, `max_fit_rows`, `validation_mode`, `sheet_index`, `header_row`, `pending_runs`. |
+| `model_artifact_stored` | Always `false`: no fitted model, weights or pickle is stored. A refit needs the input, the config, the seed and the same stack. |
+| `provenance_sha256` | SHA-256 over every field above (not `timestamp` / `created_at`). The same input, config, seed, engine and libraries give the same value. A reproducibility key, not a signature. |
+| `timestamp`, `created_at` | When the analysis ran: epoch seconds (the result's `timestamp`) and the same instant as UTC ISO 8601. |
+
+Each run added by `start` (`POST /api/campaign/start`, `POST
+/api/campaigns/{id}/runs`) carries `analysis_provenance`: `provenance_sha256`,
+`input_sha256`, `config_sha256`, `engine_version`, `seed` and `timestamp` of the
+campaign's published analysis at start time, or `null` when there is none (or it
+predates the block). The recipe is caller input: this records which analysis was
+published, not that the recipe came from it. It is stored in the campaign state
+and returned in the run, in `GET /api/campaign` and in `GET /api/campaigns/{id}`
+`pending`. Runs started earlier have no such key.
+
 ## Not in this slice
 
 - Background jobs for reanalyze (it still runs synchronously; upload has a job route).

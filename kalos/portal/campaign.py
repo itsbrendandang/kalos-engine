@@ -705,6 +705,24 @@ class CampaignStore:
             raise CampaignError(missing)
         return row, state
 
+    @staticmethod
+    def _published_provenance(
+        conn: sqlite3.Connection, tenant: str, campaign_id: str
+    ) -> dict[str, Any] | None:
+        from kalos.portal.run_record import provenance_ref
+
+        arow = conn.execute(
+            "SELECT state FROM analyses WHERE campaign_id = ? AND tenant = ?",
+            (campaign_id, tenant),
+        ).fetchone()
+        if arow is None:
+            return None
+        try:
+            data = json.loads(arow[0])
+        except ValueError:
+            return None
+        return provenance_ref(data if isinstance(data, dict) else None)
+
     def start(
         self, recipes: list[dict[str, Any]], *, tenant: str, campaign_id: str | None = None
     ) -> list[dict[str, Any]]:
@@ -741,6 +759,12 @@ class CampaignStore:
             if capacity:
                 raise CampaignError(capacity)
             kinds = column_kinds(state.get("base_rows") or [], allowed)
+            # E5-lite: each run records which published analysis it was started
+            # against (its proposal_provenance reference; None when the campaign
+            # has no analysis or one written before the block existed). The
+            # recipe itself is caller input; this says what was published, not
+            # that the recipe came from it.
+            analysis_ref = self._published_provenance(conn, tenant, row.id)
             for recipe in recipes:
                 # Validate the recipe mapping HERE, at the point of the bad
                 # input, so a malformed body 400s cleanly at /api/campaign/start
@@ -772,6 +796,7 @@ class CampaignStore:
                     "round": state["round"],
                     "created_at": now,
                     "measured_at": None,
+                    "analysis_provenance": dict(analysis_ref) if analysis_ref else None,
                 }
                 state["pending"].append(run)
                 appended.append(run)
