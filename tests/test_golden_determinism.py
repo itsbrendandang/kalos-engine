@@ -100,3 +100,23 @@ def test_a_fresh_process_gives_the_same_proposals():
     ).stdout
     line = next(ln for ln in out.splitlines() if ln.startswith("GOLDEN"))
     assert line[len("GOLDEN"):] == json.dumps(_fingerprint(here), sort_keys=True)
+
+
+def _bioprocess_80x6() -> tuple[bytes, str]:
+    cols = ["pH", "temperature_C", "glucose_gL", "glutamine_mM", "feed_rate_mLh", "DO_pct", "titer_g_L"]
+    return pd.read_csv(EXAMPLE).head(80)[cols].to_csv(index=False).encode(), "titer_g_L"
+
+
+@pytest.mark.xfail(strict=False, reason=(
+    "MEASURED NOT DETERMINISTIC (R2): 80 rows x 6 features of the committed synthetic "
+    "example, analysed 4 times in one process, gave 4 different proposal batches at "
+    "KALOS_TORCH_THREADS=4 and at 1, on a loaded machine; the same happens at 23d11df "
+    "(before the R2 surrogate changes). The posterior agrees to ~1e-16 between runs; "
+    "the acquisition optimum moves by whole units on differences that small. Cause "
+    "not isolated (in-process state that _seeded_analysis does not reset is the lead)."
+))
+def test_80x6_subset_is_identical_three_times_in_process():
+    raw, target = _bioprocess_80x6()
+    outs = [json.dumps(compute_upload_analysis(raw, target, False, "g.csv")[1]["proposals"],
+                       sort_keys=True) for _ in range(3)]
+    assert outs[0] == outs[1] == outs[2]
