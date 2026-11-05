@@ -145,6 +145,18 @@ curl http://127.0.0.1:8050/api/latest
 
 Both commands were run on a fresh install of this branch's code. `/healthz` returned ok. The upload returned a 10-feature analysis for 160 rows.
 State is written to `~/.kalos`. Set `KALOS_STATE_DIR` to change the location.
+
+Storage settings:
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `KALOS_STATE_DIR` | State directory: `portal.db` (SQLite), job inputs, audit archive, engine lock. Needed with PostgreSQL too. | `~/.kalos` |
+| `KALOS_DATABASE_URL` | Unset: SQLite in the state directory. `postgresql://...`: PostgreSQL, with `pip install 'kalos[postgres]'`. Anything else refuses to start. | unset (SQLite) |
+| `KALOS_DB_POOL_MIN` / `KALOS_DB_POOL_MAX` | PostgreSQL connection pool per process. | `1` / `10` |
+| `KALOS_DB_CONNECT_TIMEOUT` | PostgreSQL connect timeout, seconds. | `10` |
+
+See `docs/MIGRATIONS.md` ("PostgreSQL backend") for the schema, the grant model
+(the engine must not own the append-only tables) and backups.
 With no tokens configured, the API is open on loopback only. See Security model.
 
 Run these checks. They are the same as CI:

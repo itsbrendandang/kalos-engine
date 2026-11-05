@@ -91,6 +91,9 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 | `KALOS_JOB_GLOBAL_QUEUE_DEPTH` | Queued + running jobs all tenants may hold together; more answers 429. Must be >= 1. (docs/JOBS.md) | `64` |
 | `KALOS_JOB_MAX_UPLOAD_BYTES` | Largest upload a job accepts, per tenant. Must be <= the engine's upload cap. | the upload cap |
 | `KALOS_BUILD_SHA` | Commit the engine was built from, recorded as `run.build_sha` on every analysis. CI passes `github.sha` at image build (`deploy/engine/Containerfile`). | `unknown` |
+| `KALOS_DATABASE_URL` | Storage backend. Unset or empty: SQLite at `<KALOS_STATE_DIR>/portal.db`. A `postgresql://` URL: PostgreSQL (needs `kalos[postgres]`). Anything else refuses to start. Printed only with the password masked. See docs/MIGRATIONS.md, "PostgreSQL backend". | unset (SQLite) |
+| `KALOS_DB_POOL_MIN` / `KALOS_DB_POOL_MAX` | PostgreSQL only: connection pool size per engine process (and per job worker). MAX must be >= 1 and >= MIN. | `1` / `10` |
+| `KALOS_DB_CONNECT_TIMEOUT` | PostgreSQL only: seconds to wait for a connection, >= 1. | `10` |
 | `KALOS_JOB_TIMEOUT_S` | Wall-clock limit for one job; past it the worker is killed and the job is `timed_out`. Must be >= 1. | `1800` |
 
 **Fail-closed settings.** Every enum-valued or bounded `KALOS_*` setting refuses an unknown value instead of defaulting (`kalos/envconfig.py`, one shared helper). `python -m kalos.portal` runs `check_env_settings()` before it binds a socket: a bad value prints one line naming the variable to stderr and exits 2. Unset and empty always mean the default.
@@ -136,6 +139,7 @@ Every mutating request writes one `audit_log` row (tenant, subject, auth method,
 - **Nothing is deleted, with or without the setting.** The engine used to delete rows older than 365 days. It no longer does.
 - **The archive is opt-in.** `KALOS_AUDIT_RETENTION_DAYS` unset (the default) keeps every row and copies nothing. Set to N days, the portal copies rows older than N days into one append-only JSON-lines file per tenant under `<KALOS_STATE_DIR>/audit-archive/` (`t-<hex of the tenant id>.jsonl`, directory 0700, files 0600). It runs at startup and once a day, copies each row at most once, and logs the count. The copied rows stay in `portal.db`, so the archive is an export, not a space saving. A failed run is logged and does not stop the portal. An invalid value refuses to start (`python -m kalos.portal` exits 2).
 - **Limits.** The engine has no hash chain or signature on audit rows. The triggers stop UPDATE and DELETE through SQL; a person with write access to the database file can still replace it. Only the trigger-level guarantee is stated here.
+- **On PostgreSQL** (`KALOS_DATABASE_URL`), the same triggers exist, plus one that rejects TRUNCATE (the engine sees `psycopg.IntegrityError`). A table owner or superuser can disable triggers, so the engine must connect as a non-owner role with SELECT/INSERT only on `audit_log` and `run_results` (`deploy/postgres/grants.sql`). `migrate status` warns when it does not. A database superuser can still change rows. See docs/MIGRATIONS.md, "PostgreSQL grant model".
 
 ### Production mode (`KALOS_ENV=production`)
 
@@ -238,7 +242,15 @@ Limits, stated plainly:
   hosts is not protected by flock; do not share one.
 - Job worker processes do not take the lock (they are children of the engine).
 
-Implementation: `kalos/portal/engine_lock.py`.
+On PostgreSQL (`KALOS_DATABASE_URL`) the database can be reached from more than
+one host, so `python -m kalos.portal` also takes a session-level advisory lock on
+the database. A second engine on the same database (and schema search path)
+exits with status 2 even from another host or state directory. Two engines
+would each recover the other's running jobs at startup. The server drops the
+lock when the engine's connection closes.
+
+Implementation: `kalos/portal/engine_lock.py`, `kalos/portal/storage.py`
+(`acquire_pg_engine_lock`).
 
 ### What `anonymize=true` covers, and what it does not
 
