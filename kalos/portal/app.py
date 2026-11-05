@@ -1006,6 +1006,16 @@ async def _unhandled_error(request: Request, exc: Exception) -> JSONResponse:
 # above.
 app.include_router(_scale_router)
 
+# --- Skills: /api/skills* (read-only; docs/SKILLS.md). Mounted only when the
+# `skills` extra (pydantic + pyyaml) is installed, and served only when
+# KALOS_SKILLS=1 (otherwise every route answers 404, as if absent).
+try:
+    from kalos.skills.routes import router as _skills_router
+except ImportError:  # the `skills` extra is not installed
+    pass
+else:
+    app.include_router(_skills_router)
+
 __all__ = [
     "MAX_COLUMNS",
     "MAX_CSV_ROWS",
