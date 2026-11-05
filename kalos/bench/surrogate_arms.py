@@ -43,7 +43,7 @@ import argparse
 import importlib.util
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 from scipy.stats import norm, spearmanr
@@ -414,7 +414,7 @@ def run_synthetic(
 
 def run_amii(
     *, arms: Sequence[str] = DEFAULT_ARMS, seeds: Iterable[int] = range(5), data_dir=None, **kw
-) -> dict[str, dict]:
+) -> dict[str, Any]:
     """The six AMII datasets (the guardrail's actual evidence). Returns
     {"_skipped": reason} when KALOS_AMII_DATA is not set / the CSVs are absent."""
     from kalos.bench.amii import REGISTRY, amii_data_dir, load_amii_pool

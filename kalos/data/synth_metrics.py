@@ -45,7 +45,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -320,14 +320,17 @@ def column_ks(
     r, s = _align(real, schema), _align(synthetic, schema)
     out: dict[str, dict] = {}
     for c in schema.numeric:
-        a, b = r[c].dropna().to_numpy(), s[c].dropna().to_numpy()
+        a, b = r[c].dropna().to_numpy(float), s[c].dropna().to_numpy(float)
         if len(a) == 0 or len(b) == 0:
             out[c] = {"statistic": None, "pvalue": None}
             continue
         # Exact p-values for small samples, asymptotic beyond; the statistic
         # itself does not depend on the method.
-        method = "exact" if max(len(a), len(b)) <= 200 else "asymp"
-        res = stats.ks_2samp(a, b, method=method)
+        res = (
+            stats.ks_2samp(a, b, method="exact")
+            if max(len(a), len(b)) <= 200
+            else stats.ks_2samp(a, b, method="asymp")
+        )
         out[c] = {"statistic": _f(res.statistic), "pvalue": _f(res.pvalue)}
     return out
 
@@ -374,7 +377,8 @@ def correlation_difference(
         return out
     r, _ = _complete(_align(real, schema)[cols])
     s, _ = _complete(_align(synthetic, schema)[cols])
-    for m in ("pearson", "spearman"):
+    methods: tuple[Literal["pearson"], Literal["spearman"]] = ("pearson", "spearman")
+    for m in methods:
         with np.errstate(invalid="ignore", divide="ignore"):
             cr = np.nan_to_num(r.corr(method=m).to_numpy(float))
             cs = np.nan_to_num(s.corr(method=m).to_numpy(float))
