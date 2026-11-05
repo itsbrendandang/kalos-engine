@@ -33,20 +33,25 @@ Importing `kalos.skills` does not load torch. Torch loads only when a tool that 
 
 ## The skill folder
 
-A skill is a folder. The folder name is the skill's slug.
+A skill is a folder. The folder name is the skill's slug. `SKILL.md` is the only required file.
 
 ```
 kalos/skills/builtin/<slug>/
   SKILL.md            required: YAML frontmatter + markdown body
+  DATA_SOURCES.md     optional: rendered from the frontmatter, never edited by hand
   references/*.md     optional: longer detail, read on demand
+  examples/*          optional: synthetic examples only
 ```
 
 Rules for the folder:
 
+- Nothing else at the top level.
 - Text files only (`.md`, `.txt`, `.json`, `.yaml`, `.yml`, `.csv`). Scripts are not allowed.
+- No tests, fixtures, expected answers, golden files, lockfiles, dependency pins, or runner copies. Tests and evidence live in `tests/`, outside the package.
 - No symlinks.
 - Each file is at most 256 KB.
 - The `SKILL.md` body is at most 300 lines.
+- Skills ship no lockfiles. They run in the engine's single `uv.lock`.
 
 ### Identity
 
@@ -73,15 +78,17 @@ kalos skills hash kalos/skills/builtin/driver-ranking
 | `starting_prompt` | an example request |
 | `inputs[]` | `{name, type, required, description, label?}` |
 | `parameters[]` | `{name, type, default, allowed, effect}`; `effect` is required |
-| `outputs[]` | `{name, type, description, label}`; `label` is required |
+| `outputs[]` | `{name, kind, label, min_bytes, description}`; `kind` is `json`, `csv`, `table`, `image`, or `file` |
 | `tools[]` | names from the tool table (see below) |
+| `entrypoint` | locked skills: the one public engine callable that does the main work |
+| `requires_extras` | optional-dependency groups of `pyproject.toml` the tools need |
 | `implementation` | `{status: implemented / partial / needs-new-code, engine: [{symbol, ref}], gaps: [...]}` |
 | `scope` | `read` or `write` |
 | `side_effects` | `none`, `writes-campaign`, or `external`; anything other than `none` needs `scope: write` |
 | `refuses_when[]` | required for locked skills |
-| `verification` | `{deterministic: [...], receipt, review}` |
+| `verification` | `{deterministic: [...], receipt, review}`; locked skills set `receipt: true` |
 | `author`, `owner`, `visibility` | owner `system`, `tenant:<id>`, or `user:<id>` |
-| `licence` | `{spdx, data_sources, third_party_code}` |
+| `licence` | `{spdx, data_sources: [...], third_party_code}` |
 | `source`, `status`, `created`, `updated` | status `active`, `beta`, `planned`, or `deprecated` |
 
 The schema rejects unknown fields. It also checks these rules:
@@ -89,10 +96,44 @@ The schema rejects unknown fields. It also checks these rules:
 - An enum parameter lists `allowed` values, and its default is one of them.
 - A default matches the parameter type.
 - `implemented` needs at least one engine reference. `partial` and `needs-new-code` need at least one gap.
-- `status: planned` is used if and only if `implementation.status` is `needs-new-code`. A planned skill has no tools.
+- `status: planned` is used if and only if `implementation.status` is `needs-new-code`. A planned skill has no tools and no entrypoint.
+- Output names are unique, and every output has a kind, a label, and `min_bytes`.
 - A skill in the `simulation` category can only return `simulated` or `synthetic` outputs.
 - `owner` and `visibility` agree.
 - `updated` is not before `created`.
+
+### Two kinds
+
+There are two kinds of skill. There are no other package generations.
+
+| Kind | Must have | Must not have |
+|---|---|---|
+| `guided` | instructions | an entrypoint; tools that write or have side effects |
+| `locked` | an entrypoint, typed outputs, `refuses_when`, `receipt: true` | (none) |
+
+A locked skill that is not `planned` must have an entrypoint. A locked skill with no entrypoint can only be `planned`.
+
+### Entrypoint
+
+The entrypoint is `pkg.module:function`, `pkg.module:Class`, or `pkg.module:Class.method`. It must be public (no leading underscore), and so must the method. It must be the engine symbol of one of the skill's own tools. The checker finds it with `ast`, without importing it.
+
+Example: `identifier-anonymisation` uses `kalos.data.anonymizer:Anonymizer.anonymize_meta`.
+
+### Data sources
+
+Each software, dataset, API, or reference a skill depends on is one row in `licence.data_sources`:
+
+`name`, `kind` (`software`, `dataset`, `api`, `reference`), `version`, `uri`, `licence`, `commercial_status`, `bundled`, `verified_by` (a path or URL), `checked_on` (a date).
+
+`commercial_status` is `allowed`, `allowed-with-attribution`, `needs-agreement`, `blocked`, or `unknown`. Only the first two count as allowed. `unknown` never counts as allowed.
+
+The frontmatter is the source of truth. `kalos skills data-sources DIR/slug` renders `DATA_SOURCES.md`. If that file is present, it must match the rendered text byte for byte. No Kalos skill has data sources today.
+
+### Extras
+
+A skill that needs optional packages lists the extras in `requires_extras` (for example `[ml]` for tools that fit a GP, `[portal]` for tools that read uploads or campaigns). The checker fails if an extra is not defined in `pyproject.toml`, or if a tool needs an extra that the skill does not list.
+
+Per-skill environments (their own lockfile or image) are not used in v1. They are reserved for heavy, conflicting stacks, would be opt-in, and would run across a subprocess or job boundary.
 
 ### Body
 
@@ -137,7 +178,7 @@ Each tool has:
 - a pydantic model for its arguments;
 - a pydantic model for its result;
 - the label of its result;
-- scope, side effects, whether it needs torch, and a timeout.
+- scope, side effects, whether it needs torch, whether it is long-running, a timeout (default 1800 s), and the extras it needs.
 
 List the tools:
 
@@ -145,23 +186,66 @@ List the tools:
 kalos skills tools
 ```
 
-Inputs are given inline (`rows`, one dict per run) or as a `campaign_id` of the caller's tenant. For a campaign, the tool reads the base rows plus every measured result. Runs that are still waiting for a result are not included.
+Inputs are given inline (`rows`, one dict per run; or a file as `csv_text` or `content_base64`) or as a `campaign_id` of the caller's tenant. For a campaign, the tool reads the base rows plus every measured result. Runs that are still waiting for a result are not included.
 
-### How a tool call runs
+### Seeds
 
-`kalos.skills.tools.invoke(skill, tool, args, ctx)` is the only way to run a tool.
+A tool with a random step takes a `seed`. The skill must then declare an int `seed` parameter with the same default. The seed goes to every random step and into the receipt. Same arguments, seed, engine build, and skill content hash give the same output hashes. `tests/test_skills_runner.py` runs each locked skill with tools twice and compares the output hashes.
+
+## The runner
+
+`kalos/skills/runner.py` is the only runner. Skills never carry a copy of it.
+
+`invoke(skill, tool, args, ctx)` runs one tool:
 
 1. Kalos checks that the skill lists the tool and that the skill is not `planned`.
 2. Kalos checks that the caller has the skill's scope and the tool's scope.
-3. Kalos checks the arguments against the argument model. Bad arguments stop here.
-4. Kalos runs the engine function with a timeout.
-5. Kalos checks the result against the result model.
-6. Kalos checks that the result label is one of the skill's output labels.
-7. Kalos writes a receipt.
+3. Kalos checks the arguments against the argument model. Bad arguments stop here. No run directory is made.
+4. Kalos makes a fresh run directory and writes a `running` receipt.
+5. Kalos runs the engine function with the tool's timeout.
+6. Kalos checks the result against the result model, and the result label against the skill's outputs.
+7. Kalos writes the artifacts in the run directory and checks each against its `min_bytes`.
+8. The receipt moves to `analysis_complete`, then to `terminal` with result `pass`.
 
-A refusal is a normal result. For example: too few rows, a campaign of another tenant, or blocking findings in strict mode. Kalos returns `outcome: refused` with the reason and writes a receipt. Do not retry a refusal with the same input.
+### Status
 
-Caution: the timeout stops waiting for the result. It does not stop the engine thread. Long model fits will move to the job runner when a run route exists.
+`invoke` returns a small JSON status:
+
+```json
+{"status": "completed | blocked | refused | error",
+ "summary": "...",
+ "artifacts": [{"name", "path", "sha256", "bytes", "label"}],
+ "blockers": [{"code", "message", "rows"}],
+ "error": {"error_code", "exception_type", "message", "receipt_id"},
+ "receipt_id": "skr_..."}
+```
+
+Data never travels inline. Each result goes to a JSON file. Row tables (for example the anonymised table and the normalised table) go to CSV files. Read them from the run directory.
+
+| Status | Meaning |
+|---|---|
+| `completed` | the result passed every check |
+| `blocked` | the data cannot support a result: too few rows, a blocking finding in strict mode, a failed model fit |
+| `refused` | the request is not allowed or not well-formed for this tool: unknown campaign, a campaign of another tenant, bad column names, a policy |
+| `error` | a runtime fault |
+
+Blocked and refused runs are results, not exceptions. They are receipted and never retried automatically. Never get a run to pass by weakening a check, by changing to a weaker split, or by dropping blank or censored values.
+
+An error has an `error_code` (`timeout`, `input_unreadable`, `invalid_result`, `output_too_small`, `label_mismatch`, `path_escape`, `internal`), the exception type, a fixed message, and the receipt id. Kalos never stores the engine's exception text, because it can quote cell values.
+
+### Run directories
+
+Each run writes to a fresh directory: `$KALOS_STATE_DIR/skill_runs/<tenant>/<receipt_id>/`. It holds `receipt.json` and the artifacts. Kalos resolves every output path and refuses a path that leaves the directory. Inputs are hashed, never copied into the run directory.
+
+### Timeouts
+
+Caution: v1 runs each tool on a worker thread in the engine process. A Python thread cannot be stopped.
+
+- When the timeout ends, the receipt becomes `terminal`/`fail` with `error_code: timeout`.
+- Kalos stops waiting and discards any late result. It never writes a late result to the receipt or the run directory.
+- The computation can keep using CPU until it ends.
+
+Tools marked `long_running` fit a GP: `engine.surrogate_fit`, `engine.propose_batch`, `engine.grouped_cv_report`, `engine.gp_shape_report`, `engine.scale_build_readout`. Gap: these should run through the engine's killable job-worker subprocess (`kalos/portal/job_runner.py`, `python -m kalos.portal.job_worker`) when a run route exists. v1 starts no child processes. A future subprocess runner must pass a minimal, explicit environment.
 
 ### Labels
 
@@ -178,23 +262,41 @@ A `predicted`, `simulated`, or `synthetic` result can never be written as measur
 
 ## Receipts
 
-Every tool call that passes argument checks writes one receipt. This includes refusals and errors.
+Each receipt (`kalos-skill-receipt/1`) moves forward only:
+
+```
+running -> analysis_complete -> terminal (pass | fail)
+running -> terminal (fail)
+```
+
+A presentation or report step (`finalize`) can only start from `analysis_complete`. Call `invoke(..., hold=True)` to stop there. A terminal receipt is never written again.
 
 A receipt holds:
 
-- skill slug, version, and content hash;
+- id, skill slug, version, and content hash;
 - tool name and engine symbol;
-- SHA-256 of the checked arguments;
-- SHA-256 of the input table, in the same CSV form that run records use;
-- the seed, when the tool takes one;
-- the engine build (`KALOS_BUILD_SHA`);
-- each output's name, label, and SHA-256;
-- the refusal code and reason, if any;
-- tenant, subject, campaign, and start and finish times.
+- the checked arguments as canonical JSON, and their SHA-256;
+- the SHA-256 of each input (tables in the same CSV form that run records use; files as bytes);
+- the seed;
+- the engine build (`KALOS_BUILD_SHA`) and library versions;
+- state, result, status, and summary;
+- each output's name, path, SHA-256, size, and label;
+- the blockers or the error;
+- tenant, subject, campaign, and timestamps.
 
-A receipt never holds input data or output values. It holds only their hashes. For an engine error it stores the exception type, not the message.
+A receipt never holds input data or output values. It holds only their hashes.
 
-Receipts are stored as `$KALOS_STATE_DIR/skill_receipts/<tenant>/<receipt_id>.json`. Kalos writes each file once and never changes it.
+### Verify a run
+
+`verify_receipt(run_dir, skill)` passes only if:
+
+1. the receipt is `terminal` with result `pass`;
+2. the skill's content hash today equals the one the run used;
+3. every output file is present, inside the run directory, and has the recorded SHA-256 and size.
+
+```bash
+kalos skills verify-receipt $KALOS_STATE_DIR/skill_runs/<tenant>/<receipt_id>
+```
 
 ## HTTP routes
 
@@ -223,6 +325,8 @@ kalos skills list     [DIR] [--category C] [--json]
 kalos skills search   "query" [DIR] [--all] [--limit N]
 kalos skills hash     DIR/slug
 kalos skills tools    [--json]
+kalos skills data-sources DIR/slug
+kalos skills verify-receipt RUN_DIR [--skills-dir DIR] [--json]
 ```
 
 `python -m kalos.skills` is the same. `DIR` defaults to the Kalos skill set.
@@ -232,8 +336,9 @@ kalos skills tools    [--json]
 1. the schema, the folder rules, and the body sections;
 2. duplicate slugs;
 3. each engine reference, at the exact line;
-4. each tool name, and that the tool's label is one of the skill's output labels;
-5. with `--foreign-corpus`, that no run of 10 words is shared with the given texts.
+4. each tool name, the tool's label and output mapping, the entrypoint, the extras, and the seed parameter;
+5. that `DATA_SOURCES.md`, if present, matches the frontmatter;
+6. with `--foreign-corpus`, that no run of 10 words is shared with the given texts.
 
 ## Add or change a Kalos skill
 
@@ -242,6 +347,22 @@ kalos skills tools    [--json]
 3. Add 2 positive queries and 1 nearby negative query to `tests/test_skills_routing.py`.
 4. Add tests for the items in `verification.deterministic`. Keep test data in `tests/`, not in the skill folder.
 5. Run `kalos skills validate` and `pytest tests/test_skills_*.py`.
+
+## Not done yet (phase 2)
+
+These are planned and are not in v1:
+
+- an eval manifest per skill, outside the skill folder (`tests/skills/<slug>/eval.yaml`, schema `kalos-skill-eval/1`);
+- `claims[]` in the frontmatter, each with engine references and test references;
+- the maturity ladder (`draft`, `structurally_checked`, `evidence_checked`);
+- the check that a locked skill has an eval manifest before it is `active`;
+- the required test classes for each locked skill: one rejection test per `refuses_when` item, exact boundary tests, end-to-end on synthetic data with artifact reload, determinism, held-out label perturbation for modelling skills, and empty and minimal input;
+- preflight per locked skill (`ready`, `missing_dependencies`, `unsafe_environment`);
+- the held-out label-perturbation test against the engine's grouped cross-validation.
+
+Also later: freezing skills to lock files, pipelines of skills, per-tenant enable and disable, and running long tools on the job worker.
+
+Splitting rule for modelling skills: all splits come from `kalos/core/splits.py`. Modelling code takes indices and never builds its own splits. Group leakage raises. Distance-to-data uses training rows only.
 
 ## What a skill does not mean
 
