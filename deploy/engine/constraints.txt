@@ -1,7 +1,9 @@
 # Generated from uv.lock by the command below - do not edit by hand.
 # torch is excluded: deploy/engine/Containerfile installs the CPU wheel first.
+# The postgres extra is included so a KALOS_EXTRAS=ml,portal,postgres build is pinned too;
+# a constraint adds no requirement, so the default ml,portal image installs the same set as before.
 # Regenerate after any uv.lock change; compare with a fresh `uv export` to check it is not stale (there is no CI).
-#   uv export --frozen --extra ml --extra portal --no-emit-project --no-hashes | grep -v '^ *#' | grep -vi '^torch=='
+#   uv export --frozen --extra ml --extra portal --extra postgres --no-emit-project --no-hashes | grep -v '^ *#' | grep -vi '^torch=='
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.14.2
@@ -51,6 +53,9 @@ nvidia-nvtx==13.0.85 ; (platform_machine == 'aarch64' and sys_platform == 'linux
 openpyxl==3.1.5
 opentelemetry-api==1.45.1
 pandas==3.0.3
+psycopg==3.3.8
+psycopg-binary==3.3.8 ; implementation_name != 'pypy'
+psycopg-pool==3.3.3
 pycparser==3.11 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
 pydantic==2.13.4
 pydantic-core==2.46.4

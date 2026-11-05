@@ -40,6 +40,10 @@ the database level. No row changes when the triggers are created. `down` drops
 them (v4 -> v3); a v3 engine runs on the result. Its startup no longer deletes
 audit rows (see docs/HARDENING.md, "Audit retention").
 
+PostgreSQL (`KALOS_DATABASE_URL=postgresql://...`) has its own DDL for the
+same versions in `kalos.portal.migrate_pg`; the CLI below dispatches to it.
+Everything else in this module is the SQLite path.
+
 This module is torch-free and FastAPI-free on purpose: the CLI must run on a
 box where the engine itself is stopped.
 """
@@ -1413,20 +1417,35 @@ def _default_state_dir() -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m kalos.portal.migrate",
-        description="Inspect, apply or roll back the kalos portal.db schema migrations (v1 .. v5).",
+        description="Inspect, apply or roll back the kalos portal schema migrations (v1 .. v5). "
+        "With KALOS_DATABASE_URL set to a postgresql:// URL (and no --db), acts on "
+        "that PostgreSQL database instead of portal.db.",
     )
     parser.add_argument("command", choices=["up", "down", "status"])
     parser.add_argument("--dry-run", action="store_true", help="print the plan; change nothing")
     parser.add_argument("--state-dir", type=Path, default=None,
                         help="state directory (default: $KALOS_STATE_DIR or ~/.kalos)")
-    parser.add_argument("--db", type=Path, default=None, help="database path (default: <state-dir>/portal.db)")
+    parser.add_argument("--db", type=Path, default=None,
+                        help="SQLite database path (default: <state-dir>/portal.db); forces SQLite")
     parser.add_argument("--latest-dir", type=Path, default=None,
                         help="legacy analysis cache directory (default: <db dir>/latest)")
     parser.add_argument("--to", type=int, default=None, dest="target",
                         help="`down` only: the schema version to roll back to "
                              "(default: one version below the current one)")
+    parser.add_argument("--confirm-backup", action="store_true",
+                        help="PostgreSQL `down` only: state that a pg_dump was taken "
+                             "(this tool takes no server backup itself)")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    from kalos.portal.storage import StorageConfigError, backend_from_env
+
+    try:
+        backend = backend_from_env()
+    except StorageConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if backend.is_postgres and args.db is None:
+        return _main_postgres(args, backend.dsn or "")
     state_dir = args.state_dir or _default_state_dir()
     db = args.db or state_dir / DB_FILENAME
     try:
@@ -1448,6 +1467,39 @@ def main(argv: list[str] | None = None) -> int:
     print(result.plan_text)
     if result.backup_path is not None:
         print(f"backup: {result.backup_path}")
+    for w in result.warnings:
+        print(f"warning: {w}")
+    print(f"result: {result.action}")
+    return 0
+
+
+def _main_postgres(args: argparse.Namespace, dsn: str) -> int:
+    """The CLI on PostgreSQL (kalos/portal/migrate_pg.py). Error text never
+    carries the DSN's password: psycopg messages are reduced to their class and
+    first line, and the DSN is printed only redacted."""
+    from kalos.portal import migrate_pg
+    from kalos.portal.storage import DB_ERRORS, StorageConfigError, redact_dsn
+
+    try:
+        if args.command == "status":
+            report, healthy = migrate_pg.status_report(dsn)
+            print(report)
+            return 0 if healthy else 2
+        if args.command == "up":
+            result = migrate_pg.migrate_up(dsn, dry_run=args.dry_run, allow_upgrade=True)
+        else:
+            result = migrate_pg.migrate_down(
+                dsn, dry_run=args.dry_run, target=args.target, confirm_backup=args.confirm_backup
+            )
+    except (MigrationError, SchemaError, StorageConfigError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except DB_ERRORS as exc:
+        first = str(exc).splitlines()[0] if str(exc) else ""
+        print(f"error: {type(exc).__name__} on {redact_dsn(dsn)}: {first.replace(dsn, redact_dsn(dsn))}",
+              file=sys.stderr)
+        return 1
+    print(result.plan_text)
     for w in result.warnings:
         print(f"warning: {w}")
     print(f"result: {result.action}")

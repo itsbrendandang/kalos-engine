@@ -1,0 +1,56 @@
+# OPTIONAL: run the engine on PostgreSQL instead of SQLite.
+#
+#   docker compose -f compose.yaml -f compose.postgres.yaml up -d
+#
+# The default stack (compose.yaml alone) is unchanged and keeps SQLite in the
+# engine's state volume. This override adds a `postgres` service with its own
+# named volume, builds the engine with the `postgres` extra, and points the
+# engine at the database through KALOS_DATABASE_URL. The engine still needs its
+# state volume (kalos-state): job input files, the audit archive and the engine
+# lock live there (docs/MIGRATIONS.md, "PostgreSQL backend").
+#
+# Secrets: nothing here is a secret. POSTGRES_PASSWORD and KALOS_DATABASE_URL
+# come from `.env` (see .env.example), never from this file.
+#
+# Roles: for a quick start the engine can use the POSTGRES_USER role, which
+# OWNS the tables and can therefore disable the append-only triggers;
+# `python -m kalos.portal.migrate status` prints a WARNING about it. For any
+# shared deployment, create a separate non-owner engine role with
+# deploy/postgres/grants.sql and put that role in KALOS_DATABASE_URL.
+#
+# Backups: the SQLite `backup` sidecar does not cover PostgreSQL. Take
+# `pg_dump` backups of the `postgres` service (deploy/RUNBOOK.md) AND keep
+# backing up the kalos-state volume.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-kalos}
+      - POSTGRES_USER=${POSTGRES_USER:-kalos_owner}
+      # REQUIRED: compose refuses to start the stack without it.
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - kalos-pg:/var/lib/postgresql/data
+    # No published port: only the engine reaches it, over the compose network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  engine:
+    build:
+      args:
+        KALOS_EXTRAS: ml,portal,postgres
+    environment:
+      # REQUIRED with this override: a postgresql:// URL for the engine role at host `postgres` (see .env.example)
+      - KALOS_DATABASE_URL=${KALOS_DATABASE_URL:?set KALOS_DATABASE_URL in .env}
+      - KALOS_DB_POOL_MAX=${KALOS_DB_POOL_MAX:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  kalos-pg:

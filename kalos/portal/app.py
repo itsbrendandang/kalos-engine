@@ -220,6 +220,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     )
     from kalos.portal.jobs import job_settings
     from kalos.portal.migrate import MigrationError, SchemaError
+    from kalos.portal.storage import StorageConfigError
 
     check_startup_config()  # a malformed KALOS_JOB* value fails the boot, not the first job
     expect_runner(job_settings().enabled)  # /readyz is 503 while an expected runner is down
@@ -227,7 +228,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     store = None
     try:
         store = app.dependency_overrides.get(get_campaign_store, get_campaign_store)()
-    except (MigrationError, SchemaError):
+    except (MigrationError, SchemaError, StorageConfigError):
         raise
     except Exception:  # noqa: BLE001 - surfaced by /readyz instead
         log.exception("campaign store could not be opened at startup")

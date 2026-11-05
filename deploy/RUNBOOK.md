@@ -219,6 +219,34 @@ re-runs an analysis, so it does not need restore-grade rigor. The backup
 script still copies it opportunistically under
 `deploy/backups/latest-cache/` if you want it anyway.
 
+## Optional: PostgreSQL instead of SQLite
+
+`compose.postgres.yaml` is an override. It adds a `postgres` service (named
+volume `kalos-pg`, no published port), builds the engine with the `postgres`
+extra, and sets `KALOS_DATABASE_URL`. Set `POSTGRES_PASSWORD` and
+`KALOS_DATABASE_URL` in `.env` (see `.env.example`); compose refuses to start
+without them.
+
+```sh
+docker compose -f compose.yaml -f compose.postgres.yaml up -d
+docker compose -f compose.yaml -f compose.postgres.yaml exec engine \
+  python -m kalos.portal.migrate status
+```
+
+- The engine creates the schema on an empty database on first start.
+- For a shared deployment, create the non-owner engine role with
+  `deploy/postgres/grants.sql` and put that role in `KALOS_DATABASE_URL`.
+  `migrate status` prints a WARNING while the engine uses the owner role.
+- Backups: the `backup` sidecar covers only the SQLite files, so it does not
+  back up the database. Run `pg_dump --format=custom` against the `postgres`
+  service on your own schedule, and keep backing up the `kalos-state` volume
+  (job inputs, audit archive). Restore = `pg_restore` into an empty database,
+  then `migrate status`. This restore path has **not been drilled** on the
+  compose stack.
+- Upgrades that change the schema: the engine refuses to start on an older
+  PostgreSQL schema. Take a `pg_dump`, run `migrate up` as the owner role, then
+  start the new engine.
+
 ## Log locations
 
 - `docker compose logs engine` - uvicorn access/error output plus kalos's

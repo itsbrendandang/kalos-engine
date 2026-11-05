@@ -61,7 +61,10 @@ COPY deploy/engine/constraints.txt ./
 COPY pyproject.toml README.md ./
 COPY kalos ./kalos
 
-RUN pip install --no-cache-dir -c constraints.txt ".[ml,portal]"
+# KALOS_EXTRAS: add `postgres` for the optional PostgreSQL backend
+# (deploy/compose.postgres.yaml sets it). The default image stays SQLite-only.
+ARG KALOS_EXTRAS=ml,portal
+RUN pip install --no-cache-dir -c constraints.txt ".[${KALOS_EXTRAS}]"
 
 # ---------------------------------------------------------------------------
 # runtime

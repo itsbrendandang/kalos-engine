@@ -1,5 +1,9 @@
 # portal.db schema migrations
 
+This file covers the default SQLite store. The optional PostgreSQL backend
+(`KALOS_DATABASE_URL`) uses the same schema versions; see "PostgreSQL backend"
+at the end.
+
 `<KALOS_STATE_DIR>/portal.db` (default `~/.kalos/portal.db`) holds the campaign
 loop: campaigns, their published analyses, the tenant's default campaign, and
 an audit log. Its schema is versioned in `schema_migrations`. The code is
@@ -340,3 +344,102 @@ v1 code serves them as before.
 - Backups and `.pre-*` copies contain tenant data. They get the database's
   file mode, so keep the state directory `0700`.
 - `audit_log` grows without bound. The engine never deletes it (schema v4). The optional archive copies old rows to `<state dir>/audit-archive/`; it does not free space in `portal.db`. Physical removal is a separate decision and needs its own reviewed migration.
+
+## PostgreSQL backend
+
+SQLite in the state directory is the default and needs no setting. To store the
+same tables in PostgreSQL, install the extra (`pip install 'kalos[postgres]'`,
+psycopg 3) and set:
+
+```sh
+export KALOS_DATABASE_URL='postgresql://kalos_engine:<password>@db.internal:5432/kalos'
+# optional: a dedicated schema
+#   ...?options=-csearch_path%3Dkalos
+```
+
+Unset or empty means SQLite. Any value other than a `postgresql://` or
+`postgres://` URL is refused at startup (exit 2). The URL is printed only with
+its password replaced by `***`.
+
+Code: `kalos/portal/storage.py` (backend switch, connection pool, transaction
+helper) and `kalos/portal/migrate_pg.py` (the DDL). The store's SQL and tenant
+scoping are the same on both backends. Tests: `tests/test_storage_postgres.py`,
+which runs against a real server when `KALOS_TEST_DATABASE_URL` is set and
+skips without it.
+
+### What is the same and what differs
+
+| | SQLite | PostgreSQL |
+| --- | --- | --- |
+| Schema versions | v1 .. v5 | v2 .. v5 (there is no v1 PostgreSQL schema) |
+| Fresh database | created on first start | created on first start, in one transaction |
+| Older schema | migrated on start after a verified file backup | **refused on start**: take a `pg_dump`, then run `migrate up` |
+| Append-only `audit_log`, `run_results` | BEFORE UPDATE / DELETE triggers, `RAISE(ABORT)` | BEFORE UPDATE / DELETE row triggers and a BEFORE TRUNCATE statement trigger, SQLSTATE 23000 |
+| Error the engine sees | `sqlite3.IntegrityError` | `psycopg.IntegrityError` |
+| Write transaction | `BEGIN IMMEDIATE` (one writer) | `BEGIN` + `pg_advisory_xact_lock` (one writer, database-wide) |
+| Read transaction | deferred `BEGIN` (one snapshot) | `REPEATABLE READ READ ONLY` (one snapshot) |
+| Connections | one shared connection per process | a pool per process (`KALOS_DB_POOL_MIN`/`MAX`) |
+| One engine | flock on `<state dir>/engine.lock` | the flock, plus a session advisory lock on the database |
+| `down` | to any version >= 1, backup taken first | to v2 at the lowest, needs `--confirm-backup` |
+
+Types: `REAL` is `DOUBLE PRECISION` (the same 8-byte float), the autoincrement
+ids are `BIGINT GENERATED ALWAYS AS IDENTITY`, and the JSON state blobs stay
+`TEXT`, so stored values match between backends.
+
+Transactions keep the SQLite semantics. Every write first takes one advisory
+lock, so writers run one at a time across every engine process and job worker
+on the database. The generation compare-and-swap, the result version count, and
+the rule "the audit row commits in the same transaction as the change" work
+unchanged. Any error rolls the transaction back. A per-tenant lock would allow
+more parallel writes. It is not done, so the semantics stay identical.
+
+### Commands
+
+With `KALOS_DATABASE_URL` set (and no `--db`), the CLI acts on PostgreSQL:
+
+```sh
+python -m kalos.portal.migrate status            # exit 2 when the engine would refuse to start
+python -m kalos.portal.migrate up --dry-run
+pg_dump --format=custom --file=kalos-pre-up.dump "$KALOS_DATABASE_URL_OWNER"
+KALOS_DATABASE_URL="$KALOS_DATABASE_URL_OWNER" python -m kalos.portal.migrate up
+python -m kalos.portal.migrate down --to 4 --confirm-backup   # after a pg_dump
+```
+
+`status` checks the tables, the `campaigns` columns, and that every
+append-only trigger exists and is ENABLED. A disabled trigger counts as
+missing, and the engine refuses to start. `down` renames tables aside
+(`run_results_v5_rolledback`, `jobs_v3_rolledback`) and drops only triggers and
+indexes. It never drops data.
+
+### PostgreSQL grant model
+
+The append-only triggers apply to every role. But the table owner, or a
+superuser, can `ALTER TABLE ... DISABLE TRIGGER` and then change rows. So:
+
+- Run migrations as an **owner** role (for example `kalos_owner`).
+- Run the engine as a separate **non-owner, non-superuser** role (for example
+  `kalos_engine`). Give it SELECT/INSERT/UPDATE/DELETE on `campaigns`,
+  `analyses`, `tenant_defaults` and `jobs`, and SELECT on `schema_migrations`.
+  Give it SELECT and INSERT only on `audit_log` and `run_results`, with UPDATE,
+  DELETE and TRUNCATE revoked.
+- `deploy/postgres/grants.sql` is that setup as SQL, with no password in it.
+  `tests/test_storage_postgres.py` runs it against a real server and checks two
+  things. The engine works as that role. That role cannot UPDATE, DELETE,
+  TRUNCATE or disable a trigger on the append-only tables.
+- `migrate status` and engine startup print a WARNING when the connected role
+  owns a protected table or is a superuser.
+
+The triggers and the revoked privileges are two independent layers. **Neither
+stops a database superuser**, or anyone who controls the server or its
+backups. The audit rows carry no hash chain or signature. These are database
+controls, nothing more.
+
+### What stays in the state directory
+
+PostgreSQL holds only what `portal.db` holds. `KALOS_STATE_DIR` is still
+required and must be backed up. It holds job input files (`jobs/`), the audit
+archive (`audit-archive/`), the engine lock, and the experiments store
+(`experiments.db`, SQLite). The legacy `latest/` directory is read only by the
+SQLite v1 import. So a PostgreSQL deployment backs up two things: a `pg_dump`
+of the database and the state volume. Several engine replicas on one database
+are refused (one engine per database); horizontal scaling is not supported yet.

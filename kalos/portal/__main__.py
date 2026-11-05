@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import IO
+from typing import IO, Any
 
 import uvicorn
 
 from kalos.envconfig import ConfigError
-from kalos.portal import engine_lock
+from kalos.portal import engine_lock, storage
 from kalos.portal.auth import AuthConfigError, get_authenticator
 from kalos.portal.config import (
     InsecureBindError,
@@ -38,6 +38,8 @@ DEFAULT_PORT = 8050
 # The state-directory lock (kalos/portal/engine_lock.py). Module-level so the
 # file object, and with it the flock, lives as long as the server process.
 _ENGINE_LOCK: IO[str] | None = None
+# The PostgreSQL counterpart (a session advisory lock held by this connection).
+_PG_ENGINE_LOCK: Any = None
 
 
 def main() -> None:
@@ -93,6 +95,20 @@ def main() -> None:
         # this engine must not start on the directory.
         print(f"kalos portal: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
+    # On PostgreSQL the database is shared beyond this host's state directory, so
+    # the same rule is enforced on the database too (kalos/portal/storage.py).
+    global _PG_ENGINE_LOCK
+    db = storage.backend_from_env()
+    if db.is_postgres:
+        try:
+            _PG_ENGINE_LOCK = storage.acquire_pg_engine_lock(db.dsn or "")
+        except storage.EngineDatabaseLockHeld as exc:
+            print(f"kalos portal: {exc}", file=sys.stderr)
+            raise SystemExit(2) from None
+        except storage.DB_ERRORS as exc:
+            print(f"kalos portal: cannot reach the database {storage.redact_dsn(db.dsn or '')}: "
+                  f"{type(exc).__name__}", file=sys.stderr)
+            raise SystemExit(2) from None
 
     # uvicorn trusts X-Forwarded-For from loopback by default, which would make a
     # same-host reverse proxy turn every remote caller into a "loopback" peer and defeat

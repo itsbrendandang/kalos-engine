@@ -265,3 +265,23 @@ def test_backup_script_state_dir_default_matches_engine_home():
     containerfile_text = (DEPLOY_DIR / "engine" / "Containerfile").read_text()
     assert "/home/kalos/.kalos" in script_text
     assert "KALOS_STATE_DIR=/home/kalos/.kalos" in containerfile_text
+
+
+def test_postgres_override_adds_a_database_without_secrets():
+    """deploy/compose.postgres.yaml: an optional override. The default compose
+    stays SQLite-only (see test_compose_declares_expected_services); the override
+    adds `postgres` with its own volume and no published port, and takes every
+    credential from `.env`, never from the file."""
+    doc = yaml.safe_load((DEPLOY_DIR / "compose.postgres.yaml").read_text())
+    pg = doc["services"]["postgres"]
+    assert "ports" not in pg
+    assert any(v.startswith("kalos-pg:") for v in pg["volumes"])
+    assert "kalos-pg" in doc["volumes"]
+    env = " ".join(pg["environment"] + doc["services"]["engine"]["environment"])
+    assert "POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?" in env
+    assert "KALOS_DATABASE_URL=${KALOS_DATABASE_URL:?" in env
+    assert doc["services"]["engine"]["build"]["args"]["KALOS_EXTRAS"] == "ml,portal,postgres"
+    text = (DEPLOY_DIR / "compose.postgres.yaml").read_text()
+    assert not re.search(r"postgres(ql)?://[^\s$]*:[^\s$@]+@", text), "credentials in compose file"
+    grants = (DEPLOY_DIR / "postgres" / "grants.sql").read_text()
+    assert not re.search(r"PASSWORD\s+'", grants, re.IGNORECASE), "a password literal in grants.sql"
