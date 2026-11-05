@@ -1,7 +1,7 @@
 """The generator registry: every source of virtual (non-measured) rows, by id.
 
 A generator is a seeded function that returns a table of runs (design columns
-plus outcome columns) for a validated parameter set. Each one is registered with
+plus outcome columns) for a checked parameter set. Each one is registered with
 an id, a version, the origin of its output, its default parameters, and the
 source files whose content makes up its code hash. Nothing produces virtual rows
 outside this registry (docs/VIRTUAL_RUNS.md).
