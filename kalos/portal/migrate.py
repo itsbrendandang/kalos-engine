@@ -1251,10 +1251,10 @@ def migrate_down(
             goal = _down_goal(version, target)
             if goal is None:
                 return MigrationResult("dry_run", DownPlan(db, version).render())
-            parts = [_render_down_step(db, ro, step) for step in range(version, goal, -1)]
+            dry_parts = [_render_down_step(db, ro, step) for step in range(version, goal, -1)]
         finally:
             ro.close()
-        return MigrationResult("dry_run", "\n".join([_down_header(db), *parts]))
+        return MigrationResult("dry_run", "\n".join([_down_header(db), *dry_parts]))
 
     conn = connect(db)
     try:
