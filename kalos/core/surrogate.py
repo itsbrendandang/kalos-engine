@@ -12,7 +12,11 @@ CPU). The deep-learning protein embedder runs on MPS separately.
 """
 from __future__ import annotations
 
-import gpytorch
+import logging
+import re
+import warnings
+
+import linear_operator
 import numpy as np
 import torch
 from botorch.exceptions import ModelFittingError
@@ -22,6 +26,9 @@ from botorch.models.transforms.input import Normalize
 from botorch.models.transforms.outcome import Standardize
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from gpytorch.utils.errors import NotPSDError
+from linear_operator.utils.warnings import NumericalWarning
+
+log = logging.getLogger("kalos.core.surrogate")
 
 DTYPE = torch.double
 DEVICE = torch.device("cpu")
@@ -31,7 +38,21 @@ DEVICE = torch.device("cpu")
 # non-positive-definite, so the first Cholesky can fail (LinAlgError / NotPSDError
 # / ModelFittingError). We retry with progressively larger jitter before giving
 # up, so a numerically-hard-but-valid dataset still fits instead of 500-ing.
-_FIT_JITTERS: tuple[float, ...] = (1e-4, 1e-3, 1e-2)
+#
+# Units: added to the diagonal of the kernel matrix in the model's standardized
+# output space (the outcome is standardized, so the prior variance is ~1).
+#
+# History (found by the compmodel review, verified against linear_operator
+# 0.6.1): this ladder used to be passed as `cholesky_jitter(j)`, which sets only
+# the FLOAT32 value. The GP runs in float64, so the rungs never applied; every
+# rung used linear_operator's float64 default (1e-8, retried x10 up to 3 times,
+# so at most 1e-6). Now the rung is set for float64 and `cholesky_max_tries` is
+# 1, so the diagonal addition in any one Cholesky during the fit is at most the
+# current rung, and never more than `JITTER_CAP`.
+_FIT_JITTERS: tuple[float, ...] = (1e-8, 1e-6, 1e-4)
+JITTER_CAP: float = _FIT_JITTERS[-1]
+
+_JITTER_MSG = re.compile(r"added jitter of ([0-9.eE+-]+) to the diagonal")
 
 
 class FitError(RuntimeError):
@@ -51,26 +72,62 @@ class FitError(RuntimeError):
 _FIT_NUMERICAL_ERRORS = (torch.linalg.LinAlgError, NotPSDError, ModelFittingError)
 
 
-def _fit_mll_with_retry(mll) -> None:
+def _fit_mll_with_retry(mll) -> dict:
     """Fit `mll` in place, retrying on a numerical failure with escalating jitter.
 
-    Tries `fit_gpytorch_mll` under each jitter in `_FIT_JITTERS`; the first
-    success wins. If every attempt raises a numerical error, raise `FitError` with
-    an honest message. Any non-numerical exception propagates unchanged. Works for
-    both the single-objective `ExactMarginalLogLikelihood` and the multi-objective
-    `SumMarginalLogLikelihood`.
+    Tries `fit_gpytorch_mll` under each jitter in `_FIT_JITTERS` (float64 and
+    float32, one Cholesky try each); the first success wins. Returns the jitter
+    record: `jitter_rung` (the rung the fit succeeded under), `jitter_rung_index`
+    (0 = first), `jitter_added_max` (the largest diagonal addition linear_operator
+    actually made during the successful fit, read from its NumericalWarning; 0.0
+    when every Cholesky succeeded without jitter), `jitter_additions` (how many
+    times it added jitter) and `jitter_cap`. If every rung fails, raise
+    `FitError`. Any non-numerical exception propagates unchanged. Works for both
+    `ExactMarginalLogLikelihood` and `SumMarginalLogLikelihood`.
     """
     last: Exception | None = None
-    for jitter in _FIT_JITTERS:
+    for i, jitter in enumerate(_FIT_JITTERS):
         try:
-            with gpytorch.settings.cholesky_jitter(jitter):
+            with warnings.catch_warnings(record=True) as caught, \
+                    linear_operator.settings.cholesky_jitter(float_value=jitter, double_value=jitter), \
+                    linear_operator.settings.cholesky_max_tries(1):
+                warnings.simplefilter("always", NumericalWarning)
                 fit_gpytorch_mll(mll)
-            return
         except _FIT_NUMERICAL_ERRORS as exc:
             last = exc
+            continue
+        added = [
+            float(m.group(1))
+            for w in caught
+            if issubclass(w.category, NumericalWarning)
+            and (m := _JITTER_MSG.search(str(w.message))) is not None
+        ]
+        # Re-emit anything that is not a jitter notice, so other warnings keep
+        # their normal handling.
+        for w in caught:
+            if not (issubclass(w.category, NumericalWarning) and _JITTER_MSG.search(str(w.message))):
+                warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
+        added_max = max(added, default=0.0)
+        if added_max > JITTER_CAP:
+            # Cannot happen with max_tries=1; checked so a library change that
+            # adds more than the cap fails loudly instead of fitting quietly.
+            raise FitError(
+                f"the model fit needed a diagonal jitter of {added_max:.1e}, above the "
+                f"cap of {JITTER_CAP:.1e}; the rows are too close to duplicates to fit"
+            )
+        if i > 0:
+            log.warning("GP fit needed Cholesky jitter rung %.0e (cap %.0e)", jitter, JITTER_CAP)
+        return {
+            "jitter_rung": jitter,
+            "jitter_rung_index": i,
+            "jitter_added_max": added_max,
+            "jitter_additions": len(added),
+            "jitter_cap": JITTER_CAP,
+        }
     raise FitError(
         "the model could not be fit on this data - likely near-duplicate or "
-        "ill-conditioned rows"
+        f"ill-conditioned rows (Cholesky failed with a diagonal jitter up to the cap "
+        f"of {JITTER_CAP:.0e})"
     ) from last
 
 
@@ -148,6 +205,8 @@ class Surrogate:
         # Integer indices of categorical columns in X (None/empty = all continuous).
         # Recorded so the acquisition path knows which dims to enumerate.
         self._cat_dims: list[int] | None = None
+        # What the last fit did numerically (jitter rung, ...). Empty before fit.
+        self.fit_diagnostics: dict = {}
 
     def fit(self, X, y, bounds, *, noise=None, cat_dims=None) -> Surrogate:
         """Fit on (X, y). `bounds` (2 x d) ties input normalization to the fixed
@@ -215,7 +274,7 @@ class Surrogate:
                     Xt, yt, train_Yvar=yvar, input_transform=normalize, outcome_transform=Standardize(m=1)
                 )
         mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
-        _fit_mll_with_retry(mll)
+        self.fit_diagnostics = dict(_fit_mll_with_retry(mll))
         self._y = ya
         # Keep the raw (untransformed) training inputs so the noisy-EI acquisition
         # can use them as X_baseline; the model applies its input transform to them

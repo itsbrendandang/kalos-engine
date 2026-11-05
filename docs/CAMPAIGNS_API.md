@@ -281,6 +281,19 @@ published, not that the recipe came from it. It is stored in the campaign state
 and returned in the run, in `GET /api/campaign` and in `GET /api/campaigns/{id}`
 `pending`. Runs started earlier have no such key.
 
+### Model diagnostics
+
+Every analysis result carries `model_diagnostics` (additive), the numerical
+record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
+
+| Field | Meaning |
+|---|---|
+| `jitter_rung` | The Cholesky jitter rung the hyperparameter fit succeeded under: `1e-8`, `1e-6` or `1e-4` (standardized output units). |
+| `jitter_rung_index` | `0`, `1` or `2`. Above `0` the first rung failed and a larger one was used. |
+| `jitter_added_max` | The largest diagonal addition linear_operator actually made during the fit (`0.0` when no Cholesky needed jitter). |
+| `jitter_additions` | How many times jitter was added during the fit. |
+| `jitter_cap` | `1e-4`. A fit that would need more is refused (`FitError`, HTTP 400). |
+
 ## Not in this slice
 
 - Background jobs for reanalyze (it still runs synchronously; upload has a job route).

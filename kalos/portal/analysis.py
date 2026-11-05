@@ -1275,6 +1275,7 @@ def _analyze_body(
     # break) as soon as their last use is done, rather than waiting on
     # `_analyze` to return. Keeps a long-lived process (the portal, the
     # `--watch` poller) from accumulating fit memory across repeated analyses.
+    model_diagnostics = dict(s.fit_diagnostics)
     del s
     if constraint_surrogate is not None:
         del constraint_surrogate
@@ -1478,6 +1479,10 @@ def _analyze_body(
         "correlation": correlation,
         "response_surface": response_surface,
         "visualization_reasons": viz_reasons,
+        # Numerical record of the proposal surrogate's fit (kalos/core/surrogate.py
+        # `Surrogate.fit_diagnostics`): the Cholesky jitter rung and the largest
+        # diagonal addition actually made, with the cap.
+        "model_diagnostics": model_diagnostics,
         "seed": ANALYZE_SEED,
         "timestamp": int(time.time()),
         "engine_version": ENGINE_VERSION,
