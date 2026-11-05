@@ -47,10 +47,9 @@ def test_receipt_model_strict():
         make(receipt_id="nope")
 
 
-def test_canonical_json_is_order_free_and_refuses_nan():
+def test_canonical_json_is_order_free_and_maps_nan_to_null():
     assert canonical_json({"b": 1, "a": 2}) == canonical_json({"a": 2, "b": 1})
-    with pytest.raises(ValueError):
-        canonical_json({"x": float("nan")})
+    assert canonical_json({"x": [float("nan"), float("inf")]}) == canonical_json({"x": [None, None]})
 
 
 def test_table_hash_matches_run_record_form():

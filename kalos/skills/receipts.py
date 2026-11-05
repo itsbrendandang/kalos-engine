@@ -21,6 +21,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -84,10 +85,20 @@ def utcnow() -> str:
     return dt.datetime.now(dt.UTC).isoformat(timespec="milliseconds")
 
 
+def _finite(obj: Any) -> Any:
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _finite(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_finite(v) for v in obj]
+    return obj
+
+
 def canonical_json(obj: Any) -> bytes:
-    """Stable bytes for hashing: sorted keys, no whitespace, NaN refused
-    (non-finite floats must have been mapped to None before this)."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    """Stable bytes for hashing: sorted keys, no whitespace, non-finite floats
+    hashed as null (a missing cell and a NaN cell are the same input)."""
+    return json.dumps(_finite(obj), sort_keys=True, separators=(",", ":"), ensure_ascii=False,
                       allow_nan=False, default=str).encode("utf-8")
 
 
