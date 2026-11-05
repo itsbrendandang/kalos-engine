@@ -5,6 +5,8 @@
     kalos skills search   "query" [DIR] [--tenant T] [--all] [--limit N]
     kalos skills hash     DIR/slug
     kalos skills tools    [--json]
+    kalos skills data-sources DIR/slug          (render DATA_SOURCES.md to stdout)
+    kalos skills verify-receipt RUN_DIR [--skills-dir DIR] [--json]
 
 `python -m kalos.skills <cmd> ...` is the same. DIR defaults to the built-in set.
 
@@ -37,7 +39,8 @@ def _validate(a: argparse.Namespace) -> int:
     rows: list[dict[str, Any]] = []
     for sk in res.skills:
         p = check_engine_refs(sk, engine_root)
-        p += [x.split(": ", 1)[1] for x in check_tools([sk]) if x.startswith(f"{sk.slug}: ")]
+        p += [x.split(": ", 1)[1] for x in check_tools([sk], engine_root)
+              if x.startswith(f"{sk.slug}: ")]
         if corpus:
             text = "\n".join((sk.path / f).read_text(encoding="utf-8") for f in sk.files)
             overlap = ngram_overlap(text, corpus)
@@ -49,7 +52,7 @@ def _validate(a: argparse.Namespace) -> int:
                      "refs": len(sk.meta.implementation.engine), "tools": len(sk.meta.tools),
                      "content_hash": sk.content_hash, "ok": not p})
     # Problems with the tool table itself (unresolvable symbol, missing adapter).
-    problems += [("tools", x) for x in check_tools([]) if x]
+    problems += [("tools", x) for x in check_tools([], engine_root) if x]
     if a.json:
         print(json.dumps({"ok": not problems, "skills": rows,
                           "problems": [{"where": w, "message": m} for w, m in problems]},
@@ -107,7 +110,8 @@ def _tools(a: argparse.Namespace) -> int:
 
     rows = [{"name": t.name, "symbol": t.symbol, "label": t.label, "scope": t.scope,
              "side_effects": t.side_effects, "needs_torch": t.needs_torch,
-             "timeout_s": t.timeout_s} for t in TOOLS.values()]
+             "long_running": t.long_running, "timeout_s": t.timeout_s,
+             "requires_extras": sorted(t.requires_extras)} for t in TOOLS.values()]
     if a.json:
         print(json.dumps(rows, indent=1))
     else:
@@ -115,6 +119,39 @@ def _tools(a: argparse.Namespace) -> int:
             print(f"{r['name']:34} {r['label']:10} {'torch' if r['needs_torch'] else '     '} "
                   f"{r['symbol']}")
     return 0
+
+
+def _data_sources(a: argparse.Namespace) -> int:
+    from .loader import parse_skill, render_data_sources
+
+    try:
+        sk = parse_skill(Path(a.folder))
+    except Exception as exc:  # noqa: BLE001 - report, exit 1
+        print(f"cannot load skill: {exc}".splitlines()[0], file=sys.stderr)
+        return 1
+    sys.stdout.write(render_data_sources(sk.meta))
+    return 0
+
+
+def _verify(a: argparse.Namespace) -> int:
+    from .receipts import RunStore
+    from .runner import verify_receipt
+
+    run_dir = Path(a.run_dir)
+    try:
+        slug = RunStore.read(run_dir).skill_slug
+    except Exception:  # noqa: BLE001 - unreadable receipt is a failed verification
+        slug = None
+    reg = SkillRegistry(load_dir(Path(a.skills_dir) if a.skills_dir else BUILTIN_DIR).skills)
+    skill = next((s for s in reg.all() if s.slug == slug), None)
+    v = verify_receipt(run_dir, skill)
+    if a.json:
+        print(json.dumps(v.model_dump()))
+    else:
+        print("PASS" if v.ok else "FAIL")
+        for p in v.problems:
+            print(f"  ! {p}")
+    return 0 if v.ok else 1
 
 
 def build_parser(prog: str = "kalos skills") -> argparse.ArgumentParser:
@@ -144,6 +181,14 @@ def build_parser(prog: str = "kalos skills") -> argparse.ArgumentParser:
     t = sub.add_parser("tools", help="the tool table")
     t.add_argument("--json", action="store_true")
     t.set_defaults(fn=_tools)
+    d = sub.add_parser("data-sources", help="render DATA_SOURCES.md from the frontmatter")
+    d.add_argument("folder")
+    d.set_defaults(fn=_data_sources)
+    vr = sub.add_parser("verify-receipt", help="check a run against its receipt")
+    vr.add_argument("run_dir")
+    vr.add_argument("--skills-dir")
+    vr.add_argument("--json", action="store_true")
+    vr.set_defaults(fn=_verify)
     return ap
 
 
@@ -156,7 +201,8 @@ def kalos_main(argv: list[str] | None = None) -> int:
     """`kalos` console script. Only the `skills` command group exists today."""
     args = sys.argv[1:] if argv is None else list(argv)
     if not args or args[0] != "skills":
-        print("usage: kalos skills {validate,list,search,hash,tools} ...", file=sys.stderr)
+        print("usage: kalos skills {validate,list,search,hash,tools,data-sources,"
+              "verify-receipt} ...", file=sys.stderr)
         return 2
     return main(args[1:])
 

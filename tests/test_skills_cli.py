@@ -93,3 +93,27 @@ def test_python_dash_m_and_no_torch():
     r2 = subprocess.run([sys.executable, "-m", "kalos.skills", "validate", "--json"],
                         capture_output=True, text=True)
     assert r2.returncode == 0 and json.loads(r2.stdout)["ok"] is True
+
+
+def test_data_sources_render(capsys, tmp_path):
+    assert main(["data-sources", str(BUILTIN_DIR / "driver-ranking")]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("# Data sources: driver-ranking") and "None." in out
+    assert main(["data-sources", str(tmp_path)]) == 1
+
+
+def test_verify_receipt_cli(tmp_path, capsys):
+    pytest.importorskip("fastapi")
+    from kalos.skills import load_builtin
+    from kalos.skills.receipts import RunStore
+    from kalos.skills.runner import ToolContext, invoke
+
+    ctx = ToolContext(tenant="acme", runs=RunStore(tmp_path))
+    res = invoke(load_builtin().get("target-readiness-check", "acme"),
+                 "engine.assess_target_variation", {"values": [1.0, 2.0, 3.5]}, ctx)
+    assert main(["verify-receipt", str(res.run_dir), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "problems": []}
+    (res.run_dir / res.status.artifacts[0].path).write_text("tampered")
+    assert main(["verify-receipt", str(res.run_dir)]) == 1
+    assert "FAIL" in capsys.readouterr().out
+    assert main(["verify-receipt", str(tmp_path / "nope")]) == 1
