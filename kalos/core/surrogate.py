@@ -52,6 +52,16 @@ DEVICE = torch.device("cpu")
 _FIT_JITTERS: tuple[float, ...] = (1e-8, 1e-6, 1e-4)
 JITTER_CAP: float = _FIT_JITTERS[-1]
 
+# Conditioning of the matrix the fit factors, K + noise*I (model space:
+# normalized inputs, standardized outputs). Above WARN the fit proceeds and the
+# value is reported; above REFUSE the fit is refused with FitError (HTTP 400).
+# Thresholds are the owner's defaults (compmodel PLAN E2), not validated numbers.
+# Note: the noise floors (inferred noise >= 1e-4, fixed noise >= 1e-6 in model
+# units) bound the condition number by about n * outputscale / floor, so REFUSE
+# is reached only for very large or very tightly clustered designs.
+COND_WARN: float = 1e8
+COND_REFUSE: float = 1e12
+
 _JITTER_MSG = re.compile(r"added jitter of ([0-9.eE+-]+) to the diagonal")
 
 
@@ -129,6 +139,42 @@ def _fit_mll_with_retry(mll) -> dict:
         f"ill-conditioned rows (Cholesky failed with a diagonal jitter up to the cap "
         f"of {JITTER_CAP:.0e})"
     ) from last
+
+
+def kernel_condition_number(model) -> float:
+    """2-norm condition number of the fitted training covariance K + noise*I,
+    from its eigenvalues (eigvalsh; ~1 s at the 2,000-row cap). `inf` when the
+    smallest eigenvalue is not positive."""
+    model.eval()
+    with torch.no_grad():
+        X0 = model.train_inputs[0]
+        cov = model.likelihood(model.forward(X0), [X0]).covariance_matrix
+        ev = torch.linalg.eigvalsh(cov)
+    lo, hi = float(ev.min()), float(ev.max())
+    return float("inf") if lo <= 0.0 else hi / lo
+
+
+def condition_report(cond: float) -> dict:
+    """The conditioning fields recorded with a fit. Raises FitError above
+    COND_REFUSE, with a plain-language reason."""
+    if not (cond <= COND_REFUSE):
+        raise FitError(
+            "some rows are so close to each other that the model cannot tell them "
+            f"apart numerically (condition number {cond:.1e}, limit {COND_REFUSE:.0e}). "
+            "Remove or merge near-duplicate rows, or record them as replicates of one recipe."
+        )
+    warn = cond > COND_WARN
+    return {
+        "condition_number": cond,
+        "condition_warning": warn,
+        "condition_notice": (
+            f"Some rows are very close together (condition number {cond:.1e}, above "
+            f"{COND_WARN:.0e}); predictions near them are less stable."
+            if warn else None
+        ),
+        "condition_warn_above": COND_WARN,
+        "condition_refuse_above": COND_REFUSE,
+    }
 
 
 def sanitize_bounds(bounds) -> tuple[np.ndarray, np.ndarray]:
@@ -274,7 +320,11 @@ class Surrogate:
                     Xt, yt, train_Yvar=yvar, input_transform=normalize, outcome_transform=Standardize(m=1)
                 )
         mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
-        self.fit_diagnostics = dict(_fit_mll_with_retry(mll))
+        diag = dict(_fit_mll_with_retry(mll))
+        diag.update(condition_report(kernel_condition_number(self.model)))
+        if diag["condition_warning"]:
+            log.warning("GP kernel matrix is ill-conditioned (cond %.1e)", diag["condition_number"])
+        self.fit_diagnostics = diag
         self._y = ya
         # Keep the raw (untransformed) training inputs so the noisy-EI acquisition
         # can use them as X_baseline; the model applies its input transform to them

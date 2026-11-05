@@ -293,6 +293,10 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
 | `jitter_added_max` | The largest diagonal addition linear_operator actually made during the fit (`0.0` when no Cholesky needed jitter). |
 | `jitter_additions` | How many times jitter was added during the fit. |
 | `jitter_cap` | `1e-4`. A fit that would need more is refused (`FitError`, HTTP 400). |
+| `condition_number` | 2-norm condition number of the fitted training covariance `K + noise*I` (normalized inputs, standardized outputs), from its eigenvalues. |
+| `condition_warning` | `true` above `condition_warn_above` (`1e8`). The fit proceeds. |
+| `condition_notice` | Plain-language sentence when `condition_warning` is true, else `null`. |
+| `condition_warn_above`, `condition_refuse_above` | `1e8` and `1e12`. Above `1e12` the analysis is refused (HTTP 400) with a plain-language reason. These thresholds are defaults, not validated numbers. Because the noise model keeps a floor on the noise, exact replicates with inferred noise stay well conditioned; the warning needs a tight cluster of rows with a fixed small noise, and the refusal is reached only on very large or very clustered designs. |
 
 ## Not in this slice
 
