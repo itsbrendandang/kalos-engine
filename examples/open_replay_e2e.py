@@ -140,6 +140,41 @@ def match_recipe(recipe: dict, pool: pd.DataFrame, target: str, used: set[int], 
     return (best, float(np.sqrt(best_d))) if best is not None else (None, float("inf"))
 
 
+def started_recipe(pool: pd.DataFrame, label: int, keys) -> dict:
+    """The recipe a lab would start for measured row `label`: the row's own values
+    for the proposal's keys (JSON-safe scalars)."""
+    out: dict = {}
+    for k in keys:
+        v = pool.loc[label, k]
+        out[k] = float(v) if isinstance(v, (float, int, np.floating, np.integer)) else str(v)
+    return out
+
+
+def plan_batch(props: list[dict], oracle: pd.DataFrame, df: pd.DataFrame, target: str,
+               used: set[int], norm: dict) -> dict:
+    """Match each proposal to a distinct unused measured row. Returns
+    `matched`: [(proposed recipe, row label, started recipe, distance)] and
+    `unmatched`: [(proposed recipe, None)]. Does not mutate `used`."""
+    taken = set(used)
+    matched, unmatched = [], []
+    for p in props:
+        rec = p.get("recipe") or {}
+        label, dist = match_recipe(rec, oracle, target, taken, norm)
+        if label is None:
+            unmatched.append((rec, None))
+            continue
+        taken.add(label)
+        matched.append((rec, int(label), started_recipe(df, label, rec.keys()), dist))
+    return {"matched": matched, "unmatched": unmatched}
+
+
+def _matched_start_row(srec: dict, label: int, dist: float) -> dict:
+    """A start entry for the MATCHED row. Prediction fields belong to the proposed
+    recipe, not to this one, so they are not sent."""
+    return {"recipe": srec, "pred": None, "std": None, "mode": None,
+            "reason": f"replay: started held-out row {label} (proposal distance {dist:.3f})"}
+
+
 def proposal_checks(props: list[dict], analysis: dict, base: pd.DataFrame, target: str) -> dict:
     """Sanity of a proposed batch: inside the engine's own search box, inside the
     observed range of the base rows, categorical levels known, and repeats."""
@@ -217,8 +252,22 @@ def run_dataset(client: httpx.Client, log: Log, name: str, sheet: OpenSheet, out
     for r in range(1, rounds + 1):
         rnd: dict = {"round": r, "proposals_in": len(props)}
         batch_props = props[:batch]
+        # Match BEFORE starting. The run that is started carries the MATCHED row's own
+        # recipe, and the revealed value belongs to that row. Attributing a row's value to
+        # a different proposed recipe would fold imputed data into the fit as a measurement.
+        plan = plan_batch(batch_props, oracle_df, df, target, used, norm)
+        rnd["unmatched"] = [rec for rec, label in plan["unmatched"]]
+        rnd["proposal_to_started"] = [
+            {"proposed": rec, "started": srec, "row": int(label), "distance": round(dist, 4)}
+            for rec, label, srec, dist in plan["matched"]
+        ]
+        if not plan["matched"]:
+            rnd["stopped"] = "no proposed recipe matched an unused measured row; nothing to start"
+            summary["rounds"].append(rnd)
+            break
         status, started = call(client, log, name, f"start_r{r}", "POST", "/api/campaign/start",
-                               json={"recipes": [_start_row(p) for p in batch_props]},
+                               json={"recipes": [_matched_start_row(srec, label, dist)
+                                                 for _, label, srec, dist in plan["matched"]]},
                                save=out / f"start_r{r}.json")
         rnd["start_status"] = status
         if status != 200 or not started:
@@ -227,25 +276,16 @@ def run_dataset(client: httpx.Client, log: Log, name: str, sheet: OpenSheet, out
             break
         runs = started.get("started", [])
         measured = []
-        for run in runs:
-            label, dist = match_recipe(run.get("recipe") or {}, oracle_df, target, used, norm)
-            if label is None:
-                rnd.setdefault("unmatched", []).append(run.get("recipe"))
-                continue
+        for run, (_, label, srec, dist) in zip(runs, plan["matched"]):
             used.add(label)
             value = float(df.loc[label, target])
-            measured.append({"match_row": int(label), "distance": round(dist, 4), "value": value})
+            measured.append({"match_row": int(label), "distance": round(dist, 4), "value": value,
+                             "started_recipe": srec, "run_recipe_ok": run.get("recipe") == srec})
             st, _ = call(client, log, name, f"result_r{r}", "POST", "/api/campaign/result",
                          json={"id": run["id"], "value": value})
             if st != 200:
                 rnd.setdefault("result_errors", []).append(st)
         rnd["measured"] = measured
-        if not measured:
-            # Nothing the engine proposed could be matched to a measured row, so there
-            # is nothing to fold. Stop here rather than call reanalyze with no results.
-            rnd["stopped"] = "no proposed recipe matched an unused measured row; nothing to fold"
-            summary["rounds"].append(rnd)
-            break
         rnd["match_distance_max"] = max((m["distance"] for m in measured), default=None)
         rnd["revealed_best_this_round"] = max((m["value"] for m in measured), default=None)
         best_seen = max([best_seen] + [m["value"] for m in measured])
@@ -277,11 +317,6 @@ def run_dataset(client: httpx.Client, log: Log, name: str, sheet: OpenSheet, out
     summary["final_best"] = best_seen
     summary["final_frac_of_pool_max"] = round(best_seen / summary["pool_max"], 4) if summary["pool_max"] else None
     return summary
-
-
-def _start_row(p: dict) -> dict:
-    return {"recipe": p.get("recipe") or {}, "pred": p.get("pred"), "std": p.get("std"),
-            "mode": p.get("mode"), "reason": p.get("reason")}
 
 
 def _base_from(df: pd.DataFrame, used: set[int], seed_idx: list[int], oracle_df: pd.DataFrame) -> pd.DataFrame:
