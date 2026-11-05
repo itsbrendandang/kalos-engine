@@ -109,6 +109,9 @@ def check_env_settings() -> None:
     validation_mode_setting()
     audit_retention_days()
     provider_setting()
+    from kalos.portal.storage import check_database_settings
+
+    check_database_settings()
 
 
 def is_production() -> bool:

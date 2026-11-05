@@ -31,6 +31,9 @@ protein = ["transformers>=4.40"]
 # The web portal (FastAPI viewer over the live engine). The portal drives the
 # live GP surrogate, so it needs `ml` too - install as `kalos[ml,portal]`.
 portal = ["fastapi>=0.143.0", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9", "openpyxl>=3.1.5", "PyJWT[crypto]>=2.10.1"]
+# The optional PostgreSQL storage backend (KALOS_DATABASE_URL=postgresql://...,
+# kalos/portal/storage.py). SQLite needs none of this and stays the default.
+postgres = ["psycopg[binary,pool]>=3.2"]
 # The LLM tier of `kalos.normalize` (kalos/normalize/llm.py). Pydantic ships
 # as a transitive dependency of `anthropic` and is not listed separately.
 # The torch-free deterministic core (units/synonyms/plan/apply) and the
