@@ -36,26 +36,35 @@ Scalar = float | int | str | bool | None
 
 
 class ToolRefusal(Exception):
-    """An adapter-level refusal (bad input for this engine function, missing
-    campaign, policy). Recorded as `outcome="refused"`, never retried."""
+    """A receipted non-result, never retried and never an error.
 
-    def __init__(self, code: str, reason: str) -> None:
+    `kind="blocked"`: the data cannot support the result (too few rows, a
+    blocking finding, a failed gate). `kind="refused"`: the request is not
+    allowed or not well-formed for this tool (unknown campaign, bad column
+    names, policy). Never get past either by weakening a check."""
+
+    def __init__(self, code: str, reason: str, *, kind: Literal["blocked", "refused"] = "refused",
+                 rows: list[int] | None = None) -> None:
         super().__init__(reason)
         self.code = code
         self.reason = reason
+        self.kind = kind
+        self.rows = rows
 
 
 @dataclass
 class ToolContext:
     """Who is calling and with what. `store` is a `CampaignStore` when a tool
-    needs campaign state; `receipts` is a `ReceiptStore` (None = default root)."""
+    needs campaign state; `runs` is a `RunStore` (None = the default root)."""
 
     tenant: str
     subject: str | None = None
     scopes: frozenset[str] = frozenset({"read"})
     store: Any = None
-    receipts: Any = None
+    runs: Any = None  # RunStore; None = the default root
     extras: dict[str, Any] = field(default_factory=dict)
+    # Filled per call by the adapters: sha256 of every input actually read.
+    input_sha256s: list[str] = field(default_factory=list)
 
 
 # --- JSON safety --------------------------------------------------------------- #
@@ -149,13 +158,19 @@ class FileArgs(Args):
             raise ValueError("give exactly one of 'content_base64' or 'csv_text'")
         return self
 
-    def raw(self) -> bytes:
+    def raw(self, ctx: ToolContext) -> bytes:
+        """The file bytes; their sha256 is recorded as an input hash."""
+        import hashlib
+
         if self.csv_text is not None:
-            return self.csv_text.encode("utf-8")
-        try:
-            return base64.b64decode(self.content_base64 or "", validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise ToolRefusal("bad_input", "content_base64 is not valid base64") from exc
+            data = self.csv_text.encode("utf-8")
+        else:
+            try:
+                data = base64.b64decode(self.content_base64 or "", validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ToolRefusal("bad_input", "content_base64 is not valid base64") from exc
+        ctx.input_sha256s.append(hashlib.sha256(data).hexdigest())
+        return data
 
 
 class CampaignArgs(Args):
@@ -194,8 +209,12 @@ def resolve_table(args: TableArgs, ctx: ToolContext) -> tuple[pd.DataFrame, dict
     (what the next analysis would see); awaiting runs are never included."""
     import pandas as pd
 
+    from .receipts import frame_sha256
+
     if args.rows is not None:
-        return pd.DataFrame(list(args.rows)), None
+        df = pd.DataFrame(list(args.rows))
+        ctx.input_sha256s.append(frame_sha256(df))
+        return df, None
     state = _campaign_state(ctx, args.campaign_id)
     target = state["target"]
     rows = list(state.get("base_rows") or [])
@@ -203,8 +222,10 @@ def resolve_table(args: TableArgs, ctx: ToolContext) -> tuple[pd.DataFrame, dict
         if run.get("result") is not None and isinstance(run.get("recipe"), dict):
             rows.append({**run["recipe"], target: run["result"]})
     if not rows:
-        raise ToolRefusal("no_data", "the campaign has no measured rows")
-    return pd.DataFrame(rows), state
+        raise ToolRefusal("no_data", "the campaign has no measured rows", kind="blocked")
+    df = pd.DataFrame(rows)
+    ctx.input_sha256s.append(frame_sha256(df))
+    return df, state
 
 
 def resolve_model_table(args: ModelArgs, ctx: ToolContext) -> tuple[pd.DataFrame, str, list[str]]:
@@ -236,7 +257,7 @@ def numeric_xy(df: pd.DataFrame, target: str, features: list[str]):
         raise ToolRefusal("bad_input", f"{len(nonnum)} feature column(s) are not numeric")
     num = num.replace([np.inf, -np.inf], np.nan).dropna()
     if len(num) < 3:
-        raise ToolRefusal("too_few_rows", "fewer than 3 complete numeric rows")
+        raise ToolRefusal("too_few_rows", "fewer than 3 complete numeric rows", kind="blocked")
     return num[features].to_numpy(float), num[target].to_numpy(float)
 
 
@@ -376,7 +397,7 @@ class ParseUploadResult(Result):
 def parse_upload(a: FileArgs, ctx: ToolContext) -> dict:
     from kalos.portal.uploads import parse_upload as fn
 
-    p = fn(a.raw(), filename=a.filename, sheet=a.sheet)
+    p = fn(a.raw(ctx), filename=a.filename, sheet=a.sheet)
     return {"kind": p.kind, "n_rows": len(p.df), "n_columns": p.df.shape[1],
             "columns": [str(c) for c in p.df.columns], "sheets": list(p.sheets),
             "sheet_used": p.sheet_used}
@@ -404,9 +425,10 @@ def validate_frame(a: ValidateFrameArgs, ctx: ToolContext) -> dict:
         blocking = [f for f in data.get("findings", []) if f.get("severity") == "error"]
         if blocking:
             checks = sorted({str(f.get("check")) for f in blocking})
+            rows = sorted({int(r) for f in blocking for r in (f.get("rows") or [])})[:100]
             raise ToolRefusal("blocking_findings",
                               f"strict mode: {len(blocking)} blocking finding(s) from "
-                              + ", ".join(checks))
+                              + ", ".join(checks), kind="blocked", rows=rows or None)
     return {"report": data}
 
 
@@ -652,7 +674,7 @@ def anonymize_parsed(a: FileArgs, ctx: ToolContext) -> dict:
     from kalos.portal.analysis_parts.anonymize import anonymize_parsed as fn
     from kalos.portal.uploads import parse_upload
 
-    p = fn(parse_upload(a.raw(), filename=a.filename, sheet=a.sheet))
+    p = fn(parse_upload(a.raw(ctx), filename=a.filename, sheet=a.sheet))
     return {"kind": p.kind, "sheets": list(p.sheets), "sheet_used": p.sheet_used,
             "sheet_index": p.sheet_index}
 
@@ -682,7 +704,7 @@ def grouped_cv_report(a: CVArgs, ctx: ToolContext) -> dict:
     num = df[cols].apply(pd.to_numeric, errors="coerce")
     keep = num.replace([np.inf, -np.inf], np.nan).dropna().index
     if len(keep) < 6:
-        raise ToolRefusal("too_few_rows", "fewer than 6 complete numeric rows")
+        raise ToolRefusal("too_few_rows", "fewer than 6 complete numeric rows", kind="blocked")
     X = num.loc[keep, features].to_numpy(float)
     y = num.loc[keep, target].to_numpy(float)
     groups = None
@@ -952,7 +974,7 @@ def run_record_build(a: RunRecordArgs, ctx: ToolContext) -> dict:
     from kalos.portal.run_record import build as fn
     from kalos.portal.uploads import parse_upload
 
-    raw = a.raw()
+    raw = a.raw(ctx)
     p = parse_upload(raw, filename=a.filename, sheet=a.sheet)
     n_features = max(p.df.shape[1] - (1 if a.target in p.df.columns else 0), 0)
     rec = fn(raw, a.filename, a.sheet, a.target, "", a.anonymize, a.profile, 1, a.seed,

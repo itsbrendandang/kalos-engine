@@ -1,61 +1,37 @@
-"""The tool table and the one invocation path for skill tools.
+"""The tool table: every skill tool, bound to one existing engine symbol.
 
 Registration is an explicit, code-reviewed table (`TOOLS` below): no schema is
 generated at runtime and nothing is injected into a global namespace. Each
 `ToolSpec` names:
 
-- `symbol`: the engine function or class the tool is bound to, checked
-  statically (AST, no import) by `check_tools`;
+- `symbol`: the engine callable the tool is bound to (`pkg.mod:attr` or
+  `pkg.mod:Class.method`), checked statically (AST, no import);
 - `adapter`: the function in `kalos.skills.bindings` that calls it;
-- `args_model` / `result_model`: pydantic models that validate every call's
-  arguments and every result;
-- `label`: the data label of the result (measured, predicted, simulated,
-  synthetic, derived, metadata);
-- `scope`, `side_effects`, `needs_torch`, `timeout_s`.
+- `args_model` / `result_model`: pydantic models for every call's arguments and
+  result;
+- `label`: the data label of the result;
+- `csv`: the result key (a list of row dicts) written as a CSV artifact for the
+  skill's table output; everything else goes to one JSON artifact;
+- `scope`, `side_effects`, `needs_torch`, `long_running`, `timeout_s`
+  (default 1800 s) and the pyproject extras the tool needs.
 
-`invoke(skill, tool, args, ctx)` is the only way to run a tool:
-
-1. the skill must list the tool, must not be `planned`, and the caller must
-   hold the skill's and the tool's scope;
-2. `args_model.model_validate(args)`;
-3. the adapter runs under a timeout;
-4. `result_model.model_validate(data)`; the tool's label must be one of the
-   skill's declared output labels (a predicted result can never come out of a
-   skill that only declares derived outputs, and so on);
-5. a `SkillRunReceipt` is written for every outcome: ok, refused (engine or
-   adapter refusal, with the reason) or error.
-
-Kalos-original code.
+The single runner that executes tools, writes artifacts and receipts is
+`kalos.skills.runner`. Kalos-original code.
 """
 from __future__ import annotations
 
-import concurrent.futures as cf
-import time
 from dataclasses import dataclass
-from typing import Any, Literal
+from pathlib import Path
+from typing import Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from . import bindings as b
-from .bindings import ToolContext, ToolRefusal
-from .loader import Skill, check_symbol, default_engine_root
-from .receipts import (
-    OutputRecord,
-    ReceiptStore,
-    Refusal,
-    SkillRunReceipt,
-    engine_build_sha,
-    new_receipt_id,
-    sha256_json,
-    table_sha256,
-    utcnow,
-)
+from .loader import Skill, check_symbol, default_engine_root, defined_extras
 from .schema import DataLabel
 
 ADAPTER_MODULE = "kalos.skills.bindings"
-# Exception class names (anywhere in the MRO) that mean "the engine refused this
-# input", matched by name so this module never imports the classes (and torch).
-REFUSAL_CLASS_NAMES = frozenset({"UploadRejected", "CampaignError", "FitError", "ToolRefusal"})
+DEFAULT_TIMEOUT_S = 1800
 
 
 @dataclass(frozen=True)
@@ -69,16 +45,36 @@ class ToolSpec:
     scope: Literal["read", "write"] = "read"
     side_effects: Literal["none", "writes-campaign", "external"] = "none"
     needs_torch: bool = False
-    timeout_s: int = 120
+    # Fits a GP or similar. v1 runs every tool on an in-process worker thread,
+    # which cannot be stopped; these should move to the killable job-worker
+    # subprocess (kalos/portal/job_runner.py) when a run route exists.
+    long_running: bool = False
+    timeout_s: int = DEFAULT_TIMEOUT_S
+    csv: str | None = None
+    extra_extras: tuple[str, ...] = ()
     description: str = ""
-    output: str = ""  # which declared skill output this result feeds
+
+    @property
+    def requires_extras(self) -> frozenset[str]:
+        out = set(self.extra_extras)
+        if self.needs_torch:
+            out.add("ml")
+        if self.symbol.startswith("kalos.portal."):
+            out.add("portal")
+        return frozenset(out)
+
+    @property
+    def args_seed_default(self) -> int | None:
+        f = self.args_model.model_fields.get("seed")
+        return None if f is None else f.default
 
 
-def _t(name, symbol, adapter, args, result, label, *, torch=False, timeout=120, desc="",
-       output="") -> ToolSpec:
+def _t(name, symbol, adapter, args, result, label, *, torch=False, long=False, timeout=None,
+       csv=None, extras=(), desc="") -> ToolSpec:
     return ToolSpec(name=name, symbol=symbol, adapter=adapter, args_model=args,
-                    result_model=result, label=label, needs_torch=torch, timeout_s=timeout,
-                    description=desc, output=output)
+                    result_model=result, label=label, needs_torch=torch, long_running=long,
+                    timeout_s=timeout or DEFAULT_TIMEOUT_S, csv=csv, extra_extras=tuple(extras),
+                    description=desc)
 
 
 TOOLS: dict[str, ToolSpec] = {t.name: t for t in [
@@ -115,7 +111,7 @@ TOOLS: dict[str, ToolSpec] = {t.name: t for t in [
     _t("engine.convert_unit", "kalos.normalize.units:convert", "convert_unit",
        b.ConvertArgs, b.ConvertResult, "derived"),
     _t("engine.apply_unit_conversions", "kalos.validation.runner:apply_unit_conversions",
-       "apply_unit_conversions", b.TableArgs, b.UnitConversionsResult, "derived"),
+       "apply_unit_conversions", b.TableArgs, b.UnitConversionsResult, "derived", csv="rows"),
     # search-box-definition
     _t("engine.build_search_box", "kalos.domains.profile:build_design_space", "build_search_box",
        b.SearchBoxArgs, b.SearchBoxResult, "derived"),
@@ -127,27 +123,28 @@ TOOLS: dict[str, ToolSpec] = {t.name: t for t in [
     _t("engine.rank_drivers", "kalos.core.drivers:rank_drivers", "rank_drivers",
        b.RankDriversArgs, b.RankDriversResult, "derived"),
     # identifier-anonymisation
-    _t("engine.anonymizer", "kalos.data.anonymizer:Anonymizer", "anonymise_table",
-       b.AnonymiseArgs, b.AnonymiseResult, "derived"),
+    _t("engine.anonymizer", "kalos.data.anonymizer:Anonymizer.anonymize_meta",
+       "anonymise_table", b.AnonymiseArgs, b.AnonymiseResult, "derived", csv="rows",
+       extras=("portal",)),
     _t("engine.anonymize_parsed", "kalos.portal.analysis_parts.anonymize:anonymize_parsed",
        "anonymize_parsed", b.FileArgs, b.AnonymiseParsedResult, "derived"),
     # trust-report
     _t("engine.grouped_cv_report", "kalos.core.evaluation:grouped_cv_report", "grouped_cv_report",
-       b.CVArgs, b.CVResult, "derived", torch=True, timeout=600),
+       b.CVArgs, b.CVResult, "derived", torch=True, long=True),
     _t("engine.interval_calibration", "kalos.core.evaluation:interval_calibration",
        "interval_calibration", b.CalibrationArgs, b.CalibrationResult, "derived", torch=True),
     _t("engine.check_gates", "kalos.core.gates:check_gates", "check_gates",
        b.GatesArgs, b.GatesResult, "derived"),
     _t("engine.gp_shape_report", "kalos.core.gp_shape:gp_shape_report", "gp_shape_report",
-       b.GPShapeArgs, b.GPShapeResult, "derived", torch=True, timeout=300),
+       b.GPShapeArgs, b.GPShapeResult, "derived", torch=True, long=True),
     # bo-next-batch
     _t("engine.surrogate_fit", "kalos.core.surrogate:Surrogate", "surrogate_fit",
-       b.SurrogateFitArgs, b.SurrogateFitResult, "predicted", torch=True, timeout=300),
+       b.SurrogateFitArgs, b.SurrogateFitResult, "predicted", torch=True, long=True),
     _t("engine.propose_batch", "kalos.core.optimize:propose_batch", "propose_batch",
-       b.ProposeArgs, b.ProposeResult, "predicted", torch=True, timeout=600),
+       b.ProposeArgs, b.ProposeResult, "predicted", torch=True, long=True),
     # scale-up-envelope-check
     _t("engine.scale_build_readout", "kalos.scale.readout:build_readout", "scale_build_readout",
-       b.ScaleReadoutArgs, b.ScaleReadoutResult, "predicted", torch=True, timeout=600),
+       b.ScaleReadoutArgs, b.ScaleReadoutResult, "predicted", torch=True, long=True),
     # campaign-status / campaign-provenance-report
     _t("engine.campaign_summary", "kalos.portal.campaign:CampaignStore", "campaign_summary",
        b.CampaignArgs, b.CampaignSummaryResult, "derived"),
@@ -167,164 +164,89 @@ def get_tool(name: str) -> ToolSpec | None:
     return TOOLS.get(name)
 
 
-def check_tools(skills: list[Skill] | None = None) -> list[str]:
-    """Static checks, no imports: every tool's engine symbol resolves, its adapter
-    exists, and every skill's `tools[]` names a registered tool whose label is one
-    of the skill's declared output labels."""
-    root = default_engine_root()
+def artifact_targets(skill: Skill, spec: ToolSpec) -> tuple[str | None, str | None]:
+    """(json output name, csv output name) this tool writes for this skill.
+    JSON goes to the skill's one `json` output with the tool's label; the CSV
+    (when `spec.csv`) to its one `table`/`csv` output with that label."""
+    m = skill.meta
+    js = [o.name for o in m.outputs if o.kind == "json" and o.label == spec.label]
+    tb = [o.name for o in m.outputs if o.kind in ("table", "csv") and o.label == spec.label]
+    return (js[0] if len(js) == 1 else None,
+            (tb[0] if len(tb) == 1 else None) if spec.csv else None)
+
+
+def check_tools(skills: list[Skill] | None = None, engine_root: Path | None = None) -> list[str]:
+    """Static checks, no engine imports:
+
+    - every tool's engine symbol resolves and its adapter exists;
+    - every skill tool is registered, carries a label the skill declares, and
+      maps to exactly one declared output per artifact;
+    - a locked skill's entrypoint is the symbol of one of its own tools;
+    - tool extras are declared in the skill's `requires_extras`, and every
+      declared extra exists in pyproject.toml;
+    - a tool that takes a `seed` needs a `seed` int parameter in the skill with
+      the same default.
+    """
+    root = Path(engine_root) if engine_root is not None else default_engine_root()
     problems: list[str] = []
     for t in TOOLS.values():
         problems += [f"{t.name}: {p}" for p in check_symbol(t.symbol, root)]
         if not callable(getattr(b, t.adapter, None)):
             problems.append(f"{t.name}: adapter {ADAPTER_MODULE}:{t.adapter} missing")
+    extras = defined_extras(root)
     for s in skills or []:
-        for name in s.meta.tools:
+        m = s.meta
+        for x in m.requires_extras:
+            if x not in extras:
+                problems.append(f"{s.slug}: requires_extras names {x!r}, not an extra in "
+                                "pyproject.toml")
+        symbols = set()
+        for name in m.tools:
             spec = TOOLS.get(name)
             if spec is None:
                 problems.append(f"{s.slug}: tool {name} is not registered")
-            elif spec.label not in s.meta.output_labels:
-                problems.append(
-                    f"{s.slug}: tool {name} emits {spec.label}, skill declares "
-                    f"{sorted(s.meta.output_labels)}")
+                continue
+            symbols.add(spec.symbol)
+            if spec.label not in m.output_labels:
+                problems.append(f"{s.slug}: tool {name} emits {spec.label}, skill declares "
+                                f"{sorted(m.output_labels)}")
+                continue
+            js, tb = artifact_targets(s, spec)
+            if js is None:
+                problems.append(f"{s.slug}: tool {name} has no single json output labelled "
+                                f"{spec.label}")
+            if spec.csv and tb is None:
+                problems.append(f"{s.slug}: tool {name} writes a table but the skill has no "
+                                f"single table output labelled {spec.label}")
+            missing = spec.requires_extras - set(m.requires_extras)
+            if missing:
+                problems.append(f"{s.slug}: tool {name} needs extras {sorted(missing)}")
+            sd = spec.args_seed_default
+            if sd is not None:
+                param = next((p for p in m.parameters if p.name == "seed"), None)
+                if param is None or param.type != "int":
+                    problems.append(f"{s.slug}: tool {name} takes a seed; declare an int "
+                                    "'seed' parameter")
+                elif param.default != sd:
+                    problems.append(f"{s.slug}: seed default {param.default} != tool default {sd}")
+        if m.entrypoint is not None:
+            problems += [f"{s.slug}: entrypoint {p}" for p in check_symbol(m.entrypoint, root)]
+            if m.entrypoint not in symbols:
+                problems.append(f"{s.slug}: entrypoint {m.entrypoint} is not the symbol of one "
+                                "of its tools")
+        if m.kind == "guided":
+            for name in m.tools:
+                spec = TOOLS.get(name)
+                if spec is not None and (spec.scope != "read" or spec.side_effects != "none"):
+                    problems.append(f"{s.slug}: guided skills may only use read-only tools")
     return problems
 
 
-# --- invocation --------------------------------------------------------------- #
-
-
-class ToolCallError(Exception):
-    """A call that could not run (unknown tool, scope, bad args) or failed inside
-    the engine. `receipt` is set when the call got far enough to be receipted."""
-
-    def __init__(self, code: str, message: str, receipt: SkillRunReceipt | None = None):
-        super().__init__(message)
-        self.code = code
-        self.receipt = receipt
-
-
-class ToolOutcome(BaseModel):
-    outcome: Literal["ok", "refused"]
-    label: DataLabel
-    data: Any = None
-    refusal: Refusal | None = None
-    receipt: SkillRunReceipt
-
-
-def _is_refusal(exc: BaseException) -> bool:
-    return any(c.__name__ in REFUSAL_CLASS_NAMES for c in type(exc).__mro__)
-
-
-def _refusal_code(exc: BaseException) -> str:
-    code = getattr(exc, "code", None)
-    return code if isinstance(code, str) and code else type(exc).__name__
-
-
-def guard_measured_write(label: str) -> None:
-    """Honesty invariant: only `measured` values may be written into a campaign's
-    measured data. Called by any write path before it stores a skill result."""
-    if label != "measured":
-        raise ToolRefusal("label_mismatch",
-                          f"a {label} result can never be written as measured data")
-
-
-def _run_with_timeout(fn, args, ctx, timeout_s: int):
-    # A thread, not a process: a timed-out engine call is abandoned (its result
-    # discarded and receipted as a timeout), not killed. Long fits belong on the
-    # job runner once a run route exists.
-    ex = cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="kalos-skill-tool")
-    try:
-        fut = ex.submit(fn, args, ctx)
-        return fut.result(timeout=timeout_s)
-    finally:
-        ex.shutdown(wait=False, cancel_futures=True)
-
-
-def invoke(skill: Skill, tool: str, args: dict[str, Any], ctx: ToolContext, *,
-           campaign_id: str | None = None, timeout_s: int | None = None) -> ToolOutcome:
-    """Run one tool for one skill. Returns a receipted `ToolOutcome` for ok and
-    refused calls; raises `ToolCallError` otherwise (receipted when it got past
-    argument validation)."""
-    m = skill.meta
-    if m.status == "planned":
-        raise ToolCallError("planned", f"skill {m.slug} is planned; it has no tools yet")
-    if tool not in m.tools:
-        raise ToolCallError("tool_not_in_skill", f"{tool} is not a tool of {m.slug}")
-    spec = TOOLS.get(tool)
-    if spec is None:
-        raise ToolCallError("unknown_tool", f"{tool} is not registered")
-    needed = {m.scope, spec.scope}
-    if not needed <= set(ctx.scopes):
-        raise ToolCallError("forbidden", f"requires scope(s) {sorted(needed)}")
-    try:
-        parsed = spec.args_model.model_validate(args)
-    except ValidationError as exc:
-        raise ToolCallError("invalid_args", f"invalid arguments for {tool}: "
-                            f"{exc.error_count()} error(s)") from exc
-
-    started, t0 = utcnow(), time.monotonic()
-    dumped = parsed.model_dump(mode="json")
-    rows = dumped.get("rows") if isinstance(dumped.get("rows"), list) else None
-    input_sha = table_sha256(rows) if rows else None
-    cid = campaign_id or dumped.get("campaign_id")
-    seed = dumped.get("seed") if isinstance(dumped.get("seed"), int) else None
-
-    def receipt(outcome, outputs=(), refusal=None) -> SkillRunReceipt:
-        r = SkillRunReceipt(
-            receipt_id=new_receipt_id(), skill_slug=m.slug, skill_version=m.version,
-            skill_content_hash=skill.content_hash, tool=tool, symbol=spec.symbol,
-            args_sha256=sha256_json(dumped), input_sha256=input_sha,
-            input_rows=len(rows) if rows else None, seed=seed,
-            build_sha=engine_build_sha(), outcome=outcome, outputs=list(outputs),
-            refusal=refusal, tenant=ctx.tenant, subject=ctx.subject,
-            campaign_id=cid if isinstance(cid, str) else None, started_at=started,
-            finished_at=utcnow(), duration_ms=int((time.monotonic() - t0) * 1000))
-        store = ctx.receipts if ctx.receipts is not None else ReceiptStore()
-        store.write(r)
-        return r
-
-    adapter = getattr(b, spec.adapter)
-    try:
-        data = _run_with_timeout(adapter, parsed, ctx, timeout_s or spec.timeout_s)
-    except cf.TimeoutError:
-        r = receipt("error", refusal=Refusal(code="timeout", reason=f"no result within "
-                                             f"{timeout_s or spec.timeout_s} s"))
-        raise ToolCallError("timeout", f"{tool} timed out", r) from None
-    except Exception as exc:  # noqa: BLE001 - classified below, always receipted
-        if _is_refusal(exc):
-            reason = getattr(exc, "reason", None) or getattr(exc, "message", None) or str(exc)
-            ref = Refusal(code=_refusal_code(exc), reason=str(reason)[:2000])
-            return ToolOutcome(outcome="refused", label=spec.label, refusal=ref,
-                               receipt=receipt("refused", refusal=ref))
-        r = receipt("error", refusal=Refusal(code="engine_error", reason=type(exc).__name__))
-        raise ToolCallError("engine_error", f"{tool} failed: {type(exc).__name__}", r) from exc
-
-    try:
-        result = spec.result_model.model_validate(data)
-    except ValidationError as exc:
-        r = receipt("error", refusal=Refusal(code="invalid_result",
-                                             reason=f"{exc.error_count()} error(s)"))
-        raise ToolCallError("invalid_result", f"{tool} returned an invalid result", r) from exc
-    if spec.label not in m.output_labels:
-        r = receipt("error", refusal=Refusal(code="label_mismatch",
-                                             reason=f"{spec.label} not declared by {m.slug}"))
-        raise ToolCallError("label_mismatch", "result label contradicts the skill", r)
-    out = result.model_dump(mode="json")
-    output_name = spec.output or next(
-        (o.name for o in m.outputs if o.label == spec.label), spec.name)
-    rec = receipt("ok", outputs=[OutputRecord(name=output_name, label=spec.label,
-                                              sha256=sha256_json(out))])
-    return ToolOutcome(outcome="ok", label=spec.label, data=out, receipt=rec)
-
-
 __all__ = [
+    "DEFAULT_TIMEOUT_S",
     "TOOLS",
-    "ToolCallError",
-    "ToolContext",
-    "ToolOutcome",
-    "ToolRefusal",
     "ToolSpec",
+    "artifact_targets",
     "check_tools",
     "get_tool",
-    "guard_measured_write",
-    "invoke",
 ]

@@ -1,20 +1,25 @@
-"""Skill run receipts: one JSON record per tool call, written whether the call
-succeeded, was refused, or failed.
+"""Skill run receipts (`kalos-skill-receipt/1`) and the per-run directories
+they live in.
 
-A receipt says which bytes ran (skill slug, version and folder `content_hash`;
-tool name and engine symbol; engine `build_sha`), on what (sha256 of the
-validated arguments and, for table inputs, of the input data in the same CSV
-form `kalos.portal.run_record.fold_bytes` uses), with which seed, and what came
-out (one entry per output with its sha256 and its data label: measured,
-predicted, simulated, synthetic, derived or metadata). It never stores the input
-data or the output values themselves, only their hashes.
+Every tool call gets a fresh run directory
+`<root>/<tenant>/<receipt_id>/` holding `receipt.json` and the call's output
+artifacts. `root` defaults to `$KALOS_STATE_DIR/skill_runs`.
 
-A refusal is a successful, receipted outcome (`outcome="refused"` with the
-engine's reason), not an error to retry around.
+A receipt moves through a small state machine, forward only:
 
-Storage: `<root>/<tenant>/<receipt_id>.json`, root defaulting to
-`$KALOS_STATE_DIR/skill_receipts` (`~/.kalos/skill_receipts`). Files are written
-atomically (temp file + rename) and never overwritten. Kalos-original code.
+    running -> analysis_complete -> terminal (result pass | fail)
+    running -> terminal (fail)            runtime fault, timeout, block, refusal
+
+A presentation or report step (`kalos.skills.runner.finalize`) may only start
+from `analysis_complete`. A terminal receipt is never written again.
+
+A receipt says which bytes ran (skill slug, version, content hash; tool and
+engine symbol; engine build and library versions), on what (canonical
+arguments and their sha256; sha256 of each input; the seed) and what came out
+(per artifact: path, sha256, bytes, label). It never holds input data: inputs
+are hashed, never copied. An error carries a machine `error_code` and a fixed
+generic message, never the engine's exception text (which can quote cell
+values). Kalos-original code.
 """
 from __future__ import annotations
 
@@ -34,23 +39,53 @@ from pydantic import BaseModel, ConfigDict, Field
 from .schema import DataLabel
 
 RECEIPT_SCHEMA = "kalos-skill-receipt/1"
+RECEIPT_FILE = "receipt.json"
 RECEIPT_ID_RE = re.compile(r"^skr_[0-9a-f]{32}$")
 _TENANT_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,128}$")
+
+State = Literal["running", "analysis_complete", "terminal"]
+RunStatus = Literal["completed", "blocked", "refused", "error"]
+ErrorCode = Literal["timeout", "input_unreadable", "invalid_result", "output_too_small",
+                    "label_mismatch", "path_escape", "internal"]
+ERROR_MESSAGES: dict[str, str] = {
+    "timeout": "the tool did not finish within its time limit; any late result is discarded",
+    "input_unreadable": "the input could not be read",
+    "invalid_result": "the engine result did not match the tool's result model",
+    "output_too_small": "an output artifact is smaller than its declared minimum size",
+    "label_mismatch": "the result label contradicts the skill's declared outputs",
+    "path_escape": "an output path resolved outside the run directory",
+    "internal": "the engine raised an unexpected error",
+}
+_NEXT: dict[str, frozenset[str]] = {
+    "running": frozenset({"analysis_complete", "terminal"}),
+    "analysis_complete": frozenset({"terminal"}),
+    "terminal": frozenset(),
+}
 
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class OutputRecord(_Strict):
-    name: str
-    label: DataLabel
+class Artifact(_Strict):
+    name: str  # the declared skill output this artifact is
+    path: str  # relative to the run directory
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    bytes: int = Field(ge=0)
+    label: DataLabel
 
 
-class Refusal(_Strict):
+class Blocker(_Strict):
     code: str
-    reason: str = Field(max_length=2000)
+    message: str = Field(max_length=2000)
+    rows: list[int] | None = None
+
+
+class ErrorInfo(_Strict):
+    error_code: ErrorCode
+    exception_type: str | None = None
+    message: str
+    receipt_id: str
 
 
 class SkillRunReceipt(_Strict):
@@ -61,20 +96,26 @@ class SkillRunReceipt(_Strict):
     skill_content_hash: str
     tool: str
     symbol: str
+    args_json: str
     args_sha256: str
-    input_sha256: str | None = None
-    input_rows: int | None = None
+    input_sha256s: list[str] = []
     seed: int | None = None
     build_sha: str
-    outcome: Literal["ok", "refused", "error"]
-    outputs: list[OutputRecord] = []
-    refusal: Refusal | None = None
+    library_versions: dict[str, str | None] = {}
+    state: State
+    result: Literal["pass", "fail"] | None = None
+    status: RunStatus | None = None
+    summary: str = ""
+    outputs: list[Artifact] = []
+    failures: list[Blocker] = []
+    error: ErrorInfo | None = None
     tenant: str
     subject: str | None = None
     campaign_id: str | None = None
     started_at: str
-    finished_at: str
-    duration_ms: int
+    updated_at: str
+    finished_at: str | None = None
+    duration_ms: int | None = None
 
 
 def new_receipt_id() -> str:
@@ -97,7 +138,7 @@ def _finite(obj: Any) -> Any:
 
 def canonical_json(obj: Any) -> bytes:
     """Stable bytes for hashing: sorted keys, no whitespace, non-finite floats
-    hashed as null (a missing cell and a NaN cell are the same input)."""
+    as null (a missing cell and a NaN cell are the same input)."""
     return json.dumps(_finite(obj), sort_keys=True, separators=(",", ":"), ensure_ascii=False,
                       allow_nan=False, default=str).encode("utf-8")
 
@@ -111,14 +152,19 @@ def sha256_json(obj: Any) -> str:
 
 
 def table_sha256(rows: list[dict[str, Any]]) -> str:
-    """Hash of a table input in the form run records use (`fold_bytes`: the
-    frame as CSV without the index), so the same rows give the same hash here
-    and in a run record."""
+    """Hash of a table in the form run records use (`fold_bytes`: CSV without
+    the index), so the same rows give the same hash here and in a run record."""
     import pandas as pd
 
     from kalos.portal.run_record import fold_bytes
 
     return sha256_hex(fold_bytes(pd.DataFrame(rows)))
+
+
+def frame_sha256(df: Any) -> str:
+    from kalos.portal.run_record import fold_bytes
+
+    return sha256_hex(fold_bytes(df))
 
 
 def engine_build_sha() -> str:
@@ -127,68 +173,118 @@ def engine_build_sha() -> str:
     return build_sha()
 
 
+def library_versions() -> dict[str, str | None]:
+    """Installed versions of the numeric stack, read from package metadata (no
+    import, so this never loads torch)."""
+    from importlib import metadata
+
+    from kalos.portal.run_record import LIBRARY_DISTRIBUTIONS
+
+    out: dict[str, str | None] = {}
+    for dist in (*LIBRARY_DISTRIBUTIONS, "scipy", "scikit-learn", "gpytorch", "kalos"):
+        try:
+            out[dist] = metadata.version(dist)
+        except metadata.PackageNotFoundError:
+            out[dist] = None
+    return out
+
+
 def default_root() -> Path:
-    return Path(os.environ.get("KALOS_STATE_DIR", Path.home() / ".kalos")) / "skill_receipts"
+    return Path(os.environ.get("KALOS_STATE_DIR", Path.home() / ".kalos")) / "skill_runs"
 
 
-class ReceiptStore:
-    """Append-only, per-tenant receipt files."""
+class TransitionError(RuntimeError):
+    """A receipt write that would move the state machine backwards or touch a
+    terminal receipt."""
+
+
+class RunStore:
+    """Per-tenant run directories, each with one receipt.json."""
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = Path(root) if root is not None else default_root()
 
-    def _dir(self, tenant: str) -> Path:
-        if not _TENANT_RE.match(tenant):
-            raise ValueError("invalid tenant id for a receipt path")
+    def tenant_dir(self, tenant: str) -> Path:
+        if not _TENANT_RE.match(tenant) or tenant in (".", ".."):
+            raise ValueError("invalid tenant id for a run path")
         return self.root / tenant
 
-    def write(self, receipt: SkillRunReceipt) -> Path:
-        d = self._dir(receipt.tenant)
-        d.mkdir(parents=True, exist_ok=True)
-        path = d / f"{receipt.receipt_id}.json"
-        if path.exists():
-            raise FileExistsError(f"receipt {receipt.receipt_id} already written")
-        data = json.dumps(receipt.model_dump(by_alias=True), indent=1, sort_keys=True)
+    def run_dir(self, tenant: str, receipt_id: str) -> Path:
+        if not RECEIPT_ID_RE.match(receipt_id):
+            raise ValueError("invalid receipt id")
+        return self.tenant_dir(tenant) / receipt_id
+
+    def create_run(self, receipt: SkillRunReceipt) -> Path:
+        """Make the fresh run directory (must not exist) and write the first
+        (`running`) receipt."""
+        if receipt.state != "running":
+            raise TransitionError("a run starts in state running")
+        d = self.run_dir(receipt.tenant, receipt.receipt_id)
+        d.parent.mkdir(parents=True, exist_ok=True)
+        d.mkdir(exist_ok=False)
+        self._write(d, receipt)
+        return d
+
+    def update(self, receipt: SkillRunReceipt) -> None:
+        d = self.run_dir(receipt.tenant, receipt.receipt_id)
+        prev = self.read(d)
+        if receipt.state not in _NEXT[prev.state]:
+            raise TransitionError(f"{prev.state} -> {receipt.state} is not allowed")
+        self._write(d, receipt)
+
+    @staticmethod
+    def read(run_dir: Path) -> SkillRunReceipt:
+        return SkillRunReceipt.model_validate_json(
+            (Path(run_dir) / RECEIPT_FILE).read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _write(d: Path, receipt: SkillRunReceipt) -> None:
+        data = json.dumps(receipt.model_dump(), indent=1, sort_keys=True) + "\n"
         fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-", suffix=".json")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(data + "\n")
-            os.link(tmp, path)  # fails if `path` appeared meanwhile: never overwrite
-        finally:
-            os.unlink(tmp)
-        return path
+                fh.write(data)
+            os.replace(tmp, d / RECEIPT_FILE)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
 
     def get(self, tenant: str, receipt_id: str) -> SkillRunReceipt | None:
         """The receipt, or None when absent or owned by another tenant."""
         if not RECEIPT_ID_RE.match(receipt_id):
             return None
-        path = self._dir(tenant) / f"{receipt_id}.json"
-        if not path.is_file():
+        d = self.run_dir(tenant, receipt_id)
+        if not (d / RECEIPT_FILE).is_file():
             return None
-        return SkillRunReceipt.model_validate_json(path.read_text(encoding="utf-8"))
+        return self.read(d)
 
     def list_for(self, tenant: str, *, skill: str | None = None) -> list[SkillRunReceipt]:
-        d = self._dir(tenant)
+        d = self.tenant_dir(tenant)
         if not d.is_dir():
             return []
-        out = []
-        for p in sorted(d.glob("skr_*.json")):
-            r = SkillRunReceipt.model_validate_json(p.read_text(encoding="utf-8"))
-            if skill is None or r.skill_slug == skill:
-                out.append(r)
+        out = [self.read(p) for p in d.glob("skr_*") if (p / RECEIPT_FILE).is_file()]
+        out = [r for r in out if skill is None or r.skill_slug == skill]
         out.sort(key=lambda r: (r.started_at, r.receipt_id))
         return out
 
 
 __all__ = [
+    "ERROR_MESSAGES",
+    "RECEIPT_FILE",
     "RECEIPT_SCHEMA",
-    "OutputRecord",
-    "ReceiptStore",
-    "Refusal",
+    "Artifact",
+    "Blocker",
+    "ErrorInfo",
+    "RunStore",
     "SkillRunReceipt",
+    "TransitionError",
     "canonical_json",
     "engine_build_sha",
+    "frame_sha256",
+    "library_versions",
     "new_receipt_id",
+    "sha256_hex",
     "sha256_json",
     "table_sha256",
 ]
