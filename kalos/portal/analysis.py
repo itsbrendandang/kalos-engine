@@ -109,6 +109,7 @@ from kalos.portal.uploads import (
 )
 from kalos.portal.validate import column_provenance, provenance_dicts
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
+from kalos.validation.qc import exclude_qc_failed
 
 # Re-exported: each name below was defined in this module before the split into
 # `kalos.portal.analysis_parts`; callers and tests keep importing it from here.
@@ -333,6 +334,23 @@ def _analyze_body(
             code="target_not_found",
             context={"target": str(requested_target), "available_targets": available},
         )
+
+    # QC-failed runs (a `qc` column saying fail, or `contamination` = Y) are
+    # not measurements of their recipe - a contaminated culture often reads
+    # HIGH - so they are excluded before validation, the fit and the incumbent,
+    # and counted in `qc_excluded` (kalos/validation/qc.py). The QC column is
+    # removed so it can never become a categorical feature, unless roles
+    # declared it on purpose.
+    declared_cols = (
+        {str(roles.target), *map(str, roles.features), *map(str, roles.categoricals)}
+        if roles is not None
+        else {str(requested_target)} if requested_target is not None else set()
+    )
+    df, qc_exclusion = exclude_qc_failed(df, keep_columns=declared_cols)
+    if qc_exclusion.n_excluded:
+        n_data_rows = len(df.dropna(axis=0, how="all"))
+        if n_data_rows < MIN_FIT_ROWS:
+            raise _too_few_rows(n_data_rows)
 
     # The validation gate runs FIRST, on the sheet as uploaded, before any
     # column is typed or dropped - it has to see the raw cells to catch a mixed
@@ -1337,6 +1355,7 @@ def _analyze_body(
         "n_dropped_incomplete": n_rows_dropped,
         "n_censored_excluded": n_censored_rows,
         "data_drops": _data_drops_block(by_column, n_rows_dropped, n_censored_rows, zero_filled),
+        "qc_excluded": qc_exclusion.to_dict(),
         # Text columns the engine treated as categorical with no declared roles
         # (see `_auto_categorical`); empty when roles were declared.
         "auto_categorical": [str(c) for c in auto_cats if c in kept_cats],

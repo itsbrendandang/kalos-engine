@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 
 from kalos.domains.profile import ColumnRoles
+from kalos.validation.qc import qc_fail_mask
 
 
 @dataclass(frozen=True)
@@ -115,7 +116,8 @@ def load_real_frame(
             raise ValueError("real_only needs a data_type column")
         df = df[df[mapping.data_type].astype(str).str.strip().str.lower() == mapping.real_value.lower()]
     if exclude_contaminated and mapping.contamination in df.columns:
-        df = df[df[mapping.contamination].astype(str).str.upper() != "Y"]
+        # Same token rule the portal applies to uploads (kalos/validation/qc.py).
+        df = df[~qc_fail_mask(df[mapping.contamination], "contamination")]
     df = df.copy()
     for c in needed:
         df[c] = pd.to_numeric(df[c], errors="coerce")
