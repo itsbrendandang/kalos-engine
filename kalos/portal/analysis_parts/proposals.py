@@ -23,6 +23,7 @@ def _annotate(
     *,
     p_feasible: np.ndarray | None = None,
     constraint: tuple[str, np.ndarray, np.ndarray] | None = None,
+    distance: np.ndarray | None = None,
 ) -> list:
     """Attach predicted value, uncertainty, and an explore/exploit rationale to
     each proposed experiment. Explore = high model uncertainty (chosen to learn);
@@ -43,7 +44,10 @@ def _annotate(
     length-`len(batch)` arrays/name - and every row gets a
     `pred_<column_name>` key of `{"mean": ..., "std": ...}`. `None` (the
     default) omits the key entirely: it is only ever passed when PART 2's
-    constraint was actually applied."""
+    constraint was actually applied.
+
+    `distance`, when given, adds `nearest_training_distance` to every row (see
+    `nearest_training_distance`). Omitted when None."""
     mean = np.asarray(mean, float).reshape(-1)
     std = np.asarray(std, float).reshape(-1)
     thr = float(np.quantile(std, 2 / 3)) if len(std) > 2 else float(std.max() if len(std) else 0.0)
@@ -72,8 +76,34 @@ def _annotate(
                 "mean": round(float(cmean[i]), 3),
                 "std": round(float(cstd[i]), 3),
             }
+        if distance is not None:
+            row["nearest_training_distance"] = round(float(distance[i]), 4)
         rows.append(row)
     return rows
+
+
+def nearest_training_distance(
+    batch: np.ndarray, X_train: np.ndarray, bounds: np.ndarray, cat_dims: Sequence[int] | None = None,
+) -> np.ndarray:
+    """Distance from each proposed row to its nearest training row, in
+    normalized units (compmodel PLAN E11): each continuous feature is divided by
+    its design-box width (so 1.0 = the full width of that feature), a categorical
+    feature contributes 1 when the levels differ and 0 when equal, and the
+    distance is Euclidean over all features. 0 = the proposal is a training
+    row. A number only; no threshold or verdict is applied here."""
+    B = np.asarray(batch, float)
+    X = np.asarray(X_train, float)
+    if B.size == 0 or X.size == 0:
+        return np.full(len(B), np.nan)
+    lo, hi = np.asarray(bounds, float)
+    width = np.where(hi - lo > 0, hi - lo, 1.0)
+    cats = set(int(c) for c in (cat_dims or []))
+    cont = np.array([j not in cats for j in range(B.shape[1])])
+    diff = np.empty((len(B), len(X), B.shape[1]))
+    diff[:, :, cont] = (B[:, None, cont] - X[None, :, cont]) / width[cont]
+    if (~cont).any():
+        diff[:, :, ~cont] = (B[:, None, ~cont] != X[None, :, ~cont]).astype(float)
+    return np.sqrt((diff ** 2).sum(axis=2)).min(axis=1)
 
 
 def _encode_pending(
@@ -142,3 +172,29 @@ def _encode_pending(
     if arr.shape[0] == 0:
         return None, n_dropped
     return arr, n_dropped
+
+
+def training_nn_distance_median(
+    X_train: np.ndarray, bounds: np.ndarray, cat_dims: Sequence[int] | None = None,
+) -> float | None:
+    """Median over training rows of the distance to the nearest OTHER training
+    row, in the `nearest_training_distance` metric. Exact duplicates count as 0.
+    None with fewer than 2 rows. Computed in chunks (memory is chunk x n x d)."""
+    X = np.asarray(X_train, float)
+    if len(X) < 2:
+        return None
+    out = np.empty(len(X))
+    for start in range(0, len(X), 128):
+        block = X[start:start + 128]
+        lo, hi = np.asarray(bounds, float)
+        width = np.where(hi - lo > 0, hi - lo, 1.0)
+        cats = set(int(c) for c in (cat_dims or []))
+        cont = np.array([j not in cats for j in range(X.shape[1])])
+        diff = np.empty((len(block), len(X), X.shape[1]))
+        diff[:, :, cont] = (block[:, None, cont] - X[None, :, cont]) / width[cont]
+        if (~cont).any():
+            diff[:, :, ~cont] = (block[:, None, ~cont] != X[None, :, ~cont]).astype(float)
+        d = np.sqrt((diff ** 2).sum(axis=2))
+        d[np.arange(len(block)), np.arange(start, start + len(block))] = np.inf
+        out[start:start + len(block)] = d.min(axis=1)
+    return round(float(np.median(out)), 4)

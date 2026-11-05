@@ -329,6 +329,16 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
   `judgeable`, `judgement` (`"not enough runs to judge calibration"` when
   10 <= n < 20, else `null`) and `judge_min_n` (20). It is still shown from 10.
 
+### Distance to data (additive)
+
+- `proposals[].nearest_training_distance`: distance from the proposed recipe to
+  the nearest training row. Each continuous feature is divided by its design-box
+  width (1.0 = the full width of that feature); a categorical feature adds 1
+  when the level differs; Euclidean over all features. `0` = the recipe is a
+  training row. A number only: the engine applies no threshold and no label.
+- `training_nn_distance_median`: the same metric between training rows (median
+  distance from each row to its nearest other row), for scale.
+
 ## Not in this slice
 
 - Background jobs for reanalyze (it still runs synchronously; upload has a job route).

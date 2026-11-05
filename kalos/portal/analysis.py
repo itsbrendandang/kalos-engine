@@ -77,7 +77,12 @@ from kalos.portal.analysis_parts.policy import (
     RELIABILITY_SPEARMAN_FLOOR,
     validation_mode,
 )
-from kalos.portal.analysis_parts.proposals import _annotate, _encode_pending
+from kalos.portal.analysis_parts.proposals import (
+    _annotate,
+    _encode_pending,
+    nearest_training_distance,
+    training_nn_distance_median,
+)
 from kalos.portal.analysis_parts.ranges import (
     _absent_is_zero_columns,
     _physical_range,
@@ -1490,7 +1495,11 @@ def _analyze_body(
         "proposals": _annotate(
             batch, p_mean, p_std, incumbent, cols=show_idx, design=design,
             p_feasible=p_feasible_arr, constraint=constraint_pred,
+            distance=nearest_training_distance(batch, X, bounds, cat_dims),
         ),
+        # Context for `proposals[].nearest_training_distance` (same metric): the
+        # median distance from each training row to its nearest other row.
+        "training_nn_distance_median": training_nn_distance_median(X, bounds, cat_dims),
         "oof": [[round(a, 4), round(p, 4)] for a, p in zip(oof_a, oof_p)],
         "provenance": provenance,
         # Orientation pre-pass fact from the upload path (kalos/portal/uploads.py):
