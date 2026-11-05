@@ -207,3 +207,82 @@ def test_audit_triggers_and_rows_survive_a_down_and_up_round_trip(tmp_path):
             conn.execute("DELETE FROM audit_log")
     finally:
         conn.close()
+
+
+# --- status / dry-run report the stuck shape (D-6) ------------------------------ #
+
+
+def test_stuck_shape_dry_run_names_it_and_recommends_recovery(tmp_path):
+    db = _stuck_shape(tmp_path)
+    with pytest.raises(migrate.StuckShapeError) as exc:
+        migrate.migrate_up(db, dry_run=True)
+    msg = str(exc.value)
+    assert "STUCK SHAPE" in msg and "records v3" in msg
+    assert "campaigns_backup_2" in msg
+    assert "analyses" in msg and "tenant_defaults" in msg  # FK children named
+    assert "repair a COPY" in msg and "FRESH state directory" in msg
+    assert "does not repair" in msg
+
+
+def test_stuck_shape_status_reports_and_exits_nonzero(tmp_path, capsys):
+    db = _stuck_shape(tmp_path)
+    before = _snapshot(db)
+    report, healthy = migrate.status_report(db)
+    assert healthy is False
+    assert "SHAPE CHECK FAILED" in report and "STUCK SHAPE" in report
+    assert "repair a COPY" in report
+    assert "pending migration" not in report  # no plan is offered for this shape
+
+    assert migrate.main(["status", "--db", str(db)]) == 2
+    assert "STUCK SHAPE" in capsys.readouterr().out
+    assert migrate.main(["up", "--dry-run", "--db", str(db)]) == 1
+    err = capsys.readouterr().err
+    assert "STUCK SHAPE" in err and "FRESH state directory" in err
+
+    assert _snapshot(db) == before  # status and dry-run changed nothing
+    assert _backups(db) == []
+
+
+def test_engine_start_on_stuck_shape_raises_the_specific_error(tmp_path):
+    _stuck_shape(tmp_path)
+    with pytest.raises(migrate.StuckShapeError, match="campaigns_backup_2"):
+        CampaignStore(tmp_path)
+
+
+def test_status_on_healthy_db_is_ok_and_exit_zero(tmp_path):
+    db = _clean_v4(tmp_path)
+    report, healthy = migrate.status_report(db)
+    assert healthy and "shape check: ok" in report
+    assert migrate.main(["status", "--db", str(db)]) == 0
+
+
+def test_status_on_clean_v3_shows_plan_and_exit_zero(tmp_path):
+    db = _clean_v3(tmp_path)
+    report, healthy = migrate.status_report(db)
+    assert healthy and "schema v3 -> v5" in report
+
+
+def test_status_on_unversioned_v2_tables_is_unhealthy(tmp_path):
+    db = _clean_v4(tmp_path)
+    conn = sqlite3.connect(str(db))
+    conn.execute("DELETE FROM schema_migrations")
+    conn.commit()
+    conn.close()
+    report, healthy = migrate.status_report(db)
+    assert not healthy and "no schema version row" in report
+
+
+def test_v3_with_v1_campaigns_but_no_backup_table_is_generic_refusal(tmp_path):
+    """Not the stuck shape (no v2-shaped backup): the generic refusal, which now
+    names the missing campaigns columns instead of saying 'missing: none'."""
+    db = _clean_v3(tmp_path)
+    conn = sqlite3.connect(str(db))
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("DROP TABLE campaigns")
+    conn.execute(migrate.V1_CAMPAIGNS_DDL)
+    conn.commit()
+    conn.close()
+    with pytest.raises(migrate.SchemaError) as exc:
+        migrate.migrate_up(db, dry_run=True)
+    assert not isinstance(exc.value, migrate.StuckShapeError)
+    assert "missing campaigns columns" in str(exc.value) and "'id'" in str(exc.value)

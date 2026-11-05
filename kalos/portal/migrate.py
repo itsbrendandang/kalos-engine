@@ -291,6 +291,12 @@ class SchemaError(RuntimeError):
     """`portal.db` is in a shape this code refuses to run against."""
 
 
+class StuckShapeError(SchemaError):
+    """The recorded version is v2 or later but the live `campaigns` table is not
+    v2-shaped while a `campaigns_backup_N` table holds the v2 shape (a v2 table
+    that an earlier repair renamed away). Never repaired automatically."""
+
+
 # --- connections ------------------------------------------------------------ #
 
 
@@ -402,11 +408,74 @@ def campaigns_table_is_v1_compatible(conn: sqlite3.Connection) -> bool:
     return names >= _V1_REQUIRED_COLUMNS and pk_columns == [_V1_CONFLICT_COLUMN]
 
 
+_BACKUP_TABLE = re.compile(r"campaigns_backup_\d+")
+
+RECOVERY_TEXT = (
+    "recommended recovery (this tool does not repair it; stop the engine first and "
+    "leave this file as it is):\n"
+    "  1. repair a COPY: copy the file with `sqlite3 <db> \".backup <scratch>/portal.db\"` "
+    "(or copy portal.db with its -wal/-shm files), repair the copy by hand, check it with "
+    "`python -m kalos.portal.migrate status --db <scratch>/portal.db`, and only then put "
+    "it in place with the engine stopped; or\n"
+    "  2. start from a FRESH state directory (set KALOS_STATE_DIR to a new empty "
+    "directory) and import the campaign data into it. There is no import command yet: "
+    "read the rows from the backup table with sqlite3 and re-enter them.\n"
+    "  See docs/MIGRATIONS.md (\"Stuck shape\")."
+)
+
+
+def detect_stuck_shape(conn: sqlite3.Connection, version: int | None = None) -> str | None:
+    """Describe the "stuck" shape, or return None when it is not present.
+
+    Stuck = the recorded version is v2 or later, the live `campaigns` table
+    lacks the v2 columns, and at least one `campaigns_backup_N` table has them
+    (the v2 table was renamed away by a v1-path repair; foreign keys may still
+    name the backup table). Read-only: nothing is changed."""
+    v = current_version(conn) if version is None else version
+    if v < V2:
+        return None
+    tables = _tables(conn)
+    if "campaigns" not in tables:
+        return None
+    cols = {str(r[1]) for r in _columns(conn, "campaigns")}
+    if cols >= _V2_CAMPAIGN_COLUMNS:
+        return None
+    backups = sorted(
+        t for t in tables
+        if _BACKUP_TABLE.fullmatch(t) and {str(r[1]) for r in _columns(conn, t)} >= _V2_CAMPAIGN_COLUMNS
+    )
+    if not backups:
+        return None
+    fk_children = sorted(
+        t for t in tables
+        if any(str(r[2]) in backups for r in conn.execute(f'PRAGMA foreign_key_list("{t}")'))
+    )
+    shape = "v1-shaped" if campaigns_table_is_v1_compatible(conn) else "not v2-shaped"
+    lines = [
+        f"STUCK SHAPE: schema_migrations records v{v}, but the tables do not have the v{v} "
+        f"shape: the live `campaigns` table is "
+        f"{shape} (missing columns: {', '.join(sorted(_V2_CAMPAIGN_COLUMNS - cols))}) and "
+        f"the v2-shaped table is {', '.join(backups)}."
+    ]
+    if fk_children:
+        lines.append(
+            f"Foreign keys in {', '.join(fk_children)} name {', '.join(backups)}, "
+            "not `campaigns`."
+        )
+    lines.append("The engine refuses to start on this database.")
+    lines.append(RECOVERY_TEXT)
+    return "\n".join(lines)
+
+
 def _assert_v2_shape(conn: sqlite3.Connection, version: int | None = None) -> None:
     """The tables (and, from v3, `jobs`; from v4, the audit triggers) that the
-    recorded version requires exist. `version` defaults to the recorded one."""
+    recorded version requires exist. `version` defaults to the recorded one.
+    The stuck shape (`detect_stuck_shape`) raises `StuckShapeError`."""
     tables = _tables(conn)
     v = current_version(conn) if version is None else version
+    stuck = detect_stuck_shape(conn, v)
+    if stuck is not None:
+        raise StuckShapeError(stuck)
     expected = _V2_TABLES + (_V3_TABLES if v >= V3 else ())
     missing: list[str] = [t for t in expected if t not in tables]
     if v >= V4:
@@ -418,10 +487,12 @@ def _assert_v2_shape(conn: sqlite3.Connection, version: int | None = None) -> No
         missing += [t for t in _V5_TABLES if t not in tables]
         missing += [f"trigger {t}" for t in _V5_TRIGGERS if t not in triggers]
     cols = {str(r[1]) for r in _columns(conn, "campaigns")}
-    if missing or not cols >= _V2_CAMPAIGN_COLUMNS:
+    missing_cols = sorted(_V2_CAMPAIGN_COLUMNS - cols)
+    if missing or missing_cols:
         raise SchemaError(
             f"portal.db records schema v{v} but its tables do not have the v{v} shape "
-            f"(missing: {missing or 'none'}); refusing to start. "
+            f"(missing tables/triggers: {missing or 'none'}; missing campaigns columns: "
+            f"{missing_cols or 'none'}); refusing to start. "
             "See docs/MIGRATIONS.md (restore the pre-upgrade backup or run `down`)."
         )
 
@@ -1280,13 +1351,18 @@ def _export_latest(
 # --- status ----------------------------------------------------------------- #
 
 
-def status(db_path: Path | str, *, latest_dir: Path | str | None = None) -> str:
+def status_report(db_path: Path | str, *, latest_dir: Path | str | None = None) -> tuple[str, bool]:
+    """(report, healthy). Read-only. `healthy` is False when the engine would
+    refuse to start on the database (shape check failed, unversioned v2 tables,
+    or a newer schema); the report then says why and, for the stuck shape, the
+    recommended recovery."""
     db = Path(db_path)
     ldir = Path(latest_dir) if latest_dir is not None else db.parent / "latest"
     lines = [f"database: {db}"]
     if not db.exists():
-        lines.append("  does not exist (a fresh v2 database is created on first start)")
-        return "\n".join(lines)
+        lines.append("  does not exist (a fresh database is created on first start)")
+        return "\n".join(lines), True
+    healthy = True
     ro = _connect_readonly(db)
     try:
         version = current_version(ro)
@@ -1295,15 +1371,33 @@ def status(db_path: Path | str, *, latest_dir: Path | str | None = None) -> str:
         for table in sorted(_tables(ro)):
             n = ro.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]  # noqa: S608 - identifiers are module constants or sqlite_master table names; values are bound parameters
             lines.append(f"  table {table}: {n} row(s)")
-        if version < SCHEMA_VERSION:
+        problem: str | None = None
+        try:
+            _refuse_unversioned(ro)
+            _refuse_newer(version)
+            if version >= V2:
+                _assert_v2_shape(ro, version)
+        except SchemaError as exc:
+            problem = str(exc)
+        if problem is not None:
+            healthy = False
+            lines.append("SHAPE CHECK FAILED: the engine would refuse to start on this database.")
+            lines.extend(f"  {ln}" for ln in problem.splitlines())
+        elif version < SCHEMA_VERSION:
             lines.append("pending migration (dry run):")
             lines.append(_plan_up(ro, db, ldir).render())
+        else:
+            lines.append("  shape check: ok")
     finally:
         ro.close()
     backups = sorted(db.parent.glob(f"{db.name}.pre-*"))
     for b in backups:
         lines.append(f"  backup file: {b.name}")
-    return "\n".join(lines)
+    return "\n".join(lines), healthy
+
+
+def status(db_path: Path | str, *, latest_dir: Path | str | None = None) -> str:
+    return status_report(db_path, latest_dir=latest_dir)[0]
 
 
 # --- CLI ------------------------------------------------------------------ #
@@ -1334,8 +1428,9 @@ def main(argv: list[str] | None = None) -> int:
     db = args.db or state_dir / DB_FILENAME
     try:
         if args.command == "status":
-            print(status(db, latest_dir=args.latest_dir))
-            return 0
+            report, healthy = status_report(db, latest_dir=args.latest_dir)
+            print(report)
+            return 0 if healthy else 2
         if args.command == "up":
             if not args.dry_run and not db.exists():
                 db.parent.mkdir(parents=True, exist_ok=True)

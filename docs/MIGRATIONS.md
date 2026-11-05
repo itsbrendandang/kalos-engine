@@ -80,8 +80,28 @@ is renamed. `up`, `up --dry-run`, `down` and the engine's startup all refuse the
 
 The rename-based repair of an incompatible `campaigns` table (`campaigns_backup_N`)
 runs only on a database read as v1 or v0. It is not run on any v2+ database.
-`status` still reports, without refusing. Repair of a refused database is a manual
-step on a copy, with the engine stopped.
+`status` runs the same checks read-only. When one fails it prints
+`SHAPE CHECK FAILED: the engine would refuse to start on this database.`, the
+reason, and exits with code 2 (0 when the shape check passes). Repair of a refused
+database is a manual step on a copy, with the engine stopped.
+
+### Stuck shape
+
+The specific shape `schema_migrations` = v2 or later, a live `campaigns` table
+without the v2 columns (usually the v1 shape), and a `campaigns_backup_N` table
+that has the v2 columns (foreign keys in `analyses` / `tenant_defaults` may name
+it) is reported as `STUCK SHAPE` by `status`, `up --dry-run`, `up` and the
+engine's startup (`StuckShapeError`, a `SchemaError`). The message names the
+backup table, the tables whose foreign keys point at it, and the recommended
+recovery. Nothing is repaired automatically. Recovery, with the engine stopped:
+
+1. **Repair a copy.** `sqlite3 portal.db ".backup /scratch/portal.db"`, repair the
+   copy by hand, check it with
+   `python -m kalos.portal.migrate status --db /scratch/portal.db` (exit 0), and
+   only then put it in place. Keep the original file.
+2. **Or start from a fresh state directory** (`KALOS_STATE_DIR` set to a new empty
+   directory) and import the campaign data. There is no import command yet: read
+   the rows from the `campaigns_backup_N` table with `sqlite3` and re-enter them.
 
 ## Schema v5: append-only result history
 
