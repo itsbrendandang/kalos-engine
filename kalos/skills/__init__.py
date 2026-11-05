@@ -10,6 +10,16 @@ string and imported only when a tool is first called
 """
 from __future__ import annotations
 
+from .loader import Skill, load_dir, parse_skill
+from .registry import SkillRegistry, get_registry, load_builtin
 from .schema import SkillMeta
 
-__all__ = ["SkillMeta"]
+__all__ = [
+    "Skill",
+    "SkillMeta",
+    "SkillRegistry",
+    "get_registry",
+    "load_builtin",
+    "load_dir",
+    "parse_skill",
+]
