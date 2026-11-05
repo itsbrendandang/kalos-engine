@@ -773,7 +773,7 @@ class CampaignStore:
 
     @staticmethod
     def _published_provenance(
-        conn: sqlite3.Connection, tenant: str, campaign_id: str
+        conn: DbConnection, tenant: str, campaign_id: str
     ) -> dict[str, Any] | None:
         from kalos.portal.run_record import provenance_ref
 
