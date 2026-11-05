@@ -55,6 +55,9 @@ PLAN = {
     "MOBO_rat_myocyte": dict(seed=24, batch=4),
     "HeLa_regular": dict(seed=24, batch=4),
     "HeLa_timesaving": dict(seed=24, batch=4),
+    "scfv_refolding_18270843": dict(seed=22, batch=4),   # seed = DoE1 history (seed_mask); lab = 25 BO runs
+    "rudt_ib_refolding_16315733": dict(seed=8, batch=2),
+    "cho_bioreactor_20829178": dict(seed=10, batch=2),
     "Tcell_expansion": dict(seed=24, batch=4),
     "TF1_expansion": dict(seed=24, batch=4),
 }
@@ -217,8 +220,13 @@ def run_dataset(client: httpx.Client, log: Log, name: str, sheet: OpenSheet, out
     norm = {"cat": cat_cols, "span": {c: float(max(df[c].max() - df[c].min(), 1e-12)) for c in numeric}}
     rng = np.random.default_rng(seed)
     perm = rng.permutation(len(df))
-    seed_idx = [int(i) for i in perm[:seed_n]] if not full_upload else list(range(len(df)))
-    oracle_idx = set(int(i) for i in perm[seed_n:]) if not full_upload else set()
+    if sheet.seed_mask is not None and not full_upload:
+        # The dataset's own history is the seed; the rest is the held-out lab (no random draw).
+        seed_idx = [i for i, m in enumerate(sheet.seed_mask) if m]
+        oracle_idx = {i for i, m in enumerate(sheet.seed_mask) if not m}
+    else:
+        seed_idx = [int(i) for i in perm[:seed_n]] if not full_upload else list(range(len(df)))
+        oracle_idx = set(int(i) for i in perm[seed_n:]) if not full_upload else set()
     base = df.loc[seed_idx]
     oracle_df = df.loc[sorted(oracle_idx)] if oracle_idx else df.iloc[0:0]
     summary: dict = {"dataset": name, "rows_in_source": len(df), "seed_rows": len(seed_idx),

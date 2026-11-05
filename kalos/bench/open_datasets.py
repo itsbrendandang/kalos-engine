@@ -35,6 +35,9 @@ class OpenSheet:
     target: str
     roles: dict | None
     notes: list[str] = field(default_factory=list)
+    # Optional: rows that are the client's EXISTING history (uploaded at Setup). The rest are
+    # the held-out "lab" the replay reveals from. None = seed a random subset (default).
+    seed_mask: list[bool] | None = None
 
 
 def open_data_dir(explicit: str | Path | None = None) -> Path:
@@ -227,6 +230,149 @@ def load_amii_sheet(name: str, data_dir: str | Path | None = None) -> OpenSheet:
     return OpenSheet(out, tgt, None, notes)
 
 
+# --- scFv inclusion-body refolding (zenodo 18270843, CC BY 4.0) ----------------- #
+
+SCFV_ATTRIBUTION = (
+    "scFv inclusion-body refolding spectroscopy-assisted Bayesian optimisation dataset, "
+    "Zenodo doi 10.5281/zenodo.18270843, CC BY 4.0. Attribute the record's authors."
+)
+
+
+def load_scfv_refolding(root: Path | None = None) -> OpenSheet:
+    """DoE1 (22 runs, five process factors) plus the 25 BO runs on the same five factors.
+    The seed (uploaded at Setup) is DoE1; the BO runs are the held-out lab the replay reveals.
+    Outcome: refolding yield (%). DoE2/DoE3 use different factor sets and are not loaded."""
+    root = root or open_data_dir()
+    doe_all = pd.read_excel(_find(root, "DoE_Data.xlsx"), sheet_name="DoE1")
+    bo_all = pd.read_excel(_find(root, "BO_Data.xlsx"))
+    notes = [SCFV_ATTRIBUTION]
+    excl = int((doe_all["Incl/Excl"].astype(str).str.strip() != "Incl").sum())
+    doe = doe_all[doe_all["Incl/Excl"].astype(str).str.strip() == "Incl"]
+    notes.append(f"DoE1: {len(doe)} runs marked Incl ({excl} marked otherwise and dropped)")
+    cols = {"pH": "pH", "Final Urea (M)": "final Urea (M)", "Dilution Factor": "Dilution Factor (-)",
+            "GSSG (mM)": "GSSG (mM)", "DTT (mM)": "DTT in solubilized protein (mM)",
+            "Refolding yield (%)": "Refolding Yield (%)"}
+    d1 = pd.DataFrame({k: doe[v].to_numpy() for k, v in cols.items()})
+    bcols = {"pH": "pH", "Final Urea (M)": "Final Urea [M]", "Dilution Factor": "Dilution Factor",
+             "GSSG (mM)": "GSSG [mM]", "DTT (mM)": "DTT [mM]",
+             "Refolding yield (%)": "Refolding yield (HPLC based) [%]"}
+    d2 = pd.DataFrame({k: bo_all[v].to_numpy() for k, v in bcols.items()})
+    df = pd.concat([d1, d2], ignore_index=True)
+    mask = [True] * len(d1) + [False] * len(d2)
+    notes.append(f"BO sheet: {len(d2)} runs on the same five factors; BO-Iteration, Experiment ID, P_Proxy, "
+                 "Delta AEW, monomer and concentration columns are outputs or identifiers and are dropped")
+    notes.append("Outcome 'Refolding yield (%)' is the HPLC yield as published. Some BO values exceed 100 % "
+                 f"(max {df['Refolding yield (%)'].max():.1f}); kept as published")
+    notes.append("Factors are in real units (pH, M urea, dilution factor, mM GSSG and DTT); no decoding needed")
+    dup = int(df.duplicated([c for c in df.columns if c != "Refolding yield (%)"]).sum())
+    notes.append(f"{dup} rows are exact repeats of another recipe: the DoE1 centre-point triplicate "
+                 "(N19-N21, yields 72-84 %), a replicate-noise estimate")
+    return OpenSheet(df, "Refolding yield (%)", {"target": "Refolding yield (%)"}, notes, seed_mask=mask)
+
+
+# --- Rudt 2025 ambr250 inclusion-body refolding (zenodo 16315733) ------------- #
+
+RUDT_ATTRIBUTION = (
+    "Rudt et al. 2025 (HES-SO Valais and Lonza), data Zenodo doi 10.5281/zenodo.16315733, CC BY 4.0 "
+    "(data); code licence MIT-style. Copyright co-held by HES-SO and Lonza. Attribute both."
+)
+# Ranges from the open-access article (PMC12503015, Biotechnol Bioeng 2025, doi 10.1002/bit.70033):
+# "pH was adjusted in the range of 6.2-7.5; temperature varied between 18 C and 35 C". The feed rate
+# is "presented in standardized, pseudonymized form": it cannot be decoded and stays on the authors' scale.
+RUDT_PH_RANGE = (6.2, 7.5)
+RUDT_T_RANGE = (18.0, 35.0)
+
+
+def load_rudt_ib_refolding(root: Path | None = None) -> OpenSheet:
+    """24 ambr250 runs (two blocks of 12). pH and temperature are decoded from the
+    authors' -1..1 min-max scale using the article's stated ranges; feed rate stays coded.
+    Target: refolded concentration (normalised by the authors; units are not recoverable)."""
+    root = root or open_data_dir()
+    m = pd.read_csv(_find(root, "master table.csv"), sep=";")
+    notes = [RUDT_ATTRIBUTION]
+    ph = RUDT_PH_RANGE[0] + (m["pH"] + 1) / 2 * (RUDT_PH_RANGE[1] - RUDT_PH_RANGE[0])
+    temp = RUDT_T_RANGE[0] + (m["temperature"] + 1) / 2 * (RUDT_T_RANGE[1] - RUDT_T_RANGE[0])
+    notes.append("pH decoded: 6.2 + (x+1)/2 x 1.3 (article range 6.2-7.5). Check: coded centre 0.2308 -> pH 7.00")
+    notes.append("temperature decoded: 18 + (x+1)/2 x 17 (article range 18-35 C). Check: coded 0.4118 -> 30.0 C")
+    notes.append("feed_rate is NOT decoded: the article says it is pseudonymised; values stay on the authors' -1..1 scale")
+    df = pd.DataFrame({
+        "pH": ph.round(4).to_numpy(), "temperature_C": temp.round(3).to_numpy(),
+        "feed_rate_coded": m["feed_rate"].to_numpy(),
+        "refolded_concentration": m["refolded_concentration"].to_numpy(),
+    })
+    notes.append("dropped: reactor label (repeats across the two blocks), ambr_block and is_part_of_ref_block_* "
+                 "(block/reference flags), POI and purity, soluble POI, monomer, dimer, aggregates, particle diameter "
+                 "(all measured outputs of the same run)")
+    notes.append("the two blocks each contain a centre-point replicate; 2 exact duplicate recipes")
+    return OpenSheet(df, "refolded_concentration", {"target": "refolded_concentration"}, notes)
+
+
+# --- CHO-K1 bioreactor time series (zenodo 20829178, CC BY 4.0) ----------------- #
+
+CHO_ATTRIBUTION = (
+    "CHO-K1 bioreactor dataset (24 cultivations, 2 reactors per experiment), Zenodo doi "
+    "10.5281/zenodo.20829178, CC BY 4.0. Attribute the record's authors."
+)
+_CHO_FILE = re.compile(r"^EXP(\d{3})_(batch|fed-batch)\.xlsx$")
+
+
+def load_cho_bioreactor(root: Path | None = None) -> OpenSheet:
+    """One run sheet row per reactor (24 runs). The dataset has NO product titer: its
+    offline data are cell counts, viability, glucose, lactate, ammonium and osmolality.
+    Endpoints are extracted from the time series, per reactor:
+      inputs  - median inline setpoint-like values over the run (pH, temperature, DO,
+                agitation, total aeration, O2 and CO2 inlet fraction), total cumulative feed
+                and base (NaOH) added, run length;
+      target  - integral viable cell density (IVCD, 1e6 cells h / mL), trapezoid over the
+                offline VCD samples from inoculation to the last sample. A growth proxy, not
+                a product measure."""
+    root = Path(root) if root else open_data_dir()
+    files = sorted(p for p in root.rglob("EXP*_*.xlsx") if _CHO_FILE.match(p.name))
+    if not files:
+        raise FileNotFoundError(f"no EXP*_batch.xlsx / EXP*_fed-batch.xlsx under {root}")
+    rows = []
+    notes = [CHO_ATTRIBUTION]
+    for f in files:
+        exp, mode = _CHO_FILE.match(f.name).groups()  # type: ignore[union-attr]
+        book = pd.ExcelFile(f)
+        for r in ("R01", "R02"):
+            pp = book.parse(f"{r}_inline_ProcessParameters")  # type: ignore[attr-defined]
+            feed = book.parse(f"{r}_online_Feed")  # type: ignore[attr-defined]
+            naoh = book.parse(f"{r}_online_NaOH")  # type: ignore[attr-defined]
+            cell = book.parse(f"{r}_offline_CellAnalysis")  # type: ignore[attr-defined]
+            t_end = float(pp["Time (h)"].max())
+            t = pd.to_numeric(cell["Time (h)"], errors="coerce").to_numpy(float)
+            vcd = pd.to_numeric(cell["VCD Mean (cells/mL)"], errors="coerce").to_numpy(float)
+            ok = np.isfinite(t) & np.isfinite(vcd)
+            ivcd = float(np.trapezoid(vcd[ok] / 1e6, t[ok])) if ok.sum() > 1 else float("nan")
+            rows.append({
+                "experiment": int(exp), "reactor": r, "mode": mode,
+                "pH": float(pd.to_numeric(pp["pH"], errors="coerce").median()),
+                "temperature_C": float(pd.to_numeric(pp["Temperature (°C)"], errors="coerce").median()),
+                "DO_pct_air": float(pd.to_numeric(pp["Dissolved O2 (% air sat)"], errors="coerce").median()),
+                "agitation_rpm": float(pd.to_numeric(pp["Agitation rate (rpm)"], errors="coerce").median()),
+                "aeration_sL_h": float(pd.to_numeric(pp["Aeration rate total (sL/h)"], errors="coerce").median()),
+                "O2_inlet_pct": float(pd.to_numeric(pp["O2 fraction inlet (%)"], errors="coerce").median()),
+                "CO2_inlet_pct": float(pd.to_numeric(pp["CO2 fraction inlet (%)"], errors="coerce").median()),
+                "feed_total_g": float(pd.to_numeric(feed.iloc[:, 1], errors="coerce").max()),
+                "NaOH_total_g": float(pd.to_numeric(naoh.iloc[:, 1], errors="coerce").max()),
+                "run_length_h": t_end,
+                "IVCD_1e6_cells_h_mL": ivcd,
+                "final_viability_pct": float(pd.to_numeric(cell["Viability Mean (%)"], errors="coerce").dropna().iloc[-1]),
+            })
+    df = pd.DataFrame(rows)
+    notes.append(f"{len(files)} experiment files, {len(df)} reactor runs; modes: {df.groupby('mode').size().to_dict()}")
+    notes.append("NO product titer exists in this dataset (offline data: VCD, viability, glucose, lactate, "
+                 "ammonium, osmolality). The target is IVCD, a growth proxy")
+    notes.append("inputs are per-reactor medians of the inline process signals; these are measured values, not "
+                 "the commanded setpoints, which the dataset does not list")
+    notes.append("EXCLUDED from the sheet: experiment/reactor/mode (identifiers), run_length_h and "
+                 "final_viability_pct (endpoints, leakage), NaOH_total_g (output of pH control). "
+                 "feed_total_g (cumulative fed mass) is kept as a process input: the operator sets the feed")
+    sheet = df.drop(columns=["experiment", "reactor", "mode", "run_length_h", "final_viability_pct", "NaOH_total_g"])
+    return OpenSheet(sheet, "IVCD_1e6_cells_h_mL", {"target": "IVCD_1e6_cells_h_mL"}, notes)
+
+
 # --- registry ------------------------------------------------------------------ #
 
 OPEN_SETS: dict[str, Callable[[Path | None], OpenSheet]] = {
@@ -236,6 +382,9 @@ OPEN_SETS: dict[str, Callable[[Path | None], OpenSheet]] = {
     "trichoderma_ambr": load_trichoderma_ambr,
     "trichoderma_ambr_condition": partial(load_trichoderma_ambr, include_strain=False),
     "candida_rsm_nr1": load_candida_rsm,
+    "scfv_refolding_18270843": load_scfv_refolding,
+    "rudt_ib_refolding_16315733": load_rudt_ib_refolding,
+    "cho_bioreactor_20829178": load_cho_bioreactor,
 }
 AMII_SETS = ("DBO_rat_myocyte", "MOBO_rat_myocyte", "HeLa_regular", "HeLa_timesaving",
              "Tcell_expansion", "TF1_expansion")

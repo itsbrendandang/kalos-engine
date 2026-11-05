@@ -35,7 +35,7 @@ from scipy.stats import binomtest  # noqa: E402
 from kalos.bench.amii import load_amii_pool, run_trial  # noqa: E402
 from kalos.bench.open_datasets import AMII_SETS, load_open_sheet  # noqa: E402
 
-SMALL = {"candida_rsm_nr1": (5, 8), "trichoderma_ambr": (6, 14), "trichoderma_ambr_condition": (6, 14)}  # (n_init, budget) for tiny pools
+SMALL = {"cho_bioreactor_20829178": (6, 18), "rudt_ib_refolding_16315733": (6, 18), "candida_rsm_nr1": (5, 8), "trichoderma_ambr": (6, 14), "trichoderma_ambr_condition": (6, 14)}  # (n_init, budget) for tiny pools
 
 
 def encode(name: str) -> tuple[np.ndarray, np.ndarray, list[str]]:
@@ -117,7 +117,8 @@ def main() -> int:
     ap.add_argument("--out", default="/tmp/redesign/replay/pool")
     a = ap.parse_args()
     names = list(AMII_SETS) + ["pichia_HSA", "pichia_HerceptinA", "pichia_RBDJ", "trichoderma_ambr",
-                               "trichoderma_ambr_condition", "candida_rsm_nr1"] if a.dataset == ["all"] else a.dataset
+                               "trichoderma_ambr_condition", "candida_rsm_nr1",
+                               "scfv_refolding_18270843", "rudt_ib_refolding_16315733", "cho_bioreactor_20829178"] if a.dataset == ["all"] else a.dataset
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     results = []

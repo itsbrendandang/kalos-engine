@@ -25,6 +25,9 @@ redistributing anything derived from it.
 | Pichia CoCaBO, HSA / HerceptinA / RBDJ (3 files) | `KALOS_OPEN_DATA` | Zenodo 15466161, doi [10.5281/zenodo.15466161](https://doi.org/10.5281/zenodo.15466161) (GitHub NHarini-1995/CellCultureBayesianOptimization) | Zenodo: CC BY 4.0. The GitHub repo has no licence file; the Zenodo record governs the archived copy |
 | Trichoderma sp. ambr250 (Tamminen 2022) | `KALOS_OPEN_DATA` | Zenodo 5846028, doi [10.5281/zenodo.5846028](https://doi.org/10.5281/zenodo.5846028) | CC BY 4.0 |
 | Candida utilis RSM Nr1 | `KALOS_OPEN_DATA` | Zenodo 22277916, doi [10.5281/zenodo.22277916](https://doi.org/10.5281/zenodo.22277916) | CC BY 4.0 |
+| scFv inclusion-body refolding, DoE1 + BO (5 factors, refolding yield %) | `KALOS_OPEN_DATA` (files `DoE_Data.xlsx`, `BO_Data.xlsx`, from `Results_Tabular.zip`) | Zenodo 18270843, doi [10.5281/zenodo.18270843](https://doi.org/10.5281/zenodo.18270843) | CC BY 4.0. Attribution: "scFv inclusion-body refolding spectroscopy-assisted Bayesian optimisation dataset, Zenodo doi 10.5281/zenodo.18270843, CC BY 4.0" |
+| Rüdt et al. 2025 ambr250 inclusion-body refolding (24 runs, 3 factors) | `KALOS_OPEN_DATA` (file `master table.csv`, from `ORD_effic_ib.zip`) | Zenodo 16315733, doi [10.5281/zenodo.16315733](https://doi.org/10.5281/zenodo.16315733). Factor ranges from the open-access article, doi [10.1002/bit.70033](https://doi.org/10.1002/bit.70033) (PMC12503015) | Data CC BY 4.0 (`LICENSE.txt`). Code: MIT-style text (`LICENSE_CODE.txt`). Copyright co-held by HES-SO Valais and Lonza. Attribution: "Rüdt et al. 2025, HES-SO Valais and Lonza; data Zenodo doi 10.5281/zenodo.16315733, CC BY 4.0; factor ranges from doi 10.1002/bit.70033" |
+| CHO-K1 bioreactor time series (24 reactors, 48 variables) | `KALOS_OPEN_DATA` (the 12 `EXP*_batch.xlsx` / `EXP*_fed-batch.xlsx` files, from `Dataset.zip`, 228 MB; md5 71b2a35b7df2ed11644ec9f177453772) | Zenodo 20829178, doi [10.5281/zenodo.20829178](https://doi.org/10.5281/zenodo.20829178) | CC BY 4.0. Attribution: "CHO-K1 bioreactor dataset, Zenodo doi 10.5281/zenodo.20829178, CC BY 4.0" |
 | Amii DBO / MOBO rat myoblast, HeLa regular / time-saving, T-cell, TF-1 | `KALOS_AMII_DATA` | GitHub Amii-Applied-AI/amii-cell-ag-tools `active-learning-for-cell-media/Data`; source articles doi [10.1002/elsc.202300005](https://doi.org/10.1002/elsc.202300005), [10.1038/s41540-023-00284-7](https://doi.org/10.1038/s41540-023-00284-7), [10.1038/s42003-019-0296-7](https://doi.org/10.1038/s42003-019-0296-7) | Repo root MIT; the data folder's `Data/SOURCES.md` says the datasets keep the original papers' terms (source articles CC BY 4.0 per Crossref). See `kalos/bench/amii.py` |
 
 Not used (see `/tmp` research notes, not in this repo): the erythromycin batch set
@@ -67,6 +70,19 @@ anywhere underneath it:
   one row per measurement (no averaging). DBO's `IS_indicator` (information source, four
   values) is not an input, so the sources are mixed and the result is unresolved. MOBO uses
   the highest fidelity only.
+
+- **scFv refolding**: DoE1 (22 runs, five factors, rows marked `Incl`) is the upload at Setup.
+  The 25 BO runs on the same five factors are the held-out lab. Outcome: refolding yield (%).
+  Yields above 100 % in the BO sheet (max 100.9) are kept as published. DoE2 and DoE3 use different factor sets and are not loaded.
+- **Rüdt ambr250**: `pH` and `temperature` are decoded from the authors' -1..1 min-max scale. The
+  article gives pH 6.2-7.5 and 18-35 °C. The decoding reproduces the centre point (coded 0.2308 → pH 7.00; coded 0.4118 → 30.0 °C).
+  **Feed rate is not decoded.** The article says it is "standardized, pseudonymized", so it stays on the authors' -1..1 scale.
+  Target: `refolded_concentration`, which the authors normalised. Its units are not recoverable, so the target is a relative measure.
+  The paper does not define "refolding yield" in a form that can be rebuilt from the table, so it is not used as the target.
+- **CHO-K1 time series**: there is **no product titer** in this dataset. Each reactor is one row:
+  inputs are per-reactor medians of the inline process signals, plus cumulative feed mass;
+  target is **IVCD** (trapezoid of the offline viable cell density over the run, 1e6 cells·h/mL).
+  This is a growth proxy, not a product measure. Run length, final viability and NaOH total are excluded (endpoints or outputs).
 
 ## Reproduce
 
