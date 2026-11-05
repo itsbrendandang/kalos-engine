@@ -503,3 +503,17 @@ def test_owner_and_superuser_are_warned_and_the_documented_grants_work(pg_store,
             c.execute(f'DROP OWNED BY "{role}"')
             c.execute(f'REVOKE CONNECT ON DATABASE "{database}" FROM "{role}"')
             c.execute(f'DROP ROLE "{role}"')
+
+
+@needs_pg
+def test_audit_archive_copies_and_deletes_nothing_on_postgres(pg_store, tmp_path):
+    import time
+
+    for i in range(3):
+        pg_store.record_audit(tenant="acme", action=f"a{i}", outcome="ok")
+    later = time.time() + 10 * 86_400
+    assert pg_store.archive_audit_log(1, now=later) == 3
+    assert pg_store.archive_audit_log(1, now=later) == 0  # never copied twice
+    assert len(pg_store.audit_entries(tenant="acme")) == 3
+    files = list((tmp_path / "audit-archive").glob("*.jsonl"))
+    assert len(files) == 1 and len(files[0].read_text().splitlines()) == 3
