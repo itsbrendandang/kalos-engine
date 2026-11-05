@@ -15,7 +15,7 @@ from scipy.stats import qmc
 from kalos.core.optimize import propose
 from kalos.core.surrogate import FitError, Surrogate
 
-from .objectives import MixedObjective, Objective
+from .objectives import MixedObjective, Objective, ZeroInflatedObjective
 
 STRATEGIES = ("bo", "lhs", "random")
 MIXED_STRATEGIES = ("bo", "random")
@@ -208,3 +208,47 @@ def summarize(result: dict[str, dict], obj: Objective, n_init: int = 5) -> dict:
             lhs_experiments = len(bo_curve) - 1 - n_init
             speedup = max(0, lhs_experiments - bo_experiments)
     return {"per_strategy": per, "bo_fewer_experiments_than_lhs": speedup}
+
+
+def run_feasibility_race(
+    obj: ZeroInflatedObjective,
+    *,
+    gated: bool,
+    budget: int = 12,
+    n_init: int = 10,
+    noise: float = 0.05,
+    seed: int = 0,
+    num_restarts: int = 4,
+    raw_samples: int = 128,
+) -> dict:
+    """One closed-loop trial on a zero-inflated surface, with or without the
+    feasibility gate (`propose(..., feasibility_classifier=...)`, refit every
+    step on `y_obs > 0`; the classifier's own cold-start fallback leaves early
+    steps ungated). Returns the share of PROPOSED experiments that landed in the
+    deterministic crash region and the final simple regret."""
+    import torch
+
+    from kalos.core.feasibility import FeasibilityClassifier, feasible_labels
+
+    rng = np.random.default_rng(seed)
+    torch.manual_seed(seed)
+    X = _lhs(n_init, obj.bounds, rng)
+    y_true, y_obs = obj.evaluate(X, noise, rng)
+    crashes = 0
+    for _ in range(budget):
+        try:
+            s = Surrogate().fit(X, y_obs, bounds=obj.bounds)
+            clf = FeasibilityClassifier().fit(X, feasible_labels(y_obs)) if gated else None
+            x_next = propose(s, obj.bounds, q=1, num_restarts=num_restarts,
+                             raw_samples=raw_samples, feasibility_classifier=clf)[0]
+        except FitError:
+            x_next = _uniform(1, obj.bounds, rng)[0]
+        crashes += int(obj.crashed(x_next)[0])
+        yt, yo = obj.evaluate(x_next, noise, rng)
+        X = np.vstack([X, x_next])
+        y_true = np.append(y_true, yt)
+        y_obs = np.append(y_obs, yo)
+    return {
+        "crash_rate": crashes / budget,
+        "final_simple_regret": float(obj.optimum - y_true.max()),
+    }

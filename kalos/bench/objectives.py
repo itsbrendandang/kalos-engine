@@ -200,6 +200,77 @@ def bioprocess_like() -> MixedObjective:
     )
 
 
+@dataclass
+class ZeroInflatedObjective(Objective):
+    """An `Objective` whose runs CRASH to zero: a deterministic, input-dependent
+    crash region (learnable from x, so a feasibility gate can win) plus a small
+    random crash rate (not learnable, the honest floor). `y_true` carries the
+    deterministic crashes; the random ones only hit `y_obs`."""
+
+    crash_fn: Callable[[np.ndarray], np.ndarray] | None = None
+    p_random_crash: float = 0.0
+
+    def crashed(self, X) -> np.ndarray:
+        """True where `X` lies in the deterministic crash region."""
+        X = np.atleast_2d(np.asarray(X, dtype=float))
+        if self.crash_fn is None:
+            return np.zeros(len(X), dtype=bool)
+        return np.asarray(self.crash_fn(X), dtype=bool).reshape(-1)
+
+    def evaluate(
+        self, X, noise: float = 0.0, rng: np.random.Generator | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        y_true, y_obs = super().evaluate(X, noise, rng)
+        if rng is None:
+            rng = np.random.default_rng()
+        crash = self.crashed(X)
+        if self.p_random_crash > 0:
+            crash = crash | (rng.uniform(size=len(y_obs)) < self.p_random_crash)
+        y_obs = np.where(crash, 0.0, np.maximum(y_obs, 0.0))
+        return y_true, y_obs
+
+
+ZERO_INFLATED_FACTORS = ("media_g_L", "temp_C", "feed_pct", "pH", "glucose_g_L")
+
+
+def zero_inflated_titer(p_random_crash: float = 0.05) -> ZeroInflatedObjective:
+    """5-factor separable log-paraboloid titer with an x-dependent crash region.
+
+    Clean-room re-implementation of the idea in voyager-mini's demo surface
+    (media, temp, feed, pH, glucose; optimum titer 3.0), with the change the
+    Bioqore mine asked for: there the 15% crash-to-zero was independent of x,
+    so no classifier could learn it. Here a run crashes when glucose > 9.8 g/L
+    (overflow; about half the box), plus a 5% random crash. The optimum
+    (titer 3.0 at media 19, temp 36.5, feed 3.2, pH 7.0, glucose 9.0) sits just
+    inside the glucose cliff, so the incumbent's neighbourhood is half crash
+    region: an ungated GP smooths the cliff and keeps proposing over it, which
+    is the case `kalos.core.optimize`'s feasibility gate exists for.
+
+    Made-up numbers for a benchmark, not calibrated to any process.
+    """
+    opt = np.array([19.0, 36.5, 3.2, 7.0, 9.0])
+    lo = np.array([10.0, 33.0, 0.0, 6.4, 4.0])
+    hi = np.array([30.0, 39.0, 6.0, 7.6, 16.0])
+    curv = np.array([1.5, 2.0, 1.5, 3.0, 1.0])  # per-factor penalty on the range-scaled distance
+    peak = 3.0
+
+    def f(X: np.ndarray) -> np.ndarray:
+        z = (X - opt) / (hi - lo)
+        # log-titer is a separable paraboloid (the voyager-mini surface is a
+        # paraboloid in titer; the exp keeps the floor positive so every zero
+        # is a crash, never the clip of a wide paraboloid)
+        val = peak * np.exp(-4.0 * (curv * z**2).sum(axis=1))
+        return np.where(crash(X), 0.0, val)
+
+    def crash(X: np.ndarray) -> np.ndarray:
+        return X[:, 4] > 9.8
+
+    return ZeroInflatedObjective(
+        "zero_inflated_titer_5d", 5, np.vstack([lo, hi]), peak, peak, f,
+        crash_fn=crash, p_random_crash=p_random_crash,
+    )
+
+
 def cho_fed_batch() -> Objective:
     """Mechanistic CHO fed-batch surface (`kalos.bench.cho_sim`): ODE kinetics,
     interior optimum in feed / glucose / pH. Lazy import: the ODE module loads
@@ -217,6 +288,7 @@ OBJECTIVES: dict[str, Callable[[], Objective | MixedObjective]] = {
     "mixed_bump_2c3k": lambda: mixed_bump(2, 3),
     "bioprocess_like_mixed": bioprocess_like,
     "cho_fed_batch_4d": cho_fed_batch,
+    "zero_inflated_titer_5d": zero_inflated_titer,
 }
 
 
