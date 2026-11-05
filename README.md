@@ -245,7 +245,7 @@ These numbers are not a comparison against other optimizers. See [Benchmark vs o
 - The data validation gate checks units, physical bounds, duplicates, missing values, and more. It runs before any column is used. Proposals stay physically possible: [`docs/UPLOADS.md`](docs/UPLOADS.md), `tests/test_validation_gate.py`.
 - Runs that are started but not yet measured are passed to the acquisition as in-flight points. So a mid-round re-proposal does not repeat them: `tests/test_pending_proposals.py`, `python -m kalos.bench --pending`, [`BENCHMARK.md`](BENCHMARK.md).
 - The scale-up readout refuses to predict. This happens when its backtest on your own scale ladder does not beat two naive baselines: [`docs/SCALE_READOUT.md`](docs/SCALE_READOUT.md), `tests/test_scale_readout.py`.
-- Every analysis response carries `seed` and `engine_version`. The analyze path is seeded. So the same upload gives the same proposals: `tests/test_hardening.py`.
+- Every analysis response carries `seed`, `engine_version` and `proposal_provenance`. The analyze path is seeded, and small uploads give the same proposals when repeated (`tests/test_hardening.py`, `tests/test_golden_determinism.py`). This is not guaranteed: an 80-row, 6-feature sheet gave different proposals on identical runs in one process (recorded xfail; `docs/CAMPAIGNS_API.md`, "Determinism").
 
 ## Benchmark vs other optimizers
 
