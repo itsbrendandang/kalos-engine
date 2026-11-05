@@ -444,38 +444,62 @@ def test_a_sqlite_only_version_bump_is_refused(monkeypatch):
         migrate_pg.migrate_up("postgresql://unused/never-connected")
 
 
+def _grants_sql(role: str, schema: str, database: str) -> list[str]:
+    """deploy/postgres/grants.sql with its names swapped for this test's."""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent.parent / "deploy/postgres/grants.sql").read_text()
+    lines = [ln.split("--", 1)[0] for ln in text.splitlines()]
+    body = "\n".join(lines)
+    body = body.replace("kalos_engine", f'"{role}"').replace("SCHEMA public", f'SCHEMA "{schema}"')
+    body = body.replace("DATABASE kalos ", f'DATABASE "{database}" ')
+    return [stmt.strip() for stmt in body.split(";") if stmt.strip()]
+
+
 @needs_pg
-def test_owner_and_superuser_are_warned_and_a_non_owner_role_is_not(pg_store, pg_dsn):
+def test_owner_and_superuser_are_warned_and_the_documented_grants_work(pg_store, pg_dsn, tmp_path,
+                                                                       monkeypatch):
     """The test server connects as a superuser that owns the tables: status warns.
-    A separate role with the documented grants gets no warning and cannot
-    UPDATE, DELETE, TRUNCATE or disable a trigger."""
+    A role set up with deploy/postgres/grants.sql gets no warning, runs the store
+    (result + audit in one transaction), and cannot UPDATE, DELETE, TRUNCATE or
+    disable a trigger on the append-only tables."""
     import psycopg
 
     from kalos.portal import migrate_pg
+    from kalos.portal.campaign import CampaignStore
 
     report, healthy = migrate_pg.status_report(pg_dsn)
     assert healthy and "WARNING" in report and "superuser" in report and "owns" in report
     role = "kalos_app_" + uuid.uuid4().hex[:8]
     schema = pg_dsn.split("search_path%3D")[1]
     with _raw(pg_dsn) as c:
-        c.execute(f'CREATE ROLE "{role}" LOGIN')
-        c.execute(f'GRANT USAGE ON SCHEMA "{schema}" TO "{role}"')
-        c.execute(f'GRANT SELECT, INSERT, UPDATE, DELETE ON campaigns, analyses, tenant_defaults, '
-                  f'jobs TO "{role}"')
-        c.execute(f'GRANT SELECT ON schema_migrations TO "{role}"')
-        c.execute(f'GRANT SELECT, INSERT ON audit_log, run_results TO "{role}"')
+        database = c.execute("SELECT current_database()").fetchone()[0]
+        for stmt in _grants_sql(role, schema, database):
+            c.execute(stmt)
     app_dsn = pg_dsn.replace("postgresql://postgres@", f"postgresql://{role}@")
     try:
         report, healthy = migrate_pg.status_report(app_dsn)
         assert healthy and "WARNING" not in report
+        monkeypatch.setenv("KALOS_DATABASE_URL", app_dsn)
+        app_store = CampaignStore(tmp_path / "app")
+        try:
+            df = pd.DataFrame({"x": [0.1, 0.2], "y": [1.0, 2.0]})
+            cid = app_store.create_campaign(tenant="acme", name="c")["id"]
+            app_store.seed(df, "y", ["x"], tenant="acme", campaign_id=cid)
+            rid = app_store.start([{"recipe": {"x": 0.3}}], tenant="acme", campaign_id=cid)[0]["id"]
+            app_store.set_result(rid, 3.0, tenant="acme", campaign_id=cid, audit=True, actor="a")
+            assert app_store.audit_entries(tenant="acme")[0]["action"] == "campaign.result"
+        finally:
+            app_store.close()
         with _raw(app_dsn) as c:
-            c.execute("INSERT INTO audit_log (ts, tenant, action, outcome) VALUES (1, 'a', 'x', 'ok')")
-            for stmt in ("UPDATE audit_log SET tenant = 'b'", "DELETE FROM audit_log",
-                         "TRUNCATE audit_log",
-                         "ALTER TABLE audit_log DISABLE TRIGGER audit_log_no_delete"):
-                with pytest.raises(psycopg.Error):
-                    c.execute(stmt)
+            for table in ("audit_log", "run_results"):
+                for stmt in (f"UPDATE {table} SET tenant = 'b'", f"DELETE FROM {table}",
+                             f"TRUNCATE {table}",
+                             f"ALTER TABLE {table} DISABLE TRIGGER {table}_no_delete"):
+                    with pytest.raises(psycopg.Error):
+                        c.execute(stmt)
     finally:
         with _raw(pg_dsn) as c:
             c.execute(f'DROP OWNED BY "{role}"')
+            c.execute(f'REVOKE CONNECT ON DATABASE "{database}" FROM "{role}"')
             c.execute(f'DROP ROLE "{role}"')
