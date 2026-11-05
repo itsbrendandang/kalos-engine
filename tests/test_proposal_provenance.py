@@ -77,13 +77,14 @@ def test_block_fields_and_types():
     assert p["created_at"] == "2023-11-14T22:13:20Z"
     assert p["model_artifact_stored"] is False
     assert p["build_sha"] == "unknown"
-    assert p["config_fields"] == list(run_record.CONFIG_FIELDS)
+    assert p["config_fields"] == [*run_record.CONFIG_FIELDS, "proposal_fit_restarts"]
 
 
 def test_config_hash_is_over_the_named_run_fields():
     _, result = compute_upload_analysis(_csv(), "lipase_titer", False, FILENAME, analyze=_stub)
     run = result["run"]
     cfg = {k: run.get(k) for k in run_record.CONFIG_FIELDS}
+    cfg["proposal_fit_restarts"] = None  # the stub analysis has no model_diagnostics
     expected = hashlib.sha256(
         json.dumps(cfg, sort_keys=True, separators=(",", ":"), default=str).encode()
     ).hexdigest()

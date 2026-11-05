@@ -267,7 +267,7 @@ reanalyze and job results). Analyses written before it existed have no such key.
 | `seed` | The fit seed (as `run.seed`). |
 | `input_sha256` | As `run.input_sha256`. |
 | `config_sha256` | SHA-256 of the `run` fields named in `config_fields`, as canonical JSON (sorted keys, no spaces). |
-| `config_fields` | `kind`, `target`, `roles_declared`, `profile`, `anonymize`, `seed`, `torch_threads`, `max_fit_rows`, `validation_mode`, `sheet_index`, `header_row`, `pending_runs`. |
+| `config_fields` | `kind`, `target`, `roles_declared`, `profile`, `anonymize`, `seed`, `torch_threads`, `max_fit_rows`, `validation_mode`, `sheet_index`, `header_row`, `pending_runs`, and `proposal_fit_restarts` (from `model_diagnostics.restarts`). |
 | `model_artifact_stored` | Always `false`: no fitted model, weights or pickle is stored. A refit needs the input, the config, the seed and the same stack. |
 | `provenance_sha256` | SHA-256 over every field above (not `timestamp` / `created_at`). The same input, config, seed, engine and libraries give the same value. A reproducibility key, not a signature. |
 | `timestamp`, `created_at` | When the analysis ran: epoch seconds (the result's `timestamp`) and the same instant as UTC ISO 8601. |
@@ -297,10 +297,10 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
 | `condition_warning` | `true` above `condition_warn_above` (`1e8`). The fit proceeds. |
 | `condition_notice` | Plain-language sentence when `condition_warning` is true, else `null`. |
 | `condition_warn_above`, `condition_refuse_above` | `1e8` and `1e12`. Above `1e12` the analysis is refused (HTTP 400) with a plain-language reason. These thresholds are defaults, not validated numbers. Because the noise model keeps a floor on the noise, exact replicates with inferred noise stay well conditioned; the warning needs a tight cluster of rows with a fixed small noise, and the refusal is reached only on very large or very clustered designs. |
-| `restarts`, `restart_seed` | The proposal fit runs from 3 starts: the default initialization and 2 seeded random ones (`restart_seed` = the analysis seed). CV folds and other fits use one start. |
-| `restart_mll` | Marginal log likelihood reached from each start (`null` = that start failed numerically or was skipped by the time budget). |
+| `restarts`, `restart_seed` | The proposal fit runs from 3 starts (the default initialization and 2 seeded random ones; `restart_seed` = the analysis seed) up to 1,000 fit rows, and from 1 start above that. The count depends only on the row count, never on time, so the same rows give the same fit on any host. It is part of `proposal_provenance.config_sha256` (`proposal_fit_restarts`). |
+| `restart_mll` | Marginal log likelihood reached from each start (`null` = that start failed numerically). `null` for a one-start fit. |
 | `restart_chosen` | Index of the start kept (best likelihood; a random start must beat the default by more than 1e-6). When it is `0` the model is the one-start model, unchanged. |
-| `restarts_skipped` | Extra starts skipped because the fit had already taken 30 s. |
+| `cv_fit_restarts` | `1`. The CV folds behind the trust verdict (`reliability`, `promotion`) fit with one start, so the verdict measures the one-start procedure; the served model may use 3. When `restart_chosen` is `0` the two procedures give the same model. |
 | `fit_seconds` | Wall time of the multi-start fit. Measured cost of 3 starts vs 1 (4 threads, loaded M3 Pro): n=80: 1.0 s vs 0.3 s; n=300: 2.4 s vs 0.9 s; n=1000: 9.0 s vs 2.9 s. |
 | `noise_fitted` | Fitted noise variance (standardized units); `null` when the noise was fixed. |
 | `lengthscales` | Fitted lengthscales (normalized inputs: 1.0 = the design box width). |

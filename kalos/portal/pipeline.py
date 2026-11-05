@@ -218,6 +218,7 @@ def _provenance(run: dict, result: dict) -> dict:
     return run_record.proposal_provenance(
         run, engine_version=str(result.get("engine_version") or engine_version),
         timestamp=result.get("timestamp"),
+        proposal_fit_restarts=(result.get("model_diagnostics") or {}).get("restarts"),
     )
 
 

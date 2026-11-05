@@ -184,11 +184,19 @@ def condition_report(cond: float) -> dict:
 # than 10x the box width: the feature barely moves the prediction, or the fit
 # did not learn it. Recorded, never refused.
 LONG_LENGTHSCALE = 10.0
-# Wall-clock bound on the EXTRA starts of a multi-start fit: once the fit so far
-# has taken this long, the remaining starts are skipped (and recorded as None,
-# `restarts_skipped` counts them). Measured (4 threads, Apple M3 Pro, loaded
-# machine): 3 starts cost 1.0 s at n=80, 2.4 s at n=300, 9.0 s at n=1000.
-MULTI_START_BUDGET_S = 30.0
+# Runtime bound for multi-start fits, decided from the data size only (never
+# from wall-clock time, so the same rows give the same fit on any host):
+# above MULTI_START_MAX_ROWS rows one start is used. Measured (4 threads, Apple
+# M3 Pro, loaded machine): 3 starts cost 1.0 s at n=80, 2.4 s at n=300, 9.0 s
+# at n=1000 (vs 0.3 / 0.9 / 2.9 s for one start).
+MULTI_START_MAX_ROWS = 1000
+
+
+def proposal_restarts(n_rows: int, n_features: int, requested: int = 3) -> int:
+    """How many hyperparameter starts a fit of this size gets: `requested` up to
+    MULTI_START_MAX_ROWS rows, else 1. A pure function of (n_rows, n_features)."""
+    del n_features  # part of the contract; not used by the current rule
+    return int(requested) if int(n_rows) <= MULTI_START_MAX_ROWS else 1
 _AT_BOUND_RTOL = 1.1
 
 
@@ -301,13 +309,8 @@ def _multi_start_fit(mll, *, restarts: int, seed: int) -> tuple[dict, object]:
     values: list[float | None] = [round(best_val, 6)]
     chosen = 0
     np_state = np.random.get_state()
-    skipped = 0
     with torch.random.fork_rng():
         for k in range(1, restarts):
-            if time.perf_counter() - t0 > MULTI_START_BUDGET_S:
-                values.append(None)
-                skipped += 1
-                continue
             cand = copy.deepcopy(pristine)
             cand_mll = ExactMarginalLogLikelihood(cand.likelihood, cand)
             _randomize_hyperparameters(cand, torch.Generator().manual_seed(seed + k))
@@ -328,7 +331,6 @@ def _multi_start_fit(mll, *, restarts: int, seed: int) -> tuple[dict, object]:
         "restart_seed": seed,
         "restart_mll": values,
         "restart_chosen": chosen,
-        "restarts_skipped": skipped,
         "fit_seconds": round(time.perf_counter() - t0, 3),
     }, best_model
 
@@ -491,6 +493,9 @@ class Surrogate:
         mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
         if restarts > 1:
             diag, self.model = _multi_start_fit(mll, restarts=int(restarts), seed=int(restart_seed))
+        elif restarts == 1 and restart_seed:
+            diag = {**_fit_mll_with_retry(mll), "restarts": 1, "restart_seed": int(restart_seed),
+                    "restart_mll": None, "restart_chosen": 0}
         else:
             diag = dict(_fit_mll_with_retry(mll))
         diag.update(hyperparameter_report(self.model, fixed_noise=yvar is not None))

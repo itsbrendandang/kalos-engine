@@ -105,13 +105,25 @@ def test_analysis_uses_three_starts_and_reports_them():
     _, r = compute_upload_analysis(raw, "t", False, "x.csv")
     md = r["model_diagnostics"]
     assert md["restarts"] == 3 and len(md["restart_mll"]) == 3
+    assert md["cv_fit_restarts"] == 1
+    assert r["proposal_provenance"]["config_fields"][-1] == "proposal_fit_restarts"
     assert isinstance(md["boundary_flags"], list) and isinstance(md["lengthscales"], list)
 
 
-def test_extra_starts_stop_at_the_time_budget(monkeypatch):
+def test_restart_decision_is_a_pure_function_of_n_and_d():
+    """Review (standing-7): no wall-clock input; the same rows give the same
+    number of starts on any host."""
     from kalos.core import surrogate as surrogate_module
+    from kalos.core.surrogate import MULTI_START_MAX_ROWS, proposal_restarts
 
-    monkeypatch.setattr(surrogate_module, "MULTI_START_BUDGET_S", 0.0)
-    d = Surrogate().fit(*_design(), bounds=B, restarts=3).fit_diagnostics
-    assert d["restarts_skipped"] == 2 and d["restart_mll"][1:] == [None, None]
-    assert d["restart_chosen"] == 0
+    assert not hasattr(surrogate_module, "MULTI_START_BUDGET_S")
+    for n, d in [(5, 1), (80, 6), (MULTI_START_MAX_ROWS, 20)]:
+        assert proposal_restarts(n, d) == 3
+        assert proposal_restarts(n, d) == proposal_restarts(n, d)
+    assert proposal_restarts(MULTI_START_MAX_ROWS + 1, 3) == 1
+    assert proposal_restarts(2000, 6) == 1
+
+
+def test_one_start_with_a_seed_is_still_recorded():
+    d = Surrogate().fit(*_design(), bounds=B, restarts=1, restart_seed=7).fit_diagnostics
+    assert d["restarts"] == 1 and d["restart_chosen"] == 0

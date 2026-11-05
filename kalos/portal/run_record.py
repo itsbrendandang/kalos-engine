@@ -264,6 +264,7 @@ def _canonical_sha256(value: Any) -> str:
 
 def proposal_provenance(
     run: dict[str, Any], *, engine_version: str, timestamp: int | float | None,
+    proposal_fit_restarts: int | None = None,
 ) -> dict[str, Any]:
     """The `proposal_provenance` block of an analysis result: what produced its
     proposals. Built from the `run` block (`RunRecord.to_dict()`), so it repeats
@@ -278,6 +279,9 @@ def proposal_provenance(
     libs = library_versions(PROVENANCE_LIBRARIES)
     drift = {k: libs.get(k) for k, v in PINNED_ML.items() if public_version(libs.get(k)) != v}
     config = {k: run.get(k) for k in CONFIG_FIELDS}
+    # The effective number of hyperparameter starts of the proposal fit (from the
+    # result's `model_diagnostics`; decided from n and d only). Part of the config.
+    config["proposal_fit_restarts"] = proposal_fit_restarts
     body: dict[str, Any] = {
         "schema_version": PROVENANCE_SCHEMA_VERSION,
         "engine_version": str(engine_version),
@@ -289,7 +293,7 @@ def proposal_provenance(
         "seed": run.get("seed"),
         "input_sha256": run.get("input_sha256"),
         "config_sha256": _canonical_sha256(config),
-        "config_fields": list(CONFIG_FIELDS),
+        "config_fields": [*CONFIG_FIELDS, "proposal_fit_restarts"],
         "model_artifact_stored": False,
     }
     ts = int(timestamp) if timestamp is not None else None

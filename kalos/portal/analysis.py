@@ -156,7 +156,8 @@ _RNG_LOCK = threading.RLock()
 
 
 # Hyperparameter starts for the PROPOSAL surrogate only (default start + 2
-# seeded random starts; best marginal likelihood wins). CV folds keep one start.
+# seeded random starts; best marginal likelihood wins), 1 above
+# MULTI_START_MAX_ROWS rows (`proposal_restarts`). CV folds keep one start.
 # Measured cost: see docs/CAMPAIGNS_API.md "Model diagnostics".
 PROPOSAL_FIT_RESTARTS = 3
 
@@ -292,7 +293,7 @@ def _analyze_body(
         )
         from kalos.core.gates import GatesConfig, check_gates
         from kalos.core.optimize import MAX_MIXED_COMBOS, propose_batch
-        from kalos.core.surrogate import FitError, Surrogate
+        from kalos.core.surrogate import FitError, Surrogate, proposal_restarts
         from kalos.portal.viz_utils import (
             _correlation_spearman,
             _embedding_pca,
@@ -1164,7 +1165,9 @@ def _analyze_body(
             per_point_var = float(sigma2) / np.maximum(n_reps_g, 1).astype(float)
             s = Surrogate().fit(
                 Xf, yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
-                check_conditioning=True, restarts=PROPOSAL_FIT_RESTARTS, restart_seed=ANALYZE_SEED,
+                check_conditioning=True,
+                restarts=proposal_restarts(len(yf), Xf.shape[1], PROPOSAL_FIT_RESTARTS),
+                restart_seed=ANALYZE_SEED,
             )
             incumbent = best_reproducible
             X_fit, y_fit = Xf, yf
@@ -1174,7 +1177,8 @@ def _analyze_body(
     if not replicate_aware:
         s = Surrogate().fit(
             X, y, bounds=bounds, cat_dims=cat_dims, check_conditioning=True,
-            restarts=PROPOSAL_FIT_RESTARTS, restart_seed=ANALYZE_SEED,
+            restarts=proposal_restarts(len(y), X.shape[1], PROPOSAL_FIT_RESTARTS),
+            restart_seed=ANALYZE_SEED,
         )
     # In-flight recipes, encoded into this design so the acquisition treats them
     # as taken. Encoding can drop rows (a recipe naming an unknown categorical
@@ -1315,7 +1319,9 @@ def _analyze_body(
     # break) as soon as their last use is done, rather than waiting on
     # `_analyze` to return. Keeps a long-lived process (the portal, the
     # `--watch` poller) from accumulating fit memory across repeated analyses.
-    model_diagnostics = dict(s.fit_diagnostics)
+    # CV folds (the trust verdict) fit with ONE start; the served model may use
+    # more. Stated here so the mismatch is visible in the record.
+    model_diagnostics = {**s.fit_diagnostics, "cv_fit_restarts": 1}
     del s
     if constraint_surrogate is not None:
         del constraint_surrogate
