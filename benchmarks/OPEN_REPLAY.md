@@ -96,13 +96,18 @@ Tests use tiny fake files written to a temporary folder and never read real data
 
 **End-to-end driver** (`examples/open_replay_e2e.py`). A seeded random subset of each
 dataset (8 rows for the 20-row Trichoderma and 6 for the 13-row Candida, 24 otherwise) is
-uploaded as the client's existing data. The rest is the held-out "lab". Each round starts
-the proposed batch, reveals the held-out value of each recipe, records it, and calls
-reanalyze. A proposal rarely sits on a measured grid. The revealed value is therefore the
-closest **unused** measured row (categorical levels must match exactly, continuous
-features are compared in min-max normalised space). The match distance is recorded. The
-driver stops a dataset when nothing can be matched. `--full-upload-probe` also uploads the
-whole sheet once, to test the fit-size limit.
+uploaded as the client's existing data. The rest is the held-out "lab". Each round first
+matches every proposed recipe to the closest **unused** measured row (categorical levels
+must match exactly, continuous features are compared in min-max normalised space). It then
+starts **the matched row's own recipe**, not the proposal, and records that row's measured
+value against that run. A proposal rarely sits on a measured grid, so the started recipe
+and the proposal differ. The distance between them is logged per recipe
+(`proposal_to_started`). Prediction fields (`pred`, `std`) are not sent for matched
+recipes, because they describe the proposal. Attributing a row's value to a different
+recipe would fold imputed data into the fit as if it were a measurement, so the driver
+never does it. A proposal with no exact categorical match is listed as unmatched and not
+started. The driver stops a dataset when nothing matches. `--full-upload-probe` also uploads
+the whole sheet once, to test the fit-size limit.
 
 **Pool replay** (`examples/open_pool_replay.py`). It reuses `kalos.bench.amii.run_trial`,
 where every arm (BO, random, LHS-style nearest neighbour) starts from the same seeded
@@ -118,7 +123,8 @@ evidence.
 
 - Proposals are matched to the nearest measured row, not to a new measurement. Pool
   results describe the optimizer's ranking of existing rows, not a new experiment.
-- Torch and BoTorch versions change the GP fits. The lock file pins torch 2.13.0 and
-  botorch 0.18.1 for the runs reported here.
+- Torch and BoTorch versions change the GP fits. `uv.lock` pins torch 2.13.0 and botorch
+  0.18.1. Any result drawn from these scripts should record the versions it was run with;
+  `benchmarks/` in this repository holds no result files for this replay.
 - The Amii pool replay uses replicate-averaged rows and the paper's feature choices. It is
   not the paper's surrogate-landscape protocol (see `kalos/bench/amii.py`).
