@@ -1,0 +1,15 @@
+{
+  "_note": "PLACEHOLDER design bounds in ng/mL. Invented generic cytokine-supplement ranges for a schema example; NOT taken from any dataset, protocol, or lab. Replace with your own ranges before designing experiments.",
+  "placeholder": true,
+  "units": "ng/mL",
+  "bounds": {
+    "SCF_ng_mL":   [0.0, 100.0],
+    "TPO_ng_mL":   [0.0, 100.0],
+    "IL6_ng_mL":   [0.0, 50.0],
+    "IL3_ng_mL":   [0.0, 50.0],
+    "FLT3L_ng_mL": [0.0, 100.0],
+    "GMCSF_ng_mL": [0.0, 50.0],
+    "IL9_ng_mL":   [0.0, 50.0],
+    "IL1b_ng_mL":  [0.0, 20.0]
+  }
+}
