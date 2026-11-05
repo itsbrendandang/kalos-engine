@@ -230,9 +230,12 @@ _V4_TRIGGERS = ("audit_log_no_update", "audit_log_no_delete")
 # is ever updated or deleted (the same two-trigger guard as `audit_log`). A
 # campaign's `pending` run keeps its CURRENT value in the state blob, so the fold,
 # the summary and the v4 code read it as before; this table is the history. Version
-# 1 is the first submission. A later submission (a correction) must carry a reason,
-# enforced here by the CHECK as well as in the store. `previous_value` is the value
-# it replaced (NULL for version 1).
+# 1 is the first value recorded in THIS table: there is no backfill, so for a run
+# measured before v5 (or before a down+up, which leaves the old history in
+# `run_results_v5_rolledback`) version 1 is a correction and carries the replaced
+# value in `previous_value`. A submission that replaces a value must carry a reason
+# (store rule); a version above 1 without one is refused here by the CHECK too.
+# `previous_value` is NULL only when no value existed.
 _V5_TRIGGERS = ("run_results_no_update", "run_results_no_delete")
 _V5_TABLES = ("run_results",)
 _V5_DDL: tuple[str, ...] = (

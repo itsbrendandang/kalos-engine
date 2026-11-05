@@ -123,6 +123,8 @@ Schema v5 adds one table, `run_results`, with the same two-trigger guard as
 - `down` (v5 -> v4) drops the triggers and renames `run_results` to
   `run_results_v5_rolledback`. The history is kept, and the v4 engine still reads the
   current values from the blobs.
+  A later `up` creates an empty `run_results`: numbering restarts at version 1, and
+  the earlier history stays in `run_results_v5_rolledback` (not merged back).
 
 ## Schema v4: append-only audit log
 
