@@ -27,14 +27,12 @@ offset is unknown), so the cold regime falls back to a pooled GP.
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import numpy as np
-import torch
-from botorch.models import MultiTaskGP
-from botorch.models.transforms.input import Normalize
-from gpytorch.mlls import ExactMarginalLogLikelihood
 
-from .surrogate import DEVICE, DTYPE, _fit_mll_with_retry, sanitize_bounds
+# torch/botorch are imported inside the methods: kalos/core keeps torch out of
+# `import kalos.core` (tests/test_core_torch_contract.py).
 
 WARM_START_ENV = "KALOS_EXPERIMENTAL_WARM_START"
 
@@ -51,12 +49,19 @@ class MultiTaskSurrogate:
 
     def __init__(self, rank: int | None = None) -> None:
         self.rank = rank
-        self.model: MultiTaskGP | None = None
-        self._X: torch.Tensor | None = None
+        self.model: Any = None  # botorch MultiTaskGP once fitted
+        self._X: Any = None  # torch tensor of the target campaign's rows
         self._y: np.ndarray | None = None
         self.task_ids: dict = {}
 
     def fit(self, X, y, tasks, bounds, *, target_task) -> MultiTaskSurrogate:
+        import torch
+        from botorch.models import MultiTaskGP
+        from botorch.models.transforms.input import Normalize
+        from gpytorch.mlls import ExactMarginalLogLikelihood
+
+        from .surrogate import DEVICE, DTYPE, _fit_mll_with_retry, sanitize_bounds
+
         Xa = np.asarray(X, float)
         ya = np.asarray(y, float).reshape(-1)
         ta = np.asarray(tasks, dtype=object).reshape(-1)
@@ -86,6 +91,10 @@ class MultiTaskSurrogate:
 
     def posterior(self, X, *, observation_noise: bool = False):
         """(mean, std) for the TARGET campaign at `X` (n x d, no task column)."""
+        import torch
+
+        from .surrogate import DEVICE, DTYPE
+
         assert self.model is not None, "fit() first"
         Xt = torch.as_tensor(np.asarray(X, float), dtype=DTYPE, device=DEVICE)
         self.model.eval()
