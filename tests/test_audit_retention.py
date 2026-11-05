@@ -173,3 +173,27 @@ def test_a_failing_archive_does_not_stop_the_boot(store, monkeypatch, caplog):
     with TestClient(portal.app) as client:
         assert client.get("/healthz").status_code == 200
     assert "audit" in caplog.text.lower()
+
+
+def test_truncated_last_archive_line_is_skipped_and_the_row_recopied(store):
+    """Regression (standing review P2-4): a crash mid-append left a partial last
+    line, and every later run failed on json.loads. Now the watermark comes from
+    the last complete line, the partial line is ended, and the row is copied again."""
+    store.record_audit(tenant="acme", action="first", outcome="200")
+    _age(store, "first", 500)
+    assert store.archive_audit_log(365) == 1
+    path = store.state_dir / "audit-archive" / f"t-{b'acme'.hex()}.jsonl"
+    store.record_audit(tenant="acme", action="second", outcome="200")
+    _age(store, "second", 500)
+    with path.open("ab") as fh:
+        fh.write(b'{"action": "second", "id": 9')  # simulated crash mid-append
+    assert store.archive_audit_log(365) == 1  # 'second' copied again, not skipped
+    lines = path.read_text(encoding="utf-8").splitlines()
+    parsed = []
+    for line in lines:
+        try:
+            parsed.append(json.loads(line)["action"])
+        except ValueError:
+            parsed.append("<partial>")
+    assert parsed == ["first", "<partial>", "second"]
+    assert store.archive_audit_log(365) == 0  # and the next run is a no-op

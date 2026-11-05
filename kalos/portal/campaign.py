@@ -227,20 +227,41 @@ def _archive_path(archive_dir: Path, tenant: str) -> Path:
 
 
 def _archive_watermark(path: Path) -> int:
-    """The largest audit id already archived to `path` (0 for a new file). Only
-    the last line is read: the archive is written in id order."""
+    """The largest audit id already archived to `path` (0 for a new file). The
+    archive is written in id order, so the last COMPLETE line is read. A
+    truncated final line (a crash mid-append) is skipped, not fatal: that row is
+    copied again on the next run (`_append_archive` first ends the partial line)."""
     try:
         with path.open("rb") as fh:
             fh.seek(0, os.SEEK_END)
             size = fh.tell()
-            fh.seek(max(0, size - 65_536))
-            lines = [ln for ln in fh.read().split(b"\n") if ln.strip()]
+            window = 65_536
+            while True:
+                fh.seek(max(0, size - window))
+                lines = [ln for ln in fh.read().split(b"\n") if ln.strip()]
+                for raw in reversed(lines):
+                    try:
+                        obj = json.loads(raw)
+                        return int(obj["id"])
+                    except (ValueError, KeyError, TypeError):
+                        continue
+                if window >= size:
+                    return 0
+                window *= 4
     except FileNotFoundError:
         return 0
-    if not lines:
-        return 0
-    last = json.loads(lines[-1])
-    return int(last["id"])
+
+
+def _ends_mid_line(path: Path) -> bool:
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            if fh.tell() == 0:
+                return False
+            fh.seek(-1, os.SEEK_END)
+            return fh.read(1) != b"\n"
+    except FileNotFoundError:
+        return False
 
 
 def _append_archive(path: Path, rows: list[tuple[Any, ...]]) -> None:
@@ -251,6 +272,8 @@ def _append_archive(path: Path, rows: list[tuple[Any, ...]]) -> None:
     payload = "".join(
         json.dumps(dict(zip(names, row)), sort_keys=True, ensure_ascii=False) + "\n" for row in rows
     ).encode("utf-8")
+    if _ends_mid_line(path):
+        payload = b"\n" + payload  # end a line truncated by an earlier crash
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
         os.write(fd, payload)
