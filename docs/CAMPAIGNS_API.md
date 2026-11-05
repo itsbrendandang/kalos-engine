@@ -244,11 +244,18 @@ identifier-type columns in the analysis body. Full scope, including the raw
 sheet stored at rest in `campaigns.base_rows`: docs/HARDENING.md, "What
 `anonymize=true` covers".
 
-Determinism: the same bytes give the same proposals on the same library stack
-and the same torch thread count (`run.torch_threads`, `run.library_versions`).
-That is the only claim. A different torch or botorch version, or a different
-thread count, may legitimately change the numbers. Compare `run` before
-comparing proposals.
+Determinism: **not guaranteed, even for identical runs.** Measured: an 80-row,
+6-feature subset of the committed synthetic example, analysed four times in one
+process with the same library stack and thread count, gave four different
+proposal batches (at 4 threads and at 1; the same happens before the R2 changes,
+at 23d11df). The fitted posterior agreed to about 1e-16 between runs, but the
+acquisition optimum moved by whole units. Small sheets do repeat
+(`tests/test_golden_determinism.py`); the 80x6 case is a recorded xfail in the
+same file. The cause is not isolated yet (the usual suspect is acquisition
+optimizer RNG or state that `_seeded_analysis` does not reset). A different
+torch or botorch version, or a different thread count, can also change the
+numbers. Compare `run` and `proposal_provenance` before comparing proposals;
+equal provenance does not mean equal proposals.
 
 ### Proposal provenance
 
@@ -269,7 +276,7 @@ reanalyze and job results). Analyses written before it existed have no such key.
 | `config_sha256` | SHA-256 of the `run` fields named in `config_fields`, as canonical JSON (sorted keys, no spaces). |
 | `config_fields` | `kind`, `target`, `roles_declared`, `profile`, `anonymize`, `seed`, `torch_threads`, `max_fit_rows`, `validation_mode`, `sheet_index`, `header_row`, `pending_runs`, and `proposal_fit_restarts` (from `model_diagnostics.restarts`). |
 | `model_artifact_stored` | Always `false`: no fitted model, weights or pickle is stored. A refit needs the input, the config, the seed and the same stack. |
-| `provenance_sha256` | SHA-256 over every field above (not `timestamp` / `created_at`). The same input, config, seed, engine and libraries give the same value. A reproducibility key, not a signature. |
+| `provenance_sha256` | SHA-256 over every field above (not `timestamp` / `created_at`). The same input, config, seed, engine and libraries give the same value. It identifies the inputs, config and stack; it is not a guarantee that the proposals repeat (see "Determinism" above), and not a signature. |
 | `timestamp`, `created_at` | When the analysis ran: epoch seconds (the result's `timestamp`) and the same instant as UTC ISO 8601. |
 
 Each run added by `start` (`POST /api/campaign/start`, `POST
@@ -297,7 +304,7 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
 | `condition_warning` | `true` above `condition_warn_above` (`1e8`). The fit proceeds. |
 | `condition_notice` | Plain-language sentence when `condition_warning` is true, else `null`. |
 | `condition_warn_above`, `condition_refuse_above` | `1e8` and `1e12`. Above `1e12` the analysis is refused (HTTP 400) with a plain-language reason. These thresholds are defaults, not validated numbers. Because the noise model keeps a floor on the noise, exact replicates with inferred noise stay well conditioned; the warning needs a tight cluster of rows with a fixed small noise, and the refusal is reached only on very large or very clustered designs. |
-| `restarts`, `restart_seed` | The proposal fit runs from 3 starts (the default initialization and 2 seeded random ones; `restart_seed` = the analysis seed) up to 1,000 fit rows, and from 1 start above that. The count depends only on the row count, never on time, so the same rows give the same fit on any host. It is part of `proposal_provenance.config_sha256` (`proposal_fit_restarts`). |
+| `restarts`, `restart_seed` | The proposal fit runs from 3 starts (the default initialization and 2 seeded random ones; `restart_seed` = the analysis seed) up to 1,000 fit rows, and from 1 start above that. The count depends only on the row count, never on time, so the same rows get the same number of starts on any host (the fitted values themselves can still differ by host or build). It is part of `proposal_provenance.config_sha256` (`proposal_fit_restarts`). |
 | `restart_mll` | Marginal log likelihood reached from each start (`null` = that start failed numerically). `null` for a one-start fit. |
 | `restart_chosen` | Index of the start kept (best likelihood; a random start must beat the default by more than 1e-6). When it is `0` the model is the one-start model, unchanged. |
 | `cv_fit_restarts` | `1`. The CV folds behind the trust verdict (`reliability`, `promotion`) fit with one start, so the verdict measures the one-start procedure; the served model may use 3. When `restart_chosen` is `0` the two procedures give the same model. |

@@ -343,11 +343,12 @@ These are judgement calls for the science owner; the code is unchanged.
 
 - `_analyze` holds `_RNG_LOCK` for its whole run, so two admitted analyses (busy.py
   `KALOS_JOB_WORKERS=2`) run their seeded sections one after the other. The result is
-  deterministic and identical to sequential, but the parallelism between two
+  the same as running them sequentially (which is itself not always repeatable:
+  docs/CAMPAIGNS_API.md "Determinism"), but the parallelism between two
   analyses is lost. A per-call `torch.Generator` through BoTorch would remove the lock;
   that is a larger refactor and is not done.
 - Scale readout (`kalos/scale/readout.py`) uses torch outside `_analyze` and does not
-  take the lock. Its output is not covered by the determinism guarantee.
+  take the lock. It is not covered by the seeding either.
 
 ### Concentration naming gap (C1 follow-on)
 

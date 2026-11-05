@@ -13,7 +13,8 @@ Built once in `kalos.portal.pipeline.compute_upload_analysis`, after the parse
 and before publishing, so the sync routes and the background-job worker attach
 an identical block for the same bytes (both call the same function). Nothing in
 it is a timestamp or a process id; that is what makes "same bytes, same stack,
-same thread count -> same record" hold.
+same thread count -> same RECORD" hold. It does not make the proposals repeat
+(docs/CAMPAIGNS_API.md "Determinism").
 
 The separate `proposal_provenance` block (`proposal_provenance` below) does
 carry a timestamp; its `provenance_sha256` excludes it.
@@ -272,7 +273,9 @@ def proposal_provenance(
 
     `provenance_sha256` hashes every field except `timestamp` and `created_at`:
     the same input bytes, config, seed, engine and library versions give the
-    same value. It is a reproducibility key, not a signature.
+    same value. It identifies the inputs, config and stack; it is not a
+    guarantee that the proposals repeat (they can differ between identical
+    runs, tests/test_golden_determinism.py), and not a signature.
     """
     from kalos.versions import PINNED_ML, library_versions, public_version
 

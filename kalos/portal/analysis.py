@@ -253,8 +253,10 @@ def _analyze_body(
     raising; see PART 2 below for the policy. Wiring this parameter through
     the portal's HTTP surface is out of scope here.
 
-    Deterministic: seeds torch + numpy up front so the same sheet gives the same
-    proposals. Returns a per-column `provenance` report (what was kept/dropped and
+    Seeded: torch + numpy are seeded up front. That makes small sheets repeat,
+    but identical runs CAN give different proposals (measured on an 80x6 sheet,
+    even in one process; tests/test_golden_determinism.py, docs/CAMPAIGNS_API.md
+    "Determinism"). Returns a per-column `provenance` report (what was kept/dropped and
     why) plus `seed`, `timestamp`, and `engine_version` for audit. When
     `anonymize` is True, identifier-type column names are replaced with stable
     pseudonyms in the response (the owner UI keeps real names when False).
