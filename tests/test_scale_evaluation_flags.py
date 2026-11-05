@@ -100,7 +100,7 @@ def test_include_oof_arrays_have_equal_lengths_matching_per_scale_totals():
     report = leave_one_scale_out_report(df, "titer_g_per_L", _PROCESS_COLUMNS, include_oof=True)
 
     oof = report["oof"]
-    keys = ("scale_L", "actual", "pred", "naive_mean_pred", "naive_nn_pred", "direction")
+    keys = ("scale_L", "actual", "pred", "naive_mean_pred", "naive_nn_pred", "naive_cf_pred", "direction")
     assert set(oof.keys()) == set(keys)
     lengths = {len(oof[k]) for k in keys}
     assert len(lengths) == 1  # every array the same length

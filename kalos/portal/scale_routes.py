@@ -274,12 +274,17 @@ def _decision_banner(readout: dict[str, Any]) -> str:
     )
 
 
+def _fmt_cf(v: Any) -> str:
+    """Carry-forward MAE, or 'n/a' where the baseline applied to no row."""
+    return "n/a" if v is None or v != v else _FMT_METRIC.format(v)
+
+
 def _rung_verdict(r: dict[str, Any]) -> str:
     """The rung's own verdict, plus why a winning rung still cannot license
     the reference ratio when it sits below the license window."""
     if r["too_few_to_judge"]:
         return "too few to judge"
-    if not r["beats_both"]:
+    if not r["beats_both"] or not r.get("beats_carry_forward", True):
         return "no"
     return "yes" if r.get("in_license_window", True) else "yes (below license window)"
 
@@ -294,13 +299,15 @@ def _rungs_table(readout: dict[str, Any]) -> str:
             f'<td>{_fmt_sig4(r["scale_L"])} L</td><td>{_FMT_RATIO.format(r["step_ratio"])}</td><td>{r["n"]}</td>'
             f'<td>{_FMT_METRIC.format(r["mae"])}</td><td>{_FMT_METRIC.format(r["naive_mean_mae"])}</td>'
             f'<td>{_FMT_METRIC.format(r["naive_nn_mae"])}</td>'
+            f'<td>{_fmt_cf(r.get("naive_cf_mae"))}</td>'
             f"<td>{_rung_verdict(r)}</td>"
             "</tr>"
             for r in rungs
         )
         parts.append(
             "<table><thead><tr><th>Scale</th><th>Step ratio</th><th>n</th><th>MAE</th>"
-            "<th>naive_mean MAE</th><th>naive_nn MAE</th><th>beats both</th></tr></thead>"
+            "<th>naive_mean MAE</th><th>naive_nn MAE</th><th>carry-forward MAE</th>"
+            "<th>beats baselines</th></tr></thead>"
             f"<tbody>{rows}</tbody></table>"
         )
     else:
@@ -339,11 +346,18 @@ def _baseline_section(readout: dict[str, Any]) -> str:
         + _kv("Model MAE", _FMT_METRIC.format(comparison["pooled_mae"]))
         + _kv("naive_mean MAE", _FMT_METRIC.format(comparison["pooled_naive_mean_mae"]))
         + _kv("naive_nn MAE", _FMT_METRIC.format(comparison["pooled_naive_nn_mae"]))
+        + _kv("carry-forward MAE", _fmt_cf(comparison.get("pooled_naive_cf_mae")))
         + _kv(
             "beats both baselines",
             "too few to judge"
             if comparison["n_residuals"] < MIN_RESIDUALS
             else ("yes" if comparison["pooled_beats_both"] else "no"),
+        )
+        + _kv(
+            "beats carry-forward",
+            "too few to judge"
+            if comparison["n_residuals"] < MIN_RESIDUALS
+            else ("yes" if comparison.get("pooled_beats_carry_forward", True) else "no"),
         )
         + _kv("pooled residuals (n)", comparison["n_residuals"])
     )
