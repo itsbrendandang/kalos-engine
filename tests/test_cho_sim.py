@@ -9,7 +9,7 @@ import pytest
 from kalos.bench import OBJECTIVES, get_objective, run_one
 from kalos.bench.cho_sim import (
     CHO_OPTIMUM_MG_L,
-    DESIGN_SPACE,
+    SEARCH_BOX,
     ProcessParams,
     endpoint_titer,
     replicate_titers,
@@ -41,7 +41,7 @@ def test_optimum_is_interior_and_matches_the_recorded_value():
     p, v = true_optimum()
     assert v == pytest.approx(CHO_OPTIMUM_MG_L, rel=5e-3)
     for k in ("glc_feed_rate", "glc_0", "ph_setpoint"):
-        lo, hi = DESIGN_SPACE[k]
+        lo, hi = SEARCH_BOX[k]
         span = hi - lo
         assert lo + 0.02 * span < getattr(p, k) < hi - 0.02 * span, k
     # nothing in a dense random sample beats the recorded optimum

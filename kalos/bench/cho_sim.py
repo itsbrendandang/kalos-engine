@@ -22,7 +22,7 @@ States (y): VCD [1e6 cells/mL], Glc [mM], Lac [mM], Titer [mg/L]; time in hours.
 The kinetic constants below are our own, chosen for plausible CHO fed-batch
 dynamics (14-day culture, peak VCD ~40e6 cells/mL for an intensified fed-batch,
 titer O(1000) mg/L), and
-tuned so endpoint titer has an INTERIOR optimum in the design space: too little
+tuned so endpoint titer has an INTERIOR optimum in the search box: too little
 glucose feed starves growth, too much drives lactate overflow that inhibits and
 kills, and growth/product formation peak near pH 7.0. This is a benchmark tool,
 NOT a validated predictor of any real process - it must never be presented as one.
@@ -64,8 +64,8 @@ class ProcessParams:
     ph_setpoint: float     # controlled culture pH
 
 
-# Design space (lo, hi) for each controllable parameter.
-DESIGN_SPACE: dict[str, tuple[float, float]] = {
+# Search box (lo, hi) for each controllable parameter.
+SEARCH_BOX: dict[str, tuple[float, float]] = {
     "glc_feed_rate": (0.0, 2.5),
     "glc_0": (20.0, 60.0),
     "vcd_0": (0.2, 1.0),
@@ -128,11 +128,11 @@ def endpoint_titer(p: ProcessParams, *, noise_cv: float = 0.0,
 
 
 def sample_doe(n: int, *, seed: int = 0) -> list[ProcessParams]:
-    """Space-filling Latin-hypercube sample over the design space (a proper DoE,
+    """Space-filling Latin-hypercube sample over the search box (a proper DoE,
     not ad-hoc random draws)."""
-    keys = list(DESIGN_SPACE)
-    lo = np.array([DESIGN_SPACE[k][0] for k in keys])
-    hi = np.array([DESIGN_SPACE[k][1] for k in keys])
+    keys = list(SEARCH_BOX)
+    lo = np.array([SEARCH_BOX[k][0] for k in keys])
+    hi = np.array([SEARCH_BOX[k][1] for k in keys])
     unit = qmc.LatinHypercube(d=len(keys), seed=seed).random(n)
     scaled = qmc.scale(unit, lo, hi)
     return [ProcessParams(**dict(zip(keys, row))) for row in scaled]
@@ -162,16 +162,16 @@ def replicate_titers(p: ProcessParams, n_rep: int, *, noise_cv: float = 0.1,
 
 
 def _design_arrays() -> tuple[list[str], np.ndarray, np.ndarray]:
-    keys = list(DESIGN_SPACE)
-    lo = np.array([DESIGN_SPACE[k][0] for k in keys])
-    hi = np.array([DESIGN_SPACE[k][1] for k in keys])
+    keys = list(SEARCH_BOX)
+    lo = np.array([SEARCH_BOX[k][0] for k in keys])
+    hi = np.array([SEARCH_BOX[k][1] for k in keys])
     return keys, lo, hi
 
 
 @lru_cache(maxsize=4)
 def true_optimum(*, n_search: int = 2000, seed: int = 0,
                  n_polish: int = 4) -> tuple[ProcessParams, float]:
-    """The design-space optimum: a dense space-filling search, then L-BFGS-B
+    """The search-box optimum: a dense space-filling search, then L-BFGS-B
     polish from the `n_polish` best points (deterministic ground truth for regret
     curves). Cached: it costs a few seconds of ODE solves.
 

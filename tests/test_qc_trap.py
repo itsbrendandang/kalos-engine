@@ -169,3 +169,64 @@ def test_portal_numeric_contamination_level_is_not_excluded():
     df["contamination"] = np.resize([0, 1, 2], len(df))
     res = _analyze(df, roles=ColumnRoles.from_dict(_roles(exclude_flagged_rows=True)), profile=GENERIC_PROFILE)
     assert res["qc_excluded"]["n_excluded"] == 0 and res["n"] == len(df)
+
+
+def test_missing_declared_qc_column_is_a_coded_refusal():
+    from kalos.domains import GENERIC_PROFILE, ColumnRoles
+    from kalos.portal.analysis import _analyze
+    from kalos.portal.uploads import UploadRejected
+
+    df = _upload_frame(0)
+    roles = ColumnRoles.from_dict(_roles(exclude_flagged_rows=True, qc="no_such_col"))
+    with pytest.raises(UploadRejected) as exc:
+        _analyze(df, roles=roles, profile=GENERIC_PROFILE)
+    assert exc.value.code == "qc_column_not_found"
+
+
+@pytest.fixture
+def qc_client(tmp_path, monkeypatch):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from kalos.portal import app as portal_module
+    from kalos.portal import campaign as campaign_module
+    from kalos.portal.campaign import CampaignStore, get_campaign_store
+
+    monkeypatch.setenv("KALOS_STATE_DIR", str(tmp_path))
+    store = CampaignStore(tmp_path)
+    monkeypatch.setattr(portal_module, "_STATE_DIR", tmp_path)
+    monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
+    monkeypatch.setattr(campaign_module, "_STORE", store)
+    portal_module.app.dependency_overrides[get_campaign_store] = lambda: store
+    try:
+        yield TestClient(portal_module.app)
+    finally:
+        portal_module.app.dependency_overrides.pop(get_campaign_store, None)
+
+
+@pytest.mark.parametrize("opt_in", [True, False])
+def test_reanalyze_inherits_the_qc_opt_in(qc_client, opt_in):
+    import json
+
+    df = _upload_frame(0)
+    fail_rows = [int(i) for i in df.index[df["qc"] == "fail"]]
+    roles = _roles(exclude_flagged_rows=True) if opt_in else _roles()
+    up = qc_client.post(
+        "/api/run",
+        files={"file": ("qc.csv", df.to_csv(index=False).encode(), "text/csv")},
+        data={"roles": json.dumps(roles)},
+    )
+    assert up.status_code == 200, up.text
+    assert up.json()["qc_excluded"]["n_excluded"] == (len(fail_rows) if opt_in else 0)
+    recipe = {f: float(df[f].iloc[0]) for f in FACTORS}
+    started = qc_client.post("/api/campaign/start", json={"recipes": [
+        {"recipe": recipe, "pred": 1.0, "std": 0.1, "mode": "explore", "reason": "t"},
+    ]}).json()["started"]
+    assert qc_client.post("/api/campaign/result", json={"id": started[0]["id"], "value": 1.0}).status_code == 200
+    re = qc_client.post("/api/campaign/reanalyze")
+    assert re.status_code == 200, re.text
+    qc = re.json()["analysis"]["qc_excluded"]
+    if opt_in:
+        assert qc["requested"] is True and qc["rows"] == fail_rows
+    else:
+        assert qc["requested"] is False and qc["n_excluded"] == 0

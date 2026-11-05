@@ -367,7 +367,12 @@ def _analyze_body(
     qc_col = qc_column if qc_column is not None else (roles.qc if roles is not None else None)
     want_exclusion = bool(exclude_flagged_rows or (roles is not None and roles.exclude_flagged_rows))
     if qc_col is not None and qc_col not in df.columns:
-        raise ValueError(f"declared columns not found in the sheet: {[qc_col]}")
+        raise UploadRejected(
+            f"The declared QC flag column {clip_name(qc_col)!r} is not in this sheet. "
+            "Name an existing column in roles.qc, or omit it to detect the flag column by name.",
+            code="qc_column_not_found",
+            context={"qc": str(qc_col)},
+        )
     if want_exclusion:
         keep_cols = (
             {str(roles.target), *map(str, roles.features), *map(str, roles.categoricals)}
