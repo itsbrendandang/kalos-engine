@@ -102,7 +102,7 @@ def test_seed_depends_on_each_component():
 
 
 def test_params_are_validated():
-    with pytest.raises(g.GeneratorError, match="does not take"):
+    with pytest.raises(g.GeneratorError, match="does not take 1 of"):
         g.generate("bench.gaussian_bump", {"evil": 1}, 3, **KEY)
     with pytest.raises(g.GeneratorError, match="wrong type"):
         g.generate("bench.gaussian_bump", {"dim": "4"}, 3, **KEY)

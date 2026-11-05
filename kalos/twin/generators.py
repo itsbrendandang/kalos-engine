@@ -96,8 +96,10 @@ class GeneratorSpec:
         given = dict(params or {})
         unknown = sorted(set(given) - set(self.defaults))
         if unknown:
+            # The names are the caller's input and are not echoed back.
             raise GeneratorError(
-                f"generator {self.id!r} does not take parameter(s): {', '.join(unknown)}"
+                f"generator {self.id!r} does not take {len(unknown)} of the given parameter(s); "
+                "see its defaults for the accepted names"
             )
         out = dict(self.defaults)
         for key, value in given.items():

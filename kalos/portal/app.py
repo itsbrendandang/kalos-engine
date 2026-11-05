@@ -99,6 +99,7 @@ from kalos.portal.uploads import (
 from kalos.portal.uploads import (
     rejection_counts as _rejection_counts,
 )
+from kalos.portal.virtual_runs_api import router as _virtual_runs_router
 from kalos.providers import provider_status
 
 log = logging.getLogger("kalos.portal")
@@ -898,6 +899,7 @@ def upload_error_response(error: BaseException) -> JSONResponse:
 app.include_router(_campaign_router)
 app.include_router(_campaigns_router)  # /api/campaigns* (kalos.portal.campaigns_api)
 app.include_router(_jobs_router)  # background jobs (kalos.portal.jobs_api, docs/JOBS.md)
+app.include_router(_virtual_runs_router)  # simulated/synthetic runs (docs/VIRTUAL_RUNS.md)
 
 
 _CAMPAIGN_BODY_FIELDS = frozenset(
