@@ -282,6 +282,13 @@ async def _reanalyze(
     previous = store.load_analysis(tenant=tenant, campaign_id=campaign_id) or {}
     previous_run = previous.get("run")
     anonymize = bool(isinstance(previous_run, dict) and previous_run.get("anonymize"))
+    # The QC opt-in is per campaign: a re-analysis keeps the upload's
+    # `exclude_flagged_rows` / `qc` roles (default off), so flagged rows are not
+    # silently re-admitted or newly dropped by a re-analysis.
+    prev_roles = previous_run.get("roles_declared") if isinstance(previous_run, dict) else None
+    prev_roles = prev_roles if isinstance(prev_roles, dict) else {}
+    exclude_flagged = prev_roles.get("exclude_flagged_rows") is True
+    qc_column = prev_roles.get("qc") if isinstance(prev_roles.get("qc"), str) else None
 
     if df.empty:
         log.warning("reanalyze rejected: campaign has no base rows to analyze")
@@ -294,7 +301,8 @@ async def _reanalyze(
         result = await run_in_slot(
             functools.partial(
                 _analyze, df, target, profile=BIOPROCESS_PROFILE, pending=awaiting,
-                anonymize=anonymize,
+                anonymize=anonymize, exclude_flagged_rows=exclude_flagged,
+                qc_column=qc_column if exclude_flagged else None,
             ),
             tenant=tenant,
         )
