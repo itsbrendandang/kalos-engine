@@ -65,6 +65,7 @@ from botorch.utils.sampling import draw_sobol_samples
 
 from .feasibility import FeasibilityClassifier
 from .surrogate import DEVICE, DTYPE, Surrogate, sanitize_bounds
+from .turbo import TURBO_MIN_DIM, TurboState, trust_region_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -381,6 +382,7 @@ def propose(
     constraint_surrogate: Surrogate | None = None,
     constraint_floor: float | None = None,
     linear_constraints: list[tuple[list[int], list[float], float]] | None = None,
+    trust_region: TurboState | None = None,
 ) -> np.ndarray:
     """The proposed points only (`propose_batch(...).X`); see `propose_batch`.
 
@@ -402,6 +404,7 @@ def propose(
         constraint_surrogate=constraint_surrogate,
         constraint_floor=constraint_floor,
         linear_constraints=linear_constraints,
+        trust_region=trust_region,
     ).X
 
 
@@ -421,6 +424,7 @@ def propose_batch(
     constraint_floor: float | None = None,
     min_separation: float = NEAR_DUPLICATE_TOL,
     linear_constraints: list[tuple[list[int], list[float], float]] | None = None,
+    trust_region: TurboState | None = None,
 ) -> ProposalBatch:
     """Propose up to `q` DISTINCT points maximizing qLogNEI, with an account of
     the batch's distinctness (`ProposalBatch`).
@@ -507,6 +511,13 @@ def propose_batch(
     Both compositions are independent and stack: gating and constraining can be
     combined by passing both.
 
+    `trust_region` (a `kalos.core.turbo.TurboState`, default None = unchanged)
+    restricts the search to a TuRBO-1 trust region around the best observation
+    for a continuous design with d >= `TURBO_MIN_DIM`; otherwise it is ignored
+    (logged). The caller owns the state and calls `turbo.update_state` after
+    each measured batch. Near-duplicate separation is then relative to the
+    region's width, not the full box.
+
     `linear_constraints` are HARD linear inequalities on the design in raw units
     (BoTorch's `inequality_constraints`): each `(indices, coefficients, rhs)`
     requires `sum(coefficients[k] * x[indices[k]]) >= rhs` (flip the signs for a
@@ -517,6 +528,24 @@ def propose_batch(
     `ValueError` up front. Not supported together with categorical dimensions.
     """
     assert surrogate.model is not None and surrogate._X is not None, "fit the surrogate first"
+    if trust_region is not None:
+        d_box = int(np.asarray(bounds, float).shape[1])
+        if cat_dims or linear_constraints or d_box < TURBO_MIN_DIM:
+            logger.info(
+                "trust_region ignored (needs a continuous design with d >= %d and no linear "
+                "constraints; got d=%d)", TURBO_MIN_DIM, d_box,
+            )
+        else:
+            # TuRBO-1: optimize the same acquisition inside the trust region only.
+            # In-flight runs outside the region are dropped by the pending
+            # sanitizer; they cannot collide with a proposal inside it.
+            return propose_batch(
+                surrogate, trust_region_bounds(surrogate, bounds, trust_region), q,
+                num_restarts, raw_samples, pending=pending, seed=seed,
+                feasibility_classifier=feasibility_classifier,
+                constraint_surrogate=constraint_surrogate, constraint_floor=constraint_floor,
+                min_separation=min_separation,
+            )
     if (constraint_surrogate is None) != (constraint_floor is None):
         raise ValueError(
             "constraint_surrogate and constraint_floor must be given together "
