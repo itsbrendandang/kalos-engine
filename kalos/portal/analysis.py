@@ -1134,14 +1134,17 @@ def _analyze_body(
         if nr["n_recipes"] >= 6 and np.isfinite(sigma2) and sigma2 > 0:
             replicate_aware = True
             per_point_var = float(sigma2) / np.maximum(n_reps_g, 1).astype(float)
-            s = Surrogate().fit(Xf, yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims)
+            s = Surrogate().fit(
+                Xf, yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
+                check_conditioning=True,
+            )
             incumbent = best_reproducible
             X_fit, y_fit = Xf, yf
 
     # proposed next batch, with predicted target + uncertainty + a why per row
     _progress("proposing", 0.8)
     if not replicate_aware:
-        s = Surrogate().fit(X, y, bounds=bounds, cat_dims=cat_dims)
+        s = Surrogate().fit(X, y, bounds=bounds, cat_dims=cat_dims, check_conditioning=True)
     # In-flight recipes, encoded into this design so the acquisition treats them
     # as taken. Encoding can drop rows (a recipe naming an unknown categorical
     # level cannot be placed in the design at all), so the count actually used is

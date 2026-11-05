@@ -127,3 +127,19 @@ def test_analysis_result_exposes_the_jitter_record():
     assert md["jitter_rung"] in surrogate_module._FIT_JITTERS
     assert md["jitter_cap"] == JITTER_CAP
     assert md["jitter_added_max"] <= JITTER_CAP
+
+
+def test_committed_synthetic_example_fits_at_rung_zero():
+    """Review (standing-4): the ladder change must not move a normal dataset off
+    the first rung. The committed synthetic example (numeric columns) fits there."""
+    from pathlib import Path
+
+    import pandas as pd
+
+    df = pd.read_csv(Path(__file__).resolve().parents[1] / "examples" / "synthetic_bioprocess"
+                     / "synthetic_bioprocess.csv")
+    num = df.select_dtypes("number")
+    X, y = num.drop(columns=["titer_g_L"]).to_numpy(float), num["titer_g_L"].to_numpy(float)
+    bounds = np.vstack([X.min(axis=0), X.max(axis=0)])
+    d = Surrogate().fit(X, y, bounds=bounds).fit_diagnostics
+    assert d["jitter_rung_index"] == 0 and d["jitter_rung"] == 1e-8

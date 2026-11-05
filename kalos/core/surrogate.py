@@ -254,7 +254,9 @@ class Surrogate:
         # What the last fit did numerically (jitter rung, ...). Empty before fit.
         self.fit_diagnostics: dict = {}
 
-    def fit(self, X, y, bounds, *, noise=None, cat_dims=None) -> Surrogate:
+    def fit(
+        self, X, y, bounds, *, noise=None, cat_dims=None, check_conditioning: bool = False,
+    ) -> Surrogate:
         """Fit on (X, y). `bounds` (2 x d) ties input normalization to the fixed
         design box rather than the training-data envelope; it is required so a
         caller can never fall into the training-envelope normalization footgun.
@@ -277,6 +279,10 @@ class Surrogate:
         kernel on the rest; the continuous dims are input-normalized to the box
         and the categorical codes pass through untouched. When `None`/empty the
         continuous `SingleTaskGP` path is unchanged.
+
+        `check_conditioning` (default off) computes the condition number of the
+        fitted K + noise*I, records it in `fit_diagnostics`, and refuses above
+        `COND_REFUSE` (FitError). The portal turns it on for the proposal fit only.
         """
         Xa = np.asarray(X, float)
         ya = np.asarray(y, float).reshape(-1)
@@ -321,9 +327,13 @@ class Surrogate:
                 )
         mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
         diag = dict(_fit_mll_with_retry(mll))
-        diag.update(condition_report(kernel_condition_number(self.model)))
-        if diag["condition_warning"]:
-            log.warning("GP kernel matrix is ill-conditioned (cond %.1e)", diag["condition_number"])
+        if check_conditioning:
+            # Only the fit whose posterior is served (the analysis's proposal
+            # surrogate) pays for the eigendecomposition and can be refused here;
+            # CV folds, bench arms and auxiliary surrogates never are.
+            diag.update(condition_report(kernel_condition_number(self.model)))
+            if diag["condition_warning"]:
+                log.warning("GP kernel matrix is ill-conditioned (cond %.1e)", diag["condition_number"])
         self.fit_diagnostics = diag
         self._y = ya
         # Keep the raw (untransformed) training inputs so the noisy-EI acquisition

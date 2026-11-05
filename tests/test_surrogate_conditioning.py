@@ -38,7 +38,7 @@ def test_thresholds():
 
 
 def test_well_spaced_design_is_not_flagged():
-    d = Surrogate().fit(*_spaced(), bounds=B).fit_diagnostics
+    d = Surrogate().fit(*_spaced(), bounds=B, check_conditioning=True).fit_diagnostics
     assert d["condition_number"] < 1e5
     assert d["condition_warning"] is False and d["condition_notice"] is None
 
@@ -47,7 +47,7 @@ def test_duplicate_rows_with_inferred_noise_are_not_refused():
     X, y = _spaced()
     Xd = np.vstack([X, X[:4]])
     yd = np.r_[y, y[:4] + 0.02]
-    d = Surrogate().fit(Xd, yd, bounds=B).fit_diagnostics
+    d = Surrogate().fit(Xd, yd, bounds=B, check_conditioning=True).fit_diagnostics
     assert np.isfinite(d["condition_number"]) and d["condition_warning"] is False
 
 
@@ -57,7 +57,7 @@ def test_near_duplicate_cluster_with_fixed_tiny_noise_warns():
     Xc = 0.5 + rng.uniform(0, 1e-6, (200, 2))
     X = np.vstack([Xs, Xc])
     y = np.r_[np.sin(3 * Xs[:, 0]), 0.5 + rng.normal(0, 1e-6, 200)]
-    d = Surrogate().fit(X, y, bounds=B, noise=1e-9).fit_diagnostics
+    d = Surrogate().fit(X, y, bounds=B, noise=1e-9, check_conditioning=True).fit_diagnostics
     assert d["condition_number"] > COND_WARN
     assert d["condition_warning"] is True
     assert "very close together" in d["condition_notice"]
@@ -67,15 +67,15 @@ def test_near_duplicate_is_worse_conditioned_than_well_spaced():
     X, y = _spaced()
     Xn = np.vstack([X, X[:4] + 1e-7])
     yn = np.r_[y, y[:4] + 1e-3]
-    well = Surrogate().fit(X, y, bounds=B, noise=1e-6).fit_diagnostics["condition_number"]
-    near = Surrogate().fit(Xn, yn, bounds=B, noise=1e-6).fit_diagnostics["condition_number"]
+    well = Surrogate().fit(X, y, bounds=B, noise=1e-6, check_conditioning=True).fit_diagnostics["condition_number"]
+    near = Surrogate().fit(Xn, yn, bounds=B, noise=1e-6, check_conditioning=True).fit_diagnostics["condition_number"]
     assert near > 100 * well
 
 
 def test_refusal_above_the_limit_is_plain_language(monkeypatch):
     monkeypatch.setattr(surrogate_module, "COND_REFUSE", 10.0)
     with pytest.raises(FitError, match="so close to each other") as exc:
-        Surrogate().fit(*_spaced(), bounds=B)
+        Surrogate().fit(*_spaced(), bounds=B, check_conditioning=True)
     assert "near-duplicate" in str(exc.value)
 
 
@@ -99,3 +99,25 @@ def test_analysis_result_carries_the_conditioning_fields():
     assert md["condition_warning"] is False and md["condition_number"] > 1
     assert md["condition_warn_above"] == 1e8 and md["condition_refuse_above"] == 1e12
     json.dumps(md, allow_nan=False)  # JSON-safe
+
+
+def test_default_fit_skips_the_check_and_cv_never_runs_it(monkeypatch):
+    """Review (standing-4): the eigendecomposition and the refusal belong to the
+    served proposal fit only, never to CV folds or auxiliary surrogates."""
+    calls = {"n": 0}
+    real = surrogate_module.kernel_condition_number
+
+    def spy(model):
+        calls["n"] += 1
+        return real(model)
+
+    monkeypatch.setattr(surrogate_module, "kernel_condition_number", spy)
+    monkeypatch.setattr(surrogate_module, "COND_REFUSE", 1.0)  # would refuse anything
+    d = Surrogate().fit(*_spaced(), bounds=B).fit_diagnostics
+    assert "condition_number" not in d and calls["n"] == 0
+
+    from kalos.core.evaluation import grouped_cv_report
+
+    X, y = _spaced(30)
+    grouped_cv_report(X, y, groups=np.arange(30), bounds=B)
+    assert calls["n"] == 0
