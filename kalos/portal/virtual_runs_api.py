@@ -15,6 +15,7 @@ job queue. No route here feeds virtual rows to an analysis.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Annotated, Any, Literal
@@ -34,6 +35,7 @@ from kalos.portal.campaign import (
     get_campaign_store,
 )
 from kalos.portal.campaign_routes import campaign_not_found_response
+from kalos.portal.campaigns_api import _audit
 from kalos.portal.migrate import CAMPAIGN_ID_PATTERN
 from kalos.twin import generators as gen
 
@@ -94,12 +96,15 @@ def create_virtual_runs(
             store, tenant=principal.tenant, campaign_id=campaign_id,
             generator_id=body.generator, params=body.params, n=body.n,
             requested_by=principal.subject, auth_method=_auth_method(principal),
+            audit=True,  # the audit row commits with the rows
         )
     except CampaignNotFound:
         return campaign_not_found_response()
     except CampaignArchived:
+        _audit(store, principal, vr.AUDIT_CREATE, 409, campaign_id)
         return _archived()
     except gen.GeneratorError as exc:
+        _audit(store, principal, vr.AUDIT_CREATE, 400, campaign_id)
         return _error(400, "invalid_generator_request", str(exc))
     log.info("virtual runs: batch created (n=%d)", out["n"])
     return JSONResponse(out, status_code=201)
@@ -167,11 +172,14 @@ def export_virtual_runs(
     except CampaignNotFound:
         return campaign_not_found_response()
     except vr.MixedExportRefused as exc:
+        _audit(store, principal, vr.AUDIT_EXPORT, 409, campaign_id, detail=exc.code)
         return _error(409, exc.code, str(exc))
     except vr.NoVirtualRuns as exc:
         return _error(404, exc.code, str(exc))
     except CampaignError as exc:
         return _error(400, "invalid_request", str(exc))
+    _audit(store, principal, vr.AUDIT_EXPORT, 200, campaign_id,
+           detail=json.dumps({"origin": str(the_origin), "bytes": len(text.encode("utf-8"))}))
     return Response(
         content=text, media_type="text/csv; charset=utf-8",
         headers={

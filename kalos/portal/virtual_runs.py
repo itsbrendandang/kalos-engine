@@ -54,6 +54,8 @@ MAX_LIST_ROWS = 1000
 MAX_EXPORT_ROWS = 50_000
 MAX_ACTOR_CHARS = 512
 OPEN_MODE_ACTOR = "anonymous"
+AUDIT_CREATE = "campaign.virtual_runs.create"
+AUDIT_EXPORT = "campaign.virtual_runs.export"
 
 _COLUMNS = (
     "id, batch_id, k, origin, generator_id, generator_version, params_json, params_sha256, "
@@ -116,8 +118,16 @@ def create_batch(
     requested_by: str | None,
     auth_method: str | None = None,
     twin_version_id: str | None = None,
+    audit: bool = False,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate `n` rows with `generator_id` and append them to `virtual_runs`.
+
+    With `audit=True` the `campaign.virtual_runs.create` audit row is inserted in
+    the SAME transaction as the rows, so a batch that cannot be audited is not
+    stored. Its `detail` is a JSON object with `batch_id`, `origin`,
+    `generator_id`, `generator_version`, `n`, `params_sha256` and
+    `twin_version_id` (never the generated values). The route passes `audit=True`.
 
     The batch id is minted here and is the "job" component of the seed
     (`[tenant, campaign, twin_version, batch]`). Raises `CampaignNotFound`,
@@ -157,6 +167,19 @@ def create_batch(
                 for r in batch.rows
             ],
         )
+        if audit:
+            detail = json.dumps({
+                "batch_id": batch_id, "origin": str(batch.origin),
+                "generator_id": batch.generator_id,
+                "generator_version": batch.generator_version, "n": len(batch.rows),
+                "params_sha256": batch.params_sha256,
+                "twin_version_id": batch.twin_version_id,
+            }, sort_keys=True)
+            store._insert_audit(
+                conn, tenant=tenant, action=AUDIT_CREATE, outcome="ok", subject=actor,
+                auth_method=auth_method, campaign_id=campaign_id, job_id=batch_id,
+                request_id=request_id, detail=detail, now=now,
+            )
     return {
         "batch_id": batch_id,
         "campaign_id": campaign_id,
