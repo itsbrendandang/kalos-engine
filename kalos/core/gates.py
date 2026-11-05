@@ -18,7 +18,15 @@ class GatesConfig:
     min_feasibility_auc: float = 0.65
     max_ece: float = 0.15
     max_brier: float = 0.25
+    # Below this many scored runs the ECE is not judged (neither pass nor fail):
+    # at small n a calibrated model's ECE exceeds `max_ece` too often for the
+    # number to mean anything (compmodel PLAN E5). Applies only when the caller
+    # passes `ece_n`; without it the ECE is judged as before.
+    min_ece_n: int = 20
     enabled: bool = True
+
+
+NOT_ENOUGH_RUNS_FOR_CALIBRATION = "not enough runs to judge calibration"
 
 
 @dataclass
@@ -27,6 +35,9 @@ class PromotionResult:
     failures: list[str] = field(default_factory=list)
     metrics: dict[str, float] = field(default_factory=dict)
     summary: str = ""
+    # Gates that were neither passed nor failed, with the reason (e.g. ECE on
+    # fewer than `min_ece_n` runs).
+    not_judged: list[str] = field(default_factory=list)
 
 
 def _finite(x: Any) -> TypeGuard[float]:
@@ -60,14 +71,23 @@ def check_gates(stats: dict[str, Any], config: GatesConfig | None = None) -> Pro
         else:
             f.append(f"{key} missing/NaN (unmeasured)")  # fail closed
 
+    not_judged: list[str] = []
     floor("surrogate_spearman", cfg.min_spearman)
     floor("feasibility_auc", cfg.min_feasibility_auc)
-    ceiling("ece", cfg.max_ece)
+    ece_n = stats.get("ece_n")
+    if _finite(ece_n) and ece_n < cfg.min_ece_n:
+        not_judged.append(
+            f"ece: {NOT_ENOUGH_RUNS_FOR_CALIBRATION} (n={int(ece_n)}, need {cfg.min_ece_n})"
+        )
+    else:
+        ceiling("ece", cfg.max_ece)
     ceiling("brier", cfg.max_brier)
 
     passed = not f
     summary = "ALL GATES PASSED" if passed else "GATES FAILED: " + "; ".join(f)
-    return PromotionResult(passed, f, m, summary)
+    if not_judged:
+        summary += " (not judged: " + "; ".join(not_judged) + ")"
+    return PromotionResult(passed, f, m, summary, not_judged)
 
 
-__all__ = ["GatesConfig", "PromotionResult", "check_gates"]
+__all__ = ["NOT_ENOUGH_RUNS_FOR_CALIBRATION", "GatesConfig", "PromotionResult", "check_gates"]

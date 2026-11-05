@@ -876,6 +876,9 @@ def _analyze_body(
         "surrogate_spearman": rho,  # the pooled CV rho already computed above
         "feasibility_auc": feas["auc"],
         "ece": feas["ece"],
+        # How many pooled out-of-fold runs the classifier ECE was scored on:
+        # below GatesConfig.min_ece_n (20) the ECE is reported, not judged.
+        "ece_n": feas["n"] if feas.get("evaluable") else None,
         "brier": feas["brier"],
     }
     promotion_result = check_gates(gate_stats)
@@ -887,6 +890,9 @@ def _analyze_body(
         # so this is strict-JSON safe by construction - no NaN can reach here.
         "metrics": promotion_result.metrics,
         "summary": promotion_result.summary,
+        # Gates neither passed nor failed, e.g. "ece: not enough runs to judge
+        # calibration (n=14, need 20)". Additive.
+        "not_judged": promotion_result.not_judged,
         # FAIL-CLOSED IS CORRECT, BUT ILLEGIBLE WITHOUT THIS. On an all-producer
         # sheet (no non-producers to build a feasibility classifier from) or
         # any sheet too small to measure one of the four gates,

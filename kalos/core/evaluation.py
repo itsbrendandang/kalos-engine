@@ -287,6 +287,11 @@ CALIBRATION_LEVELS: tuple[float, ...] = (0.5, 0.8, 0.9, 0.95)
 # 50% but overconfident at 95% cannot hide behind a single number.
 
 MIN_CALIBRATION_N = 10
+# Display threshold. Judging (a pass/fail on the ECE) needs more: at n=10 a
+# perfectly calibrated Gaussian predictor has ECE > 0.15 in ~9% of samples, at
+# n=20 ~1% (compmodel PLAN E5, re-measured). Between the two the ECE is shown
+# with `judgement` = "not enough runs to judge calibration".
+CALIBRATION_JUDGE_MIN_N = 20
 # Below this many held-out points, an empirical coverage rate is not a
 # measurement: at n=6 the achievable rates are 0, 1/6, 2/6, ..., so the nearest
 # attainable value to a nominal 0.90 is 0.833 and the "error" is an artifact of
@@ -374,6 +379,10 @@ def interval_calibration(
         "available": True,
         "reason": None,
         "n": n,
+        # Additive: whether n is enough to judge the ECE against a threshold.
+        "judgeable": n >= CALIBRATION_JUDGE_MIN_N,
+        "judgement": None if n >= CALIBRATION_JUDGE_MIN_N else "not enough runs to judge calibration",
+        "judge_min_n": CALIBRATION_JUDGE_MIN_N,
         "ece": round(float(np.mean(gaps)), 4),
         "z_std": round(float(np.std(z, ddof=1)) if n > 1 else float("nan"), 4),
         "levels": rows,
@@ -579,6 +588,7 @@ def group_mean_baseline_spearman(y, groups) -> dict:
 
 
 __all__ = [
+    "CALIBRATION_JUDGE_MIN_N",
     "CALIBRATION_LEVELS",
     "MIN_CALIBRATION_N",
     "group_mean_baseline_spearman",
