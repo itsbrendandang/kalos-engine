@@ -121,8 +121,11 @@ evidence.
 
 ## Known limits
 
-- Proposals are matched to the nearest measured row, not to a new measurement. Pool
-  results describe the optimizer's ranking of existing rows, not a new experiment.
+- Proposals are matched to the nearest unused measured row, not to a new measurement, and
+  the started recipe is often far from the proposal (in the v2 run, median normalised distance
+  0.66, and 75 of 120 started recipes more than 0.5 away). The end-to-end run therefore shows
+  that the loop runs on real rows, not how well it optimises. Pool results describe the
+  optimizer's ranking of existing rows, not a new experiment.
 - Torch and BoTorch versions change the GP fits. `uv.lock` pins torch 2.13.0 and botorch
   0.18.1. Any result drawn from these scripts should record the versions it was run with;
   `benchmarks/` in this repository holds no result files for this replay.
