@@ -267,6 +267,7 @@ def _analyze_body(
         # of these names is used.
         from kalos.core.evaluation import (
             group_mean_baseline_spearman,
+            group_mean_margin,
             grouped_cv_report,
             interval_calibration,
             logo_report,
@@ -872,8 +873,24 @@ def _analyze_body(
     # width" - so the classifier's `ece` is what belongs here. Naming both in
     # this comment is the whole point: nothing downstream should ever swap
     # them without knowing it changed the question being asked.
+    # GROUP-MEAN FLOOR AS A GATE (compmodel PLAN E13): the surrogate must beat
+    # the leave-one-row-out recipe mean by more than a paired bootstrap's
+    # uncertainty (lower 95% bound of the paired Spearman difference > 0).
+    # Not judged when too few recipes are replicated to form the floor.
+    _n_rep_groups = int((pd.Series(recipe_key).value_counts() >= 2).sum())
+    if _n_rep_groups < GROUP_MEAN_BASELINE_MIN_GROUPS:
+        gm_margin: dict[str, Any] = {
+            "evaluable": False, "passed": None,
+            "reason": (
+                f"only {_n_rep_groups} recipes have 2+ rows; need at least "
+                f"{GROUP_MEAN_BASELINE_MIN_GROUPS} to form a group-mean floor"
+            ),
+        }
+    else:
+        gm_margin = group_mean_margin(y, recipe_key, rep["oof_index"], oof_p)
     gate_stats = {
         "surrogate_spearman": rho,  # the pooled CV rho already computed above
+        "group_mean_margin": gm_margin,
         "feasibility_auc": feas["auc"],
         "ece": feas["ece"],
         # How many pooled out-of-fold runs the classifier ECE was scored on:
@@ -1430,7 +1447,9 @@ def _analyze_body(
         # rather than silently absent.
         "cv_logo": cv_logo,
         "cv_topk": cv_topk,
-        "cv_group_mean_baseline": cv_group_mean_baseline,
+        # `margin` (additive): the paired surrogate-vs-floor comparison the
+        # promotion gate reads (kalos/core/evaluation.py `group_mean_margin`).
+        "cv_group_mean_baseline": {**cv_group_mean_baseline, "margin": gm_margin},
         "best": round(best_single, 4),
         "noise": _noise_block(nr, best_single, best_reproducible, replicate_aware, het),
         # Explicit, labeled second evaluation pass on the log scale, run only

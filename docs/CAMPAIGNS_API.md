@@ -298,6 +298,28 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
 | `condition_notice` | Plain-language sentence when `condition_warning` is true, else `null`. |
 | `condition_warn_above`, `condition_refuse_above` | `1e8` and `1e12`. Above `1e12` the analysis is refused (HTTP 400) with a plain-language reason. These thresholds are defaults, not validated numbers. Because the noise model keeps a floor on the noise, exact replicates with inferred noise stay well conditioned; the warning needs a tight cluster of rows with a fixed small noise, and the refusal is reached only on very large or very clustered designs. |
 
+### Promotion gate changes (additive fields)
+
+- `promotion.not_judged`: list of gates that were neither passed nor failed,
+  with the reason. Two cases today:
+  - `ece: not enough runs to judge calibration (n=<n>, need 20)`: the classifier
+    ECE is judged only from 20 pooled out-of-fold runs (`GatesConfig.min_ece_n`).
+    Below that it is still reported in `feasibility`-side metrics, but does not
+    pass or fail the gate.
+  - `group-mean floor: <reason>`: too few recipes with 2+ rows to form the floor.
+  `promotion.summary` appends `(not judged: ...)` when the list is not empty.
+- Group-mean floor gate: the surrogate must beat the leave-one-row-out recipe
+  mean on the same out-of-fold rows by more than a paired bootstrap's
+  uncertainty (lower bound of the 95% CI of the Spearman difference above 0).
+  A failure reads `surrogate does not beat the group-mean floor: ...`. The raw
+  numbers are in `cv_group_mean_baseline.margin`: `difference`, `ci95`,
+  `surrogate_spearman`, `group_mean_spearman` (both on the paired rows only, so
+  they can differ from the headline CV Spearman), `n_paired`, `n_groups_paired`,
+  `passed`, `evaluable`, `reason`. `cv_group_mean_baseline.spearman` is unchanged.
+- `reliability.calibration` (interval ECE, reported, not gated) gains
+  `judgeable`, `judgement` (`"not enough runs to judge calibration"` when
+  10 <= n < 20, else `null`) and `judge_min_n` (20). It is still shown from 10.
+
 ## Not in this slice
 
 - Background jobs for reanalyze (it still runs synchronously; upload has a job route).

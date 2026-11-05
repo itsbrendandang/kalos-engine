@@ -82,6 +82,20 @@ def check_gates(stats: dict[str, Any], config: GatesConfig | None = None) -> Pro
     else:
         ceiling("ece", cfg.max_ece)
     ceiling("brier", cfg.max_brier)
+    # Group-mean floor (compmodel PLAN E13): only when the caller passes the
+    # paired comparison (`group_mean_margin` in kalos/core/evaluation.py).
+    gm = stats.get("group_mean_margin")
+    if isinstance(gm, dict):
+        if gm.get("evaluable"):
+            lo = (gm.get("ci95") or [float("nan")])[0]
+            m["group_mean_margin_ci_lo"] = float(lo)
+            if not gm.get("passed"):
+                f.append(
+                    f"surrogate does not beat the group-mean floor: paired difference "
+                    f"{gm.get('difference')} with 95% CI lower bound {lo} <= 0"
+                )
+        else:
+            not_judged.append(f"group-mean floor: {gm.get('reason') or 'not evaluable'}")
 
     passed = not f
     summary = "ALL GATES PASSED" if passed else "GATES FAILED: " + "; ".join(f)

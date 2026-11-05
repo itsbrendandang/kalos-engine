@@ -314,7 +314,8 @@ def test_promotion_passes_on_an_engineered_strong_signal_sheet_or_states_why_not
     promo = out["promotion"]
     if promo["passed"]:
         assert promo["failures"] == []
-        assert promo["summary"] == "ALL GATES PASSED"
+        # Gates not judged (ECE below 20 runs, no group-mean floor) are appended.
+        assert promo["summary"].startswith("ALL GATES PASSED")
         for key in ("surrogate_spearman", "feasibility_auc", "ece", "brier"):
             assert key in promo["metrics"]
             assert np.isfinite(promo["metrics"][key])
