@@ -72,6 +72,11 @@ LEGACY_CREATOR = "legacy-route"
 MAX_CAMPAIGN_NAME_CHARS = 200
 MAX_AUDIT_FIELD_CHARS = 512
 MAX_RESULT_REASON_CHARS = 256
+# A structured (JSON) audit `detail` is never clipped: clipping would leave
+# invalid JSON. It must fit this bound or the write fails (and its transaction
+# rolls back). The campaign.result detail is at most ~2.4k chars even when every
+# reason/actor char is JSON-escaped to \uXXXX (256*6 + 128*6 + ids).
+MAX_AUDIT_DETAIL_JSON_CHARS = 4096
 # `seed(expected_generation=...)` default: no explicit compare-and-swap token
 # (the write still CASes on the generation it read in the same transaction).
 _UNCHECKED: Any = object()
@@ -871,7 +876,7 @@ class CampaignStore:
                         self._insert_audit(
                             conn, tenant=tenant, action="campaign.result", outcome="ok",
                             subject=actor, auth_method=auth_method, campaign_id=row.id,
-                            detail=detail, now=now,
+                            detail=detail, now=now, structured_detail=True,
                         )
                     return {
                         **run,
@@ -1084,14 +1089,24 @@ class CampaignStore:
         subject: str | None = None, auth_method: str | None = None,
         campaign_id: str | None = None, job_id: str | None = None,
         request_id: str | None = None, detail: str | None = None, now: float,
+        structured_detail: bool = False,
     ) -> None:
-        """One audit row, inside the caller's transaction."""
+        """One audit row, inside the caller's transaction. A `structured_detail`
+        (JSON) is stored whole, never clipped; longer than
+        MAX_AUDIT_DETAIL_JSON_CHARS raises ValueError, so the caller's change
+        rolls back with it (fail closed)."""
+        if structured_detail and detail is not None:
+            if len(detail) > MAX_AUDIT_DETAIL_JSON_CHARS:
+                raise ValueError("structured audit detail exceeds its bound; not recorded")
+            stored_detail: str | None = detail
+        else:
+            stored_detail = _clip(detail)
         conn.execute(
             "INSERT INTO audit_log (ts, tenant, subject, auth_method, action, campaign_id, "
             "job_id, outcome, request_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (now, tenant, _clip(subject), _clip(auth_method), _clip(action, 64),
              _clip(campaign_id, 64), _clip(job_id, 64), _clip(outcome, 64),
-             _clip(request_id, 128), _clip(detail)),
+             _clip(request_id, 128), stored_detail),
         )
 
     def archive_audit_log(self, retention_days: int, *, now: float | None = None) -> int:

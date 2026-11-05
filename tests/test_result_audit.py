@@ -131,3 +131,45 @@ def test_a_failed_audit_write_is_a_server_error_on_the_route(store, monkeypatch,
     resp = tc.post("/api/campaign/result", json={"id": run_id, "value": 7.0})
     assert resp.status_code == 500
     assert store.result_history(run_id, tenant="default") == []
+
+
+def test_long_quote_heavy_reason_keeps_the_detail_valid_json(store):
+    """Regression (standing review P1-1): the JSON detail used to be clipped at
+    512 chars, so a 256-char quote-heavy reason plus a 128-char actor produced
+    invalid JSON with run_id/version cut off."""
+    run_id = _start(store)
+    actor = "a" * 128
+    store.set_result(run_id, 1.0, tenant="default", actor=actor, audit=True)
+    reason = '"' * 200 + "\\" * 56
+    assert len(reason) == 256
+    store.set_result(run_id, 2.0, tenant="default", reason=reason, actor=actor, audit=True)
+    for row in _result_rows(store):
+        detail = json.loads(row["detail"])
+        assert detail["run_id"] == run_id and detail["version"] in (1, 2)
+    (last,) = [d for d in (json.loads(r["detail"]) for r in _result_rows(store))
+               if d["version"] == 2]
+    assert last["reason"] == reason and last["actor"] == actor and last["old_value"] == 1.0
+
+
+def test_control_char_reason_still_fits_the_detail_bound(store):
+    """Worst case escaping (every char -> \\uXXXX) stays under the bound."""
+    run_id = _start(store)
+    store.set_result(run_id, 1.0, tenant="default", actor="\x01" * 128, audit=True)
+    store.set_result(run_id, 2.0, tenant="default", reason="x" + "\x01" * 255,
+                     actor="\x01" * 128, audit=True)
+    for row in _result_rows(store):
+        assert len(row["detail"]) <= campaign_module.MAX_AUDIT_DETAIL_JSON_CHARS
+        json.loads(row["detail"])
+
+
+def test_oversized_structured_detail_fails_closed(store, monkeypatch):
+    """A structured detail over the bound is not clipped: the result and the
+    audit row are both rolled back."""
+    run_id = _start(store)
+    monkeypatch.setattr(campaign_module, "MAX_AUDIT_DETAIL_JSON_CHARS", 50)
+    with pytest.raises(ValueError, match="exceeds its bound"):
+        store.set_result(run_id, 1.0, tenant="default", actor="alice", audit=True)
+    assert store.result_history(run_id, tenant="default") == []
+    assert _result_rows(store) == []
+    pending = store.summary(tenant="default")["pending"]
+    assert pending[0]["result"] is None
