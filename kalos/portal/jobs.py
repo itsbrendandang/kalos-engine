@@ -39,7 +39,6 @@ import logging
 import math
 import os
 import re
-import sqlite3
 import time
 import uuid
 from dataclasses import dataclass
@@ -53,6 +52,7 @@ from kalos.portal.campaign import (
     validate_campaign_id,
 )
 from kalos.portal.migrate import JOB_ID_PATTERN, JOB_STATES
+from kalos.portal.storage import DbConnection
 from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.uploads import MAX_UPLOAD_BYTES
 
@@ -287,13 +287,13 @@ _COLUMNS = (
 )
 
 
-def _rows(conn: sqlite3.Connection, sql: str, args: tuple[Any, ...]) -> list[dict[str, Any]]:
+def _rows(conn: DbConnection, sql: str, args: tuple[Any, ...]) -> list[dict[str, Any]]:
     cur = conn.execute(sql, args)
     names = [d[0] for d in cur.description]
     return [dict(zip(names, r)) for r in cur.fetchall()]
 
 
-def _one(conn: sqlite3.Connection, tenant: str, job_id: str) -> dict[str, Any] | None:
+def _one(conn: DbConnection, tenant: str, job_id: str) -> dict[str, Any] | None:
     found = _rows(conn, f"SELECT {_COLUMNS} FROM jobs WHERE id = ? AND tenant = ?", (job_id, tenant))  # noqa: S608 - identifiers are module constants or sqlite_master table names; values are bound parameters
     return found[0] if found else None
 
@@ -335,14 +335,14 @@ def _write_input(path: Path, raw: bytes) -> None:
     os.replace(tmp, path)
 
 
-def _active_depth(conn: sqlite3.Connection, tenant: str) -> int:
+def _active_depth(conn: DbConnection, tenant: str) -> int:
     return int(conn.execute(
         "SELECT COUNT(*) FROM jobs WHERE tenant = ? AND state IN ('queued', 'running')",
         (tenant,),
     ).fetchone()[0])
 
 
-def _active_total(conn: sqlite3.Connection) -> int:
+def _active_total(conn: DbConnection) -> int:
     return int(conn.execute(
         "SELECT COUNT(*) FROM jobs WHERE state IN ('queued', 'running')",
     ).fetchone()[0])
@@ -358,7 +358,7 @@ def run_counts(store: CampaignStore, *, tenant: str, campaign_id: str) -> tuple[
     return awaiting, len(pending) - awaiting
 
 
-def _has_pending_upload(conn: sqlite3.Connection, tenant: str, campaign_id: str) -> bool:
+def _has_pending_upload(conn: DbConnection, tenant: str, campaign_id: str) -> bool:
     return conn.execute(
         "SELECT 1 FROM jobs WHERE tenant = ? AND campaign_id = ? AND state IN ('queued', 'running') LIMIT 1",
         (tenant, campaign_id),
@@ -665,7 +665,7 @@ def finish(
     return changed
 
 
-def mark_succeeded(conn: sqlite3.Connection, *, tenant: str, job_id: str, generation: str) -> None:
+def mark_succeeded(conn: DbConnection, *, tenant: str, job_id: str, generation: str) -> None:
     """The publish commit hook (`CampaignStore.seed(on_commit=...)`): runs INSIDE
     the transaction that writes the campaign and its analysis, so "succeeded"
     and "published" land together or not at all. Raises `JobCancelled` (which

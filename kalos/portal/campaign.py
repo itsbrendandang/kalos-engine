@@ -42,7 +42,6 @@ import json
 import logging
 import math
 import os
-import sqlite3
 import threading
 import time
 import uuid
@@ -50,7 +49,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
@@ -63,7 +62,11 @@ from kalos.portal.migrate import (
 from kalos.portal.migrate import (
     campaigns_table_is_v1_compatible as _campaigns_table_is_compatible,
 )
+from kalos.portal.storage import DbConnection, PgPool, backend_from_env, pg_transaction
 from kalos.portal.tenancy import validate_tenant_id
+
+if TYPE_CHECKING:
+    import sqlite3
 
 log = logging.getLogger("kalos.portal")
 
@@ -293,30 +296,60 @@ class CampaignStore:
         )
         self._dir.mkdir(parents=True, exist_ok=True)
         self._path = self._dir / DB_FILENAME
-        # Migrates a v1 database (backup first) or creates a fresh v2 one;
-        # raises MigrationError / SchemaError rather than run on a bad schema.
-        ensure_schema(self._path, latest_dir=self._dir / "latest")
         self._lock = threading.Lock()
-        self._conn = connect(self._path, check_same_thread=False)
+        # KALOS_DATABASE_URL (kalos/portal/storage.py): unset = SQLite in the
+        # state dir; postgresql:// = PostgreSQL. The state dir is needed either
+        # way (job inputs, audit archive, engine lock).
+        self._backend = backend_from_env()
+        self._pool: PgPool | None = None
+        self._conn: sqlite3.Connection  # SQLite only; never read when _pool is set
+        if self._backend.is_postgres:
+            from kalos.portal import migrate_pg
+
+            # Creates an empty schema; refuses an older or malformed one.
+            migrate_pg.ensure_schema(self._backend.dsn or "")
+            self._pool = PgPool(self._backend.dsn or "")
+        else:
+            # Migrates a v1 database (backup first) or creates a fresh v2 one;
+            # raises MigrationError / SchemaError rather than run on a bad schema.
+            ensure_schema(self._path, latest_dir=self._dir / "latest")
+            self._conn = connect(self._path, check_same_thread=False)
 
     @property
     def state_dir(self) -> Path:
         """The state directory holding `portal.db` (and background-job inputs)."""
         return self._dir
 
+    @property
+    def backend(self) -> str:
+        """`sqlite` or `postgres`."""
+        return self._backend.kind
+
     def close(self) -> None:
+        if self._pool is not None:
+            self._pool.close()
+            return
         with self._lock:
             self._conn.close()
 
     # --- transactions ------------------------------------------------------- #
 
     @contextmanager
-    def _txn(self, *, write: bool) -> Iterator[sqlite3.Connection]:
-        """One SQLite transaction. Writes use `BEGIN IMMEDIATE`, which takes the
-        database write lock up front: a concurrent writer in another connection
-        or process waits (busy_timeout) instead of interleaving its
+    def _txn(self, *, write: bool) -> Iterator[DbConnection]:
+        """One transaction. On SQLite, writes use `BEGIN IMMEDIATE`, which takes
+        the database write lock up front: a concurrent writer in another
+        connection or process waits (busy_timeout) instead of interleaving its
         read-modify-write with ours. The threading lock only serializes this
-        process's use of the one shared connection."""
+        process's use of the one shared connection.
+
+        On PostgreSQL, each transaction borrows a pooled connection; a write
+        takes the database-wide advisory lock first, which serializes writers
+        exactly like `BEGIN IMMEDIATE`, and a read is one REPEATABLE READ
+        snapshot (`kalos.portal.storage.pg_transaction`)."""
+        if self._pool is not None:
+            with self._pool.connection() as pconn, pg_transaction(pconn, write=write) as tx:
+                yield tx
+            return
         with self._lock:
             conn = self._conn
             conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
@@ -336,14 +369,14 @@ class CampaignStore:
     # --- in-transaction helpers (every statement carries tenant = ?) --------- #
 
     @staticmethod
-    def _default_id(conn: sqlite3.Connection, tenant: str) -> str | None:
+    def _default_id(conn: DbConnection, tenant: str) -> str | None:
         row = conn.execute(
             "SELECT campaign_id FROM tenant_defaults WHERE tenant = ?", (tenant,)
         ).fetchone()
         return str(row[0]) if row is not None else None
 
     @staticmethod
-    def _row(conn: sqlite3.Connection, tenant: str, campaign_id: str) -> _Row | None:
+    def _row(conn: DbConnection, tenant: str, campaign_id: str) -> _Row | None:
         row = conn.execute(
             f"SELECT {_ROW_COLUMNS} FROM campaigns WHERE id = ? AND tenant = ?",  # noqa: S608 - identifiers are module constants or sqlite_master table names; values are bound parameters
             (campaign_id, tenant),
@@ -352,7 +385,7 @@ class CampaignStore:
 
     @staticmethod
     def _insert_campaign(
-        conn: sqlite3.Connection, tenant: str, name: str, created_by: str | None,
+        conn: DbConnection, tenant: str, name: str, created_by: str | None,
         *, make_default: bool,
     ) -> str:
         cid = "cmp_" + uuid.uuid4().hex
@@ -372,7 +405,7 @@ class CampaignStore:
         return cid
 
     def _resolve(
-        self, conn: sqlite3.Connection, tenant: str, campaign_id: str | None, *, create: bool
+        self, conn: DbConnection, tenant: str, campaign_id: str | None, *, create: bool
     ) -> _Row | None:
         """The row for an explicit `campaign_id` (CampaignNotFound if it is not
         this tenant's), or for the tenant default when `campaign_id` is None —
@@ -394,7 +427,7 @@ class CampaignStore:
 
     @staticmethod
     def _cas_write(
-        conn: sqlite3.Connection, tenant: str, row: _Row, state: dict[str, Any],
+        conn: DbConnection, tenant: str, row: _Row, state: dict[str, Any],
         expected_generation: str | None,
     ) -> str:
         """Persist `state` iff the row still has `expected_generation` and is
@@ -416,7 +449,7 @@ class CampaignStore:
 
     @staticmethod
     def _write_analysis(
-        conn: sqlite3.Connection, tenant: str, campaign_id: str, blob: str,
+        conn: DbConnection, tenant: str, campaign_id: str, blob: str,
         dataset: str | None, campaign_generation: str | None, now: float,
     ) -> None:
         conn.execute(
@@ -592,7 +625,7 @@ class CampaignStore:
         campaign_id: str | None = None, analysis: dict[str, Any] | None = None,
         dataset: str | None = None, base_rows: list[dict[str, Any]] | None = None,
         expected_generation: Any = _UNCHECKED,
-        on_commit: Callable[[sqlite3.Connection, str], None] | None = None,
+        on_commit: Callable[[DbConnection, str], None] | None = None,
     ) -> str:
         """Start a FRESH campaign state, overwriting the campaign's current one.
         Returns the `generation` token minted for it.
@@ -658,7 +691,12 @@ class CampaignStore:
     def ping(self) -> None:
         """Readiness check: a read-only, tenant-agnostic query against the
         store's schema bookkeeping (never any tenant's data). Raises whatever
-        sqlite3 raises when the database is missing, corrupt or locked."""
+        the driver raises when the database is missing, corrupt, locked or
+        unreachable."""
+        if self._pool is not None:
+            with self._pool.connection() as pconn:
+                pconn.execute("SELECT MAX(version) FROM schema_migrations").fetchall()
+            return
         with self._lock:
             self._conn.execute("SELECT MAX(version) FROM schema_migrations").fetchall()
 
@@ -723,7 +761,7 @@ class CampaignStore:
         }
 
     def _writable_state(
-        self, conn: sqlite3.Connection, tenant: str, campaign_id: str | None, missing: str
+        self, conn: DbConnection, tenant: str, campaign_id: str | None, missing: str
     ) -> tuple[_Row, dict[str, Any]]:
         row = self._resolve(conn, tenant, campaign_id, create=False)
         if row is not None and row.archived_at is not None:
@@ -1108,7 +1146,7 @@ class CampaignStore:
 
     @staticmethod
     def _insert_audit(
-        conn: sqlite3.Connection, *, tenant: str, action: str, outcome: str,
+        conn: DbConnection, *, tenant: str, action: str, outcome: str,
         subject: str | None = None, auth_method: str | None = None,
         campaign_id: str | None = None, job_id: str | None = None,
         request_id: str | None = None, detail: str | None = None, now: float,
