@@ -27,6 +27,7 @@ from kalos.portal.campaign import (
     CampaignConflict,
     CampaignError,
     CampaignNotFound,
+    CampaignReasonRequired,
     CampaignStore,
     get_campaign_store,
 )
@@ -102,6 +103,8 @@ def campaign_error_response(exc: CampaignError) -> JSONResponse:
     with the store-authored (input-free) message."""
     if isinstance(exc, CampaignNotFound):
         return campaign_not_found_response()
+    if isinstance(exc, CampaignReasonRequired):
+        return JSONResponse({"error": str(exc), "code": "reason_required"}, status_code=400)
     if isinstance(exc, (CampaignArchived, CampaignConflict)):
         return JSONResponse({"error": str(exc), "code": "conflict"}, status_code=409)
     return JSONResponse({"error": str(exc), "code": "invalid_request"}, status_code=400)
@@ -153,10 +156,12 @@ class _StartBody(BaseModel):
 class _ResultBody(BaseModel):
     """Body for `POST /api/campaign/result`. `value` is a JSON number (bools
     and numeric strings are refused); a non-finite value is refused by the
-    store with its own message."""
+    store with its own message. `reason` is required when the run already has
+    a recorded value (a correction), and optional for the first value."""
 
     id: Annotated[str, StringConstraints(min_length=1, max_length=MAX_STRING_CHARS)]
     value: Annotated[float, _Strict()]
+    reason: Annotated[str, StringConstraints(max_length=256)] | None = None
 
 
 @router.get("/api/campaign")
@@ -203,14 +208,22 @@ def log_campaign_result(
     store: CampaignStore = Depends(get_campaign_store),
     principal: Principal = Depends(require_scope(WRITE)),
 ) -> JSONResponse:
-    """Set the measured outcome on a pending run. Requires `write`. 400 on an
-    unknown id or a non-finite value — an unmeasured or bad-value run must never
-    silently become foldable into the base dataset."""
+    """Record the measured outcome of a pending run. Requires `write`. 400 on an
+    unknown id, a non-finite value, or a correction without a `reason` (code
+    `reason_required`). Append-only: each call adds a version (CampaignStore.set_result).
+    An unmeasured or bad-value run must never silently become foldable into the base dataset."""
     try:
-        run = store.set_result(body.id, body.value, tenant=principal.tenant)
+        run = store.set_result(
+            body.id, body.value, tenant=principal.tenant, reason=body.reason,
+            actor=principal.subject,
+            auth_method="anonymous" if principal.anonymous else "bearer",
+        )
     except CampaignArchived as exc:
         audit(store, principal, "campaign.result", 409)
         return _archived(exc)
+    except CampaignReasonRequired as exc:
+        audit(store, principal, "campaign.result", 400)
+        return JSONResponse({"error": str(exc), "code": "reason_required"}, status_code=400)
     except CampaignError as exc:
         log.warning("campaign result rejected: %s", exc)
         audit(store, principal, "campaign.result", 400)

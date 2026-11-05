@@ -114,6 +114,7 @@ Every refusal the engine sends has the same body: `{"error": "<what went wrong a
 | 403 | `forbidden` | a valid token without the required scope |
 | 404 | `not_found` | unknown route, or a campaign, run or job that does not exist for this tenant |
 | 405 | `method_not_allowed` | wrong method on a known route |
+| 400 | `reason_required` | a correction to a recorded campaign result without a `reason` (docs/CAMPAIGNS_API.md, "Recording results") |
 | 409 | `conflict`, `campaign_archived`, `campaign_has_runs` | state refusal |
 | 413 | `payload_too_large` | body over a size cap |
 | 422 | `validation_error` (other routes), `invalid_target` / gate checks (`/api/scale/readout`) | request does not validate |

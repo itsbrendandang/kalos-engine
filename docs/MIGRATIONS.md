@@ -10,7 +10,8 @@ an audit log. Its schema is versioned in `schema_migrations`. The code is
 | v1 | `campaigns(tenant PRIMARY KEY, state, updated_at)`, one campaign per tenant; analyses in memory plus `latest/*.json` | before `feat/campaign-schema-v2` |
 | v2 | `schema_migrations`, `campaigns`, `analyses`, `tenant_defaults`, `audit_log` (below) | `feat/campaign-schema-v2` |
 | v3 | adds the `jobs` table (background jobs, `docs/JOBS.md`) | `feat/background-jobs` |
-| v4 | adds two triggers on `audit_log` that reject UPDATE and DELETE (append-only; below) | current (`SCHEMA_VERSION = 4`) |
+| v4 | adds two triggers on `audit_log` that reject UPDATE and DELETE (append-only; below) | `SCHEMA_VERSION = 4` |
+| v5 | adds `run_results` (append-only result history) with UPDATE/DELETE triggers | current (`SCHEMA_VERSION = 5`) |
 
 A v1 database has no `schema_migrations` table.
 
@@ -81,6 +82,27 @@ The rename-based repair of an incompatible `campaigns` table (`campaigns_backup_
 runs only on a database read as v1 or v0. It is not run on any v2+ database.
 `status` still reports, without refusing. Repair of a refused database is a manual
 step on a copy, with the engine stopped.
+
+## Schema v5: append-only result history
+
+Schema v5 adds one table, `run_results`, with the same two-trigger guard as
+`audit_log` (`run_results is append-only: UPDATE is rejected`, and DELETE).
+
+- One row per submitted value of a pending run: `(tenant, campaign_id, run_id,
+  version, value, previous_value, reason, actor, auth_method, recorded_at)`,
+  `UNIQUE (campaign_id, tenant, run_id, version)`, and `FOREIGN KEY (campaign_id,
+  tenant)` to `campaigns`.
+- A CHECK refuses a version above 1 with no reason, so the rule holds even for a
+  statement that bypasses the store.
+- Nothing is copied or rewritten. The campaign state blobs keep each run's current
+  value, so the fold and the v4 code read it as before.
+- `up` from v4 takes a `pre-v5-<ts>` backup and creates the table in one
+  transaction. A v4 campaign whose run was measured before v5 has a value and no
+  history rows. Its next submission is version 1, it records the value it replaces
+  in `previous_value`, and it needs a reason (the store rule, since a value exists).
+- `down` (v5 -> v4) drops the triggers and renames `run_results` to
+  `run_results_v5_rolledback`. The history is kept, and the v4 engine still reads the
+  current values from the blobs.
 
 ## Schema v4: append-only audit log
 
@@ -195,10 +217,10 @@ explicitly with the engine stopped:
 
 ```sh
 python -m kalos.portal.migrate up
-python -m kalos.portal.migrate status    # expect: schema version: v4; journal_mode=wal
+python -m kalos.portal.migrate status    # expect: schema version: v5; journal_mode=wal
 ```
 
-Keep the `portal.db.pre-v2-<ts>`, `pre-v3-<ts>` and `pre-v4-<ts>` copies (whichever apply) until the release is accepted.
+Keep the `portal.db.pre-v2-<ts>` ... `pre-v5-<ts>` copy (whichever apply) until the release is accepted.
 
 ### Verify
 

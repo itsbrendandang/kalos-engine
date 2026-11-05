@@ -55,7 +55,7 @@ below), which the first legacy upload creates. A campaign made with
 | POST | `/api/campaigns/{id}/upload` | write | Upload a run sheet into this campaign (multipart; `replace=true` confirms replacing the campaign's runs, see below). Same contract as `/api/run`. |
 | GET | `/api/campaigns/{id}/analysis` | read | This campaign's published analysis, in the `/api/latest` shape (`{"has_data": false}` before the first upload). |
 | POST | `/api/campaigns/{id}/runs` | write | Start runs from a proposed batch. Same body and bounds as `/api/campaign/start`. Returns `{"started": [...]}`. |
-| POST | `/api/campaigns/{id}/runs/{run_id}/result` | write | Body: `{"value": number}`. Records the measured outcome and returns the run. |
+| POST | `/api/campaigns/{id}/runs/{run_id}/result` | write | Body: `{"value": number, "reason"?: str}`. Records a measured outcome and returns the run. A correction needs `reason` (see "Recording results"). |
 | POST | `/api/campaigns/{id}/reanalyze` | write | Fold measured runs, re-run the engine and publish the new analysis. Returns `{"analysis": ..., "campaign": <summary>}`, where `campaign` is this campaign's summary with `stage` and `next_action`. |
 
 ### Stage
@@ -120,6 +120,36 @@ returns `409` and nothing is stored.
 Uploads through this route run synchronously. To queue the same upload as a
 background job (202, polled by id, cancellable, with per-tenant limits), use
 `POST /api/campaigns/{id}/jobs` (see "Background jobs" below and docs/JOBS.md).
+
+### Recording results
+
+Recorded results are append-only (schema v5, docs/MIGRATIONS.md, "Schema v5").
+A result is never overwritten in place.
+
+- Every submission for a run is a new row in `run_results`: the value, the value it
+  replaces (`previous_value`, `null` for the first), the reason, the actor (the
+  caller's subject, `anonymous` in open mode), the auth method and the server time.
+  Rows are numbered by `version`, from 1.
+- The first value needs no `reason`. Any later value for the same run is a
+  correction and needs a non-blank `reason` (at most 256 characters). Without one the
+  response is `400` with `"code": "reason_required"` and nothing is written.
+- The campaign's current value for the run is the latest one. The fold and the
+  summary use it, as before.
+- Each response carries the fields below for this submission. The fields are added
+  to the run object; no existing field changed.
+
+| Field | Meaning |
+|---|---|
+| `result_version` | `1` for the first value, then `2`, `3`, ... |
+| `previous_result` | The value this submission replaced, or `null`. |
+| `result_reason` | The reason as stored (trimmed), or `null`. |
+| `result_actor` | The actor the row records. |
+| `result_recorded_at` | The server time, Unix seconds. This is when the engine recorded the value. |
+
+The `reason` field of a run is still the proposal's reason (why the run was
+proposed). The correction reason is `result_reason`.
+
+The history is not yet exposed over HTTP (the audit and read API is a separate change).
 
 ### Runs and results
 

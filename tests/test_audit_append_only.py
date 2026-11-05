@@ -112,8 +112,8 @@ def test_engine_store_has_no_delete_path_and_still_appends(tmp_path):
 def test_v4_is_recorded_and_the_store_refuses_a_v3_shape_without_triggers(tmp_path):
     CampaignStore(tmp_path).close()
     db = tmp_path / "portal.db"
-    assert _q(db, "SELECT version, name FROM schema_migrations ORDER BY version")[-1] == (
-        migrate.V4, migrate.V4_NAME)
+    assert (migrate.V4, migrate.V4_NAME) in _q(
+        db, "SELECT version, name FROM schema_migrations ORDER BY version")
     conn = sqlite3.connect(str(db))
     conn.execute("DROP TRIGGER audit_log_no_update")
     conn.commit()
@@ -139,7 +139,7 @@ def test_v3_copy_migrates_up_with_a_backup_and_keeps_every_audit_row(tmp_path):
     shutil.copy2(source, copy)
 
     plan = migrate.migrate_up(copy, dry_run=True).plan_text
-    assert "schema v3 -> v4" in plan and "triggers" in plan
+    assert "schema v3 -> v5" in plan and "triggers" in plan
     assert _triggers(copy) == set()  # a dry run changes nothing
 
     result = migrate.migrate_up(copy)
@@ -149,7 +149,7 @@ def test_v3_copy_migrates_up_with_a_backup_and_keeps_every_audit_row(tmp_path):
     assert result.backup_path.exists()
     assert _audit_rows(result.backup_path) == before_rows  # the pre-v4 backup is a real copy
 
-    assert _q(copy, "SELECT version FROM schema_migrations ORDER BY version") == [(2,), (3,), (4,)]
+    assert _q(copy, "SELECT version FROM schema_migrations ORDER BY version") == [(2,), (3,), (4,), (5,)]
     assert {"audit_log_no_update", "audit_log_no_delete"} <= _triggers(copy)
     assert _audit_rows(copy) == before_rows
     assert _q(copy, "SELECT id, tenant, name FROM campaigns ORDER BY id") == before_campaigns
@@ -179,11 +179,11 @@ def test_v4_copy_rolls_back_to_v3_and_forward_again(tmp_path):
     shutil.copy2(source, copy)
     migrate.migrate_up(copy)
 
-    plan = migrate.migrate_down(copy, dry_run=True).plan_text
+    plan = migrate.migrate_down(copy, dry_run=True, target=3).plan_text
     assert "schema v4 -> v3" in plan and "drop: audit_log" in plan
     assert {"audit_log_no_update", "audit_log_no_delete"} <= _triggers(copy)
 
-    result = migrate.migrate_down(copy)
+    result = migrate.migrate_down(copy, target=3)
     assert result.action == "rolled_back"
     assert result.backup_path is not None and result.backup_path.name.startswith("portal.db.pre-down-")
     assert _triggers(copy) == set()
@@ -234,7 +234,7 @@ def test_down_from_v4_with_a_newer_schema_is_refused(tmp_path):
     CampaignStore(tmp_path).close()
     db = tmp_path / "portal.db"
     conn = sqlite3.connect(str(db))
-    conn.execute("INSERT INTO schema_migrations VALUES (5, 'future', 0)")
+    conn.execute("INSERT INTO schema_migrations VALUES (6, 'future', 0)")
     conn.commit()
     conn.close()
     with pytest.raises(migrate.SchemaError, match="newer"):
@@ -244,5 +244,5 @@ def test_down_from_v4_with_a_newer_schema_is_refused(tmp_path):
 def test_invalid_down_target_is_refused(tmp_path):
     CampaignStore(tmp_path).close()
     db = tmp_path / "portal.db"
-    with pytest.raises(migrate.MigrationError, match=r"valid targets are 1\.\.3"):
-        migrate.migrate_down(db, target=4)
+    with pytest.raises(migrate.MigrationError, match=r"valid targets are 1\.\.4"):
+        migrate.migrate_down(db, target=5)

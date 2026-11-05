@@ -71,6 +71,7 @@ DEFAULT_CAMPAIGN_NAME = "Default campaign"
 LEGACY_CREATOR = "legacy-route"
 MAX_CAMPAIGN_NAME_CHARS = 200
 MAX_AUDIT_FIELD_CHARS = 512
+MAX_RESULT_REASON_CHARS = 256
 # `seed(expected_generation=...)` default: no explicit compare-and-swap token
 # (the write still CASes on the generation it read in the same transaction).
 _UNCHECKED: Any = object()
@@ -80,6 +81,7 @@ __all__ = [
     "CampaignConflict",
     "CampaignError",
     "CampaignNotFound",
+    "CampaignReasonRequired",
     "CampaignStore",
     "TenantCampaigns",
     "_campaigns_table_is_compatible",
@@ -109,6 +111,16 @@ class CampaignArchived(CampaignError):
 
     def __init__(self) -> None:
         super().__init__("the campaign is archived; it can be read but not changed")
+
+
+class CampaignReasonRequired(CampaignError):
+    """A correction (a second or later value for a run) was submitted without a
+    reason. Nothing was written."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "a correction to a recorded result needs a reason: say why the value changed"
+        )
 
 
 class CampaignConflict(CampaignError):
@@ -768,14 +780,28 @@ class CampaignStore:
             return appended
 
     def set_result(
-        self, run_id: str, value: float, *, tenant: str, campaign_id: str | None = None
+        self, run_id: str, value: float, *, tenant: str, campaign_id: str | None = None,
+        reason: str | None = None, actor: str | None = None, auth_method: str | None = None,
     ) -> dict[str, Any]:
-        """Set the measured outcome on a pending run. Raises `CampaignError`
+        """Record the measured outcome of a pending run. Raises `CampaignError`
         (never silently ignored) if `run_id` is unknown or `value` is not a
         finite number — a NaN/inf result must never be foldable into the
-        base dataset on the next re-analyze."""
+        base dataset on the next re-analyze.
+
+        Append-only (schema v5, docs/CAMPAIGNS_API.md "Recording results"): every
+        call inserts a row in `run_results` with the value, the value it replaces,
+        the reason, the actor, and the server time. Nothing is overwritten. The
+        first value needs no reason; any later value (a correction) needs one,
+        else `CampaignReasonRequired` and nothing is written. The run's current
+        value in the campaign state is the latest. The history row and the state
+        change commit in one transaction.
+
+        Returns the run with `result_version`, `previous_result`, `result_reason`,
+        `result_actor` and `result_recorded_at` for THIS submission.
+        """
         if not math.isfinite(value):
             raise CampaignError(f"result value must be a finite number; got {value!r}")
+        reason_text = reason.strip()[:MAX_RESULT_REASON_CHARS] if isinstance(reason, str) else ""
         self._check(tenant, campaign_id)
         with self._txn(write=True) as conn:
             row, state = self._writable_state(
@@ -783,13 +809,54 @@ class CampaignStore:
             )
             for run in state["pending"]:
                 if run["id"] == run_id:
+                    prior = run["result"]
+                    if prior is not None and not reason_text:
+                        raise CampaignReasonRequired()
                     now = time.time()
+                    version = int(conn.execute(
+                        "SELECT COUNT(*) FROM run_results WHERE tenant = ? AND campaign_id = ? "
+                        "AND run_id = ?",
+                        (tenant, row.id, run_id),
+                    ).fetchone()[0]) + 1
+                    conn.execute(
+                        "INSERT INTO run_results (tenant, campaign_id, run_id, version, value, "
+                        "previous_value, reason, actor, auth_method, recorded_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (tenant, row.id, run_id, version, value, prior,
+                         reason_text or None, _clip(actor), _clip(auth_method), now),
+                    )
                     run["result"] = value
                     run["measured_at"] = now
+                    run["result_version"] = version
                     state["updated_at"] = now
                     self._cas_write(conn, tenant, row, state, row.generation)
-                    return dict(run)
+                    return {
+                        **run,
+                        "previous_result": prior,
+                        "result_reason": reason_text or None,
+                        "result_actor": _clip(actor),
+                        "result_recorded_at": now,
+                    }
             raise CampaignError(f"unknown pending run id {run_id!r}")
+
+    def result_history(
+        self, run_id: str, *, tenant: str, campaign_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Every recorded value for one run, oldest first (`run_results`). Not an
+        HTTP route: the audit/read API is a separate change (engine-needs E7)."""
+        self._check(tenant, campaign_id)
+        with self._txn(write=False) as conn:
+            row = self._resolve(conn, tenant, campaign_id, create=False)
+            if row is None:
+                return []
+            cur = conn.execute(
+                "SELECT version, value, previous_value, reason, actor, auth_method, recorded_at "
+                "FROM run_results WHERE tenant = ? AND campaign_id = ? AND run_id = ? "
+                "ORDER BY version",
+                (tenant, row.id, run_id),
+            )
+            names = [d[0] for d in cur.description]
+            return [dict(zip(names, r)) for r in cur.fetchall()]
 
     def plan_fold(
         self, *, tenant: str, campaign_id: str | None = None
@@ -1022,7 +1089,7 @@ _TENANT_METHODS = frozenset({
     "create_campaign", "campaign_info", "list_campaigns", "default_campaign_id",
     "archive_campaign", "update_campaign", "seed", "get", "summary", "start", "set_result", "plan_fold",
     "awaiting_recipes", "commit_fold", "save_analysis", "load_analysis",
-    "record_audit", "audit_entries",
+    "record_audit", "audit_entries", "result_history",
 })
 
 

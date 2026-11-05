@@ -38,7 +38,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 from pydantic import Strict as _Strict
 
 from kalos.portal.auth import ADMIN, READ, WRITE, Principal, require_scope
@@ -194,6 +194,8 @@ class _RunResultBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     value: Annotated[float, _Strict()] = Field()
+    # Required when the run already has a value (a correction); see CampaignStore.set_result.
+    reason: Annotated[str, StringConstraints(max_length=256)] | None = None
 
 
 # --- campaign management ------------------------------------------------------- #
@@ -392,7 +394,9 @@ def log_run_result(
     else:
         try:
             run = store.set_result(
-                run_id, body.value, tenant=principal.tenant, campaign_id=campaign_id
+                run_id, body.value, tenant=principal.tenant, campaign_id=campaign_id,
+                reason=body.reason, actor=principal.subject,
+                auth_method=_auth_method(principal),
             )
             response = JSONResponse(run)
         except CampaignError as exc:

@@ -124,10 +124,10 @@ def test_fresh_database_is_created_at_v2_without_a_backup(tmp_path):
     store = CampaignStore(tmp_path)
     db = tmp_path / "portal.db"
     assert {"schema_migrations", "campaigns", "analyses", "tenant_defaults", "audit_log"} <= _tables(db)
-    # schema v3 (background jobs) and v4 (append-only audit log) are applied on top of
-    # v2 in the same transaction
+    # schema v3 (background jobs), v4 (append-only audit log) and v5 (append-only
+    # result history) are applied on top of v2 in the same transaction
     assert _q(db, "SELECT version, name FROM schema_migrations ORDER BY version") == [
-        (2, migrate.V2_NAME), (3, migrate.V3_NAME), (4, migrate.V4_NAME)]
+        (2, migrate.V2_NAME), (3, migrate.V3_NAME), (4, migrate.V4_NAME), (5, migrate.V5_NAME)]
     assert not list(tmp_path.glob("portal.db.pre-*"))
     assert store.get(tenant="acme") is None
     assert store.summary(tenant="acme") == {"has_campaign": False}
@@ -351,7 +351,7 @@ def test_migration_is_idempotent(tmp_path):
     CampaignStore(tmp_path)
     CampaignStore(tmp_path)
     assert _q(db, "SELECT id FROM campaigns ORDER BY id") == ids
-    assert _q(db, "SELECT version FROM schema_migrations ORDER BY version") == [(2,), (3,), (4,)]
+    assert _q(db, "SELECT version FROM schema_migrations ORDER BY version") == [(2,), (3,), (4,), (5,)]
     assert len(list(tmp_path.glob("portal.db.pre-v2-*"))) == 1
     assert migrate.migrate_up(db, dry_run=True).plan_text.endswith("nothing to do")
 
@@ -360,7 +360,7 @@ def test_newer_schema_is_refused(tmp_path):
     CampaignStore(tmp_path).close()
     db = tmp_path / "portal.db"
     conn = sqlite3.connect(str(db))
-    conn.execute("INSERT INTO schema_migrations VALUES (5, 'future', 0)")
+    conn.execute("INSERT INTO schema_migrations VALUES (6, 'future', 0)")
     conn.commit()
     conn.close()
     with pytest.raises(migrate.SchemaError, match="newer"):
@@ -384,7 +384,8 @@ def test_down_restores_the_v1_shape_the_old_code_reads(tmp_path):
     store.close()
 
     plan = migrate.migrate_down(db, dry_run=True, target=1)
-    assert "schema v4 -> v3" in plan.plan_text and "schema v3 -> v2" in plan.plan_text
+    assert "schema v5 -> v4" in plan.plan_text and "schema v4 -> v3" in plan.plan_text
+    assert "schema v3 -> v2" in plan.plan_text
     assert "schema v2 -> v1" in plan.plan_text
     result = migrate.migrate_down(db, target=1)
     assert result.action == "rolled_back" and result.backup_path is not None
@@ -433,7 +434,7 @@ def test_cli_up_down_status(tmp_path, capsys):
     assert migrate.main(["up", "--state-dir", str(tmp_path)]) == 0
     assert "result: migrated" in capsys.readouterr().out
     assert migrate.main(["status", "--state-dir", str(tmp_path)]) == 0
-    assert "schema version: v4" in capsys.readouterr().out
+    assert "schema version: v5" in capsys.readouterr().out
     assert migrate.main(["down", "--to", "1", "--state-dir", str(tmp_path)]) == 0
     assert "result: rolled_back" in capsys.readouterr().out
 
@@ -761,5 +762,5 @@ def test_startup_migrates_and_a_failed_backup_stops_the_app(tmp_path, monkeypatc
 
     with TestClient(portal_module.app) as tc:
         assert tc.get("/readyz").json() == {"status": "ok"}
-    assert _q(db, "SELECT version FROM schema_migrations ORDER BY version") == [(2,), (3,), (4,)]
+    assert _q(db, "SELECT version FROM schema_migrations ORDER BY version") == [(2,), (3,), (4,), (5,)]
     assert campaign_module._STORE.get(tenant="acme") == json.loads(blobs["acme"])
