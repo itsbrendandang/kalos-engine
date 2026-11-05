@@ -13,10 +13,13 @@ keywords: [reliability, verdict, calibration, cross-validation, refusal, trust, 
 starting_prompt: Can I trust this round's proposals? Give me the reasons either way.
 inputs:
   - {name: campaign, type: campaign-ref, required: true, description: "Campaign after analysis."}
-parameters: []
+parameters:
+  - {name: seed, type: int, default: 0, effect: "Seed for every random step (bootstrap, CV shuffles, restarts); recorded in the receipt."}
 outputs:
-  - {name: trust_report, type: json, label: derived, description: "Out-of-fold Spearman vs floor, calibration (or why unavailable), baseline comparison, promotion pass/fail with failed gates, GP shape notes, list of unmodelled aspects, refusals."}
+  - {name: trust_report, kind: json, label: derived, min_bytes: 2, description: "Out-of-fold Spearman vs floor, calibration (or why unavailable), baseline comparison, promotion pass/fail with failed gates, GP shape notes, list of unmodelled aspects, refusals."}
 tools: [engine.grouped_cv_report, engine.interval_calibration, engine.check_gates, engine.gp_shape_report]
+entrypoint: "kalos.core.gates:check_gates"
+requires_extras: [ml]
 implementation:
   status: partial
   engine:

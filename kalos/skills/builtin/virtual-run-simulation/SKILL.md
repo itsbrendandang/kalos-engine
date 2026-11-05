@@ -18,9 +18,11 @@ parameters:
   - {name: t_end_h, type: float, default: 336, effect: "Simulated duration in hours."}
   - {name: noise_cv, type: float, default: 0.0, effect: "Optional multiplicative noise for synthetic data; 0 gives the deterministic trajectory."}
 outputs:
-  - {name: trajectory, type: table, label: simulated, description: "Time course of biomass, substrate, product; every row carries data_type=simulated."}
-  - {name: endpoints, type: json, label: simulated, description: "Final and peak values, with the model id and parameters used."}
+  - {name: trajectory, kind: table, label: simulated, min_bytes: 8, description: "Time course of biomass, substrate, product; every row carries data_type=simulated."}
+  - {name: endpoints, kind: json, label: simulated, min_bytes: 2, description: "Final and peak values, with the model id and parameters used."}
 tools: [engine.ode_model]
+entrypoint: "kalos.core.mechanistic:monod_example"
+requires_extras: []
 implementation:
   status: partial
   engine:

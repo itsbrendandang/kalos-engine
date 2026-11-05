@@ -16,10 +16,13 @@ inputs:
 parameters:
   - {name: anonymise, type: bool, default: true, effect: "Replace identifiers and file names with stable aliases in the bundle."}
   - {name: format, type: enum, allowed: [zip-json-csv, pdf-summary], default: zip-json-csv, effect: "Machine bundle or a human summary that references the bundle hash."}
+  - {name: seed, type: int, default: 0, effect: "Seed for every random step (bootstrap, CV shuffles, restarts); recorded in the receipt."}
 outputs:
-  - {name: bundle, type: file, label: derived, description: "Archive with manifest.json (sha256 of every file), data, proposals (predicted), results (measured), trust reports, run records, audit entries."}
-  - {name: provenance_summary, type: json, label: derived, description: "Engine build sha, skill ids and content hashes, seeds, timestamps, who did what."}
+  - {name: bundle, kind: file, label: derived, min_bytes: 64, description: "Archive with manifest.json (sha256 of every file), data, proposals (predicted), results (measured), trust reports, run records, audit entries."}
+  - {name: provenance_summary, kind: json, label: derived, min_bytes: 2, description: "Engine build sha, skill ids and content hashes, seeds, timestamps, who did what."}
 tools: [engine.run_record_build, engine.audit_entries, engine.campaign_summary]
+entrypoint: "kalos.portal.run_record:build"
+requires_extras: [portal]
 implementation:
   status: partial
   engine:

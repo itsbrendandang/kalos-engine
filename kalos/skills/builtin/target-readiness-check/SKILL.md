@@ -15,8 +15,10 @@ inputs:
   - {name: target, type: column, required: true, description: "Proposed response column."}
 parameters: []
 outputs:
-  - {name: target_readiness, type: json, label: derived, description: "Usable-row count, variation class (constant / near-constant / usable), and a refusal reason if any."}
+  - {name: target_readiness, kind: json, label: derived, min_bytes: 2, description: "Usable-row count, variation class (constant / near-constant / usable), and a refusal reason if any."}
 tools: [engine.assess_target_variation]
+entrypoint: "kalos.validation.target:assess_target_variation"
+requires_extras: []
 implementation:
   status: implemented
   engine:

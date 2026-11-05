@@ -36,8 +36,9 @@ starting_prompt: Summarise this run sheet please.
 inputs:
   - {{name: rows, type: table, description: "Rows of the run sheet."}}
 outputs:
-  - {{name: summary, type: json, label: derived, description: "A derived summary."}}
+  - {{name: summary, kind: json, label: derived, min_bytes: 2, description: "A derived summary."}}
 tools: [engine.noise_report]
+entrypoint: "kalos.core.replicates:noise_report"
 implementation:
   status: implemented
   engine:
@@ -127,8 +128,70 @@ def test_non_text_file_rejected(tmp_path):
     d = write_skill(tmp_path)
     (d / "scripts").mkdir()
     (d / "scripts" / "run.py").write_text("print('x')\n")
+    with pytest.raises(SkillFormatError, match="not allowed"):
+        parse_skill(d)
+    (d / "scripts" / "run.py").unlink()
+    (d / "scripts").rmdir()
+    (d / "references").mkdir()
+    (d / "references" / "picture.png").write_bytes(b"x")
     with pytest.raises(SkillFormatError, match="non-text"):
         parse_skill(d)
+
+
+@pytest.mark.parametrize("rel", [
+    "tests/test_x.md", "references/expected_output.json", "examples/golden.csv",
+    "references/uv.lock", "examples/requirements.txt", "references/run_skill.md",
+    "references/runner.md", "examples/fixtures/a.csv", "notes.md", "SKILL.md.bak.md",
+    "references/pyproject.toml", "examples/answers.json", "references/package-lock.json",
+])
+def test_evidence_and_machinery_rejected(tmp_path, rel):
+    d = write_skill(tmp_path)
+    (d / rel).parent.mkdir(parents=True, exist_ok=True)
+    (d / rel).write_text("x\n")
+    with pytest.raises(SkillFormatError):
+        parse_skill(d)
+
+
+def test_references_and_synthetic_examples_allowed(tmp_path):
+    d = write_skill(tmp_path)
+    (d / "references").mkdir()
+    (d / "references" / "method.md").write_text("# Method\n")
+    (d / "examples").mkdir()
+    (d / "examples" / "synthetic_runs.csv").write_text("a,b\n1,2\n")
+    assert parse_skill(d).files == ("SKILL.md", "examples/synthetic_runs.csv",
+                                    "references/method.md")
+
+
+def test_data_sources_md_must_match_frontmatter(tmp_path):
+    from kalos.skills.loader import render_data_sources
+
+    d = write_skill(tmp_path)
+    meta = parse_skill(d).meta
+    (d / "DATA_SOURCES.md").write_text(render_data_sources(meta))
+    assert "None." in (d / "DATA_SOURCES.md").read_text()
+    parse_skill(d)
+    (d / "DATA_SOURCES.md").write_text("# hand-edited\n")
+    with pytest.raises(SkillFormatError, match="DATA_SOURCES"):
+        parse_skill(d)
+
+
+def test_render_data_sources_rows():
+    from kalos.skills.loader import render_data_sources
+    from kalos.skills.schema import SkillMeta
+
+    meta = SkillMeta.model_validate({**_meta_dict(), "licence": {"spdx": "Apache-2.0", "data_sources": [
+        {"name": "A|B", "kind": "software", "version": "1.0", "uri": "https://x", "licence": "MIT",
+         "commercial_status": "unknown", "bundled": True, "verified_by": "references/lic.md",
+         "checked_on": "2026-11-05"}]}})
+    out = render_data_sources(meta)
+    assert "| A\\|B | software | 1.0 | MIT | unknown | yes |" in out
+    assert render_data_sources(meta) == out
+
+
+def _meta_dict():
+    from kalos.skills.loader import split_frontmatter
+
+    return split_frontmatter(FRONT.format(slug="example-skill", ref=_ref()) + "x")[0]
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="no symlinks")
@@ -189,6 +252,11 @@ def test_engine_ref_wrong_line_and_wrong_module(tmp_path):
 
 def test_check_symbol_static():
     assert check_symbol("kalos.core.optimize:propose_batch", default_engine_root()) == []
+    root = default_engine_root()
+    assert check_symbol("kalos.data.anonymizer:Anonymizer.anonymize_meta", root) == []
+    assert check_symbol("kalos.data.anonymizer:Anonymizer.nope", root)
+    assert check_symbol("kalos.data.anonymizer:Anonymizer._salt", root)
+    assert check_symbol("kalos.core.optimize:propose_batch.x", root)  # not a class
     assert check_symbol("kalos.core.optimize:no_such_thing", default_engine_root())
     assert check_symbol("kalos.core.nope:x", default_engine_root())
 

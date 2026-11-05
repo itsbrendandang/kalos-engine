@@ -15,9 +15,12 @@ inputs:
 parameters:
   - {name: top_k, type: int, default: 5, effect: "How many factors to list."}
   - {name: q, type: float, default: 0.05, effect: "False-discovery rate for flagging associations."}
+  - {name: seed, type: int, default: 42, effect: "Seed for every random step (bootstrap, CV shuffles, restarts); recorded in the receipt."}
 outputs:
-  - {name: drivers, type: json, label: derived, description: "Factor, rank correlation, bootstrap interval, adjusted p-value, flag."}
+  - {name: drivers, kind: json, label: derived, min_bytes: 2, description: "Factor, rank correlation, bootstrap interval, adjusted p-value, flag."}
 tools: [engine.bootstrap_spearman, engine.rank_drivers]
+entrypoint: "kalos.core.drivers:rank_drivers"
+requires_extras: []
 implementation:
   status: implemented
   engine:

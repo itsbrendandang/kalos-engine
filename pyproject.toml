@@ -69,7 +69,7 @@ include = ["kalos*"]
 # Source checkouts never noticed.
 [tool.setuptools.package-data]
 "kalos.portal" = ["templates/*.html"]
-"kalos.skills" = ["builtin/*/SKILL.md", "builtin/*/references/*.md"]
+"kalos.skills" = ["builtin/*/SKILL.md", "builtin/*/DATA_SOURCES.md", "builtin/*/references/*", "builtin/*/examples/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

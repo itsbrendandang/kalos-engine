@@ -40,6 +40,9 @@ SLUG_RE = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
 SEMVER_RE = r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$"
 REF_RE = re.compile(r"^(?P<path>[\w./-]+\.py):(?P<line>\d+)$")
 SYMBOL_RE = re.compile(r"^(?P<module>[A-Za-z_][\w.]*):(?P<attr>[A-Za-z_]\w*)$")
+# An entrypoint or tool symbol may name a public method: `pkg.mod:Class.method`.
+ENTRYPOINT_RE = re.compile(
+    r"^(?P<module>[A-Za-z_][\w.]*):(?P<attr>[A-Za-z_]\w*)(?:\.(?P<method>[A-Za-z_]\w*))?$")
 TOOL_NAME_RE = r"^(?:engine|skills)\.[a-z][a-z0-9_]*$"
 OWNER_RE = re.compile(r"^(?:system|tenant:[A-Za-z0-9_.@-]{1,128}|user:[A-Za-z0-9_.@-]{1,256})$")
 # "Not for ...", "not a ...", "never ...": a summary must say what the skill is NOT.
@@ -80,13 +83,27 @@ class _Strict(BaseModel):
 
 
 class IOField(_Strict):
-    """A declared input or output of a skill."""
+    """A declared input of a skill."""
 
     name: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     type: str = Field(min_length=2, max_length=40)
     required: bool = True
     description: str = Field(min_length=8)
     label: DataLabel | None = None
+
+
+OutputKind = Literal["json", "csv", "table", "image", "file"]
+
+
+class OutputField(_Strict):
+    """A declared output: a typed artifact with a data label and a size floor
+    (an artifact smaller than `min_bytes` is a runtime fault, not a result)."""
+
+    name: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    kind: OutputKind
+    description: str = Field(min_length=8)
+    label: DataLabel
+    min_bytes: int = Field(ge=0, le=1 << 30)
 
 
 class Parameter(_Strict):
@@ -157,9 +174,35 @@ class Verification(_Strict):
     review: Literal["none", "optional", "required"] = "none"
 
 
+CommercialStatus = Literal["allowed", "allowed-with-attribution", "needs-agreement", "blocked",
+                          "unknown"]
+# Only these count as allowed for commercial use. `unknown` never does.
+COMMERCIAL_OK = frozenset({"allowed", "allowed-with-attribution"})
+
+
+class DataSource(_Strict):
+    """One software, dataset, API or reference a skill depends on. The
+    frontmatter row is authoritative; DATA_SOURCES.md, if present, is rendered
+    from these rows (`kalos.skills.loader.render_data_sources`)."""
+
+    name: str = Field(min_length=1, max_length=200)
+    kind: Literal["software", "dataset", "api", "reference"]
+    version: str = Field(min_length=1, max_length=100)
+    uri: str = Field(min_length=1, max_length=500)
+    licence: str = Field(min_length=1, max_length=200)
+    commercial_status: CommercialStatus
+    bundled: bool
+    verified_by: str = Field(min_length=1, max_length=500)
+    checked_on: dt.date
+
+    @property
+    def commercial_use_allowed(self) -> bool:
+        return self.commercial_status in COMMERCIAL_OK
+
+
 class Licence(_Strict):
     spdx: str = Field(pattern=r"^(?:[A-Za-z0-9.+-]+|LicenseRef-[A-Za-z0-9.-]+)$")
-    data_sources: list[dict[str, str]] = []
+    data_sources: list[DataSource] = []
     third_party_code: list[str] = []
 
 
@@ -180,8 +223,14 @@ class SkillMeta(_Strict):
     starting_prompt: str = Field(min_length=10)
     inputs: list[IOField] = Field(min_length=1)
     parameters: list[Parameter] = []
-    outputs: list[IOField] = Field(min_length=1)
+    outputs: list[OutputField] = Field(min_length=1)
     tools: list[str] = []
+    # Locked skills: the one public engine callable that does the main
+    # computation (`pkg.module:attr`); null while a skill is planned. Guided
+    # skills have none.
+    entrypoint: str | None = None
+    # Optional dependency groups of pyproject.toml this skill's tools need.
+    requires_extras: list[str] = []
     implementation: Implementation
     scope: Literal["read", "write"]
     side_effects: Literal["none", "writes-campaign", "external"]
@@ -221,8 +270,6 @@ class SkillMeta(_Strict):
             raise ValueError("locked skills must declare refuses_when")
         if self.side_effects != "none" and self.scope != "write":
             raise ValueError("side effects require scope=write")
-        if any(o.label is None for o in self.outputs):
-            raise ValueError("every output needs a data label (" + "/".join(DATA_LABELS) + ")")
         if self.category == "simulation" and any(
             o.label not in ("simulated", "synthetic") for o in self.outputs
         ):
@@ -238,13 +285,38 @@ class SkillMeta(_Strict):
             raise ValueError("owner=tenant:<id> requires visibility=tenant")
         if self.owner.startswith("user:") and self.visibility not in ("private", "shared"):
             raise ValueError("owner=user:<id> requires visibility=private or shared")
+        if self.entrypoint is not None:
+            em = ENTRYPOINT_RE.match(self.entrypoint)
+            if em is None:
+                raise ValueError("entrypoint must be 'package.module:attr[.method]'")
+            if em["attr"].startswith("_") or (em["method"] or "").startswith("_"):
+                raise ValueError("entrypoint must be public (no leading underscore)")
+        if self.kind == "guided" and self.entrypoint is not None:
+            raise ValueError("guided skills have no entrypoint")
+        if self.kind == "locked" and not planned:
+            if self.entrypoint is None:
+                raise ValueError("a locked skill needs an entrypoint")
+            if not self.verification.receipt:
+                raise ValueError("a locked skill must write a receipt")
+        if planned and self.entrypoint is not None:
+            raise ValueError("a planned skill has no entrypoint until its code exists")
+        if self.kind == "guided" and (self.scope != "read" or self.side_effects != "none"):
+            raise ValueError("guided skills are read-only")
+        if len(set(self.requires_extras)) != len(self.requires_extras):
+            raise ValueError("duplicate extra in requires_extras")
+        names = [o.name for o in self.outputs]
+        if len(set(names)) != len(names):
+            raise ValueError("duplicate output name")
         if self.updated < self.created:
             raise ValueError("updated before created")
         return self
 
     @property
     def output_labels(self) -> frozenset[str]:
-        return frozenset(o.label for o in self.outputs if o.label is not None)
+        return frozenset(o.label for o in self.outputs)
+
+    def output(self, name: str) -> OutputField | None:
+        return next((o for o in self.outputs if o.name == name), None)
 
     @property
     def tenant(self) -> str | None:
@@ -254,7 +326,9 @@ class SkillMeta(_Strict):
 
 __all__ = [
     "CATEGORIES",
+    "COMMERCIAL_OK",
     "DATA_LABELS",
+    "ENTRYPOINT_RE",
     "NON_MEASURED_LABELS",
     "REF_RE",
     "REQUIRED_SECTIONS",
@@ -262,10 +336,12 @@ __all__ = [
     "SYMBOL_RE",
     "Category",
     "DataLabel",
+    "DataSource",
     "EngineRef",
     "IOField",
     "Implementation",
     "Licence",
+    "OutputField",
     "Parameter",
     "SkillMeta",
     "Verification",

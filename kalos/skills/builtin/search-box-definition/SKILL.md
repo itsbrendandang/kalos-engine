@@ -17,8 +17,10 @@ inputs:
 parameters:
   - {name: expand_fraction, type: float, default: 0.0, effect: "How far beyond observed ranges the search may go; 0 keeps proposals inside measured ranges."}
 outputs:
-  - {name: search_box, type: json, label: derived, description: "Factors with type, bounds, levels, provenance of each bound (observed, physical, scientist), and constraints."}
+  - {name: search_box, kind: json, label: derived, min_bytes: 2, description: "Factors with type, bounds, levels, provenance of each bound (observed, physical, scientist), and constraints."}
 tools: [engine.build_search_box, engine.validate_constraint]
+entrypoint: "kalos.domains.profile:build_design_space"
+requires_extras: [portal]
 implementation:
   status: implemented
   engine:

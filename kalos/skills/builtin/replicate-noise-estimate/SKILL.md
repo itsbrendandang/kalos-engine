@@ -16,8 +16,10 @@ inputs:
 parameters:
   - {name: decimals, type: int, default: 6, effect: "Rounding used to decide that two recipes are identical; coarser rounding merges near-identical recipes."}
 outputs:
-  - {name: noise_report, type: json, label: derived, description: "Rows, distinct recipes, replicated recipes, pooled noise SD, noise-vs-mean trend, signal-to-noise ratio."}
+  - {name: noise_report, kind: json, label: derived, min_bytes: 2, description: "Rows, distinct recipes, replicated recipes, pooled noise SD, noise-vs-mean trend, signal-to-noise ratio."}
 tools: [engine.noise_report, engine.estimate_noise_floor, engine.heteroscedasticity_report]
+entrypoint: "kalos.core.replicates:noise_report"
+requires_extras: []
 implementation:
   status: implemented
   engine:

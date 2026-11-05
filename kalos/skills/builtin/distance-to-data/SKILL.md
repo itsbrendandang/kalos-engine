@@ -17,8 +17,10 @@ inputs:
 parameters:
   - {name: edge_fraction, type: float, default: 0.05, effect: "Share of each factor's range treated as 'at the edge'."}
 outputs:
-  - {name: distance_report, type: json, label: derived, description: "Per recipe: nearest measured run id, range-normalised distance, factors at or beyond the edge, an in-data / near-edge / extrapolating label."}
+  - {name: distance_report, kind: json, label: derived, min_bytes: 2, description: "Per recipe: nearest measured run id, range-normalised distance, factors at or beyond the edge, an in-data / near-edge / extrapolating label."}
 tools: []
+entrypoint: null
+requires_extras: []
 implementation:
   status: needs-new-code
   engine:

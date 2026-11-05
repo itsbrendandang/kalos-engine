@@ -19,8 +19,10 @@ parameters:
   - {name: seed, type: int, default: 0, effect: "Seed for reproducible optimisation restarts."}
   - {name: objective, type: enum, allowed: [maximise, minimise], default: maximise, effect: "Direction of the response."}
 outputs:
-  - {name: proposal_batch, type: json, label: predicted, description: "Recipes in engineering units with predicted mean, uncertainty, P(feasible) when relevant, rationale, and the minimum separation used."}
+  - {name: proposal_batch, kind: json, label: predicted, min_bytes: 2, description: "Recipes in engineering units with predicted mean, uncertainty, P(feasible) when relevant, rationale, and the minimum separation used."}
 tools: [engine.propose_batch, engine.surrogate_fit]
+entrypoint: "kalos.core.optimize:propose_batch"
+requires_extras: [ml]
 implementation:
   status: implemented
   engine:

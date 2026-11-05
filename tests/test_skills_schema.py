@@ -26,9 +26,10 @@ def base(**over) -> dict:
         "starting_prompt": "Summarise this run sheet please.",
         "inputs": [{"name": "rows", "type": "table", "description": "Rows of the run sheet."}],
         "parameters": [],
-        "outputs": [{"name": "summary", "type": "json", "label": "derived",
+        "outputs": [{"name": "summary", "kind": "json", "label": "derived", "min_bytes": 2,
                      "description": "A derived summary of the rows."}],
         "tools": ["engine.noise_report"],
+        "entrypoint": "kalos.core.replicates:noise_report",
         "implementation": {"status": "implemented",
                            "engine": [{"symbol": "kalos.core.replicates:noise_report",
                                        "ref": "kalos/core/replicates.py:354"}],
@@ -121,10 +122,61 @@ def test_partial_needs_gaps():
 
 def test_planned_iff_needs_new_code_and_no_tools():
     new = {"status": "needs-new-code", "engine": [], "gaps": ["all of it"]}
-    ok(base(status="planned", implementation=new, tools=[]))
-    bad(base(status="planned", implementation=new, tools=["engine.noise_report"]))
-    bad(base(status="active", implementation=new, tools=[]))
-    bad(base(status="planned", tools=[]))  # implemented but planned
+    ok(base(status="planned", implementation=new, tools=[], entrypoint=None))
+    bad(base(status="planned", implementation=new, tools=["engine.noise_report"], entrypoint=None))
+    bad(base(status="active", implementation=new, tools=[], entrypoint=None))
+    bad(base(status="planned", tools=[], entrypoint=None))  # implemented but planned
+    bad(base(status="planned", implementation=new, tools=[]))  # planned with an entrypoint
+
+
+def test_locked_needs_entrypoint_unless_planned():
+    bad(base(entrypoint=None))
+    bad(base(entrypoint=None, status="beta"))
+    ok(base(entrypoint="kalos.data.anonymizer:Anonymizer.anonymize_meta"))
+    bad(base(entrypoint="kalos.core.replicates:_private"))
+    bad(base(entrypoint="kalos.data.anonymizer:Anonymizer._salt"))
+    bad(base(entrypoint="not a symbol"))
+
+
+def test_guided_has_no_entrypoint_and_is_read_only():
+    ok(base(kind="guided", entrypoint=None, refuses_when=[]))
+    bad(base(kind="guided", refuses_when=[]))  # has an entrypoint
+    bad(base(kind="guided", entrypoint=None, scope="write", side_effects="writes-campaign"))
+
+
+def test_locked_must_write_a_receipt():
+    bad(base(verification={"deterministic": ["x"], "receipt": False}))
+
+
+def test_outputs_are_typed():
+    d = base()
+    d["outputs"][0]["kind"] = "spreadsheet"
+    bad(d)
+    d = base()
+    del d["outputs"][0]["min_bytes"]
+    bad(d)
+    d = base()
+    d["outputs"].append(dict(d["outputs"][0]))
+    bad(d)  # duplicate output name
+
+
+DS = {"name": "Example set", "kind": "dataset", "version": "2024.1", "uri": "https://example.org/x",
+      "licence": "CC-BY-4.0", "commercial_status": "allowed-with-attribution", "bundled": False,
+      "verified_by": "https://example.org/x/licence", "checked_on": "2026-11-05"}
+
+
+def test_data_sources_rows_and_unknown_never_allowed():
+    m = ok(base(licence={"spdx": "Apache-2.0", "data_sources": [DS]}))
+    assert m.licence.data_sources[0].commercial_use_allowed
+    for st, allowed in [("allowed", True), ("needs-agreement", False), ("blocked", False),
+                        ("unknown", False)]:
+        m = ok(base(licence={"spdx": "Apache-2.0", "data_sources": [{**DS, "commercial_status": st}]}))
+        assert m.licence.data_sources[0].commercial_use_allowed is allowed
+    bad(base(licence={"spdx": "Apache-2.0", "data_sources": [{**DS, "commercial_status": "maybe"}]}))
+    bad(base(licence={"spdx": "Apache-2.0", "data_sources": [{**DS, "kind": "blog"}]}))
+    missing = dict(DS)
+    del missing["checked_on"]
+    bad(base(licence={"spdx": "Apache-2.0", "data_sources": [missing]}))
 
 
 def test_summary_needs_negative_boundary():
@@ -135,7 +187,7 @@ def test_summary_needs_negative_boundary():
 
 def test_locked_needs_refuses_when_guided_does_not():
     bad(base(refuses_when=[]))
-    ok(base(kind="guided", refuses_when=[]))
+    ok(base(kind="guided", refuses_when=[], entrypoint=None))
 
 
 def test_side_effects_need_write_scope():

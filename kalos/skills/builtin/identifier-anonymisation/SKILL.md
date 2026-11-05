@@ -15,9 +15,11 @@ inputs:
   - {name: table, type: table-file, required: true, label: measured, description: "Table or parsed upload to scrub."}
 parameters: []
 outputs:
-  - {name: anonymised_table, type: table, label: derived, description: "Same data, identifier columns replaced by aliases; process values untouched."}
-  - {name: alias_report, type: json, label: derived, description: "Which columns were aliased or dropped and why; never the alias key."}
+  - {name: anonymised_table, kind: table, label: derived, min_bytes: 8, description: "Same data, identifier columns replaced by aliases; process values untouched."}
+  - {name: alias_report, kind: json, label: derived, min_bytes: 2, description: "Which columns were aliased or dropped and why; never the alias key."}
 tools: [engine.anonymizer, engine.anonymize_parsed]
+entrypoint: "kalos.data.anonymizer:Anonymizer.anonymize_meta"
+requires_extras: [portal]
 implementation:
   status: implemented
   engine:

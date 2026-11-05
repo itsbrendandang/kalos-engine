@@ -17,8 +17,10 @@ inputs:
 parameters:
   - {name: mode, type: enum, allowed: [warn, strict], default: warn, effect: "strict refuses on any blocking finding; warn reports it and carries on."}
 outputs:
-  - {name: check_report, type: json, label: derived, description: "Each finding with its check name, severity, affected rows (capped, with the true count) and any unit conversion applied."}
+  - {name: check_report, kind: json, label: derived, min_bytes: 2, description: "Each finding with its check name, severity, affected rows (capped, with the true count) and any unit conversion applied."}
 tools: [engine.parse_upload, engine.validate_frame]
+entrypoint: "kalos.validation.runner:validate_frame"
+requires_extras: [portal]
 implementation:
   status: implemented
   engine:

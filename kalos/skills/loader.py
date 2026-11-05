@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 
-from .schema import REF_RE, REQUIRED_SECTIONS, SYMBOL_RE, SkillMeta
+from .schema import ENTRYPOINT_RE, REF_RE, REQUIRED_SECTIONS, SkillMeta
 
 FM_RE = re.compile(r"\A---\n(?P<fm>.*?)\n---\n(?P<body>.*)\Z", re.S)
 HEADING_RE = re.compile(r"(?m)^## +(.+?)\s*$")
@@ -31,6 +31,16 @@ MAX_FILE_BYTES = 256 * 1024
 # locked skill's computation is the engine function its tools are bound to.
 TEXT_SUFFIXES = frozenset({".md", ".txt", ".json", ".yaml", ".yml", ".csv"})
 SKILL_FILE = "SKILL.md"
+DATA_SOURCES_FILE = "DATA_SOURCES.md"
+# Top level of a skill folder: SKILL.md, an optional rendered DATA_SOURCES.md,
+# and two optional folders. examples/ holds synthetic examples only.
+ALLOWED_TOP = frozenset({SKILL_FILE, DATA_SOURCES_FILE, "references", "examples"})
+# Evidence and machinery live outside the package: no tests, fixtures, expected
+# answers, lockfiles, dependency pins or runner copies anywhere in the folder.
+FORBIDDEN_NAME_RE = re.compile(
+    r"(?i)(^|/)(tests?|fixtures?|expected[^/]*|golden[^/]*|answers?[^/]*|"
+    r"[^/]*\.lock|[^/]*-lock\.json|requirements[^/]*\.txt|pipfile[^/]*|pyproject\.toml|"
+    r"run_skill[^/]*|runner[^/]*|test_[^/]*|[^/]*_test\.[a-z]+)(/|$)")
 
 
 class SkillFormatError(ValueError):
@@ -106,6 +116,15 @@ def check_body(body: str) -> None:
 
 def check_files(folder: Path, files: tuple[str, ...]) -> None:
     for rel in files:
+        top = rel.split("/", 1)[0]
+        if top not in ALLOWED_TOP or (top in (SKILL_FILE, DATA_SOURCES_FILE) and "/" in rel):
+            raise SkillFormatError(
+                f"not allowed in a skill folder: {rel} (only SKILL.md, DATA_SOURCES.md, "
+                "references/, examples/)")
+        if FORBIDDEN_NAME_RE.search(rel):
+            raise SkillFormatError(
+                f"tests, fixtures, expected answers, lockfiles and runners live outside "
+                f"the skill folder: {rel}")
         p = folder / rel
         if p.suffix.lower() not in TEXT_SUFFIXES:
             raise SkillFormatError(f"non-text file in skill folder: {rel}")
@@ -127,6 +146,11 @@ def parse_skill(folder: Path, *, source: str = "kalos") -> Skill:
     check_body(body)
     digest, files = tree_hash(folder)
     check_files(folder, files)
+    ds = folder / DATA_SOURCES_FILE
+    if ds.is_file() and ds.read_text(encoding="utf-8") != render_data_sources(meta):
+        raise SkillFormatError(
+            "DATA_SOURCES.md differs from the frontmatter rows (the frontmatter is "
+            "authoritative; re-render it with `kalos skills data-sources`)")
     return Skill(meta=meta, body=body, path=folder, content_hash=digest, files=files, source=source)
 
 
@@ -137,7 +161,8 @@ def _first_line(exc: Exception) -> str:
     lines = text.splitlines()
     # pydantic: "1 validation error for SkillMeta\n<loc>\n  <msg> ..."; keep loc + msg
     if len(lines) >= 3 and "validation error" in lines[0]:
-        return f"{lines[1].strip()}: {lines[2].strip()}"
+        msg = lines[2].strip().split(" [type=", 1)[0].removeprefix("Value error, ")
+        return f"{lines[1].strip()}: {msg}"
     return lines[0]
 
 
@@ -169,6 +194,42 @@ def default_engine_root() -> Path:
     return Path(kalos.__file__).resolve().parent.parent
 
 
+def render_data_sources(meta: SkillMeta) -> str:
+    """DATA_SOURCES.md rendered from `licence.data_sources` (byte-stable)."""
+    lines = [f"# Data sources: {meta.slug}", "",
+             "Rendered from the SKILL.md frontmatter, which is authoritative. "
+             "`unknown` never counts as allowed.", ""]
+    rows = meta.licence.data_sources
+    if not rows:
+        lines.append("None.")
+    else:
+        lines += ["| Name | Kind | Version | Licence | Commercial status | Bundled | URI | "
+                  "Checked by | Checked on |", "|---|---|---|---|---|---|---|---|---|"]
+        for d in rows:
+            cells = [d.name, d.kind, d.version, d.licence, d.commercial_status,
+                     "yes" if d.bundled else "no", d.uri, d.verified_by, d.checked_on.isoformat()]
+            lines.append("| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def defined_extras(engine_root: Path | None = None) -> frozenset[str]:
+    """Optional-dependency groups the engine defines: pyproject.toml in a
+    checkout, else the installed distribution's Provides-Extra."""
+    import tomllib
+
+    root = Path(engine_root) if engine_root is not None else default_engine_root()
+    pp = root / "pyproject.toml"
+    if pp.is_file():
+        data = tomllib.loads(pp.read_text(encoding="utf-8"))
+        return frozenset(data.get("project", {}).get("optional-dependencies", {}))
+    from importlib import metadata
+
+    try:
+        return frozenset(metadata.metadata("kalos").get_all("Provides-Extra") or [])
+    except metadata.PackageNotFoundError:
+        return frozenset()
+
+
 def top_level_defs(path: Path) -> dict[str, int]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     return {
@@ -180,9 +241,10 @@ def top_level_defs(path: Path) -> dict[str, int]:
 
 def check_symbol(symbol: str, engine_root: Path, *, line: int | None = None,
                  ref_path: str | None = None) -> list[str]:
-    """Statically check `pkg.mod:attr`: the module file exists and defines `attr`
-    at top level (at `line`, when given). Never imports anything."""
-    sm = SYMBOL_RE.match(symbol)
+    """Statically check `pkg.mod:attr` (or `pkg.mod:Class.method`): the module
+    file exists and defines `attr` at top level (at `line`, when given), and the
+    class defines a public `method`. Never imports anything."""
+    sm = ENTRYPOINT_RE.match(symbol)
     if not sm:
         return [f"{symbol}: not 'package.module:attr'"]
     mod_path = sm["module"].replace(".", "/") + ".py"
@@ -198,6 +260,18 @@ def check_symbol(symbol: str, engine_root: Path, *, line: int | None = None,
         problems.append(f"{symbol}: not defined at module top level")
     elif line is not None and got != line:
         problems.append(f"{symbol}: defined at line {got}, ref says {line}")
+    if got is not None and sm["method"]:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        cls = next((n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == sm["attr"]),
+                   None)
+        methods = {b.name for b in (cls.body if cls else [])
+                   if isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        if cls is None:
+            problems.append(f"{symbol}: {sm['attr']} is not a class")
+        elif sm["method"] not in methods:
+            problems.append(f"{symbol}: class has no method {sm['method']}")
+        elif sm["method"].startswith("_"):
+            problems.append(f"{symbol}: method is private")
     return problems
 
 
@@ -240,9 +314,11 @@ __all__ = [
     "check_symbol",
     "corpus_ngrams",
     "default_engine_root",
+    "defined_extras",
     "load_dir",
     "ngram_overlap",
     "parse_skill",
+    "render_data_sources",
     "split_frontmatter",
     "tree_hash",
 ]

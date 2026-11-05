@@ -17,9 +17,11 @@ inputs:
 parameters:
   - {name: min_prominence, type: float, default: 0.0, effect: "Ignore peaks below this prominence (signal units); 0 uses an automatic noise-based threshold."}
 outputs:
-  - {name: peak_table, type: table, label: derived, description: "Per injection and peak: retention time, area, height, width, concentration, flags."}
-  - {name: suitability, type: json, label: derived, description: "Calibration fit (slope, intercept, R²), resolution, tailing, plate count, and pass/fail against the method's limits."}
+  - {name: peak_table, kind: table, label: derived, min_bytes: 8, description: "Per injection and peak: retention time, area, height, width, concentration, flags."}
+  - {name: suitability, kind: json, label: derived, min_bytes: 2, description: "Calibration fit (slope, intercept, R²), resolution, tailing, plate count, and pass/fail against the method's limits."}
 tools: []
+entrypoint: null
+requires_extras: []
 implementation:
   status: needs-new-code
   engine: []

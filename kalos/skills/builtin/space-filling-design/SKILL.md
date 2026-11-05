@@ -19,9 +19,11 @@ parameters:
   - {name: method, type: enum, allowed: [sobol, maximin-lhs], default: maximin-lhs, effect: "Sobol gives low-discrepancy sequences; maximin LHS maximises the smallest distance between points."}
   - {name: seed, type: int, default: 0, effect: "Fixes the random stream so the design is reproducible."}
 outputs:
-  - {name: design, type: table, label: derived, description: "Proposed recipes, one per row, in engineering units."}
-  - {name: coverage_report, type: json, label: derived, description: "Minimum pairwise distance, per-factor coverage, distance to existing runs."}
+  - {name: design, kind: table, label: derived, min_bytes: 8, description: "Proposed recipes, one per row, in engineering units."}
+  - {name: coverage_report, kind: json, label: derived, min_bytes: 2, description: "Minimum pairwise distance, per-factor coverage, distance to existing runs."}
 tools: []
+entrypoint: null
+requires_extras: []
 implementation:
   status: needs-new-code
   engine:

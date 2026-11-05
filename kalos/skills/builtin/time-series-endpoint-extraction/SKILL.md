@@ -17,9 +17,11 @@ parameters:
   - {name: endpoints, type: str, default: "final,peak,time_to_peak,ivcd,mu_max,qp", effect: "Comma list of endpoints to compute."}
   - {name: harvest_time_h, type: float, required: false, effect: "Evaluate final values at this time instead of the last sample."}
 outputs:
-  - {name: endpoint_table, type: table, label: derived, description: "One row per run; each endpoint column names its source variable and method."}
-  - {name: extraction_log, type: json, label: derived, description: "Per run: samples used, gaps, interpolation applied, endpoints not computable and why."}
+  - {name: endpoint_table, kind: table, label: derived, min_bytes: 8, description: "One row per run; each endpoint column names its source variable and method."}
+  - {name: extraction_log, kind: json, label: derived, min_bytes: 2, description: "Per run: samples used, gaps, interpolation applied, endpoints not computable and why."}
 tools: []
+entrypoint: null
+requires_extras: []
 implementation:
   status: needs-new-code
   engine: []

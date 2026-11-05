@@ -14,9 +14,11 @@ inputs:
   - {name: run_sheet, type: table-file, required: true, label: measured, description: "Parsed run sheet with a confirmed column plan."}
 parameters: []
 outputs:
-  - {name: unit_conversions, type: json, label: derived, description: "Per column: detected unit tokens, chosen base unit, conversion factor, unparsed cells."}
-  - {name: normalised_table, type: table, label: derived, description: "Copy of the table in base units; the original is untouched."}
+  - {name: unit_conversions, kind: json, label: derived, min_bytes: 2, description: "Per column: detected unit tokens, chosen base unit, conversion factor, unparsed cells."}
+  - {name: normalised_table, kind: table, label: derived, min_bytes: 8, description: "Copy of the table in base units; the original is untouched."}
 tools: [engine.parse_value, engine.convert_unit, engine.apply_unit_conversions]
+entrypoint: "kalos.validation.runner:apply_unit_conversions"
+requires_extras: []
 implementation:
   status: implemented
   engine:

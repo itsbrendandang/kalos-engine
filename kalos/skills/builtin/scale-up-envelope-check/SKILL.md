@@ -14,10 +14,13 @@ starting_prompt: Will our best 2 L recipe hold at 200 L, and how sure can we be?
 inputs:
   - {name: multi_scale_sheet, type: table-file, required: true, label: measured, description: "Runs at two or more scales with scale and agitation/aeration columns."}
   - {name: target_spec, type: json, required: true, description: "Target scale, vessel geometry/physics inputs, recipe parameters."}
-parameters: []
+parameters:
+  - {name: seed, type: int, default: 0, effect: "Seed for every random step (bootstrap, CV shuffles, restarts); recorded in the receipt."}
 outputs:
-  - {name: scale_readout, type: json, label: predicted, description: "Gate results, backtest rungs, ratio to baseline, physics features with assumptions, decision (predict / predict with warning / refuse) and provenance."}
+  - {name: scale_readout, kind: json, label: predicted, min_bytes: 2, description: "Gate results, backtest rungs, ratio to baseline, physics features with assumptions, decision (predict / predict with warning / refuse) and provenance."}
 tools: [engine.scale_build_readout]
+entrypoint: "kalos.scale.readout:build_readout"
+requires_extras: [ml]
 implementation:
   status: implemented
   engine:

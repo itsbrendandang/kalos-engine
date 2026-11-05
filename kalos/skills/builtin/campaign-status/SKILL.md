@@ -14,8 +14,10 @@ inputs:
   - {name: campaign, type: campaign-ref, required: true, description: "Campaign to summarise."}
 parameters: []
 outputs:
-  - {name: status, type: json, label: derived, description: "Stage, round, runs in flight, awaited results, best measured value (measured only), next action."}
+  - {name: status, kind: json, label: derived, min_bytes: 2, description: "Stage, round, runs in flight, awaited results, best measured value (measured only), next action."}
 tools: [engine.campaign_summary, engine.derive_stage]
+entrypoint: "kalos.portal.campaign_stage:stage_fields"
+requires_extras: [portal]
 implementation:
   status: implemented
   engine:
@@ -29,7 +31,7 @@ refuses_when:
   - Campaign not found for the caller's tenant.
 verification:
   deterministic: [best-so-far computed from measured values only, stage matches derive_stage for the stored state]
-  receipt: false
+  receipt: true
   review: none
 author: Kalos
 owner: system

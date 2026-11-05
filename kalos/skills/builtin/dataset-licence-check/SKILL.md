@@ -16,8 +16,10 @@ inputs:
 parameters:
   - {name: intended_use, type: enum, allowed: [internal-rnd, commercial-service, redistribution], default: internal-rnd, effect: "Use being assessed; stricter uses need more permissive terms."}
 outputs:
-  - {name: licence_decision, type: json, label: derived, description: "allowed / needs-agreement / blocked / unknown, the rule that fired, attribution text required, and a reminder that a person must confirm."}
+  - {name: licence_decision, kind: json, label: derived, min_bytes: 2, description: "allowed / needs-agreement / blocked / unknown, the rule that fired, attribution text required, and a reminder that a person must confirm."}
 tools: []
+entrypoint: null
+requires_extras: []
 implementation:
   status: needs-new-code
   engine: []

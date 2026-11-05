@@ -15,8 +15,10 @@ inputs:
 parameters:
   - {name: profile, type: enum, allowed: [bioprocess, generic], default: bioprocess, effect: "Selects the domain vocabulary used to recognise headers."}
 outputs:
-  - {name: column_plan, type: json, label: derived, description: "Per column: proposed role, reason (header match, numeric parse rate, cardinality), and whether confirmation is required."}
+  - {name: column_plan, kind: json, label: derived, min_bytes: 2, description: "Per column: proposed role, reason (header match, numeric parse rate, cardinality), and whether confirmation is required."}
 tools: [engine.guess_role, engine.offline_plan, engine.column_provenance]
+entrypoint: "kalos.normalize.llm:offline_plan"
+requires_extras: [portal]
 implementation:
   status: implemented
   engine:
