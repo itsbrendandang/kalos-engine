@@ -54,6 +54,11 @@ dev = [
   "httpx>=0.27,<1", "anthropic>=1.5.0",
 ]
 
+[project.scripts]
+# `kalos skills validate|list|search|hash|tools` (kalos/skills/cli.py). Needs the
+# `skills` extra. Only the `skills` command group exists today.
+kalos = "kalos.skills.cli:kalos_main"
+
 [tool.setuptools.packages.find]
 include = ["kalos*"]
 
