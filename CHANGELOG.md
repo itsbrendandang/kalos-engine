@@ -4,6 +4,14 @@ Newest first.
 
 ## Unreleased
 
+### Changed - audit trail and recorded results (schema v5, `docs/MIGRATIONS.md`)
+
+- **Recorded results are append-only.** A re-submitted campaign result is a new `run_results` row (value, value replaced, reason, actor, server time). A correction needs a `reason` (`400 reason_required` without one). The run's current value is the latest. Response fields are added (`result_version`, `previous_result`, `result_reason`, `result_actor`, `result_recorded_at`); none is removed.
+- **`campaign.result` audit rows carry the change** (run id, old and new value, reason, actor) and are written in the same transaction as the change. A failed audit write fails the change.
+- **`audit_log` rejects UPDATE and DELETE** at the database level (schema v4 triggers). The 365-day delete is gone: `KALOS_AUDIT_RETENTION_DAYS` is now an opt-in archive that copies old rows to `<state>/audit-archive/` and deletes none. Unset, it archives nothing.
+- A fit-row cap refusal carries `code: too_many_fit_rows`, `max_fit_rows` and `n_rows`; the message text is unchanged.
+- Migrations refuse, before any backup or rename, a database with v2 tables but no version row.
+
 ### Added - the campaign says where it is and what to do next (PR #69, re-implemented on main)
 
 - `GET /api/campaign`, the `campaign` object from `POST /api/campaign/reanalyze`, and `summary` on `GET /api/campaigns/{id}` now carry `stage` and `next_action`, derived server-side from that campaign's own analysis, so every client shows the same round state.
