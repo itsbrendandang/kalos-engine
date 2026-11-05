@@ -22,6 +22,8 @@ from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from kalos.twin.origin import check_origin
+
 
 def feasible_labels(y: np.ndarray, threshold: float = 0.0) -> np.ndarray:
     """Binary feasibility labels from a continuous titer array.
@@ -57,8 +59,15 @@ class FeasibilityClassifier:
         self._pipeline: Pipeline | None = None
         self._fallback: bool = True
 
-    def fit(self, X: np.ndarray, y_binary: np.ndarray) -> FeasibilityClassifier:
-        """Fit on binary labels, or fall back to the no-gate state (see class docstring)."""
+    def fit(
+        self, X: np.ndarray, y_binary: np.ndarray, *, allow_origins=None
+    ) -> FeasibilityClassifier:
+        """Fit on binary labels, or fall back to the no-gate state (see class docstring).
+        Simulated/synthetic inputs raise `VirtualDataRefused` unless `allow_origins`
+        names their origin (kalos/twin/origin.py)."""
+        self.data_origin = check_origin(
+            X, y_binary, where="FeasibilityClassifier.fit", allow_origins=allow_origins
+        )
         Xa = np.asarray(X, dtype=float)
         ya = np.asarray(y_binary, dtype=int).reshape(-1)
         counts = np.bincount(ya) if ya.size else np.array([])

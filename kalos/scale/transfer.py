@@ -77,6 +77,7 @@ import pandas as pd
 from numpy.typing import ArrayLike, NDArray
 
 from kalos.core.surrogate import Surrogate
+from kalos.twin.origin import check_origin
 
 from .candidates import (
     MultiFidelitySurrogate,
@@ -242,8 +243,11 @@ class ScaleUpTransferModel:
         *,
         bounds: ArrayLike | None = None,
         noise: ArrayLike | float | None = None,
+        allow_origins=None,
     ) -> ScaleUpTransferModel:
-        """Fit on `df_small_scales`. Rows with a non-finite process column,
+        """Fit on `df_small_scales`. Simulated/synthetic rows raise
+        `VirtualDataRefused` unless `allow_origins` names their origin
+        (kalos/twin/origin.py). Rows with a non-finite process column,
         physics feature (see `kalos.scale.features` - a missing
         `agitation_rpm`/`airflow_L_per_min` column, or a NaN value in one
         present, propagates to NaN there), or target value are DROPPED, not
@@ -263,6 +267,9 @@ class ScaleUpTransferModel:
 
         Raises `ValueError` if no rows survive the drop.
         """
+        self.data_origin = check_origin(
+            df_small_scales, where="ScaleUpTransferModel.fit", allow_origins=allow_origins
+        )
         X, names = build_feature_matrix(df_small_scales, self.process_columns, self.config)
         y = df_small_scales[self.target_column].to_numpy(dtype=float)
         finite = np.isfinite(X).all(axis=1) & np.isfinite(y)

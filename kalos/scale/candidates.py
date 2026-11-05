@@ -84,6 +84,7 @@ from numpy.typing import ArrayLike, NDArray
 # the retry ladder or the bounds-sanitization rule) matters for the
 # apples-to-apples comparison.
 from kalos.core.surrogate import DEVICE, DTYPE, _fit_mll_with_retry, sanitize_bounds
+from kalos.twin.origin import check_origin
 
 
 @runtime_checkable
@@ -228,8 +229,12 @@ class PhysicsMeanSurrogate:
         self._y: np.ndarray | None = None
 
     def fit(
-        self, X: ArrayLike, y: ArrayLike, *, bounds: ArrayLike, noise: ArrayLike | float | None = None
+        self, X: ArrayLike, y: ArrayLike, *, bounds: ArrayLike, noise: ArrayLike | float | None = None,
+        allow_origins=None,
     ) -> PhysicsMeanSurrogate:
+        self.data_origin = check_origin(
+            X, y, where="PhysicsMeanSurrogate.fit", allow_origins=allow_origins
+        )
         Xa, ya, Xt, yt, box = _prep_fit_inputs(X, y, bounds)
         if Xa.shape[1] != len(self.feature_names):
             raise ValueError(
@@ -319,8 +324,12 @@ class MultiFidelitySurrogate:
         self._y: np.ndarray | None = None
 
     def fit(
-        self, X: ArrayLike, y: ArrayLike, *, bounds: ArrayLike, noise: ArrayLike | float | None = None
+        self, X: ArrayLike, y: ArrayLike, *, bounds: ArrayLike, noise: ArrayLike | float | None = None,
+        allow_origins=None,
     ) -> MultiFidelitySurrogate:
+        self.data_origin = check_origin(
+            X, y, where="MultiFidelitySurrogate.fit", allow_origins=allow_origins
+        )
         Xa, ya, Xt, yt, box = _prep_fit_inputs(X, y, bounds)
         if Xa.shape[1] != len(self.feature_names):
             raise ValueError(

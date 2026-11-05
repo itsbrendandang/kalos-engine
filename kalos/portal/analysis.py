@@ -108,6 +108,7 @@ from kalos.portal.uploads import (
     clip_name,
 )
 from kalos.portal.validate import column_provenance, provenance_dicts
+from kalos.twin.origin import Origin, VirtualDataRefused, check_origin
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
 
 # Re-exported: each name below was defined in this module before the split into
@@ -184,9 +185,22 @@ def _analyze(
     constraint: Mapping[str, Any] | None = None,
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
+    allow_origins: Sequence[Origin | str] | None = None,
 ) -> dict:
     """See `_analyze_body`. Every fitting analysis runs inside `_seeded_analysis`,
-    so its proposals depend only on its inputs, not on other analyses in flight."""
+    so its proposals depend only on its inputs, not on other analyses in flight.
+
+    Simulated or synthetic rows (an `origin` column or `attrs["kalos_origin"]`,
+    kalos/twin/origin.py) are refused with `UploadRejected(code=
+    "virtual_data_refused")` unless `allow_origins` names their origin. No HTTP
+    route passes `allow_origins`. An allowed non-measured analysis is labelled
+    with `data_origin` (the highest origin it read)."""
+    try:
+        taint = check_origin(df, pending, where="the analysis", allow_origins=allow_origins)
+    except VirtualDataRefused as exc:
+        raise UploadRejected(
+            str(exc), code=exc.code, context={"origins": sorted(str(o) for o in exc.found)}
+        ) from None
     _validate_constraint(constraint)
     kwargs: dict[str, Any] = dict(
         anonymize=anonymize, roles=roles, profile=profile, pending=pending,
@@ -195,7 +209,10 @@ def _analyze(
     if preflight_only:
         return _analyze_body(df, target, **kwargs)
     with _seeded_analysis(ANALYZE_SEED):
-        return _analyze_body(df, target, **kwargs)
+        result = _analyze_body(df, target, **kwargs)
+    if taint is not Origin.MEASURED:
+        result["data_origin"] = str(taint)
+    return result
 
 
 def _analyze_body(

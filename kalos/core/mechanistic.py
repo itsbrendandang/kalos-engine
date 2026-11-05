@@ -155,12 +155,20 @@ class HybridSurrogate:
             )
         return np.where(np.isfinite(m), m, 0.0)
 
-    def fit(self, X, y, bounds, **kwargs) -> HybridSurrogate:
+    def fit(self, X, y, bounds, *, allow_origins=None, **kwargs) -> HybridSurrogate:
+        """Simulated/synthetic inputs raise `VirtualDataRefused` unless
+        `allow_origins` names their origin (kalos/twin/origin.py)."""
         from kalos.core.surrogate import Surrogate
+        from kalos.twin.origin import check_origin
 
+        self.data_origin = check_origin(
+            X, y, where="HybridSurrogate.fit", allow_origins=allow_origins
+        )
         Xa = np.atleast_2d(np.asarray(X, float))
         ya = np.asarray(y, float).reshape(-1)
-        self.residual = Surrogate().fit(Xa, ya - self._mech(Xa), bounds=bounds, **kwargs)
+        self.residual = Surrogate().fit(
+            Xa, ya - self._mech(Xa), bounds=bounds, allow_origins=allow_origins, **kwargs
+        )
         return self
 
     def predict(self, X) -> tuple[np.ndarray, np.ndarray]:

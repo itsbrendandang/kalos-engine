@@ -46,6 +46,7 @@ from kalos.scale.readout import (
     build_readout,
 )
 from kalos.scale.readout import format_liters_plain as _format_liters_plain
+from kalos.twin.origin import VirtualDataRefused
 
 log = logging.getLogger("kalos.portal")
 
@@ -527,6 +528,8 @@ async def scale_readout(
             {"error": str(busy), "code": "engine_busy"}, status_code=503,
             headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
         )
+    except VirtualDataRefused as exc:
+        return _refusal(exc.code, str(exc))
     except ValueError as exc:
         # e.g. a malformed process_params/target mismatch surfaced by gate().
         return _refusal("invalid_target", str(exc))

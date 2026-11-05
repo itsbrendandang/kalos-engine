@@ -81,6 +81,7 @@ from kalos import __version__ as ENGINE_VERSION
 from kalos.core.conformal import conformal_interval, q_from_residuals
 from kalos.normalize import NormalizationPlan, apply_plan, offline_plan
 from kalos.normalize.units import base_unit_label, canonical_suffix
+from kalos.twin.origin import check_origin
 
 from .evaluation import leave_one_scale_out_report
 from .features import GeometryAssumptions, PowerNumberAssumption, VantRietParams
@@ -890,6 +891,7 @@ def build_readout(
     physics_overrides: dict[str, float] | None = None,
     raw_bytes: bytes | None = None,
     seed: int = 0,
+    allow_origins: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Orchestrate gate -> ladder -> decide -> final fit -> predict ->
     interval, and return a JSON-serializable dict with every section the
@@ -923,6 +925,9 @@ def build_readout(
     though nothing in this pipeline currently draws randomness (the GP fit
     and the ladder's leave-one-scale-out splits are both deterministic).
     """
+    # Simulated/synthetic rows are refused (VirtualDataRefused, a ValueError)
+    # unless `allow_origins` names them; the HTTP route never passes it.
+    check_origin(df, where="the scale-up readout", allow_origins=allow_origins)
     working_df, plan, normalized_csv, plan_json = _normalize_provenance(df, target_column)
 
     missing_physics_inputs = [

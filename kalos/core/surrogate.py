@@ -23,6 +23,8 @@ from botorch.models.transforms.outcome import Standardize
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from gpytorch.utils.errors import NotPSDError
 
+from kalos.twin.origin import Origin, check_origin
+
 DTYPE = torch.double
 DEVICE = torch.device("cpu")
 
@@ -148,8 +150,10 @@ class Surrogate:
         # Integer indices of categorical columns in X (None/empty = all continuous).
         # Recorded so the acquisition path knows which dims to enumerate.
         self._cat_dims: list[int] | None = None
+        # The highest origin of the data `fit` used (kalos/twin/origin.py).
+        self.data_origin: Origin = Origin.MEASURED
 
-    def fit(self, X, y, bounds, *, noise=None, cat_dims=None) -> Surrogate:
+    def fit(self, X, y, bounds, *, noise=None, cat_dims=None, allow_origins=None) -> Surrogate:
         """Fit on (X, y). `bounds` (2 x d) ties input normalization to the fixed
         design box rather than the training-data envelope; it is required so a
         caller can never fall into the training-envelope normalization footgun.
@@ -172,7 +176,12 @@ class Surrogate:
         kernel on the rest; the continuous dims are input-normalized to the box
         and the categorical codes pass through untouched. When `None`/empty the
         continuous `SingleTaskGP` path is unchanged.
+
+        Simulated or synthetic inputs (kalos/twin/origin.py) raise
+        `VirtualDataRefused` unless `allow_origins` names their origin; the fitted
+        model's `data_origin` records the highest origin it was fitted on.
         """
+        self.data_origin = check_origin(X, y, where="Surrogate.fit", allow_origins=allow_origins)
         Xa = np.asarray(X, float)
         ya = np.asarray(y, float).reshape(-1)
         if Xa.ndim != 2 or Xa.shape[0] == 0:

@@ -25,6 +25,8 @@ from botorch.sampling.normal import SobolQMCNormalSampler
 from botorch.utils.multi_objective.pareto import is_non_dominated
 from gpytorch.mlls import SumMarginalLogLikelihood
 
+from kalos.twin.origin import check_origin
+
 from .surrogate import DEVICE, DTYPE, _fit_mll_with_retry, sanitize_bounds
 from .torch_ext import clear_stale_extension_lock
 
@@ -37,10 +39,15 @@ class MultiObjectiveSurrogate:
         self._X: torch.Tensor | None = None
         self._Y: torch.Tensor | None = None
 
-    def fit(self, X, Y, bounds) -> MultiObjectiveSurrogate:
+    def fit(self, X, Y, bounds, *, allow_origins=None) -> MultiObjectiveSurrogate:
         """Fit one GP per objective. `bounds` (2 x d) is required so input
         normalization is always tied to the fixed design box, never the
-        training-data envelope (the same footgun the single-objective fit closes)."""
+        training-data envelope (the same footgun the single-objective fit closes).
+        Simulated/synthetic inputs raise `VirtualDataRefused` unless `allow_origins`
+        names their origin (kalos/twin/origin.py)."""
+        self.data_origin = check_origin(
+            X, Y, where="MultiObjectiveSurrogate.fit", allow_origins=allow_origins
+        )
         Xa = np.asarray(X, float)
         Ya = np.asarray(Y, float)
         if Xa.ndim != 2 or Ya.ndim != 2 or Xa.shape[0] != Ya.shape[0]:
