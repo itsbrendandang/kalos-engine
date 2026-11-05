@@ -499,7 +499,13 @@ def _analyze_body(
     # cap. Reject rather than subsample: silent subsampling would be invisible,
     # non-deterministic data loss and contradict the reproducibility contract.
     if len(fit_pos) > MAX_FIT_ROWS:
-        raise UploadRejected(_ERR_TOO_MANY_FIT_ROWS)
+        # The message text is unchanged (the web matches its sentence); the code
+        # and the two numbers let a client branch without parsing prose.
+        raise UploadRejected(
+            _ERR_TOO_MANY_FIT_ROWS,
+            code="too_many_fit_rows",
+            context={"max_fit_rows": int(MAX_FIT_ROWS), "n_rows": int(len(fit_pos))},
+        )
 
     # Per-column tallies over the rows of the sheet that carry data, by reason.
     by_column: dict[str, dict[str, int]] = {}
