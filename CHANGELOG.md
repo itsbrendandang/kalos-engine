@@ -4,6 +4,14 @@ Newest first.
 
 ## Unreleased
 
+### Added - skills framework, read-only (`skills-framework`)
+
+- `kalos/skills/`: typed, hash-identified skill packages (`kalos-skill/1`), a tenant-scoped registry with deterministic search, a hand-written tool table bound to existing engine functions, and a receipt for every tool call. See `docs/SKILLS.md`.
+- 19 Kalos skills in `kalos/skills/builtin/`: 11 call existing engine code, 3 call it in part and list their gaps, 5 are `planned` with no tools. `run-sheet-validation` is named `run-sheet-checks`.
+- `GET /api/skills`, `/api/skills/search`, `/api/skills/{slug}`, `/api/skills/{slug}/files[/{path}]` behind `KALOS_SKILLS=1` (default off). Writes answer 405. No run route.
+- `kalos skills validate|list|search|hash|tools` (new `kalos` console script) and `python -m kalos.skills`.
+- New optional extra `skills` (pydantic, PyYAML). Importing `kalos.skills` never loads torch.
+
 ### Added - the campaign says where it is and what to do next (PR #69, re-implemented on main)
 
 - `GET /api/campaign`, the `campaign` object from `POST /api/campaign/reanalyze`, and `summary` on `GET /api/campaigns/{id}` now carry `stage` and `next_action`, derived server-side from that campaign's own analysis, so every client shows the same round state.
