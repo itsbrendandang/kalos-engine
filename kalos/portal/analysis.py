@@ -150,6 +150,12 @@ __all__ = [
 _RNG_LOCK = threading.RLock()
 
 
+# Hyperparameter starts for the PROPOSAL surrogate only (default start + 2
+# seeded random starts; best marginal likelihood wins). CV folds keep one start.
+# Measured cost: see docs/CAMPAIGNS_API.md "Model diagnostics".
+PROPOSAL_FIT_RESTARTS = 3
+
+
 @contextlib.contextmanager
 def _seeded_analysis(seed: int = ANALYZE_SEED) -> Iterator[None]:
     """Run one analysis with torch and numpy seeded to `seed`, then restore them.
@@ -1153,7 +1159,7 @@ def _analyze_body(
             per_point_var = float(sigma2) / np.maximum(n_reps_g, 1).astype(float)
             s = Surrogate().fit(
                 Xf, yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
-                check_conditioning=True,
+                check_conditioning=True, restarts=PROPOSAL_FIT_RESTARTS, restart_seed=ANALYZE_SEED,
             )
             incumbent = best_reproducible
             X_fit, y_fit = Xf, yf
@@ -1161,7 +1167,10 @@ def _analyze_body(
     # proposed next batch, with predicted target + uncertainty + a why per row
     _progress("proposing", 0.8)
     if not replicate_aware:
-        s = Surrogate().fit(X, y, bounds=bounds, cat_dims=cat_dims, check_conditioning=True)
+        s = Surrogate().fit(
+            X, y, bounds=bounds, cat_dims=cat_dims, check_conditioning=True,
+            restarts=PROPOSAL_FIT_RESTARTS, restart_seed=ANALYZE_SEED,
+        )
     # In-flight recipes, encoded into this design so the acquisition treats them
     # as taken. Encoding can drop rows (a recipe naming an unknown categorical
     # level cannot be placed in the design at all), so the count actually used is

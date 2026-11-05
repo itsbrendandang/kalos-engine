@@ -12,8 +12,10 @@ CPU). The deep-learning protein embedder runs on MPS separately.
 """
 from __future__ import annotations
 
+import copy
 import logging
 import re
+import time
 import warnings
 
 import linear_operator
@@ -177,6 +179,160 @@ def condition_report(cond: float) -> dict:
     }
 
 
+# Boundary checks on the fitted hyperparameters (compmodel PLAN E7). Inputs are
+# normalized to the design box, so a lengthscale above LONG_LENGTHSCALE is more
+# than 10x the box width: the feature barely moves the prediction, or the fit
+# did not learn it. Recorded, never refused.
+LONG_LENGTHSCALE = 10.0
+# Wall-clock bound on the EXTRA starts of a multi-start fit: once the fit so far
+# has taken this long, the remaining starts are skipped (and recorded as None,
+# `restarts_skipped` counts them). Measured (4 threads, Apple M3 Pro, loaded
+# machine): 3 starts cost 1.0 s at n=80, 2.4 s at n=300, 9.0 s at n=1000.
+MULTI_START_BUDGET_S = 30.0
+_AT_BOUND_RTOL = 1.1
+
+
+def _lengthscale_modules(model) -> list:
+    return [m for m in model.modules()
+            if getattr(m, "has_lengthscale", False) and getattr(m, "lengthscale", None) is not None]
+
+
+def _median_nn_distance(model) -> float | None:
+    model.eval()
+    X0 = model.train_inputs[0].detach()
+    if X0.ndim != 2 or X0.shape[0] < 3:
+        return None
+    d = torch.cdist(X0, X0)
+    d.fill_diagonal_(float("inf"))
+    return float(d.min(dim=1).values.median())
+
+
+def hyperparameter_report(model, *, fixed_noise: bool) -> dict:
+    """Final noise and lengthscales of a fitted GP and the boundary flags."""
+    flags: list[str] = []
+    noise: float | None = None
+    lik = model.likelihood
+    if not fixed_noise and hasattr(lik, "noise_covar"):
+        noise = float(lik.noise.detach().reshape(-1)[0])
+        lb = getattr(lik.noise_covar.raw_noise_constraint, "lower_bound", None)
+        lb_f = float(lb) if lb is not None else None
+        if lb_f is not None and noise <= lb_f * _AT_BOUND_RTOL:
+            flags.append(f"noise at its lower bound ({lb_f:.0e}, standardized units)")
+    lengthscales: list[float] = []
+    n_low = 0
+    for mod in _lengthscale_modules(model):
+        ls = mod.lengthscale.detach().reshape(-1)
+        lengthscales.extend(float(v) for v in ls)
+        lb = getattr(mod.raw_lengthscale_constraint, "lower_bound", None)
+        if lb is not None:
+            n_low += int((ls <= float(lb) * _AT_BOUND_RTOL).sum())
+    # Heuristic for interpolating noise: a lengthscale shorter than the median
+    # nearest-neighbour distance between training rows (normalized inputs) lets
+    # the posterior bend between neighbouring rows. On a pure-noise target the
+    # fit does exactly that instead of hitting either bound.
+    nn = _median_nn_distance(model)
+    n_short = sum(v < nn for v in lengthscales) if nn is not None else 0
+    if n_short:
+        flags.append(
+            f"{n_short} lengthscale(s) shorter than the median nearest-neighbour distance "
+            f"between training rows ({nn:.3g}, normalized units); the fit may be following noise"
+        )
+    n_long = sum(v > LONG_LENGTHSCALE for v in lengthscales)
+    if n_long:
+        flags.append(
+            f"{n_long} lengthscale(s) above {LONG_LENGTHSCALE:g}x the design box "
+            "(the feature barely affects the prediction, or the fit did not learn it)"
+        )
+    if n_low:
+        flags.append(f"{n_low} lengthscale(s) at their lower bound")
+    return {
+        "median_nn_distance": None if nn is None else round(nn, 6),
+        "noise_fitted": noise,
+        "lengthscales": [round(v, 6) for v in lengthscales],
+        "boundary_flags": flags,
+    }
+
+
+def _mll_value(mll) -> float:
+    model = mll.model
+    model.train()
+    mll.train()
+    with torch.no_grad():
+        inputs = model.train_inputs
+        out = model(*inputs)
+        val = mll(out, model.train_targets, *inputs)
+    model.eval()
+    mll.eval()
+    return float(val.sum())
+
+
+def _randomize_hyperparameters(model, gen: torch.Generator) -> None:
+    """Seeded random start: lengthscales log-uniform in [0.05, 2] (normalized
+    inputs), inferred noise log-uniform in [1e-3, 0.3] (standardized units)."""
+    for mod in _lengthscale_modules(model):
+        shape = mod.lengthscale.shape
+        u = torch.rand(shape, generator=gen, dtype=DTYPE)
+        mod.lengthscale = torch.exp(np.log(0.05) + u * (np.log(2.0) - np.log(0.05)))
+    lik = model.likelihood
+    if hasattr(lik, "noise_covar") and hasattr(lik.noise_covar, "raw_noise"):
+        u = torch.rand(lik.noise.shape, generator=gen, dtype=DTYPE)
+        lik.noise = torch.exp(np.log(1e-3) + u * (np.log(0.3) - np.log(1e-3)))
+
+
+def _multi_start_fit(mll, *, restarts: int, seed: int) -> tuple[dict, object]:
+    """Fit from the default start, then from `restarts - 1` seeded random starts;
+    keep the highest marginal log likelihood (a restart must beat the incumbent
+    by more than 1e-6 to replace it). Returns (record, best model).
+
+    Each extra start runs on a deep copy made BEFORE the first fit, so when the
+    default start wins the returned model is the untouched first-fit object.
+    (Measured: even reloading identical parameters with `load_state_dict` moved
+    the downstream acquisition optimum, so the default path must not be
+    touched.) The extra starts also run inside `fork_rng` with the numpy state
+    restored, so the global RNGs after this call match a one-start fit. A
+    restart that fails numerically is skipped and recorded as None; the default
+    start failing raises as before."""
+    model = mll.model
+    pristine = copy.deepcopy(model)
+    t0 = time.perf_counter()
+    best = dict(_fit_mll_with_retry(mll))
+    best_val = _mll_value(mll)
+    best_model = model
+    values: list[float | None] = [round(best_val, 6)]
+    chosen = 0
+    np_state = np.random.get_state()
+    skipped = 0
+    with torch.random.fork_rng():
+        for k in range(1, restarts):
+            if time.perf_counter() - t0 > MULTI_START_BUDGET_S:
+                values.append(None)
+                skipped += 1
+                continue
+            cand = copy.deepcopy(pristine)
+            cand_mll = ExactMarginalLogLikelihood(cand.likelihood, cand)
+            _randomize_hyperparameters(cand, torch.Generator().manual_seed(seed + k))
+            try:
+                rec = dict(_fit_mll_with_retry(cand_mll))
+            except FitError:
+                values.append(None)
+                continue
+            val = _mll_value(cand_mll)
+            values.append(round(val, 6))
+            if val > best_val + 1e-6:
+                best, best_val, chosen, best_model = rec, val, k, cand
+    np.random.set_state(np_state)
+    best_model.eval()
+    return {
+        **best,
+        "restarts": restarts,
+        "restart_seed": seed,
+        "restart_mll": values,
+        "restart_chosen": chosen,
+        "restarts_skipped": skipped,
+        "fit_seconds": round(time.perf_counter() - t0, 3),
+    }, best_model
+
+
 def sanitize_bounds(bounds) -> tuple[np.ndarray, np.ndarray]:
     """Split `bounds` (2 x d) into finite `(lower, upper)` rows with `lower <= upper`.
 
@@ -256,6 +412,7 @@ class Surrogate:
 
     def fit(
         self, X, y, bounds, *, noise=None, cat_dims=None, check_conditioning: bool = False,
+        restarts: int = 1, restart_seed: int = 0,
     ) -> Surrogate:
         """Fit on (X, y). `bounds` (2 x d) ties input normalization to the fixed
         design box rather than the training-data envelope; it is required so a
@@ -283,6 +440,12 @@ class Surrogate:
         `check_conditioning` (default off) computes the condition number of the
         fitted K + noise*I, records it in `fit_diagnostics`, and refuses above
         `COND_REFUSE` (FitError). The portal turns it on for the proposal fit only.
+
+        `restarts` (default 1 = unchanged) fits the hyperparameters from that many
+        starts: the default initialization plus `restarts - 1` seeded random
+        initializations (`restart_seed`), and keeps the one with the highest
+        marginal log likelihood. Every fit records its final noise and
+        lengthscales and any boundary flags (`hyperparameter_report`).
         """
         Xa = np.asarray(X, float)
         ya = np.asarray(y, float).reshape(-1)
@@ -326,7 +489,11 @@ class Surrogate:
                     Xt, yt, train_Yvar=yvar, input_transform=normalize, outcome_transform=Standardize(m=1)
                 )
         mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
-        diag = dict(_fit_mll_with_retry(mll))
+        if restarts > 1:
+            diag, self.model = _multi_start_fit(mll, restarts=int(restarts), seed=int(restart_seed))
+        else:
+            diag = dict(_fit_mll_with_retry(mll))
+        diag.update(hyperparameter_report(self.model, fixed_noise=yvar is not None))
         if check_conditioning:
             # Only the fit whose posterior is served (the analysis's proposal
             # surrogate) pays for the eigendecomposition and can be refused here;

@@ -297,6 +297,15 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
 | `condition_warning` | `true` above `condition_warn_above` (`1e8`). The fit proceeds. |
 | `condition_notice` | Plain-language sentence when `condition_warning` is true, else `null`. |
 | `condition_warn_above`, `condition_refuse_above` | `1e8` and `1e12`. Above `1e12` the analysis is refused (HTTP 400) with a plain-language reason. These thresholds are defaults, not validated numbers. Because the noise model keeps a floor on the noise, exact replicates with inferred noise stay well conditioned; the warning needs a tight cluster of rows with a fixed small noise, and the refusal is reached only on very large or very clustered designs. |
+| `restarts`, `restart_seed` | The proposal fit runs from 3 starts: the default initialization and 2 seeded random ones (`restart_seed` = the analysis seed). CV folds and other fits use one start. |
+| `restart_mll` | Marginal log likelihood reached from each start (`null` = that start failed numerically or was skipped by the time budget). |
+| `restart_chosen` | Index of the start kept (best likelihood; a random start must beat the default by more than 1e-6). When it is `0` the model is the one-start model, unchanged. |
+| `restarts_skipped` | Extra starts skipped because the fit had already taken 30 s. |
+| `fit_seconds` | Wall time of the multi-start fit. Measured cost of 3 starts vs 1 (4 threads, loaded M3 Pro): n=80: 1.0 s vs 0.3 s; n=300: 2.4 s vs 0.9 s; n=1000: 9.0 s vs 2.9 s. |
+| `noise_fitted` | Fitted noise variance (standardized units); `null` when the noise was fixed. |
+| `lengthscales` | Fitted lengthscales (normalized inputs: 1.0 = the design box width). |
+| `median_nn_distance` | Median distance from each training row to its nearest neighbour (normalized inputs). |
+| `boundary_flags` | Plain sentences, recorded not refused: noise at its lower bound; lengthscales above 10x the box; lengthscales at their lower bound; lengthscales shorter than `median_nn_distance` (the fit may be following noise; seen on a pure-noise target). |
 
 ### Promotion gate changes (additive fields)
 
