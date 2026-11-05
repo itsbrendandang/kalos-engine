@@ -54,7 +54,8 @@ _KNOWN_ENVS = ("development", "production")
 VALIDATION_MODE_VAR = "KALOS_VALIDATION_MODE"
 VALIDATION_MODES = ("warn", "strict")
 AUDIT_RETENTION_VAR = "KALOS_AUDIT_RETENTION_DAYS"
-AUDIT_RETENTION_DEFAULT_DAYS = 365
+# Unset means keep every audit row (no archive run). The engine never deletes an
+# audit row, whatever this is set to (kalos/portal/migrate.py, schema v4).
 # 36500 days is a century: a retention "forever" is spelled as the largest value.
 AUDIT_RETENTION_MAX_DAYS = 36_500
 
@@ -81,15 +82,18 @@ def validation_mode_setting() -> str:
     return env_enum(VALIDATION_MODE_VAR, VALIDATION_MODES, "warn")
 
 
-def audit_retention_days() -> int:
-    """`KALOS_AUDIT_RETENTION_DAYS`: how long audit rows are kept (default 365).
-    Rows older than this are pruned at startup and daily. A non-integer or a value
-    outside 1..36500 raises `ConfigError`, so a typo cannot silently drop the
-    trail or keep it forever."""
-    return env_int(
-        AUDIT_RETENTION_VAR, AUDIT_RETENTION_DEFAULT_DAYS,
-        minimum=1, maximum=AUDIT_RETENTION_MAX_DAYS,
-    )
+def audit_retention_days() -> int | None:
+    """`KALOS_AUDIT_RETENTION_DAYS`: the opt-in archive window for audit rows.
+
+    None (unset or empty, the default) means keep every row and archive nothing.
+    A number N means: at startup and daily, copy rows older than N days to the
+    archive file under the state directory (`CampaignStore.archive_audit_log`).
+    Rows are never deleted, with or without this setting. A non-integer or a value
+    outside 1..36500 raises `ConfigError`, so a typo cannot silently change the
+    window."""
+    if not os.environ.get(AUDIT_RETENTION_VAR, "").strip():
+        return None
+    return env_int(AUDIT_RETENTION_VAR, 1, minimum=1, maximum=AUDIT_RETENTION_MAX_DAYS)
 
 
 def check_env_settings() -> None:

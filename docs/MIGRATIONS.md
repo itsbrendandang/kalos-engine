@@ -9,7 +9,8 @@ an audit log. Its schema is versioned in `schema_migrations`. The code is
 | --- | --- | --- |
 | v1 | `campaigns(tenant PRIMARY KEY, state, updated_at)`, one campaign per tenant; analyses in memory plus `latest/*.json` | before `feat/campaign-schema-v2` |
 | v2 | `schema_migrations`, `campaigns`, `analyses`, `tenant_defaults`, `audit_log` (below) | `feat/campaign-schema-v2` |
-| v3 | adds the `jobs` table (background jobs, `docs/JOBS.md`) | current (`SCHEMA_VERSION = 3`) |
+| v3 | adds the `jobs` table (background jobs, `docs/JOBS.md`) | `feat/background-jobs` |
+| v4 | adds two triggers on `audit_log` that reject UPDATE and DELETE (append-only; below) | current (`SCHEMA_VERSION = 4`) |
 
 A v1 database has no `schema_migrations` table.
 
@@ -59,6 +60,56 @@ The change is additive: no v2 table is altered, and no data moves.
   intend to undo.
 
 Restoring the `pre-v3` backup gives the exact pre-upgrade state, as for v2.
+
+## Refusals that come before any change
+
+The version row is not the only evidence of a schema. Three shapes are refused
+with `SchemaError`, and the refusal happens before a backup is taken or any table
+is renamed. `up`, `up --dry-run`, `down` and the engine's startup all refuse them:
+
+- **v2 tables but no version row.** `analyses`, `tenant_defaults` or `jobs` exist,
+  and `schema_migrations` is missing or empty. Reading it as v1 would rename
+  `campaigns` and break the foreign keys that name it, so the migration does not
+  guess the version.
+- **A recorded version whose tables do not match it** (for example, version 3 with a
+  v1-shaped `campaigns`, or version 4 without the audit triggers). `dry-run` checks
+  the shape too, so it no longer reports "nothing to do" for a database the engine
+  refuses to start on.
+- **A version newer than this code.**
+
+The rename-based repair of an incompatible `campaigns` table (`campaigns_backup_N`)
+runs only on a database read as v1 or v0. It is not run on any v2+ database.
+`status` still reports, without refusing. Repair of a refused database is a manual
+step on a copy, with the engine stopped.
+
+## Schema v4: append-only audit log
+
+Schema v4 adds no table and changes no row. It adds two triggers on
+`audit_log`:
+
+- `audit_log_no_update` (BEFORE UPDATE) and `audit_log_no_delete` (BEFORE DELETE)
+  both `RAISE(ABORT, ...)`. The engine sees `sqlite3.IntegrityError` with the
+  message `audit_log is append-only: UPDATE is rejected` (or `DELETE`). The row is
+  unchanged.
+- A statement that matches no row (for example, a DELETE with a WHERE clause that
+  selects nothing) runs without error, as in any SQLite trigger.
+- The engine has no delete path for audit rows. The retention setting archives
+  rows and never deletes them (docs/HARDENING.md, "Audit retention").
+- Do not use SQLite's `REPLACE` conflict resolution on `audit_log`. With
+  `recursive_triggers` off, a REPLACE removes a row without firing the DELETE
+  trigger. The engine does not use it.
+
+`up` from v3 takes a verified backup named `portal.db.pre-v4-<UTC timestamp>` and
+creates the triggers in one `BEGIN IMMEDIATE` transaction. A v3 database that is
+already at v4 is a no-op.
+
+`down` (v4 -> v3) drops the two triggers and forgets version 4. No row is touched.
+Rolling back past v4 removes the append-only guard, so it is a decision for the
+operator, with the `pre-down-<ts>` backup in hand. `down --to 3` stops at v3.
+
+The v3 -> v4 migration is tested on a copy of a v3 database (up, down, up again,
+audit rows unchanged, the source file never opened for writing):
+`tests/test_audit_append_only.py`.
 
 ## What the v1 -> v2 migration does
 
@@ -144,10 +195,10 @@ explicitly with the engine stopped:
 
 ```sh
 python -m kalos.portal.migrate up
-python -m kalos.portal.migrate status    # expect: schema version: v3; journal_mode=wal
+python -m kalos.portal.migrate status    # expect: schema version: v4; journal_mode=wal
 ```
 
-Keep `portal.db.pre-v2-<ts>` until the release is accepted.
+Keep the `portal.db.pre-v2-<ts>`, `pre-v3-<ts>` and `pre-v4-<ts>` copies (whichever apply) until the release is accepted.
 
 ### Verify
 
@@ -244,4 +295,4 @@ v1 code serves them as before.
   stack yet (see the PR).
 - Backups and `.pre-*` copies contain tenant data. They get the database's
   file mode, so keep the state directory `0700`.
-- `audit_log` grows without bound. Retention is a follow-up.
+- `audit_log` grows without bound. The engine never deletes it (schema v4). The optional archive copies old rows to `<state dir>/audit-archive/`; it does not free space in `portal.db`. Physical removal is a separate decision and needs its own reviewed migration.

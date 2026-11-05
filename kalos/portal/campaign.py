@@ -198,6 +198,48 @@ class _Row:
 
 
 _ROW_COLUMNS = "id, name, state, generation, created_by, created_at, updated_at, archived_at"
+_AUDIT_COLUMNS = (
+    "id, ts, tenant, subject, auth_method, action, campaign_id, job_id, outcome, "
+    "request_id, detail"
+)
+AUDIT_ARCHIVE_DIRNAME = "audit-archive"
+
+
+def _archive_path(archive_dir: Path, tenant: str) -> Path:
+    return archive_dir / f"t-{tenant.encode('utf-8').hex()}.jsonl"
+
+
+def _archive_watermark(path: Path) -> int:
+    """The largest audit id already archived to `path` (0 for a new file). Only
+    the last line is read: the archive is written in id order."""
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 65_536))
+            lines = [ln for ln in fh.read().split(b"\n") if ln.strip()]
+    except FileNotFoundError:
+        return 0
+    if not lines:
+        return 0
+    last = json.loads(lines[-1])
+    return int(last["id"])
+
+
+def _append_archive(path: Path, rows: list[tuple[Any, ...]]) -> None:
+    """Append `rows` (one JSON object per line) and fsync. The directory is
+    private (0700) and the file is 0600: audit rows name subjects."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    names = _AUDIT_COLUMNS.split(", ")
+    payload = "".join(
+        json.dumps(dict(zip(names, row)), sort_keys=True, ensure_ascii=False) + "\n" for row in rows
+    ).encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.write(fd, payload)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 class CampaignStore:
@@ -928,31 +970,47 @@ class CampaignStore:
                  _clip(request_id, 128), _clip(detail)),
             )
 
-    def prune_audit_log(self, retention_days: int, *, now: float | None = None) -> int:
-        """Delete audit rows older than `retention_days`, for every tenant. Returns
-        the rows removed. A maintenance pass, run at startup and daily
-        (kalos/portal/app.py, KALOS_AUDIT_RETENTION_DAYS). It goes tenant by
-        tenant so every statement that touches a tenant table names its tenant."""
+    def archive_audit_log(self, retention_days: int, *, now: float | None = None) -> int:
+        """Copy audit rows older than `retention_days` into the archive, for every
+        tenant, and return how many rows were copied. NOTHING IS DELETED: the rows
+        stay in `audit_log`, which rejects UPDATE and DELETE at the database level
+        (schema v4, kalos/portal/migrate.py).
+
+        The archive is one append-only JSON-lines file per tenant under
+        `<state_dir>/audit-archive/` (`t-<hex of the tenant id>.jsonl`, the same
+        injective encoding as the legacy `latest/` names). Each run appends the rows
+        whose `id` is above the last id already in that file, so a run that is
+        repeated copies nothing twice. Runs at startup and daily only when
+        `KALOS_AUDIT_RETENTION_DAYS` is set (docs/HARDENING.md, "Audit retention").
+        """
         if retention_days < 1:
             raise ValueError("retention_days must be at least 1")
         cutoff = (time.time() if now is None else now) - retention_days * 86_400.0
-        removed = 0
-        with self._txn(write=True) as conn:
+        archive_dir = self._dir / AUDIT_ARCHIVE_DIRNAME
+        pending: list[tuple[str, list[tuple[Any, ...]]]] = []
+        with self._txn(write=False) as conn:
             tenants = [row[0] for row in conn.execute("SELECT DISTINCT tenant FROM audit_log")]
             for tenant in tenants:
-                cur = conn.execute(
-                    "DELETE FROM audit_log WHERE tenant = ? AND ts < ?", (tenant, cutoff),
-                )
-                removed += int(cur.rowcount or 0)
-        return removed
+                watermark = _archive_watermark(_archive_path(archive_dir, tenant))
+                rows = conn.execute(
+                    f"SELECT {_AUDIT_COLUMNS} FROM audit_log "  # noqa: S608 - column list is a module constant; values are bound parameters
+                    "WHERE tenant = ? AND ts < ? AND id > ? ORDER BY id",
+                    (tenant, cutoff, watermark),
+                ).fetchall()
+                if rows:
+                    pending.append((tenant, rows))
+        archived = 0
+        for tenant, rows in pending:
+            _append_archive(_archive_path(archive_dir, tenant), rows)
+            archived += len(rows)
+        return archived
 
     def audit_entries(self, *, tenant: str, limit: int = 100) -> list[dict[str, Any]]:
         """`tenant`'s most recent audit entries, newest first."""
         validate_tenant_id(tenant)
         with self._txn(write=False) as conn:
             cur = conn.execute(
-                "SELECT id, ts, tenant, subject, auth_method, action, campaign_id, job_id, "
-                "outcome, request_id, detail FROM audit_log WHERE tenant = ? "
+                f"SELECT {_AUDIT_COLUMNS} FROM audit_log WHERE tenant = ? "  # noqa: S608 - column list is a module constant; values are bound parameters
                 "ORDER BY id DESC LIMIT ?",
                 (tenant, max(1, min(int(limit), 1000))),
             )

@@ -166,32 +166,37 @@ def _startup_auth_posture() -> bool:
 
 _AUTH_ENFORCED_AT_STARTUP = _startup_auth_posture()
 
-# Audit-log retention (docs/HARDENING.md, "Audit retention"): pruned once at
-# startup, then once a day while the process runs.
-AUDIT_PRUNE_INTERVAL_S = 86_400.0
+# Audit-log archive (docs/HARDENING.md, "Audit retention"). Runs only when
+# KALOS_AUDIT_RETENTION_DAYS is set: once at startup, then once a day. It copies
+# old rows to the archive and never deletes one.
+AUDIT_ARCHIVE_INTERVAL_S = 86_400.0
 
 
-def _prune_audit_log_once(store: CampaignStore) -> int:
-    """Remove audit rows past `KALOS_AUDIT_RETENTION_DAYS`. Never raises: a failed
-    prune is logged and the portal keeps serving."""
+def _archive_audit_log_once(store: CampaignStore) -> int:
+    """Copy audit rows past `KALOS_AUDIT_RETENTION_DAYS` to the archive. A no-op
+    when the setting is unset. Never raises: a failed archive run is logged and
+    the portal keeps serving."""
     from kalos.portal.config import audit_retention_days
 
-    try:
-        removed = store.prune_audit_log(audit_retention_days())
-    except Exception:  # noqa: BLE001 - retention must not stop the portal
-        log.exception("audit-log retention prune failed")
+    days = audit_retention_days()
+    if days is None:
         return 0
-    if removed:
-        log.info("audit-log retention: removed %d rows past the retention window", removed)
-    return removed
+    try:
+        archived = store.archive_audit_log(days)
+    except Exception:  # noqa: BLE001 - archiving must not stop the portal
+        log.exception("audit-log archive run failed")
+        return 0
+    if archived:
+        log.info("audit-log archive: copied %d rows older than %d days (rows kept)", archived, days)
+    return archived
 
 
-async def _audit_retention_loop(store: CampaignStore) -> None:
+async def _audit_archive_loop(store: CampaignStore) -> None:
     import asyncio
 
     while True:
-        await asyncio.sleep(AUDIT_PRUNE_INTERVAL_S)
-        await run_in_threadpool(_prune_audit_log_once, store)
+        await asyncio.sleep(AUDIT_ARCHIVE_INTERVAL_S)
+        await run_in_threadpool(_archive_audit_log_once, store)
 
 
 @asynccontextmanager
@@ -234,8 +239,11 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if store is not None:
         import asyncio
 
-        _prune_audit_log_once(store)
-        audit_task = asyncio.ensure_future(_audit_retention_loop(store))
+        from kalos.portal.config import audit_retention_days
+
+        if audit_retention_days() is not None:
+            _archive_audit_log_once(store)
+            audit_task = asyncio.ensure_future(_audit_archive_loop(store))
         try:
             runner = start_job_runner(store)
         except RunnerLocked:
