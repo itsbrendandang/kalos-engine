@@ -81,6 +81,7 @@ from kalos import __version__ as ENGINE_VERSION
 from kalos.core.conformal import conformal_interval, q_from_residuals
 from kalos.normalize import NormalizationPlan, apply_plan, offline_plan
 from kalos.normalize.units import base_unit_label, canonical_suffix
+from kalos.versions import library_versions
 
 from .evaluation import leave_one_scale_out_report
 from .features import GeometryAssumptions, PowerNumberAssumption, VantRietParams
@@ -941,6 +942,7 @@ def build_readout(
 
     provenance: dict[str, Any] = {
         "engine_version": ENGINE_VERSION,
+        "library_versions": library_versions(),
         "kalos_git_sha": _git_sha(),
         "candidate": candidate,
         "raw_upload_sha256": hashlib.sha256(raw_bytes).hexdigest() if raw_bytes is not None else None,

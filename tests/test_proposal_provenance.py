@@ -27,7 +27,7 @@ FILENAME = "plant.csv"
 _KEYS = {
     "schema_version", "engine_version", "build_sha", "library_versions", "seed",
     "input_sha256", "config_sha256", "config_fields", "model_artifact_stored",
-    "provenance_sha256", "timestamp", "created_at",
+    "provenance_sha256", "timestamp", "created_at", "pin_drift",
 }
 _REF_KEYS = {"provenance_sha256", "input_sha256", "config_sha256", "engine_version",
              "seed", "timestamp"}

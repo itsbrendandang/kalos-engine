@@ -243,7 +243,9 @@ PROVENANCE_SCHEMA_VERSION = 1
 # is imported. No model artefact (weights, state_dict, pickle) is stored: every
 # analysis refits from the rows, so these fields plus the input bytes, the
 # config and the seed are what a refit needs.
-PROVENANCE_LIBRARIES: tuple[str, ...] = ("torch", "botorch", "gpytorch", "numpy", "pandas")
+PROVENANCE_LIBRARIES: tuple[str, ...] = (
+    "torch", "botorch", "gpytorch", "linear-operator", "numpy", "scipy", "pandas",
+)
 
 # The run-record fields that configure the fit (not the data, not the stack).
 # `config_sha256` is the SHA-256 of these values as canonical JSON. The values
@@ -271,18 +273,19 @@ def proposal_provenance(
     the same input bytes, config, seed, engine and library versions give the
     same value. It is a reproducibility key, not a signature.
     """
-    libs: dict[str, str | None] = {}
-    for dist in PROVENANCE_LIBRARIES:
-        try:
-            libs[dist] = metadata.version(dist)
-        except metadata.PackageNotFoundError:
-            libs[dist] = None
+    from kalos.versions import PINNED_ML, library_versions, public_version
+
+    libs = library_versions(PROVENANCE_LIBRARIES)
+    drift = {k: libs.get(k) for k, v in PINNED_ML.items() if public_version(libs.get(k)) != v}
     config = {k: run.get(k) for k in CONFIG_FIELDS}
     body: dict[str, Any] = {
         "schema_version": PROVENANCE_SCHEMA_VERSION,
         "engine_version": str(engine_version),
         "build_sha": run.get("build_sha") or build_sha(),
         "library_versions": libs,
+        # Installed torch/botorch/gpytorch that differ from the pins in
+        # kalos/versions.py ({} when they match).
+        "pin_drift": drift,
         "seed": run.get("seed"),
         "input_sha256": run.get("input_sha256"),
         "config_sha256": _canonical_sha256(config),

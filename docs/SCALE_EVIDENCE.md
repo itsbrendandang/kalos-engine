@@ -47,7 +47,11 @@ Dataset commit at the time of this run: `3b298dd` (2026-08-25).
 
 Reproduced exactly on this run (`kalos` at `83b4390`, the tip of
 `origin/main` this branch is based on; `torch==2.14.0`,
-`botorch==0.18.1`, `gpytorch==1.15.2`):
+`botorch==0.18.1`, `gpytorch==1.15.2`). **The pinned stack is now torch
+2.13.0, botorch 0.18.1, gpytorch 1.15.2** (`pyproject.toml`, `uv.lock`,
+`kalos/versions.py`). These numbers were measured on torch 2.14.0 and have
+not been re-run on the pin (the dataset is in a private repo); GP numbers can
+change with the torch build:
 
 | Bucket | v0 MAE | naive_mean MAE | naive_nn MAE | v0 beats naive_mean | v0 beats naive_nn |
 |---|---|---|---|---|---|

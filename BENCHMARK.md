@@ -1,5 +1,7 @@
 # Does the optimizer actually beat a space-filling design?
 
+**Pinned numerical stack.** torch 2.13.0, botorch 0.18.1, gpytorch 1.15.2: the `ml` extra in `pyproject.toml` pins these exact versions, they match `uv.lock`, and `tests/test_torch_pin.py` fails if the runtime differs (unless `KALOS_ALLOW_TORCH_DRIFT=1`). Every bench JSON written from this commit on records the installed versions, the pins and any difference (`stack`, `kalos/versions.py`). Not every older section below says which versions it was run on; treat a number without a stated version as unconfirmed on the pin.
+
 This is the one question a bioprocess-optimization product must answer honestly before it is sold:
 given a fixed experiment budget, does the Bayesian-optimization loop reach a good recipe in **fewer experiments** than just running a Latin Hypercube (LHS) design or sampling at random?
 
@@ -35,7 +37,7 @@ This is not a broken wrapper over a GP; the optimization machinery works.
 
 **2. Observation noise is the decisive factor, not the algorithm.**
 At 15% measurement noise the advantage shrinks (smooth: 2.23 to 0.37 regret units over LHS; rugged: 2.07 to 0.61) but stays positive in these 10-seed runs.
-The BO rows were reproduced on torch 2.13.0 (the version in `uv.lock`); torch 2.14.1 gives different BO regrets on the same seeds, so these numbers depend on the torch build.
+The BO rows were reproduced on torch 2.13.0; torch 2.14.1 gives different BO regrets on the same seeds, so these numbers depend on the torch build.
 Real assay noise is frequently at or above this level, which is exactly why the real media data shows a fragile ~0.37-0.52 held-out signal: the optimizer is fine, the data is noisy relative to the effect being chased.
 
 **3. What this means for the product.**
