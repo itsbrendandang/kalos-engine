@@ -274,7 +274,7 @@ async def reanalyze_campaign(
 async def _reanalyze(
     store: CampaignStore, principal: Principal, campaign_id: str | None = None
 ) -> JSONResponse:
-    from kalos.domains import BIOPROCESS_PROFILE
+    from kalos.domains import BIOPROCESS_PROFILE, GENERIC_PROFILE, ColumnRoles
     from kalos.portal.app import _analyze
     from kalos.portal.pipeline import attach_reanalyze_run
 
@@ -309,6 +309,19 @@ async def _reanalyze(
     # then to "maximize".
     state = store.get(tenant=tenant, campaign_id=campaign_id) or {}
     direction = state.get("direction") or previous.get("direction") or "maximize"
+    # The roles declared at upload are kept with the campaign (`settings.roles`,
+    # CampaignStore.seed) and every reanalyze fits with them. Without declared
+    # roles the bioprocess profile infers them from the column names, as before.
+    settings = state.get("settings")
+    stored_roles = settings.get("roles") if isinstance(settings, dict) else None
+    declared = stored_roles if isinstance(stored_roles, dict) else None
+    roles = None
+    if declared:
+        try:
+            roles = ColumnRoles.from_dict(declared)
+        except ValueError:
+            log.warning("reanalyze: the stored roles could not be read; inferring them")
+            declared = None
 
     if df.empty:
         log.warning("reanalyze rejected: campaign has no base rows to analyze")
@@ -319,9 +332,12 @@ async def _reanalyze(
         # reanalyze racing an upload - or another reanalyze - gets an honest
         # 503 instead of contending for the CPU with an unfinished fit.
         analyze_kwargs: dict[str, Any] = {
-            "profile": BIOPROCESS_PROFILE, "pending": awaiting, "anonymize": anonymize,
+            "profile": GENERIC_PROFILE if roles is not None else BIOPROCESS_PROFILE,
+            "pending": awaiting, "anonymize": anonymize,
         }
-        if direction != "maximize":
+        if roles is not None:
+            analyze_kwargs["roles"] = roles
+        if direction != "maximize" and (roles is None or roles.direction is None):
             analyze_kwargs["direction"] = direction
         # A lab threshold set by the upload's roles is kept (env and default
         # thresholds are re-read, not copied).
@@ -357,7 +373,11 @@ async def _reanalyze(
     try:
         # The provenance block (kind=reanalyze): the same fields an upload gets, so
         # the record of a campaign's current analysis says what produced it.
-        result = attach_reanalyze_run(df, result, anonymize=anonymize, pending_runs=len(awaiting))
+        result = attach_reanalyze_run(
+            df, result, anonymize=anonymize, pending_runs=len(awaiting),
+            roles_json=json.dumps(declared) if declared else "",
+            profile="generic" if roles is not None else "bioprocess",
+        )
         # Atomic (replay F1): the analysis must be JSON-encodable BEFORE the fold
         # is committed. A NaN found only when the response is encoded used to
         # surface as a 500 for a fold the server had already kept.

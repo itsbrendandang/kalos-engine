@@ -171,6 +171,20 @@ def _direction_of(analysis: dict[str, Any] | None) -> str:
     return "minimize" if (analysis or {}).get("direction") == "minimize" else "maximize"
 
 
+def _seed_settings(
+    previous_state: dict[str, Any] | None, analysis: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The `settings` of a freshly seeded campaign: the previous state's settings,
+    with `roles` replaced by the roles this upload declared (None: inferred).
+    A reanalyze reads `settings.roles` and fits with them."""
+    old = (previous_state or {}).get("settings")
+    settings = dict(old) if isinstance(old, dict) else {}
+    run = (analysis or {}).get("run")
+    declared = run.get("roles_declared") if isinstance(run, dict) else None
+    settings["roles"] = dict(declared) if isinstance(declared, dict) and declared else None
+    return settings
+
+
 def _clip(value: str | None, limit: int = MAX_AUDIT_FIELD_CHARS) -> str | None:
     return None if value is None else str(value)[:limit]
 
@@ -654,6 +668,10 @@ class CampaignStore:
             "target": target,
             "features": list(features),
             "direction": direction,
+            # Per-campaign settings, in one place (docs/CAMPAIGN_LOOP.md,
+            # "Campaign settings"). Filled in below from the upload and the
+            # campaign's previous settings.
+            "settings": {},
             "base_rows": base_rows,
             "pending": [],
             "round": 0,
@@ -669,6 +687,7 @@ class CampaignStore:
             if row.archived_at is not None:
                 raise CampaignArchived()
             expected = row.generation if expected_generation is _UNCHECKED else expected_generation
+            state["settings"] = _seed_settings(row.state(), analysis)
             generation = self._cas_write(conn, tenant, row, state, expected)
             if analysis is not None:
                 # `analysis_id` and `supersedes` (kalos/portal/lineage.py).
@@ -1038,7 +1057,8 @@ class CampaignStore:
         `pending` (awaiting runs stay), increments `round`, appends the
         progress-trajectory point, and persists. When `analysis` is given it is
         published in the same transaction, stamped with the new generation and
-        labelled `dataset` (default `campaign round <n>`), so the fold and the
+        labelled `dataset` (default: the label of the analysis it replaces, else
+        `campaign round <n>`), so the fold and the
         analysis that describes it land together or not at all. Returns the
         updated state.
 
@@ -1086,10 +1106,12 @@ class CampaignStore:
             except CampaignConflict:
                 raise CampaignConflict(changed) from None
             if analysis is not None:
-                label = dataset or f"campaign round {state['round']}"
-                analysis = lineage.link(
-                    analysis, self._stored_analysis(conn, tenant, row.id), n_folded=n_folded,
-                )
+                # The campaign keeps its name: the label of the analysis this
+                # one replaces (the uploaded file), else `campaign round <n>`.
+                previous = self._stored_analysis(conn, tenant, row.id)
+                label = (dataset or (previous or {}).get("dataset")
+                         or f"campaign round {state['round']}")
+                analysis = lineage.link(analysis, previous, n_folded=n_folded)
                 blob = self._analysis_blob(
                     analysis, label, new_generation, now, allow_nan=False
                 )

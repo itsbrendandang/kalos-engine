@@ -86,6 +86,21 @@ stateDiagram-v2
 `features` and `target` come from the analysis result (`proposal_features`, `target`), so the campaign never guesses column roles - it takes them from the engine.
 `generation` is re-minted on every single write (`seed`, `start`, `set_result`, `commit_fold`); a re-analysis captures the generation it planned against and refuses to commit if it changed underneath - see "Re-analyze = the loop closing" below.
 
+## Campaign settings
+
+Per-campaign settings live in one place: `settings` in the campaign state
+(`campaigns.state` in `portal.db`, no schema change).
+
+- `settings.roles`: the `roles` object sent with the upload, or null when the
+  roles were inferred from the column names. Every reanalyze fits with these
+  roles (generic profile) until a new upload replaces them. The analysis says
+  which roles it used in `roles_used` (`source` `declared` or `inferred`).
+- Other keys (for example `allow_beyond`) belong to their own features. A new
+  upload keeps them and only replaces `roles`.
+
+A reanalyze keeps the campaign's name: the stored analysis keeps the label of
+the analysis it replaces (the uploaded file name), not `campaign round <n>`.
+
 ## Seeding
 
 The campaign base is seeded/replaced whenever `/api/run` succeeds, and only when

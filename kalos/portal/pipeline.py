@@ -33,7 +33,7 @@ from typing import Any
 
 import pandas as pd
 
-from kalos.portal.lineage import new_analysis_id
+from kalos.portal.lineage import new_analysis_id, roles_used
 from kalos.portal.uploads import (
     ParsedUpload,
     UploadRejected,
@@ -294,31 +294,35 @@ def compute_upload_analysis(
         direction=result.get("direction"),
     )
     run = record.to_dict()
-    return parsed.df, {**result, **parsed.context(), "run": run,
-                       "proposal_provenance": _provenance(run, result)}
+    out = {**result, **parsed.context(), "run": run,
+           "proposal_provenance": _provenance(run, result)}
+    return parsed.df, {**out, "roles_used": roles_used(out)}
 
 
 def attach_reanalyze_run(
     df: pd.DataFrame, result: dict, *, anonymize: bool, pending_runs: int,
+    roles_json: str = "", profile: str = "bioprocess",
 ) -> dict:
     """The `run` block for a campaign re-analysis (`kind="reanalyze"`): the same
     fields an upload gets, with the input hashed over the folded dataset `df`
-    and the number of in-flight runs the batch was told about. Returns a new
-    dict; `result` is not mutated."""
+    and the number of in-flight runs the batch was told about. `roles_json` and
+    `profile` are the campaign's stored roles and the profile they imply.
+    Returns a new dict; `result` is not mutated."""
     from kalos.portal import run_record
     from kalos.portal.analysis import ANALYZE_SEED
 
     record = run_record.build(
-        run_record.fold_bytes(df), None, None, result.get("target"), "", anonymize,
-        "bioprocess", TORCH_THREADS, int(result.get("seed", ANALYZE_SEED)),
+        run_record.fold_bytes(df), None, None, result.get("target"), roles_json, anonymize,
+        profile, TORCH_THREADS, int(result.get("seed", ANALYZE_SEED)),
         len(df), int(result["d"]), kind="reanalyze", pending_runs=pending_runs,
         torch_threads_actual=torch_threads_actual(),
         data_drops=run_record.drops_summary(result),
         direction=result.get("direction"),
     )
     run = record.to_dict()
-    return {**result, "run": run, "proposal_provenance": _provenance(run, result),
-            "analysis_id": new_analysis_id()}
+    out = {**result, "run": run, "proposal_provenance": _provenance(run, result),
+           "analysis_id": new_analysis_id()}
+    return {**out, "roles_used": roles_used(out)}
 
 
 def _provenance(run: dict, result: dict) -> dict:

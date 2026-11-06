@@ -144,3 +144,72 @@ def test_job_view_names_the_published_analysis(client):
         assert jobs._with_analysis_id(conn, row)["analysis_id"] == published["analysis_id"]
         stale = jobs._with_analysis_id(conn, {**row, "result_ref": "old"})
     assert stale["analysis_id"] is None
+
+
+# --- declared roles persist with the campaign (finding 7) --------------------------- #
+
+
+def _start_and_record(c, values):
+    recipes = [{"recipe": {"Carbon_conc": 20.0 + i, "Gly": 2.0, "Met": 2.0, "SP": 7.0 + i},
+                "pred": 60.0 + i, "std": 3.0} for i in range(3)]
+    started = c.post("/api/campaign/start", json={"recipes": recipes}).json()["started"]
+    for run, value in zip(started, values):
+        assert c.post("/api/campaign/result", json={"id": run["id"], "value": value}).status_code == 200
+    return started
+
+
+def test_declared_roles_and_the_name_survive_a_reanalyze(client):
+    c, store = client
+    roles = {"target": "Titer", "features": INPUTS, "direction": "maximize"}
+    first = upload(c, roles)
+    assert first["features"] == INPUTS
+    assert first["roles_used"] == {"source": "declared", "roles": roles}
+    assert first["dataset"] == "pichia.csv"
+    assert store.get(tenant="default")["settings"]["roles"] == roles
+
+    _start_and_record(c, [63.0, 71.0])
+    body = c.post("/api/campaign/reanalyze").json()
+    after = body["analysis"]
+    assert after["features"] == INPUTS
+    assert after["dataset"] == "pichia.csv"
+    assert after["roles_used"] == {"source": "declared", "roles": roles}
+    assert after["run"]["roles_declared"] == roles and after["run"]["profile"] == "generic"
+    assert after["campaign_findings"] == []
+    # The roles stay with the campaign for the next round too.
+    assert store.get(tenant="default")["settings"]["roles"] == roles
+
+
+def test_without_declared_roles_the_reanalyze_infers_and_says_so(client):
+    c, _ = client
+    upload(c)
+    _start_and_record(c, [63.0])
+    after = c.post("/api/campaign/reanalyze").json()["analysis"]
+    assert after["roles_used"]["source"] == "inferred"
+    assert after["roles_used"]["roles"]["features"] == ["Gly", "Met", "SP"]
+    assert after["run"]["profile"] == "bioprocess"
+
+
+def test_changed_inputs_carry_an_inputs_changed_finding(client):
+    c, _ = client
+    upload(c)
+    second = upload(c, {"target": "Titer", "features": INPUTS})
+    (finding,) = second["campaign_findings"]
+    assert finding["code"] == "inputs_changed"
+    assert finding["added"] == ["Carbon_conc"] and finding["removed"] == []
+    assert "Carbon_conc is now used as an input." in finding["message"]
+    third = upload(c, {"target": "Titer", "features": ["Gly", "SP"]})
+    assert third["campaign_findings"][0]["removed"] == ["Carbon_conc", "Met"]
+    assert "Carbon_conc and Met are no longer used." in third["campaign_findings"][0]["message"]
+
+
+def test_upload_settings_keep_other_keys_and_replace_roles(client):
+    c, store = client
+    upload(c, {"target": "Titer", "features": INPUTS})
+    state = store.get(tenant="default")
+    state["settings"]["allow_beyond"] = True
+    with store._txn(write=True) as conn:
+        row = store._row(conn, "default", store._default_id(conn, "default"))
+        store._cas_write(conn, "default", row, state, row.generation)
+    upload(c)
+    settings = store.get(tenant="default")["settings"]
+    assert settings == {"allow_beyond": True, "roles": None}

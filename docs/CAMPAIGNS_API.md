@@ -614,6 +614,16 @@ only added; a field never changes meaning or disappears within a version.
 - `supersedes`: `{analysis_id, code, why}` for the analysis this one replaced in
   the campaign, or null. `/api/run` now also returns the stored fields `dataset`,
   `updated` and `campaign_generation`.
+- `roles_used`: `{source, roles}`. `source` is `declared` when the upload's
+  `roles` (kept with the campaign as `settings.roles`, docs/CAMPAIGN_LOOP.md)
+  were used, `inferred` when the roles came from the column names; `roles` is
+  the declared object, or the target, features, categoricals and direction the
+  fit used. A reanalyze uses the declared roles and keeps the campaign's label in
+  `dataset` (it was `campaign round <n>`).
+- `campaign_findings`: a list of findings about how this analysis differs from
+  the one it replaced. Each has `code`, `severity`, `message` (plain), and for
+  `inputs_changed` the `added` and `removed` input names. Empty when nothing
+  changed or there was no earlier analysis.
 
 ## Not in this slice
 

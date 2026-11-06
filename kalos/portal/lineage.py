@@ -70,23 +70,75 @@ def why_refit(new: dict[str, Any], previous: dict[str, Any], *, n_folded: int | 
     return "refit", "The same sheet was fit again with different settings."
 
 
+def roles_used(result: dict[str, Any]) -> dict[str, Any]:
+    """`roles_used`: the roles this analysis was fit with. `declared` when the
+    upload (or the campaign, on a reanalyze) gave roles, else `inferred` from
+    the column names, reported as what the fit used."""
+    declared = _run(result).get("roles_declared")
+    if isinstance(declared, dict) and declared:
+        return {"source": "declared", "roles": dict(declared)}
+    return {"source": "inferred", "roles": {
+        "target": result.get("target"),
+        "features": list(result.get("features") or []),
+        "categoricals": list(result.get("categorical_features") or []),
+        "direction": result.get("direction"),
+    }}
+
+
+def _names(names: list[str]) -> str:
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def inputs_changed(new: dict[str, Any], previous: dict[str, Any]) -> dict[str, Any] | None:
+    """The `inputs_changed` finding when the fitted inputs differ from the
+    previous analysis of the campaign, else None."""
+    before = [str(f) for f in previous.get("features") or []]
+    after = [str(f) for f in new.get("features") or []]
+    added = [f for f in after if f not in before]
+    removed = [f for f in before if f not in after]
+    if not added and not removed:
+        return None
+    parts = []
+    if added:
+        parts.append(f"{_names(added)} {'is' if len(added) == 1 else 'are'} now used as "
+                     f"{'an input' if len(added) == 1 else 'inputs'}.")
+    if removed:
+        parts.append(f"{_names(removed)} {'is' if len(removed) == 1 else 'are'} no longer used.")
+    return {
+        "code": "inputs_changed", "severity": "warn",
+        "message": "The inputs changed since the last model. " + " ".join(parts),
+        "added": added, "removed": removed,
+    }
+
+
+# The fields `link` sets; an identical re-upload keeps the previous record's.
+_LINEAGE_FIELDS = ("supersedes", "campaign_findings")
+
+
 def link(
     new: dict[str, Any], previous: dict[str, Any] | None, *, n_folded: int | None = None,
 ) -> dict[str, Any]:
     """`new` as it will be stored in a campaign whose current analysis is
-    `previous` (None: the campaign had none). Adds `analysis_id` if missing and
-    `supersedes`. The same id as `previous` (an identical re-upload) keeps the
-    previous record's lineage. Returns a new dict."""
+    `previous` (None: the campaign had none). Adds `analysis_id` if missing,
+    `supersedes` and `campaign_findings`. The same id as `previous` (an
+    identical re-upload) keeps the previous record's lineage. Returns a new dict."""
     out = dict(new)
     if not out.get("analysis_id"):
         out["analysis_id"] = new_analysis_id()
+    out.setdefault("roles_used", roles_used(out))
     if not previous:
         out["supersedes"] = None
+        out["campaign_findings"] = []
         return out
     previous = with_id(previous)
     if previous["analysis_id"] == out["analysis_id"]:
-        out["supersedes"] = previous.get("supersedes")
+        for key in _LINEAGE_FIELDS:
+            out[key] = previous.get(key)
         return out
     code, why = why_refit(out, previous, n_folded=n_folded)
     out["supersedes"] = {"analysis_id": previous["analysis_id"], "code": code, "why": why}
+    changed = inputs_changed(out, previous)
+    out["campaign_findings"] = [changed] if changed else []
     return out
