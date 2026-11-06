@@ -23,14 +23,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - name: Set up Python 3.11
-        run: uv python install 3.11
-      - name: Install (ml, portal, bench, dev)
-        run: uv pip install --system -e ".[ml,portal,bench,dev]"
+      - name: Create a 3.11 venv and install (ml, portal, bench, dev)
+        run: |
+          uv venv --python 3.11 .venv
+          uv pip install -e ".[ml,portal,bench,dev]"
       - name: ruff
-        run: ruff check kalos/ tests/ examples/
+        run: uv run ruff check kalos/ tests/ examples/
       - name: mypy
-        run: mypy
+        run: uv run mypy
 
   tests:
     name: pytest
@@ -41,9 +41,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - name: Set up Python 3.11
-        run: uv python install 3.11
-      - name: Install (ml, portal, bench, dev)
-        run: uv pip install --system -e ".[ml,portal,bench,dev]"
+      - name: Create a 3.11 venv and install (ml, portal, bench, dev)
+        run: |
+          uv venv --python 3.11 .venv
+          uv pip install -e ".[ml,portal,bench,dev]"
       - name: pytest
-        run: python -m pytest -q
+        run: uv run python -m pytest -q
