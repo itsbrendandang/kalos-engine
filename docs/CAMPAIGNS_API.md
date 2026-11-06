@@ -431,7 +431,8 @@ answers how Kalos reads the sheet without fitting a model: `preflight: true`,
 `n_censored_excluded`, `header_row`, `orientation`, `provenance`, `columns`
 (see "Column kinds"), `validation`, `contract_version`, `engine_version`, and
 for workbooks `sheets` / `sheet_used`. It refuses exactly what an upload
-refuses, with the same 400 codes. Nothing is stored, no model is fit, torch is
+refuses, with the same 400 codes (including `infeasible_linear_constraints`,
+checked on the search box). Nothing is stored, no model is fit, torch is
 not loaded, and the analysis slot is not taken, so it answers in about a
 second. The fit-dependent findings (`search_box`, `cv_ci_unavailable`) only
 come with the analysis.
@@ -764,6 +765,7 @@ only added; a field never changes meaning or disappears within a version.
   (the design has a categorical input), `infeasible_linear_constraints` (no recipe in
   the search box meets them all; checked before any fit). An input held fixed
   (`fixed_inputs`) counts at its fixed value. Roles persist with the campaign.
+  `POST /api/preflight` refuses infeasible constraints with the same 400.
 - `proposals[].constraints_ok` and `model_optimum.constraints_ok`: true when the
   shown recipe meets every linear constraint within its tolerance; null when none
   are declared.

@@ -175,9 +175,13 @@ def test_http_400_codes(client):
     assert r.status_code == 400 and r.json()["code"] == "invalid_linear_constraint"
     r = _post(client, {**base, "linear_constraints": [{"terms": {"pH": 1}, "op": "<=", "rhs": 1}]})
     assert r.status_code == 400 and r.json()["code"] == "invalid_linear_constraint"
-    r = _post(client, {**base, "linear_constraints": [
-        {"terms": {"Glucose": 1, "Glycerol": 1}, "op": "==", "rhs": 500}]}, path="/api/run")
+    infeasible = {**base, "linear_constraints": [
+        {"terms": {"Glucose": 1, "Glycerol": 1}, "op": "==", "rhs": 500}]}
+    r = _post(client, infeasible, path="/api/run")
     assert r.status_code == 400 and r.json()["code"] == "infeasible_linear_constraints"
+    # The same refusal before any fit, on the preflight route (owner decision).
+    pre = _post(client, infeasible, path="/api/preflight")
+    assert pre.status_code == 400 and pre.json() == r.json()
 
 
 def test_constraints_persist_with_the_campaign_roles_across_reanalyze(tmp_path, monkeypatch):

@@ -780,31 +780,6 @@ def _analyze_body(
     linear_cons = tuple(roles.linear_constraints) if roles is not None else ()
     check_linear_inputs(linear_cons, cont_feats, kept_cats, fixed_inputs)
 
-    if preflight_only:
-        # Every refusal that does not need a fitted model has run. The column
-        # reading and the sheet check are returned too (POST /api/preflight).
-        provenance, columns_block, kind_findings = _column_reading()
-        return {
-            "preflight": True,
-            "target": str(target),
-            "targets": [str(c) for c in candidate_targets],
-            "features": [str(c) for c in cont_feats] + [str(c) for c in kept_cats],
-            "categorical_features": [str(c) for c in kept_cats],
-            "group_col": gcol,
-            "fixed_inputs": {c: v["value"] for c, v in fixed_inputs.items()},
-            "n_rows": int(n_data_rows),
-            "n_usable": int(len(fit_pos)),
-            "n_dropped_incomplete": n_rows_dropped,
-            "n_censored_excluded": n_censored_rows,
-            "header_row": header_info.get("header_row"),
-            "orientation": df.attrs.get("kalos_orientation"),
-            "provenance": provenance,
-            "columns": columns_block,
-            "validation": report_dict(_with_data_findings(validation, _sheet_findings(kind_findings))),
-            "contract_version": ANALYSIS_CONTRACT_VERSION,
-            "engine_version": ENGINE_VERSION,
-        }
-
     keep_index = df.index[fit_pos]
     y = y_all[fit_pos]
     Xc_raw = Xc_all.iloc[fit_pos]                    # NaN preserved (for grouping)
@@ -871,6 +846,33 @@ def _analyze_body(
     # Linear constraints in the design's coordinates; refused before any fit
     # when no recipe in the box can meet them (analysis_parts/linear.py).
     lin_ge, lin_eq = encode_linear_constraints(linear_cons, design.names, fixed_inputs, bounds)
+
+    if preflight_only:
+        # Every refusal that does not need a fitted model has run (including
+        # infeasible linear constraints, checked on the search box above). The column
+        # reading and the sheet check are returned too (POST /api/preflight).
+        provenance, columns_block, kind_findings = _column_reading()
+        return {
+            "preflight": True,
+            "target": str(target),
+            "targets": [str(c) for c in candidate_targets],
+            "features": [str(c) for c in cont_feats] + [str(c) for c in kept_cats],
+            "categorical_features": [str(c) for c in kept_cats],
+            "group_col": gcol,
+            "fixed_inputs": {c: v["value"] for c, v in fixed_inputs.items()},
+            "n_rows": int(n_data_rows),
+            "n_usable": int(len(fit_pos)),
+            "n_dropped_incomplete": n_rows_dropped,
+            "n_censored_excluded": n_censored_rows,
+            "header_row": header_info.get("header_row"),
+            "orientation": df.attrs.get("kalos_orientation"),
+            "provenance": provenance,
+            "columns": columns_block,
+            "validation": report_dict(_with_data_findings(validation, _sheet_findings(kind_findings))),
+            "contract_version": ANALYSIS_CONTRACT_VERSION,
+            "engine_version": ENGINE_VERSION,
+        }
+
 
     # PART 2: constrained single-objective proposals. Fit a SECOND `Surrogate`
     # over the constraint column, on the SAME design/bounds/cat_dims the target
