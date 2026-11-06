@@ -51,13 +51,9 @@ def test_every_guide_code_has_a_why_line():
         assert code in WHY, code
 
 
-# Glossary lines that still use a claim word ("will", "caused"). Mirrored
-# verbatim, so they are pinned here and sent to the glossary owner; the list
-# may only shrink.
-KNOWN_GLOSSARY_CLAIMS = {
-    "group_mean_margin", "feasibility_auc", "brier", "provenance_metadata", "target_constant",
-    "target_constant_upload", "run_waiting", "column_unique", "user_excluded",
-}
+# Glossary lines that use a claim word ("will", "caused"). Mirrored verbatim,
+# so any is pinned here and sent to the glossary owner; the list stays empty.
+KNOWN_GLOSSARY_CLAIMS: set[str] = set()
 
 
 def test_why_lines_are_plain():
