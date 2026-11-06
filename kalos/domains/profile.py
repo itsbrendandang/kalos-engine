@@ -102,6 +102,26 @@ def parse_allow_beyond(value: object) -> tuple[tuple[str, float], ...]:
     raise InvalidAllowBeyond()
 
 
+class InvalidPerRecipeNoise(ValueError):
+    """`roles.per_recipe_noise` that is not true or false
+    (HTTP 400 `invalid_per_recipe_noise`)."""
+
+    code = "invalid_per_recipe_noise"
+
+    def __init__(self) -> None:
+        super().__init__("roles.per_recipe_noise must be true or false")
+
+
+def parse_per_recipe_noise(value: object) -> bool:
+    """False when not given, else the boolean. Raises `InvalidPerRecipeNoise`
+    for anything that is not a JSON boolean (strings and numbers too)."""
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise InvalidPerRecipeNoise()
+    return value
+
+
 def parse_direction(value: object) -> str | None:
     """None for no stated direction, else "maximize"/"minimize". Raises
     `InvalidDirection` for anything else (case and surrounding spaces are
@@ -152,6 +172,9 @@ class ColumnRoles:
     `allow_beyond` lets the search go past the tried range of an input, as a
     fraction of that range at each end (("*", 0.1) = 10% for every input).
     Empty: the search box is the tried range.
+    `per_recipe_noise` (default False) lets the proposal model use each
+    recipe's own replicate spread, shrunk toward the shared one, when the
+    noise is uneven across recipes (`noise.per_recipe` in the analysis).
     """
 
     target: str
@@ -163,6 +186,7 @@ class ColumnRoles:
     direction: str | None = None
     applicability_distance: float | None = None
     allow_beyond: tuple[tuple[str, float], ...] = ()
+    per_recipe_noise: bool = False
 
     @classmethod
     def from_dict(cls, data: dict) -> ColumnRoles:
@@ -199,6 +223,7 @@ class ColumnRoles:
                 data.get("applicability_distance")
             ),
             allow_beyond=parse_allow_beyond(data.get("allow_beyond")),
+            per_recipe_noise=parse_per_recipe_noise(data.get("per_recipe_noise")),
         )
 
 

@@ -6,6 +6,8 @@ Newest first.
 
 ### Added - desktop-engine-2 (first-time-user study)
 
+- `noise.floor`: the pooled assay noise with a 95% interval and its degrees of freedom. `roles.per_recipe_noise` (off by default) lets the proposal model use each recipe's own spread, shrunk toward the pooled one, when the noise rises with the recipe mean; `noise.per_recipe` says whether it was used and why.
+
 - `GET /api/campaigns/{id}/rows`: the campaign's rows (upload and folded rounds) with `_origin`, `_round`, `_run_id`, `_kind` (`measured`), paged.
 
 - `POST /api/preflight`: the column reading (`columns`, `provenance`, target and inputs) and the sheet check, with the same refusals as an upload, without fitting or storing anything.

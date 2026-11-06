@@ -707,6 +707,17 @@ only added; a field never changes meaning or disappears within a version.
   when the run was started, or null.
 - `promotion.checks`: each promotion check in plain words, with its state and whether it is optional (see "Promotion gate changes").
 - `validation.findings[].sheet_rows`, `sheet_rows_truncated` and `values`: every affected row as a sheet row number, with the cells (see "Affected rows in findings").
+- `noise.floor`: `{sigma, sigma_ci95, var_pooled, var_ci95, df, method}`. The
+  assay noise pooled over repeated recipes, each weighted by its repeats minus
+  one (`df`), with a 95% interval. Values are null (`df` 0) with no repeats.
+  `noise.noise_sd` keeps its meaning (mean of the per-recipe variances).
+- `noise.per_recipe`: `{enabled, used, reason, df0, sd_range}`. Set
+  `"per_recipe_noise": true` in the column roles (anything but true/false is
+  400 `invalid_per_recipe_noise`). It is used only when the noise rises with
+  the recipe mean (`noise.scale.homoscedastic` false) and the fit is on recipe
+  averages: each recipe's own variance, shrunk toward the pooled one with
+  `df0` prior repeats, divided by its repeat count. Off by default; proposals
+  are unchanged when it is off.
 
 ## Not in this slice
 

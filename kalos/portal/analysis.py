@@ -24,9 +24,11 @@ from kalos.core.drivers import (
 )
 from kalos.core.gp_shape import gp_shape_report
 from kalos.core.replicates import (
+    PER_RECIPE_DF0,
     aggregate_replicates,
     heteroscedasticity_report,
     noise_report,
+    shrunken_recipe_variances,
 )
 from kalos.core.splits import row_hash_groups
 from kalos.domains import (
@@ -80,6 +82,7 @@ from kalos.portal.analysis_parts.near_constant import (
 from kalos.portal.analysis_parts.noise_blocks import (
     _alternative_scale_block,
     _noise_block,
+    per_recipe_noise_decision,
 )
 from kalos.portal.analysis_parts.policy import (
     _ERR_VALIDATION_FAILED,
@@ -258,6 +261,7 @@ def _analyze(
     direction: str | None = None,
     applicability_distance: float | None = None,
     allow_beyond: float | Mapping[str, float] | None = None,
+    per_recipe_noise: bool | None = None,
 ) -> dict:
     """See `_analyze_body`. Every fitting analysis runs inside `_seeded_analysis`,
     so its proposals depend only on its inputs, not on other analyses in flight."""
@@ -266,7 +270,7 @@ def _analyze(
         anonymize=anonymize, roles=roles, profile=profile, pending=pending,
         constraint=constraint, progress=progress, preflight_only=preflight_only,
         direction=direction, applicability_distance=applicability_distance,
-        allow_beyond=allow_beyond,
+        allow_beyond=allow_beyond, per_recipe_noise=per_recipe_noise,
     )
     if preflight_only:
         return _analyze_body(df, target, **kwargs)
@@ -288,6 +292,7 @@ def _analyze_body(
     direction: str | None = None,
     applicability_distance: float | None = None,
     allow_beyond: float | Mapping[str, float] | None = None,
+    per_recipe_noise: bool | None = None,
 ) -> dict:
     """Run the engine on an arbitrary run sheet: pick the target (the value to
     maximize), use the process INPUTS as features (other measured outputs are
@@ -1454,6 +1459,13 @@ def _analyze_body(
     # replicate-aware swap below happens, and they are what the shape report has
     # to be handed - see the `gp_shape_report` call for why that matters.
     X_fit, y_fit = X, y
+    # Per-recipe noise (roles.per_recipe_noise, or the argument): off by default.
+    per_recipe_on = (
+        bool(per_recipe_noise) if per_recipe_noise is not None
+        else bool(roles is not None and roles.per_recipe_noise)
+    )
+    per_recipe_used, per_recipe_reason = per_recipe_noise_decision(per_recipe_on, het, False)
+    per_recipe_sd: list[float] | None = None
     if nr["n_replicated"] >= 1:
         Xf, yf, _yvar_g, n_reps_g = aggregate_replicates(X, y, groups=recipe_key)
         best_reproducible = float(yf.min()) if minimize else float(yf.max())
@@ -1464,6 +1476,13 @@ def _analyze_body(
         if nr["n_recipes"] >= 6 and np.isfinite(sigma2) and sigma2 > 0:
             replicate_aware = True
             per_point_var = float(sigma2) / np.maximum(n_reps_g, 1).astype(float)
+            per_recipe_used, per_recipe_reason = per_recipe_noise_decision(per_recipe_on, het, True)
+            if per_recipe_used:
+                # Each recipe's variance shrunk toward the pooled one, then divided
+                # by its replicate count (the variance of the recipe mean).
+                var_g = shrunken_recipe_variances(_yvar_g, n_reps_g, float(nr["noise_var_pooled"]))
+                per_point_var = var_g / np.maximum(n_reps_g, 1).astype(float)
+                per_recipe_sd = [float(np.sqrt(var_g.min())), float(np.sqrt(var_g.max()))]
             s = Surrogate().fit(
                 Xf, sign * yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
                 check_conditioning=True,
@@ -1853,7 +1872,16 @@ def _analyze_body(
         # promotion gate reads (kalos/core/evaluation.py `group_mean_margin`).
         "cv_group_mean_baseline": {**cv_group_mean_baseline, "margin": gm_margin},
         "best": round(best_single, 4),
-        "noise": _noise_block(nr, best_single, best_reproducible, replicate_aware, het),
+        "noise": _noise_block(
+            nr, best_single, best_reproducible, replicate_aware, het,
+            per_recipe={
+                "enabled": per_recipe_on, "used": per_recipe_used, "reason": per_recipe_reason,
+                "df0": PER_RECIPE_DF0,
+                # Smallest and largest per-recipe noise sd the fit used (null when unused).
+                "sd_range": None if per_recipe_sd is None
+                else [round(per_recipe_sd[0], 4), round(per_recipe_sd[1], 4)],
+            },
+        ),
         # Explicit, labeled second evaluation pass on the log scale, run only
         # when `noise.scale.suggests_transform` is True (see
         # `_alternative_scale_block`'s docstring). Evaluation-only: proposals
