@@ -34,7 +34,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from starlette.concurrency import run_in_threadpool
 
-from kalos.integrations import enabled
+from kalos.integrations import BENCHLING_PREFIX, enabled
 from kalos.integrations.benchling import NAME
 from kalos.integrations.benchling.client import (
     AppCredentials,
@@ -91,7 +91,7 @@ from kalos.portal.tenancy import is_valid_tenant_id
 
 log = logging.getLogger("kalos.integrations.benchling")
 
-PREFIX = "/api/integrations/benchling"
+PREFIX = BENCHLING_PREFIX
 DELEGATED_HEADER = "X-Benchling-Delegated-Token"
 MAX_ID = 128
 MAX_PROPOSALS = 100
@@ -102,29 +102,6 @@ def require_enabled() -> None:
     if not enabled(NAME):
         raise HTTPException(status_code=404)
 
-
-router = APIRouter(prefix=PREFIX, dependencies=[Depends(require_enabled)])
-
-_NOT_FOUND = b'{"error":"Not Found","code":"not_found"}'
-
-
-class BenchlingGate:
-    """ASGI gate in front of the router: with the integration off, any request
-    under PREFIX gets the app's unknown-path 404 before its body is read or
-    checked (the router dependency alone runs after body parsing)."""
-
-    def __init__(self, app: Any) -> None:
-        self.app = app
-
-    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        if scope["type"] == "http" and not enabled(NAME):
-            path = scope.get("path", "")
-            if path == PREFIX or path.startswith(PREFIX + "/"):
-                await send({"type": "http.response.start", "status": 404, "headers": [
-                    (b"content-length", str(len(_NOT_FOUND)).encode()), (b"content-type", b"application/json")]})
-                await send({"type": "http.response.body", "body": _NOT_FOUND})
-                return
-        await self.app(scope, receive, send)
 
 
 # --- dependencies (overridden in tests) ------------------------------------------ #
@@ -268,7 +245,6 @@ class _ConnectBody(BaseModel):
     verify: bool = True
 
 
-@router.post("/connect")
 async def connect(
     body: _ConnectBody,
     principal: Principal = Depends(require_scope(ADMIN)),
@@ -314,7 +290,6 @@ def _public_connection(istore: IntegrationStore, tenant: str) -> dict[str, Any]:
                                      "connected_at", "verified_at")}
 
 
-@router.get("/status")
 def status(
     principal: Principal = Depends(require_scope(READ)),
     istore: IntegrationStore = Depends(get_integration_store),
@@ -340,7 +315,6 @@ def status(
     })
 
 
-@router.get("/studies")
 async def studies(
     principal: Principal = Depends(require_scope(READ)),
     istore: IntegrationStore = Depends(get_integration_store),
@@ -382,7 +356,6 @@ class _ImportBody(BaseModel):
     replace: bool = False
 
 
-@router.post("/import")
 async def import_study(
     body: _ImportBody,
     principal: Principal = Depends(require_scope(WRITE)),
@@ -495,7 +468,6 @@ def _campaign_import(
     return imp
 
 
-@router.post("/push-proposals")
 async def push_proposals_route(
     body: _PushProposalsBody,
     principal: Principal = Depends(require_scope(WRITE)),
@@ -571,7 +543,6 @@ class _PushResultsBody(BaseModel):
     report_field: Annotated[str, StringConstraints(min_length=1, max_length=128)] | None = None
 
 
-@router.post("/push-results")
 async def push_results_route(
     body: _PushResultsBody,
     principal: Principal = Depends(require_scope(WRITE)),
@@ -710,7 +681,6 @@ class _PollBody(BaseModel):
     result_schema_id: _Id | None = None
 
 
-@router.post("/poll")
 async def poll(
     body: _PollBody,
     principal: Principal = Depends(require_scope(WRITE)),
@@ -737,7 +707,6 @@ async def poll(
 _WEBHOOK_REJECTED = {"error": "webhook not verified", "code": "webhook_rejected"}
 
 
-@router.post("/webhook/{tenant}")
 async def webhook(
     tenant: str, request: Request,
     istore: IntegrationStore = Depends(get_integration_store),
@@ -759,3 +728,23 @@ async def webhook(
         log.warning("benchling webhook rejected: %s", exc)
         return JSONResponse(_WEBHOOK_REJECTED, status_code=401)
     return JSONResponse({"status": out.status, "event_type": out.event_type})
+
+
+def create_benchling_router() -> APIRouter:
+    """The connector's routes. `kalos.portal.app` calls this (and so imports this
+    module, httpx and the client) only when KALOS_INTEGRATIONS enables Benchling
+    at startup. `require_enabled` still answers 404 per request if the variable is
+    removed later."""
+    router = APIRouter(prefix=PREFIX, dependencies=[Depends(require_enabled)])
+    for method, path, endpoint in (
+        ("POST", "/connect", connect),
+        ("GET", "/status", status),
+        ("GET", "/studies", studies),
+        ("POST", "/import", import_study),
+        ("POST", "/push-proposals", push_proposals_route),
+        ("POST", "/push-results", push_results_route),
+        ("POST", "/poll", poll),
+        ("POST", "/webhook/{tenant}", webhook),
+    ):
+        router.add_api_route(path, endpoint, methods=[method])
+    return router

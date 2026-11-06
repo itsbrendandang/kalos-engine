@@ -72,6 +72,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("KALOS_AUTH_TOKENS", json.dumps(TOKENS))
     monkeypatch.delenv("KALOS_AUTH_TOKENS_FILE", raising=False)
     monkeypatch.setenv("KALOS_INTEGRATIONS", "benchling")
+    assert portal_module.mount_integrations()  # the app was imported with the flag unset
     monkeypatch.setenv(secrets.SECRET_KEY_VAR, "s" * 48)
     monkeypatch.setattr(portal_module, "_STATE_DIR", tmp_path)
     monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
@@ -460,3 +461,35 @@ def test_report_failure_after_committed_results_keeps_them_recorded(env):
     assert integration_store_at(store.state_dir).push_audit(tenant="acme")[0]["outcome"] == "ok_report_failed"
     again = tc.post(f"{P}/push-results", json={"campaign_id": cid}, headers=hdr)
     assert again.status_code == 409 and len(fake.committed_results) == 2
+
+
+# --- review fixes: flag off imports nothing; refuse modes ------------------------------------------ #
+
+
+def test_flag_off_does_not_import_httpx_or_the_connector():
+    import os
+    import subprocess
+    import sys
+
+    code = ("import sys, kalos.portal.app as a; "
+            "bad = [m for m in sys.modules if m == 'httpx' or m.startswith('httpx.') "
+            "or m.startswith('kalos.integrations.benchling')]; "
+            "print(bad, a.mount_integrations())")
+    env = {k: v for k, v in os.environ.items() if k != "KALOS_INTEGRATIONS"}
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=180, env=env)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().splitlines()[-1] == "[] False"
+
+
+@pytest.mark.parametrize("flag", ["", "benchling"])
+def test_refusals_before_routing_match_unknown_paths(env, monkeypatch, flag):
+    """Open mode refuses remote callers with a 503; a connector path must get the
+    same bytes as an unknown path, flag on or off."""
+    monkeypatch.delenv("KALOS_AUTH_TOKENS")
+    monkeypatch.setenv("KALOS_INTEGRATIONS", flag)
+    with TestClient(app, client=("203.0.113.9", 51000)) as remote:
+        unknown = remote.get("/api/no-such-route")
+        for method, path in (("GET", "/status"), ("POST", "/webhook/acme"), ("POST", "/connect")):
+            r = remote.request(method, P + path)
+            assert r.status_code == unknown.status_code == 503
+            assert r.content == unknown.content
