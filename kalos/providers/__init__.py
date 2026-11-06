@@ -16,11 +16,13 @@ from __future__ import annotations
 from kalos.providers.anthropic_provider import AnthropicProvider
 from kalos.providers.base import Provider, ProviderStatus
 from kalos.providers.bionemo_provider import BioNemoProvider
+from kalos.providers.ollama_provider import OllamaProvider
 from kalos.providers.registry import all_providers, get, provider_status
 
 __all__ = [
     "AnthropicProvider",
     "BioNemoProvider",
+    "OllamaProvider",
     "Provider",
     "ProviderStatus",
     "all_providers",
