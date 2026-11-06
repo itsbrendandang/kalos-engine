@@ -108,12 +108,31 @@ _QUERIES: list[tuple[str, str]] = [
 ]
 
 
-def _metrics(index: AssistIndex, cid: str, k: int = 6) -> dict[str, float]:
+# Paraphrase arm: lay/synonym wording that shares little or no literal token
+# with the stored chunks ("sugar" not "glucose", "heat" not "temperature",
+# "acidity" not "pH"). This is where a lexical retriever (BM25) is expected to
+# struggle and a semantic one (embeddings) would help - so the gap between this
+# arm and the literal arm is the measured case for (or against) embeddings.
+_PARAPHRASE_QUERIES: list[tuple[str, str]] = [
+    ("how much sugar was fed", "sheet"),
+    ("which factors drive the yield most", "analysis"),
+    ("what should we try in the next experiment", "analysis"),
+    ("did the model quality check pass", "analysis"),
+    ("were any data points flagged as unusual", "finding"),
+    ("any gaps or blanks in the measurements", "finding"),
+    ("how do I log an experiment outcome", "doc"),
+    ("when will the larger-scale estimate decline to answer", "doc"),
+]
+
+
+def _metrics(index: AssistIndex, cid: str, k: int = 6,
+             queries: list[tuple[str, str]] | None = None) -> dict[str, float]:
+    queries = queries if queries is not None else _QUERIES
     recall_hits = 0
     p_at_1 = 0
     rr_sum = 0.0
     per_kind: dict[str, list[int]] = {}
-    for question, want_kind in _QUERIES:
+    for question, want_kind in queries:
         hits = index.search(question, campaign_id=cid, k=k)
         kinds = [h.chunk.kind for h in hits]
         found = want_kind in kinds
@@ -122,7 +141,7 @@ def _metrics(index: AssistIndex, cid: str, k: int = 6) -> dict[str, float]:
         p_at_1 += int(bool(kinds) and kinds[0] == want_kind)
         rr_sum += (1.0 / rank) if rank else 0.0
         per_kind.setdefault(want_kind, []).append(int(found))
-    n = len(_QUERIES)
+    n = len(queries)
     return {
         "recall_at_k": recall_hits / n,
         "precision_at_1": p_at_1 / n,
@@ -138,20 +157,31 @@ def test_bm25_retrieval_quality_report(seeded_store, capsys):
     status = index.refresh()
     assert status["retriever"] == "bm25"
 
-    m = _metrics(index, ids["ferment"])
+    m = _metrics(index, ids["ferment"])  # literal arm
+    p = _metrics(index, ids["ferment"], queries=_PARAPHRASE_QUERIES)  # paraphrase arm
     with capsys.disabled():
         print("\n=== assist retrieval benchmark (BM25) ===")
-        print(f"queries: {int(m['n'])}  recall@6: {m['recall_at_k']:.3f}  "
+        print(f"literal    ({int(m['n'])} q):  recall@6: {m['recall_at_k']:.3f}  "
               f"P@1: {m['precision_at_1']:.3f}  MRR: {m['mrr']:.3f}")
+        print(f"paraphrase ({int(p['n'])} q):  recall@6: {p['recall_at_k']:.3f}  "
+              f"P@1: {p['precision_at_1']:.3f}  MRR: {p['mrr']:.3f}")
+        gap = m["recall_at_k"] - p["recall_at_k"]
+        print(f"recall@6 gap (literal - paraphrase): {gap:+.3f}  "
+              f"<- the headroom a semantic retriever could recover")
         for kind in ("sheet", "finding", "analysis", "doc"):
             key = f"recall_{kind}"
             if key in m:
-                print(f"  recall[{kind}]: {m[key]:.3f}")
+                pv = p.get(key)
+                extra = f"  paraphrase: {pv:.3f}" if pv is not None else ""
+                print(f"  recall[{kind}]: {m[key]:.3f}{extra}")
 
-    # Loose regression floors, not targets. If a scoring change drops below
-    # these, the benchmark fails and we look at the printed table.
-    assert m["recall_at_k"] >= 0.70, f"recall@6 regressed: {m}"
-    assert m["mrr"] >= 0.40, f"MRR regressed: {m}"
+    # Loose regression floors on the literal arm, not targets. If a scoring
+    # change drops below these, the benchmark fails and we look at the table.
+    assert m["recall_at_k"] >= 0.70, f"literal recall@6 regressed: {m}"
+    assert m["mrr"] >= 0.40, f"literal MRR regressed: {m}"
+    # The paraphrase arm has no floor: it is a diagnostic of BM25's lexical
+    # weak spot, not a contract. We only assert it was actually measured.
+    assert p["n"] == len(_PARAPHRASE_QUERIES)
 
 
 def test_retrieval_stays_within_the_campaign(seeded_store):
