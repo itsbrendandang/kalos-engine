@@ -14,15 +14,19 @@ Rules (each one narrow on purpose, so a normal sheet is not changed):
      rows still count). A design factor that is unique, whole, sorted and
      step-1 across the sheet is rare; declaring roles keeps it.
    Status `dropped_id`.
-2. Outcome-like columns after the target are not inputs unless declared
-   (`after_target_in_sheet`). Both must hold: the column sits after the target
-   in the header, AND its name reads like a measurement taken during or after
-   the run (`OUTCOME_LIKE_NAME`: OD, optical density, biomass, VCD, viability,
-   DCW, final, harvest, measured, lactate, ammonia, ...). Position alone is not
-   enough: many sheets put inputs after the target. A strong correlation alone
-   is not enough either: it would drop a real strong driver. Status
-   `dropped_output`. A non-matching input after the target that correlates
-   strongly with it (|Spearman| >= `AFTER_TARGET_RHO`) is kept and flagged.
+2. Outcome-like columns are not inputs unless declared (owner decision: a
+   leaky input makes the model look better than it is, so the default is to
+   leave it out and say so). The name must read like a measurement taken during
+   or after the run (`looks_outcome_like`: `OUTCOME_LIKE_NAME`, i.e. OD, optical
+   density, biomass, VCD, viability, DCW, final, harvest, measured, lactate,
+   ammonia, ..., or the profile's outcome hint other than a bare concentration
+   word). After the target the reason is `after_target_in_sheet`; anywhere else
+   it is `outcome_like_name`; each has a warning finding with the same code.
+   Status `dropped_output`. Position alone is not enough: many sheets put
+   inputs after the target. A strong correlation alone is not enough either: it
+   would drop a real strong driver. A non-matching input after the target that
+   correlates strongly with it (|Spearman| >= `AFTER_TARGET_RHO`) is kept and
+   flagged.
 3. A concentration input before a given target is kept. The profile's outcome
    hint matches `conc`, so `Carbon_conc` was dropped as a possible output. When
    the caller named the target, a column whose only outcome-hint match is the
@@ -31,7 +35,7 @@ Rules (each one narrow on purpose, so a normal sheet is not changed):
    with an info finding.
 
 Declared features (`roles.features`) are never excluded by these rules. A
-declared or inferred input whose name looks outcome-like gets a warning
+declared input whose name looks outcome-like gets a warning
 (`feature_looks_outcome_like`).
 
 The `recipe_label` reason belongs to a separate rule in `columns.py`; it is
@@ -92,7 +96,7 @@ REASON_CODES = (
     "numeric_input", "categorical_text", "concentration_before_target", "headerless",
     "monotone_row_number", "after_target_in_sheet", "name_matches_identifier", "constant",
     "constant_on_fitted_rows", "sparse_or_unparsed", "declared_non_numeric", "all_blank",
-    "recipe_label", "near_constant", "not_declared",
+    "recipe_label", "near_constant", "not_declared", "outcome_like_name",
 )
 
 
@@ -234,7 +238,21 @@ def column_role_safety(
                 detail={"reason": reason},
             ))
             continue
-        if pos.get(c, -1) > t_pos and OUTCOME_LIKE_NAME.search(name):
+        if out.reasons.get(name) != "concentration_before_target" and looks_outcome_like(
+            name, profile,
+        ) and pos.get(c, -1) <= t_pos:
+            out.overrides[name] = ("dropped_output", "outcome_like_name")
+            out.findings.append(Finding(
+                check="outcome_like_name", code="outcome_like_name", severity="warning",
+                column=name,
+                message=(
+                    f"Column {name!r} has a name that reads like a measurement taken during or "
+                    "after the run, so it was not used as an input. Declare it in "
+                    "roles.features if it is set before the run."
+                ),
+            ))
+            continue
+        if pos.get(c, -1) > t_pos and looks_outcome_like(name, profile):
             out.overrides[name] = ("dropped_output", "after_target_in_sheet")
             out.findings.append(Finding(
                 check="after_target_outcome", code="after_target_in_sheet", severity="warning",

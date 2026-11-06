@@ -167,3 +167,51 @@ def test_a_declared_row_number_like_feature_is_kept():
                        "titer": rng.uniform(1, 5, 12)})
     out = _safety(df, None, ColumnRoles(target="titer", features=["Line", "pH"]))
     assert out.cont_feats == ["Line", "pH"] and "Line" not in out.overrides
+
+
+def test_outcome_like_column_before_the_target_is_excluded_by_default():
+    """Owner decision: a column named like a run measurement is left out of the
+    fit even when it sits before the target, with a code and a reason."""
+    rng = np.random.default_rng(6)
+    n = 12
+    df = pd.DataFrame({
+        "Lactate_end": rng.uniform(1, 5, n), "Viability_pct": rng.uniform(1, 9, n),
+        "pH": rng.uniform(6, 7.5, n), "titer": rng.uniform(1, 5, n),
+    })
+    out = _safety(df, "titer")
+    assert out.cont_feats == ["pH"]
+    assert out.overrides["Lactate_end"] == ("dropped_output", "outcome_like_name")
+    assert out.overrides["Viability_pct"] == ("dropped_output", "outcome_like_name")
+    codes = {(f.code, f.column) for f in out.findings}
+    assert {("outcome_like_name", "Lactate_end"), ("outcome_like_name", "Viability_pct")} <= codes
+
+
+def test_a_declared_role_keeps_an_outcome_like_column_before_the_target():
+    rng = np.random.default_rng(6)
+    n = 12
+    df = pd.DataFrame({"Harvest_vol": rng.uniform(1, 9, n), "pH": rng.uniform(6, 7.5, n),
+                       "titer": rng.uniform(1, 5, n)})
+    out = _safety(df, None, ColumnRoles(target="titer", features=["Harvest_vol", "pH"]))
+    assert out.cont_feats == ["Harvest_vol", "pH"] and not out.overrides
+    assert any(f.code == "feature_looks_outcome_like" and f.column == "Harvest_vol"
+               for f in out.findings)
+
+
+def test_outcome_like_before_target_in_a_real_analysis_is_not_fitted():
+    pytest.importorskip("torch")
+    from kalos.portal.analysis import _analyze
+
+    rng = np.random.default_rng(8)
+    n = 14
+    ph = rng.uniform(6, 7.5, n)
+    titer = 3 + ph + rng.normal(0, 0.2, n)
+    df = pd.DataFrame({"VCD_end": titer * 2 + rng.normal(0, 0.1, n), "pH": ph,
+                       "temp": rng.uniform(30, 37, n), "titer": titer})
+    out = _analyze(df, target="titer")
+    assert "VCD_end" not in out["features"]
+    prov = {r["name"]: r for r in out["provenance"]}
+    assert prov["VCD_end"]["status"] == "dropped_output"
+    assert prov["VCD_end"]["reason"] == "outcome_like_name"
+    cols = {c["name"]: c for c in out["columns"]}
+    assert cols["VCD_end"]["kind"] == "outcome_like" and cols["VCD_end"]["used_in_fit"] is False
+    assert "outcome_like_name" in {f["code"] for f in out["validation"]["findings"]}

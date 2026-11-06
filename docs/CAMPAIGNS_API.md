@@ -452,6 +452,7 @@ recipe never sits outside `feature_ranges` (replay F9).
 | `headerless` | no header and one number per row: a row index |
 | `monotone_row_number` | a counter up or down from any start, at most a few numbers missing: a row index |
 | `after_target_in_sheet` | after the target and named like a measurement |
+| `outcome_like_name` | named like a measurement taken during or after the run (before the target too) |
 | `name_matches_identifier` | its name reads like an id (sample, operator, ...) |
 | `constant` | one value |
 | `constant_on_fitted_rows` | one value on the rows the model uses |
