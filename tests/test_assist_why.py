@@ -87,3 +87,13 @@ def test_desktop_engine_codes_have_why_lines():
     assert WHY["no_ordering"].startswith("If the model does no better than chance at putting your past runs")
     assert all(v in GLOSSARY for v in VERDICT_STATE_KEYS.values())
     assert GLOSSARY["ece"].startswith("If the model's chance that a recipe works does not match how often it does")
+
+
+def test_desktop_engine_why_lines_are_mirrored():
+    """engine-desktop (desktop-engine-2-secb b9a0e62) emits these codes with
+    these why-lines; the assistant must say the same sentence."""
+    for code in ("invalid_linear_constraint", "infeasible_linear_constraints", "linear_constraints_with_categorical",
+                 "invalid_specs", "invalid_allow_beyond", "invalid_exploration_design", "invalid_per_recipe_noise",
+                 "row_number_column", "after_target_in_sheet", "roles_not_applied", "possibly_measured_driver"):
+        assert code in ENGINE_ONLY, code
+    assert len([k for k in ENGINE_ONLY]) >= 47
