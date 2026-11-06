@@ -154,9 +154,15 @@ automatically.
   exponentially, then tries again (up to 5 times). Several Kalos processes do not
   share the budget.
 - **Size of a study.** About 2 calls per procedure run, plus 1 per 100 replicates,
-  plus 1 per 100 parameter values, plus 1 per 100 results. The 1,050-row test
-  study (15 runs, 4 planned and 1 measured parameter) took 109 calls. At 60
+  plus 1 per 100 parameter values, plus 1 per 200 linked ids for the results
+  (only results linked to this study's runs are listed). The 1,050-row test
+  study (15 runs, 4 planned and 1 measured parameter) took 114 calls. At 60
   requests per 30 s that is about 30 to 60 seconds.
+- **Per request.** One Kalos request may spend at most 180 s talking to Benchling
+  (504 `benchling_timeout` after that). A single wait for the rate limit is at
+  most 60 s. A `Retry-After` longer than 30 s is not waited out: Kalos answers
+  503 with that Retry-After. A list may return at most 20,000 items or 100 pages
+  (400 `benchling_too_much_data`).
 - **Tokens.** App tokens last 15 minutes. Kalos asks for a new one a minute before
   expiry and once after a 401.
 - **Retries.** Reads are retried after 5xx errors. Writes are not, because a write

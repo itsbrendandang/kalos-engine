@@ -72,7 +72,7 @@ def test_client_credentials_token_is_fetched_once_and_sent_as_bearer():
 def test_token_is_refreshed_before_the_15_minute_expiry():
     fake = FakeBenchling()
     clock = Clock()
-    with _client(fake, clock) as c:
+    with _client(fake, clock, deadline_s=None) as c:
         c.request("GET", "/api/v3/study/items")
         clock.now += 13 * 60  # within the 60 s margin? no: 13 min < 14 min
         c.request("GET", "/api/v3/study/items")
@@ -358,3 +358,55 @@ def test_client_gives_up_when_the_limiter_wait_exceeds_max_wait():
         with pytest.raises(RateLimitWaitExceeded):
             c.get("/api/v3/study/items")
     assert fake.paths().count("/api/v3/study/items") == 2
+
+
+# --- review fixes: deadlines, item caps, short Retry-After cap ---------------------------------- #
+
+
+def test_operation_deadline_stops_further_calls():
+    from kalos.integrations.benchling.client import BenchlingDeadlineExceeded
+
+    fake = FakeBenchling()
+    clock = Clock()
+    with _client(fake, clock, deadline_s=20.0) as c:
+        c.get("/api/v3/study/items")
+        clock.now += 21
+        with pytest.raises(BenchlingDeadlineExceeded):
+            c.get("/api/v3/study/items")
+    assert fake.paths().count("/api/v3/study/items") == 1
+
+
+def test_retry_that_would_pass_the_deadline_is_not_waited_out():
+    from kalos.integrations.benchling.client import BenchlingDeadlineExceeded
+
+    fake = FakeBenchling()
+    fake.script["/api/v3/study/items"] = [(429, {"Retry-After": "25"}, {"title": "slow down"})]
+    clock = Clock()
+    with _client(fake, clock, deadline_s=10.0) as c, pytest.raises(BenchlingDeadlineExceeded):
+        c.get("/api/v3/study/items")
+    assert clock.slept == []
+
+
+def test_long_retry_after_is_returned_not_slept():
+    fake = FakeBenchling()
+    fake.script["/api/v3/study/items"] = [(429, {"Retry-After": "3600"}, {"title": "slow down"})]
+    clock = Clock()
+    with _client(fake, clock) as c, pytest.raises(BenchlingRateLimited) as err:
+        c.get("/api/v3/study/items")
+    assert err.value.retry_after == 3600 and clock.slept == []
+
+
+def test_paginate_caps_items_and_pages():
+    from kalos.integrations.benchling.client import (
+        DEFAULT_MAX_PAGES,
+        BenchlingTooMuchData,
+    )
+
+    fake = FakeBenchling()
+    fake.projects.extend({"id": f"src_{i:08d}", "name": "p"} for i in range(250))
+    with _client(fake) as c:
+        with pytest.raises(BenchlingTooMuchData):
+            list(c.paginate("/api/v2/projects", items_key="projects", max_items=120))
+        with pytest.raises(BenchlingTooMuchData):
+            list(c.paginate("/api/v2/projects", items_key="projects", page_size=10, max_pages=5))
+    assert DEFAULT_MAX_PAGES <= 100

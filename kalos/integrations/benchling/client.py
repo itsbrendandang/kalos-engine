@@ -52,7 +52,11 @@ DEFAULT_RATE_LIMIT = 60          # requests ...
 DEFAULT_RATE_PERIOD_S = 30.0     # ... per this many seconds, per Benchling tenant
 TOKEN_REFRESH_MARGIN_S = 60.0    # ask for a new token this long before expiry
 DEFAULT_TOKEN_LIFETIME_S = 900.0  # "Access tokens expire after 15 minutes"
-MAX_BACKOFF_S = 60.0
+MAX_BACKOFF_S = 30.0              # longest exponential backoff step
+MAX_RETRY_AFTER_S = 30.0          # longest Retry-After / x-rate-limit-reset honoured; longer -> give up
+DEFAULT_DEADLINE_S = 180.0        # whole-operation budget of one client (one Kalos request)
+DEFAULT_MAX_PAGES = 100
+DEFAULT_MAX_ITEMS = 20_000
 MAX_PAGE_SIZE = 100              # v2 and v3 both cap pageSize at 100
 DEFAULT_TIMEOUT_S = 30.0
 DEFAULT_MAX_WAIT_S = 60.0         # longest the limiter may block a single call
@@ -127,6 +131,14 @@ class BenchlingRateLimited(BenchlingError):
 class RateLimitWaitExceeded(BenchlingRateLimited):
     """Kalos's own limiter would have to wait longer than the caller allows.
     Nothing was sent."""
+
+
+class BenchlingDeadlineExceeded(BenchlingError):
+    """The operation's deadline passed before Benchling finished answering."""
+
+
+class BenchlingTooMuchData(BenchlingError):
+    """A list returned more items or pages than the caller allows."""
 
 
 class BenchlingServerError(BenchlingError):
@@ -480,7 +492,7 @@ def _retry_after(response: httpx.Response) -> float | None:
         except ValueError:
             continue
         if value >= 0:
-            return min(value, MAX_BACKOFF_S * 5)
+            return value
     return None
 
 
@@ -500,6 +512,7 @@ class BenchlingClient:
         bucket: TokenBucket | None = None,
         tenant: str | None = None,
         max_wait_s: float = DEFAULT_MAX_WAIT_S,
+        deadline_s: float | None = DEFAULT_DEADLINE_S,
         max_retries: int = 5,
         timeout_s: float = DEFAULT_TIMEOUT_S,
         sleep: Callable[[float], None] = time.sleep,
@@ -509,6 +522,10 @@ class BenchlingClient:
         self.auth = auth
         self.bucket = bucket if bucket is not None else bucket_for(self.base_url, tenant)
         self.max_wait_s = max_wait_s
+        self.timeout_s = timeout_s
+        # One client serves one Kalos request: everything it sends must finish
+        # by this point on the bucket's clock.
+        self.deadline = None if deadline_s is None else self.bucket.now() + deadline_s
         self.max_retries = max(0, int(max_retries))
         self._sleep = sleep
         self._rng = rng or random.Random()  # noqa: S311 - backoff jitter, not security
@@ -541,8 +558,23 @@ class BenchlingClient:
         self.auth.bearer(self._http, self.base_url, self.bucket, self._wait_deadline())
 
     def _wait_deadline(self) -> float:
-        """How long the limiter may block one call."""
-        return self.bucket.now() + self.max_wait_s
+        """How long the limiter may block one call: max_wait_s, never past the
+        operation deadline."""
+        wait_until = self.bucket.now() + self.max_wait_s
+        return wait_until if self.deadline is None else min(wait_until, self.deadline)
+
+    def _remaining(self, method: str, path: str) -> float | None:
+        if self.deadline is None:
+            return None
+        left = self.deadline - self.bucket.now()
+        if left <= 0:
+            raise BenchlingDeadlineExceeded(f"Benchling {method} {path}: the request deadline passed")
+        return left
+
+    def _pause_or_give_up(self, seconds: float, method: str, path: str) -> None:
+        left = self._remaining(method, path)
+        if left is not None and seconds >= left:
+            raise BenchlingDeadlineExceeded(f"Benchling {method} {path}: retrying would pass the request deadline")
 
     def _backoff(self, attempt: int) -> float:
         return min(MAX_BACKOFF_S, 2.0 ** attempt + self._rng.random())
@@ -566,18 +598,23 @@ class BenchlingClient:
         reauthed = False
         attempt = 0
         while True:
+            self._remaining(method, path)
             token = self.auth.bearer(self._http, self.base_url, self.bucket, self._wait_deadline())
             self.bucket.acquire(self._wait_deadline())
+            left = self._remaining(method, path)
+            timeout = self.timeout_s if left is None else max(0.1, min(self.timeout_s, left))
             self.requests_sent += 1
             try:
                 resp = self._http.request(
                     method, url, params=query or None, json=json,
-                    headers={**headers, "Authorization": f"Bearer {token}"},
+                    headers={**headers, "Authorization": f"Bearer {token}"}, timeout=timeout,
                 )
             except httpx.HTTPError as exc:
                 if method in _IDEMPOTENT and attempt < self.max_retries:
                     attempt += 1
-                    self._sleep(self._backoff(attempt))
+                    delay = self._backoff(attempt)
+                    self._pause_or_give_up(delay, method, path)
+                    self._sleep(delay)
                     continue
                 raise BenchlingTransportError(
                     f"Benchling {method} {path} did not complete ({type(exc).__name__})"
@@ -599,17 +636,23 @@ class BenchlingClient:
             if status == 429:
                 self.rate_limited += 1
                 wait = _retry_after(resp)
-                if attempt >= self.max_retries:
+                # A wait longer than MAX_RETRY_AFTER_S is not sat out: the caller
+                # gets a 503 with that Retry-After instead of a hung request.
+                if attempt >= self.max_retries or (wait is not None and wait > MAX_RETRY_AFTER_S):
                     err = _error_for(resp, method, path)
                     raise BenchlingRateLimited(
                         str(err), retry_after=wait, status=429, title=err.title,
                     )
                 attempt += 1
-                self.bucket.pause(wait if wait is not None else self._backoff(attempt))
+                delay = wait if wait is not None else self._backoff(attempt)
+                self._pause_or_give_up(delay, method, path)
+                self.bucket.pause(delay)
                 continue
             if status >= 500 and method in _IDEMPOTENT and attempt < self.max_retries:
                 attempt += 1
-                self._sleep(self._backoff(attempt))
+                delay = self._backoff(attempt)
+                self._pause_or_give_up(delay, method, path)
+                self._sleep(delay)
                 continue
             raise _error_for(resp, method, path)
 
@@ -624,13 +667,15 @@ class BenchlingClient:
 
     def paginate(
         self, path: str, params: Mapping[str, Any] | None = None, *, items_key: str = "items",
-        page_size: int = MAX_PAGE_SIZE, max_pages: int = 10_000,
+        page_size: int = MAX_PAGE_SIZE, max_pages: int = DEFAULT_MAX_PAGES,
+        max_items: int = DEFAULT_MAX_ITEMS,
     ) -> Iterator[dict[str, Any]]:
         """Every item of a list endpoint, following `nextToken`. `items_key` is
         `items` for v3 and the resource name for v2 (`assayRuns`, `projects`, ...).
-        Stops with an error after `max_pages` (a token that never ends)."""
+        Raises BenchlingTooMuchData past `max_items` items or `max_pages` pages."""
         query = dict(params or {})
         query["pageSize"] = max(1, min(int(page_size), MAX_PAGE_SIZE))
+        seen = 0
         for _ in range(max_pages):
             body = self.get(path, query)
             if not isinstance(body, dict):
@@ -640,12 +685,15 @@ class BenchlingClient:
                 raise BenchlingError(f"Benchling GET {path} returned an unexpected page")
             for item in items:
                 if isinstance(item, dict):
+                    seen += 1
+                    if seen > max_items:
+                        raise BenchlingTooMuchData(f"Benchling GET {path} returned more than {max_items} items")
                     yield item
             token = body.get("nextToken")
             if not token:
                 return
             query["nextToken"] = token
-        raise BenchlingError(f"Benchling GET {path} returned more than {max_pages} pages")
+        raise BenchlingTooMuchData(f"Benchling GET {path} returned more than {max_pages} pages")
 
 
 def _param(value: Any) -> str:

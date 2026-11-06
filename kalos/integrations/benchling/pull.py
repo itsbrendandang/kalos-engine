@@ -52,6 +52,7 @@ MAX_STUDIES = 500
 MAX_SCHEMA_SCAN = 50
 MAX_EXAMPLES = 5
 MAX_NAME_CHARS = 100
+LINKED_IDS_PER_CALL = 200
 
 
 class ImportRefused(BenchlingError):
@@ -369,7 +370,20 @@ def fetch_study(
         schema_id = result_schema_id
     else:
         schema_id, defs = find_result_schema(client, target_field_id)
-    results = [r for r in client.paginate(f"{V3}/result/items", {"schema.eq": schema_id, "archived.anyOf": [False]})]
+    # Only this study's results: filter on the link-field value server-side
+    # (`schemaFieldLinkValue.linkedItemIds`, maxItems 1000; sent 200 at a time),
+    # instead of listing every result the schema has across the tenant.
+    link_ids = sorted(set(rep_ids) | set(mei_ids) | {r["id"] for r in runs if isinstance(r.get("id"), str)})
+    results: list[dict[str, Any]] = []
+    seen_results: set[str] = set()
+    for ids in chunks(link_ids, LINKED_IDS_PER_CALL):
+        for res in client.paginate(f"{V3}/result/items", {
+            "schema.eq": schema_id, "archived.anyOf": [False], "schemaFieldLinkValue.linkedItemIds": ids,
+        }):
+            res_id = res.get("id")
+            if isinstance(res_id, str) and res_id not in seen_results:
+                seen_results.add(res_id)
+                results.append(res)
     unit_ids = sorted({u for v in versions if (u := _ref_id(v.get("dataType") or {}, "unit"))}
                       | {u for d in defs if (u := _ref_id(d, "unit"))})
     units: dict[str, dict[str, Any]] = {}

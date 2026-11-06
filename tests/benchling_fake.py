@@ -177,6 +177,10 @@ class FakeBenchling:
                 return _ok({"items": self.field_defs.get(sid, [])})
             if path == f"{v3}/result/items":
                 items = [r for r in self.results if r["schema"]["id"] == params.get("schema.eq")]
+                if "schemaFieldLinkValue.linkedItemIds" in params:
+                    wanted = set(params["schemaFieldLinkValue.linkedItemIds"].split(","))
+                    assert len(wanted) <= 1000, "linkedItemIds maxItems is 1000"
+                    items = [r for r in items if wanted & _result_links(r)]
                 items = _modified_filter(items, params)
                 return self._page(items, params)
             if path == "/api/v2/assay-runs":
@@ -297,6 +301,16 @@ def _problem(status: int, title: str) -> httpx.Response:
 def _v2_error(status: int, message: str) -> httpx.Response:
     return httpx.Response(status, json={"error": {"message": message, "type": "invalid_request_error",
                                                   "userMessage": message}})
+
+
+def _result_links(result: dict) -> set[str]:
+    out = set()
+    for f in result.get("schemaFields") or []:
+        v = (f.get("value") or {}).get("value")
+        for item in v if isinstance(v, list) else [v]:
+            if isinstance(item, dict) and isinstance(item.get("id"), str):
+                out.add(item["id"])
+    return out
 
 
 def _modified_filter(items: list[dict], params: dict) -> list[dict]:

@@ -124,8 +124,8 @@ def test_large_study_1050_rows_passes_the_upload_parser_and_preflight():
     assert len(sheet.rows) == 1050
     raw = sheet.to_csv()
     assert len(_rows(raw)) == 1050
-    # bounded call count: 1 run page + 2 per run + 4 per 100 instances + few others
-    assert sent < 2 * 15 + 4 * 11 + 40, sent
+    # bounded call count: 2 per run + per 100 replicates/values + per 200 linked ids for results
+    assert sent <= 115, sent
     # EARLY-ACCESS on every bioprocess call, never on the GA ones
     for call in fake.calls:
         beta = call.path.startswith("/api/v3/procedure") or call.path.endswith("/field-definitions/items")
@@ -241,3 +241,20 @@ def test_pushed_levels_get_the_original_text_back():
 
     assert _typed("'=cmd")["value"]["value"] == "=cmd"
     assert _typed("'quoted")["value"]["value"] == "'quoted"
+
+
+def test_results_are_fetched_only_for_this_study():
+    fake = bioprocess_study(FakeBenchling(), n_runs=1, conditions_per_run=2, replicates=1)
+    # 500 results of the same schema that belong to other studies
+    for i in range(500):
+        fake.results.append({
+            "__typename": "Result", "id": f"result_other_{i}", "archived": False, "schema": {"id": RESULT_SCHEMA},
+            "modifiedAt": "2026-10-02T00:00:00+00:00", "schemaFields": [
+                {"fieldDefinition": {"id": TITER_FIELD}, "value": {"__typename": "DecimalValue", "value": "9"}},
+                {"fieldDefinition": {"id": "tsf_runlink1"},
+                 "value": {"__typename": "ObjectLinkValue", "value": {"id": f"prcr_elsewhere_{i}"}}}]})
+    with _client(fake) as c:
+        data = fetch_study(c, STUDY_ID, target_field_id=TITER_FIELD, result_schema_id=RESULT_SCHEMA)
+    assert len(data.results) == 2
+    calls = [x for x in fake.calls if x.path == "/api/v3/result/items"]
+    assert calls and all("schemaFieldLinkValue.linkedItemIds" in x.params for x in calls)

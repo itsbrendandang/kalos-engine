@@ -41,10 +41,12 @@ from kalos.integrations.benchling.client import (
     BenchlingAuthError,
     BenchlingClient,
     BenchlingConfigError,
+    BenchlingDeadlineExceeded,
     BenchlingError,
     BenchlingForbidden,
     BenchlingNotFound,
     BenchlingRateLimited,
+    BenchlingTooMuchData,
     ClientCredentialsToken,
     DelegatedToken,
     api_id,
@@ -171,6 +173,10 @@ def _benchling_error(exc: BenchlingError, *, delegated: bool = False) -> JSONRes
         return _err(400, "benchling_refused", str(exc))
     if isinstance(exc, BenchlingConfigError):
         return _err(400, "benchling_bad_request", str(exc))
+    if isinstance(exc, BenchlingDeadlineExceeded):
+        return _err(504, "benchling_timeout", "Benchling did not answer within this request's time limit")
+    if isinstance(exc, BenchlingTooMuchData):
+        return _err(400, "benchling_too_much_data", "Benchling returned more items than one import allows")
     if isinstance(exc, BenchlingRateLimited):
         wait = int(exc.retry_after) if exc.retry_after else 30
         return _err(503, "benchling_rate_limited", "Benchling's rate limit was reached; try again later",
