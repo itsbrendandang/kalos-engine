@@ -731,6 +731,19 @@ only added; a field never changes meaning or disappears within a version.
   averages: each recipe's own variance, shrunk toward the pooled one with
   `df0` prior repeats, divided by its repeat count. Off by default; proposals
   are unchanged when it is off.
+- `stopping`: advice on whether more rounds can still be told apart from assay
+  noise. Never removes proposals and never stops anything. `{advisory: true,
+  state, plain, p_gain_beyond_noise, max_expected_gain, gain_over_noise,
+  noise_sd, threshold, method, n_samples, seed}`. `state` is `keep_going`,
+  `gains_within_noise` (the chance of beating the best measured recipe by more
+  than `noise_sd` is below `threshold`, 0.10) or `unknown` (no repeated recipes,
+  so no noise estimate, or a refused sheet; numbers are null). `noise_sd` is
+  `noise.floor.sigma`; `max_expected_gain` is the largest predicted gain over
+  the best measured value, in the better direction, in target units. In a
+  synthetic simulation (`kalos/bench/stopping_sim.py`: one 2-input bump, noise
+  sd 0.5, 10 seeds x 6 rounds) 2 of 30 `gains_within_noise` readings were
+  false (the true optimum was still more than one noise sd better), both in
+  one seed. One small synthetic case; not a measured rate for real assays.
 
 ## Not in this slice
 

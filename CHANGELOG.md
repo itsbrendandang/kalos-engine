@@ -6,6 +6,8 @@ Newest first.
 
 ### Added - desktop-engine-2 (first-time-user study)
 
+- `stopping`: advice on whether more rounds can still beat the best run by more than the assay noise (`keep_going`, `gains_within_noise`, or `unknown` without repeats). Advice only: it never removes proposals. `kalos/bench/stopping_sim.py` measures how often it says "within noise" too early on a synthetic case.
+
 - `noise.floor`: the pooled assay noise with a 95% interval and its degrees of freedom. `roles.per_recipe_noise` (off by default) lets the proposal model use each recipe's own spread, shrunk toward the pooled one, when the noise rises with the recipe mean; `noise.per_recipe` says whether it was used and why.
 - Exploration design (QUEUE 6): with fewer than 2 x inputs distinct recipes, or when the model cannot rank recipes yet, the batch is the best bet plus recipes spread over the untested parts of the box, labelled (`batch_strategy`, `pick: exploration_design`). `roles.exploration_design: "off"` turns it off. No detectable difference against the model's picks on two synthetic surfaces (12 seeds).
 

@@ -31,6 +31,7 @@ from kalos.core.replicates import (
     shrunken_recipe_variances,
 )
 from kalos.core.splits import row_hash_groups
+from kalos.core.stopping import stopping_advice, unknown_advice
 from kalos.domains import (
     BIOPROCESS_PROFILE,
     ColumnRoles,
@@ -1688,6 +1689,19 @@ def _analyze_body(
         else:
             response_surface = _surf
 
+    # Advisory stopping signal (kalos/core/stopping.py). Read off the same
+    # surrogate after the batch is final and before it is
+    # released; it changes nothing else in the response.
+    _floor_var = nr.get("noise_var_pooled", float("nan"))
+    _y_fit_signed = sign * np.asarray(y_fit, float)
+    _best_fit_i = int(np.argmax(_y_fit_signed))
+    stopping = stopping_advice(
+        s, X_fit[_best_fit_i], float(_y_fit_signed[_best_fit_i]),
+        np.vstack([optimum_x.reshape(1, -1), np.asarray(batch, float).reshape(-1, X.shape[1])]),
+        float(np.sqrt(_floor_var)) if np.isfinite(_floor_var) and _floor_var > 0 else None,
+        seed=ANALYZE_SEED,
+    )
+
     # Release the fitted GP(s) (hold torch/gpytorch tensors + parameter/prior
     # back-references that can form reference cycles refcounting alone won't
     # break) as soon as their last use is done, rather than waiting on
@@ -1953,6 +1967,9 @@ def _analyze_body(
         # Whose picks the batch is: the model's, or an exploration design when
         # the model cannot rank recipes yet (analysis_parts/exploration.py).
         "batch_strategy": strategy,
+        # Advice on whether more rounds can be told apart from assay noise
+        # (kalos/core/stopping.py). Never removes proposals; never auto-stops.
+        "stopping": stopping,
         # Observed (tried) range of each continuous input, and how far past it
         # the search was allowed (roles.allow_beyond). `feature_ranges` is the
         # search box actually used.
@@ -2020,6 +2037,12 @@ def _analyze_body(
         result["proposal_notice"] = refusal_notice(refusal, PROPOSAL_BATCH_Q)
         # No best bet either: a refused model has no recipe to recommend.
         result["model_optimum"] = None
+        if stopping["state"] != "unknown":  # keep the plain "no repeats" reason
+            result["stopping"] = unknown_advice(
+                "Kalos cannot say whether more rounds will help: the model is not "
+                "reliable enough on this sheet yet.",
+                noise_sd=stopping["noise_sd"],
+            )
     if anonymize:
         result = _anonymize_result(
             result,
