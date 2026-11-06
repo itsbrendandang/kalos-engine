@@ -38,6 +38,8 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from kalos.integrations.benchling.routes import BenchlingGate
+from kalos.integrations.benchling.routes import router as _benchling_router
 from kalos.portal.analysis import _analyze, _annotate
 from kalos.portal.auth import (
     READ,
@@ -374,6 +376,9 @@ app.add_middleware(
     upload_paths=UPLOAD_PATHS,
     auth_enforced=lambda: get_authenticator().enforces(),
 )
+# Benchling connector off (KALOS_INTEGRATIONS lacks `benchling`): its paths get the
+# unknown-path 404 before any body is read. Inside CORS, like every other 404.
+app.add_middleware(BenchlingGate)
 app.add_middleware(CORSMiddleware, **cors_config())
 
 # Log the effective security posture (auth + CORS) once at import/startup.
@@ -898,6 +903,9 @@ def upload_error_response(error: BaseException) -> JSONResponse:
 app.include_router(_campaign_router)
 app.include_router(_campaigns_router)  # /api/campaigns* (kalos.portal.campaigns_api)
 app.include_router(_jobs_router)  # background jobs (kalos.portal.jobs_api, docs/JOBS.md)
+# Benchling connector (kalos/integrations/benchling, docs/BENCHLING.md); 404 unless
+# KALOS_INTEGRATIONS=benchling.
+app.include_router(_benchling_router)
 
 
 _CAMPAIGN_BODY_FIELDS = frozenset(

@@ -26,7 +26,7 @@ import base64
 import hashlib
 import math
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -110,7 +110,7 @@ def _describe(proposal: Mapping[str, Any]) -> str:
 
 
 def plan_conditions(
-    proposals: list[Mapping[str, Any]], provenance: Iterable[Mapping[str, Any]],
+    proposals: Sequence[Mapping[str, Any]], provenance: Iterable[Mapping[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[str], list[str]]:
     """The condition bodies (without `procedureRunPlanId`), the columns sent, and
     the recipe columns that cannot be planned (no planned-parameter provenance:
@@ -161,7 +161,7 @@ def plan_conditions(
 
 
 def push_proposals(
-    client: BenchlingClient, *, study_id: str, proposals: list[Mapping[str, Any]],
+    client: BenchlingClient, *, study_id: str, proposals: Sequence[Mapping[str, Any]],
     provenance: Iterable[Mapping[str, Any]], description: str,
     flowchart_config_version_id: str | None = None,
 ) -> PlanPush:
@@ -215,7 +215,7 @@ def _require_delegated(client: BenchlingClient) -> None:
 
 def push_results(
     client: BenchlingClient, *, schema_id: str, target_system_name: str, project_id: str | None,
-    results: list[Mapping[str, Any]], schema_fields: Iterable[str] = (),
+    results: Sequence[Mapping[str, Any]], schema_fields: Iterable[str] = (),
 ) -> ResultsPush:
     """Write each `{run_id, version, value}` as one Benchling result in a single
     transaction. Adds `kalos_run_id` when the schema has a field of that name."""

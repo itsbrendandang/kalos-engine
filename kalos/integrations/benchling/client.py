@@ -508,6 +508,11 @@ class BenchlingClient:
     def __repr__(self) -> str:
         return f"BenchlingClient({self.base_url!r}, mode={self.mode!r})"
 
+    def authenticate(self) -> None:
+        """Obtain a token now (app mode: one POST /oauth/token). Used to check
+        credentials before they are stored."""
+        self.auth.bearer(self._http, self.base_url, self.bucket)
+
     def _backoff(self, attempt: int) -> float:
         return min(MAX_BACKOFF_S, 2.0 ** attempt + self._rng.random())
 

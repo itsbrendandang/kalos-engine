@@ -85,11 +85,14 @@ def public_keys(jwks: Mapping[str, Any]) -> list[ec.EllipticCurvePublicKey]:
 
 def fetch_jwks(app_definition_id: str, *, transport: httpx.BaseTransport | None = None) -> dict[str, Any]:
     url = JWKS_URL.format(app_definition_id=api_id(app_definition_id))
-    with httpx.Client(transport=transport, timeout=10.0, follow_redirects=False) as http:
-        resp = http.get(url, headers={"Accept": "application/json"})
-    if resp.status_code != 200:
-        raise WebhookRejected(f"jwks fetch returned {resp.status_code}")
-    body = resp.json()
+    try:
+        with httpx.Client(transport=transport, timeout=10.0, follow_redirects=False) as http:
+            resp = http.get(url, headers={"Accept": "application/json"})
+        if resp.status_code != 200:
+            raise WebhookRejected(f"jwks fetch returned {resp.status_code}")
+        body = resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise WebhookRejected(f"jwks fetch failed ({type(exc).__name__})") from None
     if not isinstance(body, dict):
         raise WebhookRejected("jwks is not an object")
     return body
@@ -189,6 +192,10 @@ def handle_webhook(
     app_def = connection.get("app_definition_id")
     if not isinstance(app_def, str) or not app_def:
         raise WebhookRejected("tenant has no app definition id")
+    try:
+        api_id(app_def)
+    except BenchlingConfigError:
+        raise WebhookRejected("stored app definition id is malformed") from None
     try:
         wid = verify_webhook(headers, body, jwks.keys(app_def), now=now)
     except WebhookRejected:
