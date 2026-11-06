@@ -1,0 +1,684 @@
+{
+ "source": "https://benchling.com/api/v3/openapi.yaml, fetched 2026-11-06 (copy in /tmp/redesign/research/benchling-raw/openapi-v3.yaml)",
+ "rule": "beta = the operation declares the EARLY-ACCESS header parameter",
+ "operations": [
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-flowchart-config-version/items",
+   "operationId": "ProcedureFlowchartConfigVersion.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-flowchart-config-version/{procedure_flowchart_config_version_id}",
+   "operationId": "ProcedureFlowchartConfigVersion.Get",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-flowchart-config-version/{procedure_flowchart_config_version_id}/nodes/items",
+   "operationId": "ProcedureFlowchartConfigVersion.nodes.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-flowchart/items",
+   "operationId": "ProcedureFlowchart.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-flowchart/{procedure_flowchart_id}",
+   "operationId": "ProcedureFlowchart.Get",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-definition-version/items",
+   "operationId": "ProcedureMethodDefinitionVersion.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-definition-version/{procedure_method_definition_version_id}",
+   "operationId": "ProcedureMethodDefinitionVersion.Get",
+   "beta": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/procedure-method-execution-instance-association",
+   "operationId": "ProcedureMethodExecutionInstanceAssociation.Create",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-execution-instance-association/items",
+   "operationId": "ProcedureMethodExecutionInstanceAssociation.List",
+   "beta": true
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/v3/procedure-method-execution-instance-association/{procedure_method_execution_instance_association_id}",
+   "operationId": "ProcedureMethodExecutionInstanceAssociation.Delete",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-execution-instance-association/{procedure_method_execution_instance_association_id}",
+   "operationId": "ProcedureMethodExecutionInstanceAssociation.Get",
+   "beta": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/procedure-method-execution-instance-association:batch-create",
+   "operationId": "ProcedureMethodExecutionInstanceAssociation.BatchCreate",
+   "beta": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/procedure-method-execution-instance-association:batch-delete",
+   "operationId": "ProcedureMethodExecutionInstanceAssociation.BatchDelete",
+   "beta": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/procedure-method-execution-instance-association:bulk-create",
+   "operationId": "ProcedureMethodExecutionInstanceAssociation.BulkCreate",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-execution-instance/items",
+   "operationId": "ProcedureMethodExecutionInstance.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-execution-instance/{procedure_method_execution_instance_id}",
+   "operationId": "ProcedureMethodExecutionInstance.Get",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-execution-instance/{procedure_method_execution_instance_id}/created-retest-orders/items",
+   "operationId": "ProcedureMethodExecutionInstance.createdRetestOrders.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-execution-instance/{procedure_method_execution_instance_id}/data-parameter-actual-values/items",
+   "operationId": "ProcedureMethodExecutionInstance.dataParameterActualValues.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-execution-instance/{procedure_method_execution_instance_id}/data-parameter-confirmation-values/items",
+   "operationId": "ProcedureMethodExecutionInstance.dataParameterConfirmationValues.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-execution-instance/{procedure_method_execution_instance_id}/data-parameter-planned-values/items",
+   "operationId": "ProcedureMethodExecutionInstance.dataParameterPlannedValues.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-execution-instance/{procedure_method_execution_instance_id}/equipment-confirmation-values/items",
+   "operationId": "ProcedureMethodExecutionInstance.equipmentConfirmationValues.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-execution-instance/{procedure_method_execution_instance_id}/equipment-planned-values/items",
+   "operationId": "ProcedureMethodExecutionInstance.equipmentPlannedValues.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-execution-instance/{procedure_method_execution_instance_id}/material-input-confirmation-values/items",
+   "operationId": "ProcedureMethodExecutionInstance.materialInputConfirmationValues.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-execution-instance/{procedure_method_execution_instance_id}/material-input-planned-values/items",
+   "operationId": "ProcedureMethodExecutionInstance.materialInputPlannedValues.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-execution-instance/{procedure_method_execution_instance_id}/material-output-confirmation-values/items",
+   "operationId": "ProcedureMethodExecutionInstance.materialOutputConfirmationValues.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-method-execution-instance/{procedure_method_execution_instance_id}/test-orders/items",
+   "operationId": "ProcedureMethodExecutionInstance.testOrders.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-parameter-confirmation-value/items",
+   "operationId": "ProcedureParameterConfirmationValue.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-parameter-confirmation-value/{procedure_parameter_confirmation_value_id}",
+   "operationId": "ProcedureParameterConfirmationValue.Get",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-parameter-measured-value/items",
+   "operationId": "ProcedureParameterMeasuredValue.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-parameter-measured-value/{procedure_parameter_measured_value_id}",
+   "operationId": "ProcedureParameterMeasuredValue.Get",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-parameter-planned-value/items",
+   "operationId": "ProcedureParameterPlannedValue.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-parameter-planned-value/{procedure_parameter_planned_value_id}",
+   "operationId": "ProcedureParameterPlannedValue.Get",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-parameter-version/items",
+   "operationId": "ProcedureParameterVersion.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-parameter-version/{procedure_parameter_version_id}",
+   "operationId": "ProcedureParameterVersion.Get",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-parameter/items",
+   "operationId": "ProcedureParameter.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-parameter/{procedure_parameter_id}",
+   "operationId": "ProcedureParameter.Get",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-run-condition-replicate/items",
+   "operationId": "ProcedureRunConditionReplicate.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-run-condition-replicate/{procedure_run_condition_replicate_id}",
+   "operationId": "ProcedureRunConditionReplicate.Get",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-run-condition/items",
+   "operationId": "ProcedureRunCondition.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-run-condition/{procedure_run_condition_id}",
+   "operationId": "ProcedureRunCondition.Get",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-run-condition/{procedure_run_condition_id}/procedure-run-condition-replicates/items",
+   "operationId": "ProcedureRunCondition.procedureRunConditionReplicates.List",
+   "beta": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/procedure-run-plan",
+   "operationId": "ProcedureRunPlan.Create",
+   "beta": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/procedure-run-plan-condition",
+   "operationId": "ProcedureRunPlanCondition.Create",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-run-plan-condition/items",
+   "operationId": "ProcedureRunPlanCondition.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-run-plan-condition/{procedure_run_plan_condition_id}",
+   "operationId": "ProcedureRunPlanCondition.Get",
+   "beta": true
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/procedure-run-plan-condition/{procedure_run_plan_condition_id}",
+   "operationId": "ProcedureRunPlanCondition.Update",
+   "beta": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/procedure-run-plan-condition:batch-create",
+   "operationId": "ProcedureRunPlanCondition.BatchCreate",
+   "beta": true
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/procedure-run-plan-condition:batch-update",
+   "operationId": "ProcedureRunPlanCondition.BatchUpdate",
+   "beta": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/procedure-run-plan-condition:bulk-create",
+   "operationId": "ProcedureRunPlanCondition.BulkCreate",
+   "beta": true
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/procedure-run-plan-condition:bulk-update",
+   "operationId": "ProcedureRunPlanCondition.BulkUpdate",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-run-plan/items",
+   "operationId": "ProcedureRunPlan.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-run-plan/{procedure_run_plan_id}",
+   "operationId": "ProcedureRunPlan.Get",
+   "beta": true
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/procedure-run-plan/{procedure_run_plan_id}",
+   "operationId": "ProcedureRunPlan.Update",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-run-plan/{procedure_run_plan_id}/procedure-run-plan-conditions/items",
+   "operationId": "ProcedureRunPlan.procedureRunPlanConditions.List",
+   "beta": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/procedure-run-plan/{procedure_run_plan_id}:promote",
+   "operationId": "ProcedureRunPlan.Promote",
+   "beta": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/procedure-run-plan:batch-create",
+   "operationId": "ProcedureRunPlan.BatchCreate",
+   "beta": true
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/procedure-run-plan:batch-update",
+   "operationId": "ProcedureRunPlan.BatchUpdate",
+   "beta": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/procedure-run-plan:bulk-create",
+   "operationId": "ProcedureRunPlan.BulkCreate",
+   "beta": true
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/procedure-run-plan:bulk-update",
+   "operationId": "ProcedureRunPlan.BulkUpdate",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-run/items",
+   "operationId": "ProcedureRun.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-run/{procedure_run_id}",
+   "operationId": "ProcedureRun.Get",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-run/{procedure_run_id}/conditions/items",
+   "operationId": "ProcedureRun.conditions.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-run/{procedure_run_id}/method-execution-instances/items",
+   "operationId": "ProcedureRun.methodExecutionInstances.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-step-definition-version/items",
+   "operationId": "ProcedureStepDefinitionVersion.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-step-definition-version/{procedure_step_definition_version_id}",
+   "operationId": "ProcedureStepDefinitionVersion.Get",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-step-execution-instance/items",
+   "operationId": "ProcedureStepExecutionInstance.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure-step-execution-instance/{procedure_step_execution_instance_id}",
+   "operationId": "ProcedureStepExecutionInstance.Get",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure/items",
+   "operationId": "Procedure.List",
+   "beta": true
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/procedure/{procedure_id}",
+   "operationId": "Procedure.Get",
+   "beta": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/project",
+   "operationId": "Project.Create",
+   "beta": false
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/project/items",
+   "operationId": "Project.List",
+   "beta": false
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/project/{project_id}",
+   "operationId": "Project.Get",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/project/{project_id}",
+   "operationId": "Project.Update",
+   "beta": false
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/project/{project_id}/review-processes/items",
+   "operationId": "Project.reviewProcesses.List",
+   "beta": false
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/project:batch-create",
+   "operationId": "Project.BatchCreate",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/project:batch-update",
+   "operationId": "Project.BatchUpdate",
+   "beta": false
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/project:bulk-create",
+   "operationId": "Project.BulkCreate",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/project:bulk-update",
+   "operationId": "Project.BulkUpdate",
+   "beta": false
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/result",
+   "operationId": "Result.Create",
+   "beta": false
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/result-schema",
+   "operationId": "ResultSchema.Create",
+   "beta": false
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/result-schema/items",
+   "operationId": "ResultSchema.List",
+   "beta": false
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/result-schema/{result_schema_id}",
+   "operationId": "ResultSchema.Get",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/result-schema/{result_schema_id}",
+   "operationId": "ResultSchema.Update",
+   "beta": false
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/result-schema/{result_schema_id}/field-definitions/items",
+   "operationId": "ResultSchema.fieldDefinitions.List",
+   "beta": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/result-schema/{result_schema_id}:set-field-definitions",
+   "operationId": "ResultSchema.SetFieldDefinitions",
+   "beta": false
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/result-schema:batch-create",
+   "operationId": "ResultSchema.BatchCreate",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/result-schema:batch-update",
+   "operationId": "ResultSchema.BatchUpdate",
+   "beta": false
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/result-schema:bulk-create",
+   "operationId": "ResultSchema.BulkCreate",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/result-schema:bulk-update",
+   "operationId": "ResultSchema.BulkUpdate",
+   "beta": false
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/result/items",
+   "operationId": "Result.List",
+   "beta": false
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/result/{result_id}",
+   "operationId": "Result.Get",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/result/{result_id}",
+   "operationId": "Result.Update",
+   "beta": false
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/result:batch-create",
+   "operationId": "Result.BatchCreate",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/result:batch-update",
+   "operationId": "Result.BatchUpdate",
+   "beta": false
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/result:bulk-create",
+   "operationId": "Result.BulkCreate",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/result:bulk-update",
+   "operationId": "Result.BulkUpdate",
+   "beta": false
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/study",
+   "operationId": "Study.Create",
+   "beta": false
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/study/items",
+   "operationId": "Study.List",
+   "beta": false
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/study/{study_id}",
+   "operationId": "Study.Get",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/study/{study_id}",
+   "operationId": "Study.Update",
+   "beta": false
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/study/{study_id}/authors/items",
+   "operationId": "Study.authors.List",
+   "beta": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/study:batch-create",
+   "operationId": "Study.BatchCreate",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/study:batch-update",
+   "operationId": "Study.BatchUpdate",
+   "beta": false
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/study:bulk-create",
+   "operationId": "Study.BulkCreate",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/study:bulk-update",
+   "operationId": "Study.BulkUpdate",
+   "beta": false
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/unit",
+   "operationId": "Unit.Create",
+   "beta": false
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/unit/items",
+   "operationId": "Unit.List",
+   "beta": false
+  },
+  {
+   "method": "GET",
+   "path": "/api/v3/unit/{unit_id}",
+   "operationId": "Unit.Get",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/unit/{unit_id}",
+   "operationId": "Unit.Update",
+   "beta": false
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/unit:batch-create",
+   "operationId": "Unit.BatchCreate",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/unit:batch-update",
+   "operationId": "Unit.BatchUpdate",
+   "beta": false
+  },
+  {
+   "method": "POST",
+   "path": "/api/v3/unit:bulk-create",
+   "operationId": "Unit.BulkCreate",
+   "beta": false
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/v3/unit:bulk-update",
+   "operationId": "Unit.BulkUpdate",
+   "beta": false
+  }
+ ]
+}

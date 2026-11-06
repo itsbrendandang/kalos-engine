@@ -1315,6 +1315,7 @@ normalize = [
 ]
 portal = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "openpyxl" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-multipart" },
@@ -1333,6 +1334,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'portal'", specifier = ">=0.143.0" },
     { name = "gpytorch", marker = "extra == 'ml'", specifier = "==1.15.2" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27,<1" },
+    { name = "httpx", marker = "extra == 'portal'", specifier = ">=0.27,<1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "openpyxl", marker = "extra == 'portal'", specifier = ">=3.1.5" },

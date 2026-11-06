@@ -4,6 +4,13 @@ Newest first.
 
 ## Unreleased
 
+### Added - Benchling connector, off by default (`docs/BENCHLING.md`)
+
+- `KALOS_INTEGRATIONS=benchling` turns on `/api/integrations/benchling/*`: connect (admin; app secret encrypted with `KALOS_SECRET_KEY`), status, studies, import, push-proposals, push-results, poll, webhook. Off, every path is the unknown-path 404.
+- Import maps a Bioprocess study (v3) or assay runs (v2) into a run sheet and uploads it through the normal upload path, with a column-provenance table and an import report of skipped runs.
+- Writes are drafts: proposals become a run plan that Kalos never promotes. Results and the report file are written only with the user's delegated Benchling token. Every push is recorded with the Benchling ids returned.
+- Not yet run against a real Benchling tenant; see "Not verified" in `docs/BENCHLING.md`. `httpx` joins the `portal` extra.
+
 ### Changed - audit trail and recorded results (schema v5, `docs/MIGRATIONS.md`)
 
 - **Recorded results are append-only.** A re-submitted campaign result is a new `run_results` row (value, value replaced, reason, actor, server time). A correction needs a `reason` (`400 reason_required` without one). The run's current value is the latest. Response fields are added (`result_version`, `previous_result`, `result_reason`, `result_actor`, `result_recorded_at`); none is removed.

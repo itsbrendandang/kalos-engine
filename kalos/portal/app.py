@@ -38,6 +38,8 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from kalos.integrations import BENCHLING, BenchlingGate
+from kalos.integrations import enabled as _integration_enabled
 from kalos.portal.analysis import _analyze, _annotate
 from kalos.portal.auth import (
     READ,
@@ -275,6 +277,12 @@ app = FastAPI(
     redoc_url="/redoc" if _DEVELOPMENT else None,
     openapi_url="/openapi.json" if _DEVELOPMENT else None,
 )
+
+# Benchling connector off (KALOS_INTEGRATIONS lacks `benchling`): its paths get the
+# unknown-path 404 before any body is read. Added first, so it is the innermost
+# middleware: every refusal that comes earlier (open-mode remote 503, production
+# without auth, 413) treats these paths exactly like unknown ones.
+app.add_middleware(BenchlingGate)
 
 # Probes stay reachable in every posture: they carry no tenant data.
 _PROBE_PATHS = frozenset({"/healthz", "/readyz"})
@@ -898,6 +906,25 @@ def upload_error_response(error: BaseException) -> JSONResponse:
 app.include_router(_campaign_router)
 app.include_router(_campaigns_router)  # /api/campaigns* (kalos.portal.campaigns_api)
 app.include_router(_jobs_router)  # background jobs (kalos.portal.jobs_api, docs/JOBS.md)
+
+
+def mount_integrations() -> bool:
+    """Mount the Benchling connector's routes when KALOS_INTEGRATIONS enables it
+    (kalos/integrations/benchling, docs/BENCHLING.md). With it off, the connector
+    module, its client and httpx are never imported. Idempotent; returns whether
+    the routes are mounted."""
+    if getattr(app.state, "benchling_mounted", False):
+        return True
+    if not _integration_enabled(BENCHLING):
+        return False
+    from kalos.integrations.benchling.routes import create_benchling_router
+
+    app.include_router(create_benchling_router())
+    app.state.benchling_mounted = True
+    return True
+
+
+mount_integrations()
 
 
 _CAMPAIGN_BODY_FIELDS = frozenset(
