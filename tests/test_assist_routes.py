@@ -378,3 +378,20 @@ def test_tenant_skill_text_supports_no_claim(tmp_path):
     (d / "SKILL.md").write_text("# Notes\n\nHigher feed will raise titer.\n")
     chunk = skill_chunks([d / "SKILL.md"])[0]
     assert chunk.trusted_text is False and chunk.kalos_text() == ""
+
+
+def test_numbers_exponents_and_list_positions():
+    from kalos.assist.chat import Labelled, check_answer
+    from kalos.assist.index import Chunk, Hit
+
+    chunk = Chunk("c1", "analysis", "proposals", "cmp_" + "1" * 32, "Proposed recipes",
+                  "Recipe 3: Methanol = 2.5; Predicted lipase_titer 3.3")
+    lab = [Labelled("S1", Hit(chunk, 1.0))]
+    guide = {"step": "x", "why": "y", "why_it_matters": "z"}
+    assert check_answer("The titer reached 2e9 [S1].", lab, guide).answer == ""  # exponent parsed, not in source
+    assert check_answer("It was the best of 7 runs [S1].", lab, guide).answer == ""  # 7 is a value, not a position
+    kept = check_answer("Recipe 3 has Predicted lipase_titer 3.3 [S1].", lab, guide).answer
+    assert kept == "Recipe 3 has Predicted lipase_titer 3.3."
+    big = Chunk("c2", "analysis", "noise", None, "spread", "Measured spread 2000000000")
+    ok = check_answer("Measured spread was 2e9 [S1].", [Labelled("S1", Hit(big, 1.0))], guide).answer
+    assert ok == "Measured spread was 2e9."

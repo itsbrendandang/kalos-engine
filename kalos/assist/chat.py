@@ -32,7 +32,14 @@ from kalos.assist.words import banned_in, unsupported_claims
 MAX_QUESTION_CHARS = 2000
 MAX_QUOTE_CHARS = 300
 _LABEL = re.compile(r"\[(S\d{1,2}|G)\]")
-_NUMBER = re.compile(r"(?<![A-Za-z0-9_.])[-+]?\d+(?:[.,]\d+)?")
+_NUMBER = re.compile(r"(?<![A-Za-z0-9_.])[-+]?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?")
+# "Recipe 3", "run 2", "round 1", "step 4", "#5", or "2." opening a list item:
+# a position in a list, not a value. Only 1-10, and only in these spots.
+_POSITION = re.compile(
+    r"(?:\b(?:recipe|run|round|step|item|option|number|no\.?)\s*|#)(10|[1-9])(?![\d.,eE])"
+    r"|^(10|[1-9])[.)]\s",
+    re.IGNORECASE,
+)
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
 
 SYSTEM_PROMPT = """You answer questions about a lab's own experiment campaign in Kalos.
@@ -90,7 +97,21 @@ def split_sentences(text: str) -> list[str]:
 
 
 def _numbers(text: str) -> set[str]:
-    return {n.replace(",", ".").lstrip("+") for n in _NUMBER.findall(text)}
+    """Every number in `text`, normalised (2e9 and 2000000000 are the same;
+    a decimal comma reads as a point)."""
+    out = set()
+    for raw in _NUMBER.findall(text):
+        s = raw.replace(",", ".")
+        try:
+            out.add(repr(float(s)))
+        except ValueError:
+            out.add(s)
+    return out
+
+
+def _value_numbers(sentence: str) -> set[str]:
+    """Numbers in an answer sentence that are values (list positions removed)."""
+    return _numbers(_POSITION.sub(" ", sentence))
 
 
 GUIDE_OVERLAP = 0.6
@@ -161,8 +182,7 @@ def check_answer(reply: str, labelled: list[Labelled], guide: dict[str, Any]) ->
             rejected.append(f"claim not in the sources: {', '.join(claims)}")
             continue
         allowed_numbers = set().union(*(_numbers(t) for t in cited)) if cited else set()
-        allowed_numbers |= {str(n) for n in range(1, 11)}  # list positions and small counts
-        if _numbers(bare) - allowed_numbers:
+        if _value_numbers(bare) - allowed_numbers:
             dropped += 1
             continue
         kept.append(bare)
