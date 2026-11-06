@@ -12,6 +12,7 @@ src_14 must not be drawn on a numeric axis).
   row_number    a headerless or monotone 0..n / 1..n index column
   outcome_like  something measured during or after the run (not an input)
   constant      one value, or no values, on the rows the model is fit on
+  date          dates or times (never binned as numbers)
 
 `role` says what the engine did with it: target, input, categorical_input,
 group (a recipe label that groups replicates), fixed (a near-constant input
@@ -26,11 +27,13 @@ finding code `category_not_modeled`: never silently, and never as numbers.
 """
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable, Mapping
 from typing import Any
 
 import pandas as pd
 
+from kalos.portal.analysis_parts.roles import REASON_CODES
 from kalos.portal.cells import NON_NUMERIC, classify_cells
 from kalos.validation.report import Finding
 
@@ -40,6 +43,31 @@ MAX_LEVELS_LISTED = 50
 TEXT_ID_DISTINCT_SHARE = 0.9
 
 _ROW_NUMBER_REASONS = {"headerless", "monotone_row_number", "unique_per_row_integer"}
+
+# The closed list of `columns[].reason` codes (docs/CAMPAIGNS_API.md, "Column
+# kinds"): the provenance reasons plus the ones this module adds.
+COLUMN_KIND_REASONS: tuple[str, ...] = (
+    *REASON_CODES,
+    "too_many_levels", "mixed_text_and_numbers", "too_few_repeats",
+    "unique_per_row", "date_or_time",
+)
+FINDING_CODES: tuple[str, ...] = ("category_not_modeled",)
+
+
+def _looks_like_dates(series: pd.Series, text_cells: int) -> bool:
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return True
+    if text_cells == 0:
+        return False
+    labels = series[classify_cells(series) == NON_NUMERIC].astype(str).str.strip()
+    if not labels.str.contains(r"\d", regex=True).all():
+        return False
+    if not labels.str.contains(r"[-/:.T ]", regex=True).all():
+        return False
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        parsed = pd.to_datetime(labels, errors="coerce", format="mixed")
+    return bool(parsed.notna().mean() >= 0.8)
 _CONSTANT_STATUSES = {"dropped_constant", "dropped_constant_on_fitted_rows", "dropped_all_blank"}
 
 
@@ -84,6 +112,8 @@ def column_kinds(
         is_text = n_values > 0 and text_cells >= 0.5 * n_values
         if status == "target":
             entry.update(kind="numeric", role="target", used_in_fit=True)
+        elif name not in cont and name not in cats and _looks_like_dates(series, text_cells):
+            entry.update(kind="date", reason="date_or_time")
         elif status == "fixed_near_constant":
             entry.update(kind="numeric", role="fixed")
         elif reason in _ROW_NUMBER_REASONS:
@@ -108,7 +138,10 @@ def column_kinds(
             if n_levels <= 1:
                 entry.update(kind="constant")
             elif identifier or n_levels >= TEXT_ID_DISTINCT_SHARE * max(text_cells, 1):
-                entry.update(kind="text_id", n_levels=n_levels)
+                entry.update(
+                    kind="text_id", n_levels=n_levels,
+                    reason="name_matches_identifier" if identifier else "unique_per_row",
+                )
             else:
                 why = (
                     "too_many_levels" if n_levels > max_auto_levels and name not in declared
@@ -144,6 +177,8 @@ def column_kinds(
                 ))
         elif status == "dropped_id":
             entry.update(kind="text_id")
+        if entry["reason"] not in COLUMN_KIND_REASONS:
+            entry["reason"] = None  # never an undocumented code
         out.append(entry)
     return out, findings
 

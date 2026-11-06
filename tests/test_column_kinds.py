@@ -11,7 +11,11 @@ import pytest
 pytest.importorskip("botorch")
 
 from kalos.portal.analysis import _analyze
-from kalos.portal.analysis_parts.column_kinds import column_kinds
+from kalos.portal.analysis_parts.column_kinds import (
+    COLUMN_KIND_REASONS,
+    FINDING_CODES,
+    column_kinds,
+)
 
 
 def _sheet(n: int = 40, n_sources: int = 19, seed: int = 0) -> pd.DataFrame:
@@ -54,7 +58,12 @@ def test_every_column_gets_a_kind_and_a_text_input_is_never_numeric():
     assert cols["Gly"]["kind"] == "numeric" and cols["Gly"]["role"] == "input"
     assert cols["Gly"]["used_in_fit"] is True and cols["Gly"]["levels"] is None
     assert cols["Titer"]["role"] == "target"
-    assert cols["Sample"]["kind"] == "text_id"
+    assert cols["Sample"]["kind"] == "text_id" and cols["Sample"]["reason"] == "name_matches_identifier"
+    assert cols["Sample"]["levels"] is None
+    for c in out["columns"]:
+        assert c["reason"] is None or c["reason"] in COLUMN_KIND_REASONS, c
+        assert c["finding_code"] is None or c["finding_code"] in FINDING_CODES, c
+    assert [c["name"] for c in out["columns"]] == [p["name"] for p in out["provenance"]]
     assert cols["Vessel"]["kind"] == "constant"
     assert cols["OD_Prod"]["kind"] == "outcome_like" and not cols["OD_Prod"]["used_in_fit"]
     row_index = next(c for c in out["columns"] if c["kind"] == "row_number")
@@ -75,14 +84,16 @@ def test_mixed_text_and_numbers_and_rare_labels_say_why():
     df = pd.DataFrame({
         "mixed": ["a", "b", "1", "a", "b", "2"],
         "rare": ["x1", "x2", "x3", "x1", "x4", "x5"],
+        "remark": ["ok", "late", "foamed", "fine", "early", "redo"],
         "Titer": [1, 2, 3, 4, 5, 6],
     })
     prov = [{"name": "mixed", "status": "dropped_sparse"}, {"name": "rare", "status": "dropped_sparse"},
-            {"name": "Titer", "status": "target"}]
+            {"name": "remark", "status": "dropped_sparse"}, {"name": "Titer", "status": "target"}]
     cols, findings = column_kinds(df, prov, kept_cont=[], kept_cats=[], max_auto_levels=12)
     by = {c["name"]: c for c in cols}
     assert by["mixed"]["reason"] == "mixed_text_and_numbers"
     assert by["rare"]["kind"] == "category" and by["rare"]["reason"] == "too_few_repeats"
+    assert by["remark"]["kind"] == "text_id" and by["remark"]["reason"] == "unique_per_row"
     assert {f.code for f in findings} == {"category_not_modeled"}
 
 
@@ -93,3 +104,33 @@ def test_anonymize_aliases_identifier_columns_and_their_levels():
     text = json.dumps(out["columns"])
     assert "Jane Smith" not in text and "Operator" not in text
     assert "CarbonSource" in text  # process variables keep their names
+
+
+def test_dates_are_their_own_kind():
+    df = pd.DataFrame({
+        "started": [f"2026-0{1 + i % 9}-1{i % 10} 08:30" for i in range(12)],
+        "pH": np.linspace(6, 8, 12),
+        "Titer": np.linspace(1, 3, 12),
+    })
+    prov = [{"name": "started", "status": "dropped_sparse"}, {"name": "pH", "status": "kept_feature"},
+            {"name": "Titer", "status": "target"}]
+    cols, findings = column_kinds(df, prov, kept_cont=["pH"], kept_cats=[], max_auto_levels=12)
+    assert cols[0]["kind"] == "date" and cols[0]["reason"] == "date_or_time" and not findings
+    df["started"] = pd.to_datetime(df["started"])
+    cols, _ = column_kinds(df, prov, kept_cont=["pH"], kept_cats=[], max_auto_levels=12)
+    assert cols[0]["kind"] == "date"
+    # labels such as "A pH 4" are categories, not dates
+    df2 = pd.DataFrame({"cond": ["A pH 4", "B pH 5"] * 6, "Titer": range(12)})
+    cols, _ = column_kinds(df2, [{"name": "cond", "status": "dropped_sparse"},
+                                 {"name": "Titer", "status": "target"}],
+                           kept_cont=[], kept_cats=[], max_auto_levels=12)
+    assert cols[0]["kind"] == "category"
+
+
+def test_the_closed_code_list_is_documented():
+    from pathlib import Path
+
+    doc = (Path(__file__).resolve().parents[1] / "docs" / "CAMPAIGNS_API.md").read_text()
+    section = doc[doc.index("### Column kinds"):doc.index("### Contract version")]
+    for code in (*COLUMN_KIND_REASONS, *FINDING_CODES):
+        assert f"`{code}`" in section, code

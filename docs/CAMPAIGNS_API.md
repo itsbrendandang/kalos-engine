@@ -423,6 +423,42 @@ recipe never sits outside `feature_ranges` (replay F9).
   `levels`, never on a numeric one.
 - With `anonymize=true`, identifier-like names are aliased and so are the level
   labels of those columns.
+- `kind` is a closed list: `numeric`, `category`, `text_id`, `row_number`,
+  `outcome_like`, `constant`, `date` (dates or times; never binned as numbers).
+- `levels` is present for every `category` column, used or excluded.
+- `name` is the same string as `provenance[].name` (a headerless column is
+  `column N` in both). `provenance`, `features`, `categorical_features` and
+  `feature_ranges` are unchanged; `columns` is additive.
+- `finding_code` is null or `category_not_modeled`.
+- `reason` is null or one of these codes (closed list; the same codes appear in
+  `provenance[].reason`):
+
+| code | meaning |
+| --- | --- |
+| `declared` | the role came from `roles` |
+| `requested_target` | the column named as the target |
+| `name_matches_target_candidate` | its name reads like an outcome |
+| `last_numeric_column` | chosen as target because it is the last number column |
+| `numeric_input` | a number input |
+| `categorical_text` | a text input fitted as a category |
+| `concentration_before_target` | a concentration before the target, kept as an input |
+| `headerless` | no header and one number per row: a row index |
+| `monotone_row_number` | 0..n or 1..n counter: a row index |
+| `after_target_in_sheet` | after the target and named like a measurement |
+| `name_matches_identifier` | its name reads like an id (sample, operator, ...) |
+| `constant` | one value |
+| `constant_on_fitted_rows` | one value on the rows the model uses |
+| `sparse_or_unparsed` | too few usable values |
+| `declared_non_numeric` | declared as an input but not numeric |
+| `all_blank` | no values |
+| `recipe_label` | a label naming each recipe: groups replicates |
+| `near_constant` | spread within sensor precision: fixed at its median |
+| `not_declared` | roles listed the inputs and this one was not listed |
+| `too_many_levels` | a category with more than 12 labels, not declared |
+| `mixed_text_and_numbers` | labels and numbers in one column |
+| `too_few_repeats` | labels repeat too rarely to learn from |
+| `unique_per_row` | text with about one value per row |
+| `date_or_time` | dates or times |
 
 ### Contract version
 
