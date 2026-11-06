@@ -129,3 +129,41 @@ def test_pichia_like_analysis_does_not_use_leaky_columns():
 def test_csv_round_trip_helper_is_a_real_csv():
     # guard: the fixture really has a blank first header
     assert io.BytesIO(_pichia_like_csv()).readline().startswith(b",CarbonSource")
+
+
+@pytest.mark.parametrize("name, values", [
+    ("Excel row", np.arange(2, 14)),                                  # 2..n+1
+    ("Line", np.arange(101, 113)),                                    # any start
+    ("Pos", np.arange(12, 0, -1)),                                    # descending
+    ("Entry", np.array([1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+                         18, 19, 20, 21])),                           # one deleted row
+    ("No", np.arange(0, 12)),                                         # 0..n-1 (as before)
+])
+def test_row_number_any_start_descending_or_small_gaps_is_excluded(name, values):
+    rng = np.random.default_rng(3)
+    n = len(values)
+    df = pd.DataFrame({name: values, "pH": rng.uniform(6, 7.5, n), "titer": rng.uniform(1, 5, n)})
+    out = _safety(df, "titer")
+    assert out.overrides[name] == ("dropped_id", "monotone_row_number")
+    assert name not in out.cont_feats and "pH" in out.cont_feats
+
+
+@pytest.mark.parametrize("values", [
+    np.arange(10, 130, 10),                       # a dose ladder: sorted, unique, sparse
+    np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30]),  # big gaps
+    np.array([3, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12]),  # not monotone
+])
+def test_sorted_sparse_or_unsorted_integer_inputs_stay_inputs(values):
+    rng = np.random.default_rng(4)
+    n = len(values)
+    df = pd.DataFrame({"dose": values, "pH": rng.uniform(6, 7.5, n), "titer": rng.uniform(1, 5, n)})
+    out = _safety(df, "titer")
+    assert "dose" in out.cont_feats and "dose" not in out.overrides
+
+
+def test_a_declared_row_number_like_feature_is_kept():
+    rng = np.random.default_rng(5)
+    df = pd.DataFrame({"Line": np.arange(2, 14), "pH": rng.uniform(6, 7.5, 12),
+                       "titer": rng.uniform(1, 5, 12)})
+    out = _safety(df, None, ColumnRoles(target="titer", features=["Line", "pH"]))
+    assert out.cont_feats == ["Line", "pH"] and "Line" not in out.overrides

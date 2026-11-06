@@ -9,7 +9,7 @@ src_14 must not be drawn on a numeric axis).
   numeric       numbers that vary (the target is numeric too)
   category      text labels that repeat (a medium, a carbon source, a recipe label)
   text_id       text (or an identifier-named column) with about one value per row
-  row_number    a headerless or monotone 0..n / 1..n index column
+  row_number    a headerless index column, or a near-dense up/down counter
   outcome_like  something measured during or after the run (not an input)
   constant      one value, or no values, on the rows the model is fit on
   date          dates or times (never binned as numbers)

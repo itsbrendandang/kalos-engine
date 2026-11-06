@@ -58,7 +58,7 @@ Because the sheet comes from an external client, the upload path is guarded:
 - **Column-role safety.**
   These rules apply unless the column is declared in `roles.features`.
   - A column with no header that holds unique whole numbers, one per row, is a saved row index. It is not an input (`dropped_id`, reason `headerless`).
-  - A named column of 8 or more rows holding 0, 1, 2, ... or 1, 2, 3, ... in sheet order is a row number. It is not an input (`dropped_id`, reason `monotone_row_number`).
+  - A named column of 8 or more rows of unique whole numbers that run up or down in sheet order from any start (0, 1, 2, ...; 1, 2, 3, ...; Excel's 2, 3, 4, ...; n, n-1, ...), with at most a few numbers missing (at least 90% of the range present), is a row number. It is not an input (`dropped_id`, reason `monotone_row_number`).
   - A column after the target whose name reads like a measurement taken during the run (OD, optical density, biomass, VCD, viability, DCW, final, harvest, measured, lactate, ammonia) is not an input (`dropped_output`, reason `after_target_in_sheet`). Both the position and the name must match, so inputs that follow the target with plain names (pH, temperature) stay inputs.
   - When the caller names the target, a column before it whose only outcome-like part is a concentration word (`Carbon_conc`) is kept as an input (reason `concentration_before_target`, `info` finding).
   - Each exclusion has a `warning` finding (`row_number_column`, `after_target_in_sheet`). An input whose name reads like an outcome gets `feature_looks_outcome_like`. An input after the target with |Spearman| >= 0.9 to it gets `after_target_high_correlation`. Those two only warn; the input stays.

@@ -8,9 +8,11 @@ Rules (each one narrow on purpose, so a normal sheet is not changed):
    - `headerless`: a column with no header (named by its position) whose values
      are unique integers, one per row. This is a saved row index.
    - `monotone_row_number`: a named column of at least `ROW_NUMBER_MIN_ROWS`
-     rows whose values are 0, 1, 2, ... or 1, 2, 3, ... in sheet order (step
-     exactly 1). A design factor that happens to be unique, integer and sorted
-     with step 1 from 0 or 1 is rare; declaring roles keeps it.
+     rows of unique whole numbers that run up or down in sheet order (any
+     start: 0..n-1, 1..n, Excel's 2..n+1, n..1) and fill their range nearly
+     densely (rows / (span + 1) >= `ROW_NUMBER_MIN_DENSITY`, so a few deleted
+     rows still count). A design factor that is unique, whole, sorted and
+     step-1 across the sheet is rare; declaring roles keeps it.
    Status `dropped_id`.
 2. Outcome-like columns after the target are not inputs unless declared
    (`after_target_in_sheet`). Both must hold: the column sits after the target
@@ -48,6 +50,9 @@ from kalos.portal.analysis_parts.identifiers import is_identifier_name
 from kalos.validation.report import Finding
 
 ROW_NUMBER_MIN_ROWS = 8
+# Rows per value in the column's range: 1.0 is a gapless counter; 0.9 lets a
+# 20-row sheet miss 2 numbers (deleted rows). A dose ladder 10, 20, 30 is 0.1.
+ROW_NUMBER_MIN_DENSITY = 0.9
 AFTER_TARGET_RHO = 0.9
 
 # Measurement words for rule 2 and the outcome-like flag. Short tokens (OD,
@@ -127,7 +132,9 @@ def _row_number_reason(series: pd.Series, *, headerless: bool) -> str | None:
     if len(arr) < ROW_NUMBER_MIN_ROWS:
         return None
     steps = np.diff(arr)
-    if arr[0] in (0.0, 1.0) and np.all(steps == 1.0):
+    monotone = bool(np.all(steps > 0) or np.all(steps < 0))
+    density = len(arr) / (abs(arr[-1] - arr[0]) + 1.0)
+    if monotone and density >= ROW_NUMBER_MIN_DENSITY:
         return "monotone_row_number"
     return None
 
@@ -286,6 +293,7 @@ __all__ = [
     "AFTER_TARGET_RHO",
     "OUTCOME_LIKE_NAME",
     "REASON_CODES",
+    "ROW_NUMBER_MIN_DENSITY",
     "ROW_NUMBER_MIN_ROWS",
     "STATUS_ROLE",
     "RoleSafety",

@@ -450,7 +450,7 @@ recipe never sits outside `feature_ranges` (replay F9).
 | `categorical_text` | a text input fitted as a category |
 | `concentration_before_target` | a concentration before the target, kept as an input |
 | `headerless` | no header and one number per row: a row index |
-| `monotone_row_number` | 0..n or 1..n counter: a row index |
+| `monotone_row_number` | a counter up or down from any start, at most a few numbers missing: a row index |
 | `after_target_in_sheet` | after the target and named like a measurement |
 | `name_matches_identifier` | its name reads like an id (sample, operator, ...) |
 | `constant` | one value |
