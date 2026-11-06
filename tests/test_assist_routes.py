@@ -430,3 +430,14 @@ def test_rate_window_slides():
     finally:
         del os.environ["KALOS_ASSIST_ASK_PER_MINUTE"]
         ratelimit.reset()
+
+
+def test_read_routes_do_not_rewrite_an_unchanged_index(env):
+    tc, store, _fake = env
+    cid = _seed(store, "acme", A_SECRET)
+    tc.get("/api/assist/index/status", headers=H("a-read"))  # first look builds it
+    path = AssistIndex(store, "acme").path
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+    tc.get("/api/assist/index/status", headers=H("a-read"))
+    tc.post("/api/assist/ask", json={"question": "zebra saxophone", "campaign_id": cid}, headers=H("a-read"))
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before

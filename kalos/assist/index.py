@@ -708,6 +708,12 @@ class AssistIndex:
                         log.exception("assist: embedding failed; using BM25")
                         vectors = {}
                 vectors = {k: v for k, v in vectors.items() if k in live} if retriever == "embeddings" else {}
+                if (
+                    not force and changed == 0 and data and self.path.exists()
+                    and set(new_groups) == set(old_groups) and data.get("retriever") == retriever
+                ):
+                    # Nothing changed: a read (ask, status) leaves the file alone.
+                    return self._status_of(data)
                 data = {
                     "version": INDEX_VERSION,
                     "built_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),

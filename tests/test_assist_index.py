@@ -96,8 +96,9 @@ def test_incremental_refresh_touches_only_the_changed_campaign(store):
     _seed(store, name="Other")
     index = AssistIndex(store, "acme")
     index.refresh()
+    first = index.path.read_bytes()
     assert index.refresh()["chunks"] > 0
-    assert json.loads(index.path.read_text())["changed_groups"] == 0
+    assert index.path.read_bytes() == first  # nothing changed, nothing written
 
     store.set_result(run_id, 2.75, tenant="acme", campaign_id=cid)
     index.refresh(campaign_ids=[cid])
@@ -258,3 +259,18 @@ def test_one_bad_campaign_does_not_break_the_index(store, monkeypatch):
     index = AssistIndex(store, "acme")
     assert index.refresh()["chunks"] > 0
     assert any("Good" in c.text for c in index.chunks())
+
+
+def test_a_refresh_with_nothing_changed_writes_nothing(store):
+    """sec-assist nit: read-scope routes (ask, status) refresh the index; with no
+    change they must not rewrite index.json."""
+    cid, run_id = _seed(store)
+    index = AssistIndex(store, "acme")
+    index.refresh()
+    before = (index.path.read_bytes(), index.path.stat().st_mtime_ns)
+    index.refresh()
+    index.refresh(campaign_ids=[cid])
+    assert (index.path.read_bytes(), index.path.stat().st_mtime_ns) == before
+    store.set_result(run_id, 2.0, tenant="acme", campaign_id=cid)
+    index.refresh(campaign_ids=[cid])
+    assert index.path.read_bytes() != before[0]
