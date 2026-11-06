@@ -456,3 +456,18 @@ def test_ask_on_a_real_analysis_shape_is_not_a_500(env):
                 headers=H("a-read"))
     assert r.status_code == 200, r.text
     assert tc.get("/api/assist/index/status", headers=H("a-read")).json()["chunks"] > 0
+
+
+@pytest.mark.parametrize("planted", ["Raising SP increases Titer [S1].", "Low pH leads to failure [S1].",
+                                     "Recipe 1 is optimal [S1].", "It rose because of Methanol [S1]."])
+def test_one_letter_lab_label_does_not_strip_letters_from_claims(planted):
+    """sec-assist re-check (1): a text level 'A' used to strip every letter a."""
+    from kalos.assist.chat import Labelled, check_answer
+    from kalos.assist.index import Chunk, Hit, strip_terms
+
+    assert strip_terms("Raising SP increases Titer", ["A"]) == "Raising SP increases Titer"
+    assert strip_terms("Level A went with Titer", ["A"]).split() == ["Level", "went", "with", "Titer"]
+    chunk = Chunk("c1", "analysis", "drivers", None, "t", "Higher SP went with higher Titer. Level A.",
+                  user_terms=("A", "SP", "Titer"))
+    checked = check_answer(planted, [Labelled("S1", Hit(chunk, 1.0))], {"step": "", "why": "", "why_it_matters": ""})
+    assert checked.rejected, planted

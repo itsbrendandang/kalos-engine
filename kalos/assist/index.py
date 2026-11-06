@@ -89,9 +89,11 @@ class Chunk:
 
 
 def strip_terms(text: str, terms: Iterable[str]) -> str:
-    """`text` with each of `terms` removed (case-insensitive, longest first)."""
-    for term in sorted({t for t in terms if t and t.strip()}, key=len, reverse=True):
-        text = re.sub(re.escape(term), " ", text, flags=re.IGNORECASE)
+    """`text` with each of `terms` removed as a whole word or phrase
+    (case-insensitive, longest first). A one-letter label such as 'A' removes
+    only a standalone 'A', never the letter inside other words."""
+    for term in sorted({t.strip() for t in terms if t and t.strip()}, key=len, reverse=True):
+        text = re.sub(r"(?<![\w])" + re.escape(term) + r"(?![\w])", " ", text, flags=re.IGNORECASE)
     return text
 
 
