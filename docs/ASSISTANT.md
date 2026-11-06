@@ -37,12 +37,15 @@ The **next step** and **SOP drafts** use no model, so they work on any engine.
 | Setting | What happens |
 |---|---|
 | `ollama` | A model on this machine, through [Ollama](https://ollama.com). With the default address (`http://localhost:11434`) nothing leaves the machine. This is the default in the desktop app. |
-| `anthropic` | The Anthropic API. The question and the retrieved pieces of your data are **sent off the machine** to Anthropic. Needs `ANTHROPIC_API_KEY`. |
+| `anthropic` | The Anthropic API. For a question, the question and the retrieved pieces of your data are **sent off the machine** to Anthropic. For an SOP revise, the **whole draft** (every setting, value and filled-in blank in it) and your instruction are sent. Needs `ANTHROPIC_API_KEY`. |
 | `none` | No model. Ask and revise answer 404 with code `assist_disabled`. The next step, the index and SOP drafts keep working. |
 
 Unset means `ollama` in desktop mode (`KALOS_DESKTOP=1`) and `none` everywhere else. Data goes to Anthropic only when someone sets `anthropic` on purpose.
 
-Only the question, the pieces of your data that were found for it (at most six), and the next step are sent to the model. Never the whole sheet, never another tenant's data.
+What the model receives:
+
+- For a question: the question, the pieces of your data that were found for it (at most six), and the next step. Never the whole sheet, never another tenant's data.
+- For an SOP revise: the whole draft, including every setting, value and filled-in blank, and your instruction.
 
 If you point `KALOS_OLLAMA_URL` at another computer, your data goes to that computer. The status route then reports `local: false`.
 

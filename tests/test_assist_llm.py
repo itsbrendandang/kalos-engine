@@ -58,3 +58,12 @@ def test_typo_fails_closed(monkeypatch):
     monkeypatch.setenv("KALOS_LLM_PROVIDER", "nnone")
     with pytest.raises(ConfigError):
         assist_provider()
+
+
+def test_docs_say_revise_sends_the_whole_draft():
+    """sec-assist (f): the docs name what a revise sends, not only what a question sends."""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[1] / "docs" / "ASSISTANT.md").read_text()
+    assert "For an SOP revise, the **whole draft**" in text
+    assert "For an SOP revise: the whole draft" in text
