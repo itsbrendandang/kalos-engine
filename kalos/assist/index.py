@@ -260,7 +260,7 @@ def campaign_chunks(
                             f"from -1 to 1; {sure})")
             text = (f"What went with {target} in campaign {name!r}, strongest first "
                     "(went with, not a cause):\n" + "\n".join(rows))
-            out.append(_chunk("analysis", "drivers", cid, "What went with the target", text))
+            out.append(_chunk("analysis", "drivers", cid, "What went with the target: which input matters most, important inputs, drivers, influence", text))
         proposals = [p for p in a.get("proposals") or [] if isinstance(p, dict)]
         if proposals:
             rows = []
@@ -274,7 +274,7 @@ def campaign_chunks(
             text = (f"Proposed recipes for campaign {name!r} (Predicted values, not measured; "
                     "Best bet = the model expects a high value, New ground = tries a recipe the model is unsure about):\n"
                     + "\n".join(rows))
-            out.append(_chunk("analysis", "proposals", cid, "Proposed recipes", text[:MAX_CHUNK_CHARS * 3]))
+            out.append(_chunk("analysis", "proposals", cid, "Proposed recipes: what to run next, next round, suggested runs", text[:MAX_CHUNK_CHARS * 3]))
 
     refusal_chunk = _refusal_chunk(cid, name, a, refusal)
     if refusal_chunk is not None:
@@ -324,7 +324,7 @@ def _verdict_chunk(cid: str, name: str, a: dict[str, Any]) -> Chunk | None:
     if reasons:
         text += " Reasons: " + " ".join(reasons)
     text += f" Why this matters: {why}"
-    return _chunk("analysis", "verdict", cid, "Model verdict", text)
+    return _chunk("analysis", "verdict", cid, "Model verdict: can I trust the model, is it reliable, why not", text)
 
 
 def _refusal_chunk(
@@ -381,7 +381,7 @@ def _best_and_delta_chunks(
         value, where, recipe = max(candidates, key=lambda c: c[0])
         text = (f"Best measured run so far in campaign {name!r}: Measured {target} {_fmt(value)} ({where}). "
                 f"Its settings: {_recipe_text(recipe)}.")
-        out.append(_chunk("analysis", "best_run", cid, "Best measured run", text))
+        out.append(_chunk("analysis", "best_run", cid, "Best measured run: top result, highest value, why is it best", text))
 
     history = [h for h in state.get("history") or [] if isinstance(h, dict)]
     lines: list[str] = []
@@ -401,7 +401,7 @@ def _best_and_delta_chunks(
                          f"Measured {_fmt(run.get('result'))}.")
     if lines:
         text = f"What changed in campaign {name!r}:\n" + "\n".join(lines)
-        out.append(_chunk("analysis", "round_delta", cid, "What changed since the last round", text))
+        out.append(_chunk("analysis", "round_delta", cid, "What changed since the last round: new results, difference, compared with before", text))
     return out
 
 
@@ -691,6 +691,8 @@ class AssistIndex:
                 return [Hit(pool[i], float(sims[i])) for i in order[:k] if sims[i] >= min_similarity]
         corpus = [tokens(c.title + " " + c.text) for c in pool]
         scores = _bm25_scores(corpus, q)
+        # The lab's own records first: a doc must match clearly better to outrank them.
+        scores = scores * np.asarray([1.0 if c.kind in ("doc", "skill") else 1.6 for c in pool])
         qset = set(q)
         hits = [
             Hit(pool[i], float(scores[i]))

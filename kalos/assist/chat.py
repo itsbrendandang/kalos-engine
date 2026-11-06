@@ -38,7 +38,8 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
 SYSTEM_PROMPT = """You answer questions about a lab's own experiment campaign in Kalos.
 Rules:
 - Use ONLY the numbered sources below and the guide step [G]. Do not use anything else you know.
-- End every sentence with the labels of the sources it uses, like [S1] or [S2][G].
+- End EVERY sentence with the labels of the sources it uses, like [S1] or [S2][G].
+  Example: "Higher SP went with higher Titer [S2]. The best measured Titer so far is 63.3 [S4]."
 - A sentence without a label is deleted before the user sees it.
 - Copy numbers exactly as the sources give them. Do not compute new numbers.
 - Say "predicted" for model predictions and "measured" for recorded results, as the sources do.
@@ -70,12 +71,21 @@ def build_prompt(question: str, hits: list[Hit], guide: dict[str, Any]) -> tuple
     return prompt, labelled
 
 
+_ONLY_LABELS = re.compile(r"^(?:\s*\[(?:S\d{1,2}|G)\])+[\s.]*$")
+
+
 def split_sentences(text: str) -> list[str]:
-    parts = []
+    """Sentences, with a fragment that is only labels ("... end. [S1][G]")
+    joined to the sentence right before it, never to a whole paragraph."""
+    parts: list[str] = []
     for raw in _SENTENCE_END.split(text.strip()):
         s = raw.strip().lstrip("-*• ").strip()
-        if s:
-            parts.append(s)
+        if not s:
+            continue
+        if parts and _ONLY_LABELS.match(s):
+            parts[-1] = parts[-1] + " " + s
+            continue
+        parts.append(s)
     return parts
 
 

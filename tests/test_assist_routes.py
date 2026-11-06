@@ -307,3 +307,10 @@ def test_recorded_result_refreshes_the_index(env):
     assert r.status_code == 200, r.text
     rounds = [c for c in AssistIndex(store, "acme").chunks() if c.kind == "round"]
     assert any("Measured lipase_titer 2.75" in c.text for c in rounds)
+
+
+def test_labels_after_the_full_stop_belong_to_that_sentence_only():
+    from kalos.assist.chat import split_sentences
+
+    parts = split_sentences("First claim here. Second one [S1]. Third one. [S2][G]")
+    assert parts == ["First claim here.", "Second one [S1].", "Third one. [S2][G]"]
