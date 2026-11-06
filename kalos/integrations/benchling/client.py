@@ -55,6 +55,7 @@ DEFAULT_TOKEN_LIFETIME_S = 900.0  # "Access tokens expire after 15 minutes"
 MAX_BACKOFF_S = 60.0
 MAX_PAGE_SIZE = 100              # v2 and v3 both cap pageSize at 100
 DEFAULT_TIMEOUT_S = 30.0
+DEFAULT_MAX_WAIT_S = 60.0         # longest the limiter may block a single call
 
 # v3 operations the spec marks beta (they declare the EARLY-ACCESS header).
 # Every `/procedure*` operation is beta; of the result-schema operations only the
@@ -121,6 +122,11 @@ class BenchlingRateLimited(BenchlingError):
     def __init__(self, message: str, *, retry_after: float | None = None, **kw: Any) -> None:
         super().__init__(message, **kw)
         self.retry_after = retry_after
+
+
+class RateLimitWaitExceeded(BenchlingRateLimited):
+    """Kalos's own limiter would have to wait longer than the caller allows.
+    Nothing was sent."""
 
 
 class BenchlingServerError(BenchlingError):
@@ -201,8 +207,13 @@ class TokenBucket:
         while self._taken and self._taken[0] + self.period_s <= now:
             self._taken.popleft()
 
-    def acquire(self) -> float:
-        """Take one token, waiting as needed. Returns the seconds waited."""
+    def now(self) -> float:
+        return self._clock()
+
+    def acquire(self, deadline: float | None = None) -> float:
+        """Take one token, waiting as needed. Returns the seconds waited. With a
+        `deadline` (a value of this bucket's clock), raises RateLimitWaitExceeded
+        instead of waiting past it."""
         waited = 0.0
         while True:
             with self._lock:
@@ -215,6 +226,11 @@ class TokenBucket:
                     return waited
                 else:
                     wait = self._taken[0] + self.period_s - now
+                if deadline is not None and now + wait > deadline:
+                    raise RateLimitWaitExceeded(
+                        "the Benchling request budget is used up for longer than this request may wait",
+                        retry_after=wait,
+                    )
             self._sleep(wait)
             waited += wait
 
@@ -230,18 +246,19 @@ class TokenBucket:
             return self.capacity - len(self._taken)
 
 
-_BUCKETS: dict[str, TokenBucket] = {}
+_BUCKETS: dict[tuple[str, str], TokenBucket] = {}
 _BUCKETS_LOCK = threading.Lock()
 
 
-def bucket_for(base_url: str) -> TokenBucket:
-    """The process-wide bucket for one Benchling host. Several processes do not
-    share it (docs/BENCHLING.md, "Limits")."""
-    host = urlsplit(base_url).netloc.lower()
+def bucket_for(base_url: str, tenant: str | None = None) -> TokenBucket:
+    """The process-wide bucket for one (Kalos tenant, Benchling host), so one
+    workspace cannot use up another's budget. Several processes do not share it
+    (docs/BENCHLING.md, "Limits")."""
+    key = (tenant or "", urlsplit(base_url).netloc.lower())
     with _BUCKETS_LOCK:
-        bucket = _BUCKETS.get(host)
+        bucket = _BUCKETS.get(key)
         if bucket is None:
-            bucket = _BUCKETS[host] = TokenBucket()
+            bucket = _BUCKETS[key] = TokenBucket()
         return bucket
 
 
@@ -291,7 +308,9 @@ class AppCredentials:
 class TokenSource(Protocol):
     kind: str  # "app" | "delegated"
 
-    def bearer(self, http: httpx.Client, base_url: str, bucket: TokenBucket) -> str: ...
+    def bearer(
+        self, http: httpx.Client, base_url: str, bucket: TokenBucket, deadline: float | None = None,
+    ) -> str: ...
 
     def invalidate(self) -> bool:
         """Drop the cached token after a 401. True if a fresh one can be obtained."""
@@ -300,8 +319,9 @@ class TokenSource(Protocol):
 
 def _token_request(
     http: httpx.Client, base_url: str, bucket: TokenBucket, form: Mapping[str, str],
+    deadline: float | None = None,
 ) -> dict[str, Any]:
-    bucket.acquire()
+    bucket.acquire(deadline)
     try:
         resp = http.post(
             f"{base_url}/oauth/token", data=dict(form),
@@ -351,7 +371,9 @@ class ClientCredentialsToken:
     def __repr__(self) -> str:
         return f"ClientCredentialsToken(client_id={self._creds.client_id!r})"
 
-    def bearer(self, http: httpx.Client, base_url: str, bucket: TokenBucket) -> str:
+    def bearer(
+        self, http: httpx.Client, base_url: str, bucket: TokenBucket, deadline: float | None = None,
+    ) -> str:
         with self._lock:
             now = self._clock()
             if self._token is None or now >= self._expires_at - TOKEN_REFRESH_MARGIN_S:
@@ -359,7 +381,7 @@ class ClientCredentialsToken:
                     "grant_type": "client_credentials",
                     "client_id": self._creds.client_id,
                     "client_secret": self._creds.client_secret,
-                })
+                }, deadline)
                 self._token = body["access_token"]
                 self._expires_at = now + _lifetime(body)
                 self.fetches += 1
@@ -405,7 +427,9 @@ class DelegatedToken:
     def _can_refresh(self) -> bool:
         return self._refresh is not None and self._creds is not None
 
-    def bearer(self, http: httpx.Client, base_url: str, bucket: TokenBucket) -> str:
+    def bearer(
+        self, http: httpx.Client, base_url: str, bucket: TokenBucket, deadline: float | None = None,
+    ) -> str:
         with self._lock:
             now = self._clock()
             stale = self._token is None or (
@@ -425,7 +449,7 @@ class DelegatedToken:
                     "client_id": self._creds.client_id,
                     "client_secret": self._creds.client_secret,
                     "refresh_token": self._refresh,
-                })
+                }, deadline)
                 self._token = body["access_token"]
                 self._expires_at = now + _lifetime(body)
                 new_refresh = body.get("refresh_token")
@@ -474,6 +498,8 @@ class BenchlingClient:
         self, base_url: str, auth: TokenSource, *,
         transport: httpx.BaseTransport | None = None,
         bucket: TokenBucket | None = None,
+        tenant: str | None = None,
+        max_wait_s: float = DEFAULT_MAX_WAIT_S,
         max_retries: int = 5,
         timeout_s: float = DEFAULT_TIMEOUT_S,
         sleep: Callable[[float], None] = time.sleep,
@@ -481,7 +507,8 @@ class BenchlingClient:
     ) -> None:
         self.base_url = normalize_base_url(base_url)
         self.auth = auth
-        self.bucket = bucket if bucket is not None else bucket_for(self.base_url)
+        self.bucket = bucket if bucket is not None else bucket_for(self.base_url, tenant)
+        self.max_wait_s = max_wait_s
         self.max_retries = max(0, int(max_retries))
         self._sleep = sleep
         self._rng = rng or random.Random()  # noqa: S311 - backoff jitter, not security
@@ -511,7 +538,11 @@ class BenchlingClient:
     def authenticate(self) -> None:
         """Obtain a token now (app mode: one POST /oauth/token). Used to check
         credentials before they are stored."""
-        self.auth.bearer(self._http, self.base_url, self.bucket)
+        self.auth.bearer(self._http, self.base_url, self.bucket, self._wait_deadline())
+
+    def _wait_deadline(self) -> float:
+        """How long the limiter may block one call."""
+        return self.bucket.now() + self.max_wait_s
 
     def _backoff(self, attempt: int) -> float:
         return min(MAX_BACKOFF_S, 2.0 ** attempt + self._rng.random())
@@ -535,8 +566,8 @@ class BenchlingClient:
         reauthed = False
         attempt = 0
         while True:
-            token = self.auth.bearer(self._http, self.base_url, self.bucket)
-            self.bucket.acquire()
+            token = self.auth.bearer(self._http, self.base_url, self.bucket, self._wait_deadline())
+            self.bucket.acquire(self._wait_deadline())
             self.requests_sent += 1
             try:
                 resp = self._http.request(

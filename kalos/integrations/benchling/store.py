@@ -211,6 +211,15 @@ class IntegrationStore:
         keys = ("base_url", "client_id", "app_definition_id", "connected_by", "connected_at", "verified_at")
         return dict(zip(keys, row))
 
+    def host_used_by_another_tenant(self, *, tenant: str, base_url: str) -> bool:
+        """Whether another Kalos tenant already has a connection to `base_url`."""
+        validate_tenant_id(tenant)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM benchling_connections WHERE base_url = ? AND tenant != ? LIMIT 1", (base_url, tenant),
+            ).fetchone()
+        return row is not None
+
     def client_secret(self, *, tenant: str) -> str | None:
         """The opened app secret, for building a client. Never logged or returned
         by a route. Raises SecretUnreadable / SecretKeyUnavailable."""

@@ -493,3 +493,24 @@ def test_refusals_before_routing_match_unknown_paths(env, monkeypatch, flag):
             r = remote.request(method, P + path)
             assert r.status_code == unknown.status_code == 503
             assert r.content == unknown.content
+
+
+def test_connect_without_verify_is_refused_when_another_tenant_uses_the_host(env):
+    tc, store, _, _ = env
+    assert _connect(tc).status_code == 200  # acme, verified
+    r = tc.post(f"{P}/connect", json={"base_url": BASE, "client_id": "x", "client_secret": "y", "verify": False},
+                headers=H("b-admin"))
+    assert r.status_code == 400 and r.json()["code"] == "verify_required"
+    assert integration_store_at(store.state_dir).connection(tenant="globex") is None
+    # with verify the credentials are checked, so the host may be shared
+    assert _connect(tc, token="b-admin").status_code == 200
+
+
+def test_status_reports_the_tenant_own_budget(env):
+    tc, *_ = env
+    _connect(tc)
+    tc.get(f"{P}/studies", headers=H("a-read"))
+    _connect(tc, token="b-admin")
+    acme = tc.get(f"{P}/status", headers=H("a-read")).json()["rate_limit"]["available"]
+    globex = tc.get(f"{P}/status", headers=H("b-admin")).json()["rate_limit"]["available"]
+    assert globex > acme

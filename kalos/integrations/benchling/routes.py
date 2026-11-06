@@ -203,8 +203,8 @@ def _connection_and_creds(
     return conn, AppCredentials(conn["client_id"], secret)
 
 
-def _client(conn: dict[str, Any], auth: Any, transport: Any) -> BenchlingClient:
-    return BenchlingClient(conn["base_url"], auth, transport=transport)
+def _client(conn: dict[str, Any], auth: Any, transport: Any, tenant: str) -> BenchlingClient:
+    return BenchlingClient(conn["base_url"], auth, transport=transport, tenant=tenant)
 
 
 def _delegated(token: str | None) -> DelegatedToken | None:
@@ -267,9 +267,15 @@ async def connect(
         response = _err(400, "benchling_bad_request", str(exc))
         _audit(store, principal, "benchling.connect", response.status_code)
         return response
+    if not body.verify and istore.host_used_by_another_tenant(tenant=principal.tenant, base_url=base_url):
+        response = _err(400, "verify_required",
+                        "another workspace already uses this Benchling tenant; connect with verify on")
+        _audit(store, principal, "benchling.connect", response.status_code)
+        return response
     if body.verify:
         try:
-            with BenchlingClient(base_url, ClientCredentialsToken(creds), transport=transport) as c:
+            with BenchlingClient(base_url, ClientCredentialsToken(creds), transport=transport,
+                                 tenant=principal.tenant) as c:
                 await run_in_threadpool(c.authenticate)
         except BenchlingError as exc:
             response = _benchling_error(exc)
@@ -304,7 +310,7 @@ def status(
         readable = istore.client_secret(tenant=tenant) is not None
     except (SecretUnreadable, SecretKeyUnavailable):
         readable = False
-    bucket = bucket_for(conn["base_url"])
+    bucket = bucket_for(conn["base_url"], tenant)
     return JSONResponse({
         "enabled": True, "connected": True, "secret_key_configured": key_configured(),
         "credentials_readable": readable, **_public_connection(istore, tenant),
@@ -327,7 +333,7 @@ async def studies(
     conn, creds = got
 
     def _work() -> dict[str, Any]:
-        with _client(conn, _app_token(principal.tenant, creds), transport) as c:
+        with _client(conn, _app_token(principal.tenant, creds), transport, principal.tenant) as c:
             out: dict[str, Any] = {"projects": list_projects(c)}
             try:
                 out["studies"] = list_studies(c)
@@ -388,7 +394,7 @@ async def import_study(
     conn, creds = got
 
     def _fetch() -> RunSheet:
-        with _client(conn, _app_token(tenant, creds), transport) as c:
+        with _client(conn, _app_token(tenant, creds), transport, tenant) as c:
             if body.study_id is not None:
                 data = fetch_study(c, body.study_id, target_field_id=body.target_field,
                                    result_schema_id=body.result_schema_id)
@@ -499,7 +505,7 @@ async def push_proposals_route(
     description = body.description or f"Kalos proposals for campaign {body.campaign_id} (draft)"
 
     def _work() -> Any:
-        with _client(conn, auth, transport) as c:
+        with _client(conn, auth, transport, tenant) as c:
             return push_proposals(c, study_id=body.study_id, proposals=proposals,
                                   provenance=imp.get("provenance") or [], description=description,
                                   flowchart_config_version_id=flowchart)
@@ -594,7 +600,7 @@ async def push_results_route(
         return _err(409, "nothing_to_push", "every recorded result of this campaign is already in Benchling")
 
     def _work() -> tuple[Any, dict[str, str] | None, BenchlingError | None]:
-        with _client(conn, user, transport) as c:
+        with _client(conn, user, transport, tenant) as c:
             res = push_results(c, schema_id=target["schema_id"], target_system_name=target["system_name"],
                                project_id=target.get("project_id"), results=todo,
                                schema_fields=target.get("schema_fields") or []) if todo else None
@@ -694,7 +700,7 @@ async def poll(
     conn, creds = got
 
     def _work() -> dict[str, Any]:
-        with _client(conn, _app_token(principal.tenant, creds), transport) as c:
+        with _client(conn, _app_token(principal.tenant, creds), transport, principal.tenant) as c:
             return poll_study(c, istore, tenant=principal.tenant, study_id=body.study_id,
                               result_schema_id=body.result_schema_id)
 

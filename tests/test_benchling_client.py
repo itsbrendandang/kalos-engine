@@ -311,3 +311,50 @@ def test_paths_must_be_api_paths():
     fake = FakeBenchling()
     with _client(fake) as c, pytest.raises(BenchlingConfigError):
         c.get("https://evil.example/api/v3/x")
+
+
+# --- review fixes: limiter per (tenant, host), bounded waits ------------------------------------ #
+
+
+def test_buckets_are_per_kalos_tenant_and_host():
+    from kalos.integrations.benchling.client import bucket_for, reset_buckets
+
+    reset_buckets()
+    a = bucket_for(BASE, "acme")
+    assert bucket_for(BASE, "acme") is a
+    assert bucket_for(BASE, "globex") is not a
+    assert bucket_for("https://other.benchling.com", "acme") is not a
+    for _ in range(60):
+        a.acquire()
+    assert bucket_for(BASE, "globex").available == 60  # acme used up only its own budget
+    reset_buckets()
+
+
+def test_acquire_raises_instead_of_waiting_past_the_deadline():
+    from kalos.integrations.benchling.client import RateLimitWaitExceeded
+
+    clock = Clock()
+    b = TokenBucket(2, 30.0, clock=clock, sleep=clock.sleep)
+    b.acquire()
+    b.acquire()
+    with pytest.raises(RateLimitWaitExceeded) as err:
+        b.acquire(deadline=clock.now + 5.0)
+    assert err.value.retry_after == pytest.approx(30.0)
+    assert clock.slept == []  # it did not sleep
+    b.pause(100.0)
+    with pytest.raises(RateLimitWaitExceeded):
+        b.acquire(deadline=clock.now + 50.0)
+
+
+def test_client_gives_up_when_the_limiter_wait_exceeds_max_wait():
+    from kalos.integrations.benchling.client import RateLimitWaitExceeded
+
+    fake = FakeBenchling()
+    clock = Clock()
+    bucket = TokenBucket(3, 30.0, clock=clock, sleep=clock.sleep)
+    with _client(fake, clock, bucket=bucket, max_wait_s=10.0) as c:
+        c.get("/api/v3/study/items")  # token + 1 call
+        c.get("/api/v3/study/items")
+        with pytest.raises(RateLimitWaitExceeded):
+            c.get("/api/v3/study/items")
+    assert fake.paths().count("/api/v3/study/items") == 2
