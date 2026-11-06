@@ -19,10 +19,16 @@ the shapes in those specs. It has not been run against a real Benchling tenant. 
    needs read access to the projects and studies you want to import, and write
    access to the studies and result schemas you want Kalos to write to. Note the
    app's client id, client secret and app definition id (`appdef_...`).
-2. On the Kalos engine, the operator sets `KALOS_SECRET_KEY` (at least 32 random
-   characters, from the environment or a secret manager). Kalos uses it to encrypt
-   the client secret at rest. If the key changes, stored secrets cannot be read and
-   each workspace must connect again.
+2. On the Kalos engine, the operator sets `KALOS_SECRET_KEY` (at least 32
+   characters, from the environment or a secret manager). Make it with:
+
+   ```
+   openssl rand -base64 32
+   ```
+
+   Kalos uses it to encrypt the client secret at rest, in
+   `<state dir>/integrations.db`, a file only the engine's user can read. If the key
+   changes, stored secrets cannot be read and each workspace must connect again.
 3. A Kalos workspace admin calls:
 
    ```
@@ -34,7 +40,9 @@ the shapes in those specs. It has not been run against a real Benchling tenant. 
 
    Kalos first asks Benchling for a token. If Benchling refuses the credentials,
    nothing is stored. The secret is never returned, written to a log, or put in
-   the audit log. Only `https://<tenant>.benchling.com` URLs are accepted.
+   the audit log. Only `https://<tenant>.benchling.com` URLs are accepted. You can
+   skip the check with `"verify": false`, but not for a Benchling tenant another
+   Kalos workspace already uses.
 4. `GET /api/integrations/benchling/status` shows the connection (never the secret),
    whether the stored secret can still be opened, the last imports, the last pushes
    with their Benchling ids, and change notices.
@@ -84,21 +92,29 @@ Every import returns and stores:
 
 Kalos never guesses a value. If a run is unclear, it is skipped and counted.
 
+Text that a spreadsheet would run as a formula (a name or value starting with
+`=`, `+`, `-`, `@`, a tab or a carriage return, unless it is a plain number) gets a
+leading `'` in the sheet. A proposal pushed back to Benchling gets the original
+text.
+
 ## What is written (drafts only)
 
 **Proposals → a draft run plan.** `POST /push-proposals {"campaign_id", "study_id"}`
 writes the campaign's current proposals into the study it was imported from as one
 procedure run plan. Each proposal becomes a condition (one per method) with one
 replicate. Kalos never promotes the plan. Promoting starts a run in the lab, and a
-person does that in Benchling. The client refuses any `:promote` call before it is
-sent. Columns that cannot be planned (for example, measured-only parameters) are
+person does that in Benchling. The client only sends the writes listed on this page
+(run plan, plan conditions, result transaction, file, entry field). It refuses
+any other write, `:promote` in any spelling included, before it is sent. Columns that cannot be planned (for example, measured-only parameters) are
 left out and listed in the response.
 
 **Recorded results → Benchling results.** `POST /push-results {"campaign_id"}` writes
 the results recorded in Kalos that are not in Benchling yet. Each one becomes a
 result in the result schema and field the campaign was imported with. All are
 written in one result transaction: if any part fails, the transaction is aborted
-and nothing is written. A result already pushed is not pushed again. A correction
+and nothing is written. A result already pushed is not pushed again. Each result
+is claimed in Kalos before it is sent, so two pushes at the same time never both
+write it; the claim is given back only when Benchling provably wrote nothing. A correction
 in Kalos (a new version) is written as a new Benchling result. The earlier one
 stays as it is.
 
@@ -119,10 +135,14 @@ analysis as a JSON file and link it from the entry.
   they use the app's token, and Benchling names the app as creator.
 - **In Kalos**, every push writes one row to the connector's push audit table. The
   row holds: who in Kalos, which Benchling identity wrote (`app` or `delegated`),
-  the creator id Benchling returned, the campaign, the study or schema, the outcome,
-  and every Benchling id returned (plan and condition ids, transaction and result
-  ids, file id). If a push fails part-way, the ids that were already created are
-  recorded too. The table rejects updates and deletes. A matching row
+  the campaign, the study or schema, the outcome, and every Benchling id returned
+  (plan and condition ids, transaction and result ids, file id). For run plans it
+  also holds the creator id Benchling returned; the result and file calls return
+  no creator, so for those the row records only that the delegated token was used.
+  If a push fails part-way, the ids that were already created are recorded too. If
+  the row cannot be written after Benchling has accepted a write, a fallback row
+  (or, failing that, a main audit log entry) records the ids. The table rejects
+  updates and deletes. A matching row
   (`benchling.import`, `benchling.push_proposals`, `benchling.push_results`,
   `benchling.connect`) goes into the main audit log.
 
@@ -131,13 +151,17 @@ analysis as a JSON file and link it from the entry.
 - **Webhooks:** `POST /api/integrations/benchling/webhook/{tenant}` takes
   `v2.assayRun.created` and `v3.run.created`. Kalos checks each delivery the way
   Benchling's "Webhook Security" page describes:
-  - The timestamp must be within 5 minutes.
+  - The headers must be present and the timestamp (whole seconds) within 5
+    minutes. These checks run before any key is fetched.
   - An ECDSA P-256 signature over `{webhook-id}.{webhook-timestamp}.{body}` must
     match a key from the app's published key set. The key set is cached for at most
-    6 hours and fetched again once when no key matches.
+    6 hours and fetched again once when no key matches. Only one fetch runs at a
+    time per app, and a failed fetch is not retried for a minute (doubling up to
+    an hour).
   - The payload must name this workspace's app and Benchling URL.
 
-  Any failed check gets the same 401. A repeated delivery is a no-op. Other event
+  Any failed check gets the same 401. A repeated delivery is a no-op (webhook ids
+  are kept 10 minutes; change notices are also keyed on the event id). Other event
   types are acknowledged and ignored.
 - **Polling (Bioprocess):** Benchling has no events for procedure runs or results.
   `POST /poll {"study_id", "result_schema_id"?}` lists what changed since the last
@@ -148,8 +172,9 @@ automatically.
 
 ## Limits
 
-- **Rate.** At most 60 requests in any 30 seconds per Benchling tenant, per Kalos
-  process. 60 per 30 s is Benchling's smallest documented budget. On a 429, Kalos
+- **Rate.** At most 60 requests in any 30 seconds per Kalos workspace and
+  Benchling tenant, per Kalos process, so one workspace cannot use up another's
+  budget. 60 per 30 s is Benchling's smallest documented budget. On a 429, Kalos
   waits for `Retry-After` (v3) or `x-rate-limit-reset` (v2), or backs off
   exponentially, then tries again (up to 5 times). Several Kalos processes do not
   share the budget.
