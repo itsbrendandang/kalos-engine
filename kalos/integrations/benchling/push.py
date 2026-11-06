@@ -47,7 +47,7 @@ class PushRefused(BenchlingError):
 
 
 class DelegatedTokenRequired(PushRefused):
-    """This write must carry the signed-in user's Benchling token, not the app's."""
+    """This write must carry the logged-in user's Benchling token, not the app's."""
 
 
 class PushFailed(BenchlingError):
@@ -209,7 +209,7 @@ class ResultsPush:
 def _require_delegated(client: BenchlingClient) -> None:
     if client.mode != "delegated":
         raise DelegatedTokenRequired(
-            "writing results needs the signed-in user's Benchling token, so Benchling records the person"
+            "writing results needs the logged-in user's Benchling token, so Benchling records the person"
         )
 
 

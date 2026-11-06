@@ -373,7 +373,7 @@ class ClientCredentialsToken:
 
 
 class DelegatedToken:
-    """Delegated mode: a signed-in user's access token. Actions are attributed to
+    """Delegated mode: a logged-in user's access token. Actions are attributed to
     that user in Benchling's audit log and `createdBy` fields.
 
     With `refresh_token` and `credentials` it refreshes itself (single-use refresh

@@ -111,7 +111,7 @@ _NOT_FOUND = b'{"error":"Not Found","code":"not_found"}'
 class BenchlingGate:
     """ASGI gate in front of the router: with the integration off, any request
     under PREFIX gets the app's unknown-path 404 before its body is read or
-    validated (the router dependency alone runs after body parsing)."""
+    checked (the router dependency alone runs after body parsing)."""
 
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -582,13 +582,13 @@ async def push_results_route(
     delegated_token: str | None = Header(default=None, alias=DELEGATED_HEADER),
 ) -> JSONResponse:
     """Write the campaign's recorded results that are not in Benchling yet as
-    Benchling results, in one transaction, under the signed-in user's delegated
+    Benchling results, in one transaction, under the logged-in user's delegated
     token (required). Optionally attach the analysis as a blob on an entry."""
     tenant = principal.tenant
     user = _delegated(delegated_token)
     if user is None:
         response = _err(400, "delegated_token_required",
-                        f"writing results needs the signed-in user's Benchling token in {DELEGATED_HEADER}; "
+                        f"writing results needs the logged-in user's Benchling token in {DELEGATED_HEADER}; "
                         "the app's own credentials are never used for results")
         _audit(store, principal, "benchling.push_results", 400)
         return response
