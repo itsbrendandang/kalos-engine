@@ -40,6 +40,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from kalos.portal import desktop as _desktop
 from kalos.portal.analysis import _analyze, _annotate
+from kalos.portal.audit_detail import roles_change_detail, stored_roles
 from kalos.portal.auth import (
     ADMIN,
     READ,
@@ -948,11 +949,18 @@ async def run_uploaded(
     The outcome is written to the audit log (tenant, subject, status; never the
     file, its name, or its contents).
     """
+    roles_before = stored_roles(store, tenant=_principal.tenant, campaign_id=None)
     response = await _run_uploaded(
         file, target, anonymize, roles, sheet, sheet_query, _principal, store, replace=replace,
         direction=direction,
     )
-    _audit(store, _principal, "run.upload", response.status_code)
+    # The audit row names the settings this upload set or changed (keys, and
+    # old -> new for small scalars only; kalos/portal/audit_detail.py).
+    detail = None
+    if response.status_code < 400:
+        detail = roles_change_detail(
+            roles_before, stored_roles(store, tenant=_principal.tenant, campaign_id=None))
+    _audit(store, _principal, "run.upload", response.status_code, detail=detail)
     return response
 
 

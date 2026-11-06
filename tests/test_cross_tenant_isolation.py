@@ -341,8 +341,10 @@ def test_upload_to_a_campaign_stores_tenant_scoped_analysis_and_audit(env):
         assert e["tenant"] == "acme" and e["subject"] == "bob@acme"
         assert e["auth_method"] == AUTH_STATIC
         assert e["campaign_id"] == cid
-        # no data payloads: never the filename, a sheet, a column, or a value
-        assert e["detail"] is None or re.fullmatch(r"runs=\d+", e["detail"])
+        # no data payloads: never the filename, a sheet, a column, or a value. An
+        # upload names the settings keys it changed (kalos/portal/audit_detail.py).
+        assert e["detail"] is None or re.fullmatch(
+            r"runs=\d+|settings: [a-z0-9_ .;>()\-]+", e["detail"])
         assert "acme-runs" not in json.dumps(e) and "Methanol" not in json.dumps(e)
     assert all(e["subject"] != "bob@acme" for e in store.audit_entries(tenant="globex"))
 

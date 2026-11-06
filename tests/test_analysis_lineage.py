@@ -315,3 +315,46 @@ def test_unreadable_stored_roles_refuse_the_reanalyze_and_commit_nothing(client,
         assert "Upload the sheet again" in body["error"]
     assert store.get(tenant="default") == before_state
     assert store.load_analysis(tenant="default") == before_analysis
+
+
+# --- the audit row of an upload names the settings it changed (S8) ------------------- #
+
+
+def _last_audit(store, action):
+    return next(e for e in store.audit_entries(tenant="default") if e["action"] == action)
+
+
+def test_upload_audit_row_names_the_changed_settings_never_the_values_of_the_rest(client):
+    c, store = client
+    secret = "Carbon_conc"
+    upload(c, {"target": "Titer", "features": INPUTS, "allow_beyond": 0.1})
+    first = _last_audit(store, "run.upload")["detail"]
+    assert "allow_beyond set to 0.1" in first and "features set" in first
+    upload(c, {"target": "Titer", "features": ["Gly", "Met", "SP"], "allow_beyond": 0.2,
+               "linear_constraints": [{"terms": {"Gly": 1, "Met": 1}, "op": "<=", "rhs": 9,
+                                       "label": "budget"}]})
+    second = _last_audit(store, "run.upload")["detail"]
+    assert "allow_beyond 0.1 -> 0.2" in second
+    assert "features changed" in second and "linear_constraints set" in second
+    # Key names only for the rest: no column names, terms or labels.
+    for leaked in (secret, "Gly", "budget", "pichia"):
+        assert leaked not in second
+    cid = store.default_campaign_id(tenant="default")
+    upload(c, {"target": "Titer", "features": ["Gly", "Met", "SP"], "allow_beyond": 0.2,
+               "direction": "minimize"}, path=f"/api/campaigns/{cid}/upload")
+    third = _last_audit(store, "campaign.upload")["detail"]
+    assert "direction set to minimize" in third and "linear_constraints removed" in third
+    upload(c, path=f"/api/campaigns/{cid}/upload")
+    assert "cleared" in _last_audit(store, "campaign.upload")["detail"]
+
+
+def test_roles_change_detail_keeps_unsafe_values_out():
+    from kalos.portal.audit_detail import roles_change_detail
+
+    detail = roles_change_detail(
+        {"target": "Titer", "allow_beyond": {"Glucose": 0.1}, "direction": "maximize"},
+        {"target": "Yield", "allow_beyond": {"Glucose": 0.3}, "direction": "minimize",
+         "secret_key": "x"},
+    )
+    assert detail == ("settings: target changed; direction maximize -> minimize; "
+                      "allow_beyond changed; 1 other key(s) changed")
