@@ -170,6 +170,15 @@ def _startup_auth_posture() -> bool:
 
 _AUTH_ENFORCED_AT_STARTUP = _startup_auth_posture()
 
+if _DESKTOP:
+    # `KALOS_DESKTOP=1 uvicorn kalos.portal.app:app` never runs `__main__`, so the
+    # desktop refusals (a token, no open access, a loopback KALOS_HOST) run here
+    # too: the import fails instead of serving an open or exposed desktop engine.
+    _desktop.check_posture(
+        os.environ.get("KALOS_HOST", "").strip() or "127.0.0.1",
+        auth_source=get_authenticator().has_auth_source(),
+    )
+
 # Audit-log archive (docs/HARDENING.md, "Audit retention"). Runs only when
 # KALOS_AUDIT_RETENTION_DAYS is set: once at startup, then once a day. It copies
 # old rows to the archive and never deletes one.

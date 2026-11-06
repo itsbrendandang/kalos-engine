@@ -14,7 +14,9 @@ packaged engine is built. Code: `kalos/portal/desktop.py`,
 
 From a checkout: `python -m kalos.portal --desktop`.
 From the packaged engine: `<bundle>/kalos-engine --desktop`.
-`KALOS_DESKTOP=1` in the environment does the same as `--desktop`.
+`KALOS_DESKTOP=1` in the environment does the same as `--desktop`. Started any
+other way (for example `KALOS_DESKTOP=1 uvicorn kalos.portal.app:app`), the app
+runs the same token, open-access and `KALOS_HOST` refusals when it is imported.
 
 ### What the shell passes
 

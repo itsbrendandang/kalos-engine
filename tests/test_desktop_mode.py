@@ -130,6 +130,35 @@ def test_unknown_argument_is_refused(tmp_path):
     assert out.returncode == 2 and "unknown argument" in out.stderr
 
 
+def _import_app(tmp_path: Path, code: str = "", **env: str) -> subprocess.CompletedProcess[str]:
+    """Import kalos.portal.app the way `uvicorn kalos.portal.app:app` does (no
+    `__main__`), then run `code`."""
+    return subprocess.run(
+        [sys.executable, "-c", "import kalos.portal.app as m\n" + code], cwd=ROOT,
+        env=_env(tmp_path, **env), capture_output=True, text=True, timeout=120,
+    )
+
+
+@pytest.mark.parametrize("env, needle", [
+    ({}, "needs a token"),
+    ({"KALOS_ALLOW_OPEN_ACCESS": "1"}, "KALOS_ALLOW_OPEN_ACCESS"),
+    ({"KALOS_AUTH_TOKENS": _tokens(), "KALOS_HOST": "0.0.0.0"}, "only listens"),  # noqa: S104
+])
+def test_uvicorn_direct_import_runs_the_desktop_posture_check(tmp_path, env, needle):
+    """`KALOS_DESKTOP=1 uvicorn kalos.portal.app:app` skips __main__; the import
+    itself must refuse an open or exposed desktop engine."""
+    out = _import_app(tmp_path, KALOS_DESKTOP="1", **env)
+    assert out.returncode != 0
+    assert "DesktopConfigError" in out.stderr and needle in out.stderr
+
+
+def test_uvicorn_direct_import_with_a_token_loads(tmp_path):
+    out = _import_app(tmp_path, "print(m._DESKTOP)", KALOS_DESKTOP="1",
+                      KALOS_AUTH_TOKENS=_tokens())
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().splitlines()[-1] == "True"
+
+
 # --- startup self-check ------------------------------------------------------- #
 
 
