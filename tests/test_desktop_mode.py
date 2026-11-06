@@ -350,8 +350,11 @@ def test_lifespan_records_a_failed_migration_for_exit_4(tmp_path):
         assert "database upgrade could not run safely" in (desktop.startup_failure() or "")
         assert "the database upgrade" in desktop.server_start_failure("127.0.0.1", 1)
     finally:
+        from kalos.portal.job_runner import expect_runner
+
         app.dependency_overrides.pop(get_campaign_store, None)
         desktop.note_startup_failure("")
+        expect_runner(False)  # the failed lifespan never reached its own reset
 
 
 # --- shutdown guard ------------------------------------------------------------ #
