@@ -38,6 +38,8 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from kalos.assist.hooks import after_write as _assist_after_write
+from kalos.assist.routes import router as _assist_router
 from kalos.portal.analysis import _analyze, _annotate
 from kalos.portal.auth import (
     READ,
@@ -784,6 +786,9 @@ async def run_uploaded(
         file, target, anonymize, roles, sheet, sheet_query, _principal, store, replace=replace,
     )
     _audit(store, _principal, "run.upload", response.status_code)
+    await run_in_threadpool(
+        _assist_after_write, store, _principal.tenant, None, response, kind="upload",
+    )
     return response
 
 
@@ -898,6 +903,7 @@ def upload_error_response(error: BaseException) -> JSONResponse:
 app.include_router(_campaign_router)
 app.include_router(_campaigns_router)  # /api/campaigns* (kalos.portal.campaigns_api)
 app.include_router(_jobs_router)  # background jobs (kalos.portal.jobs_api, docs/JOBS.md)
+app.include_router(_assist_router)  # /api/assist/* (kalos.assist, docs/ASSISTANT.md)
 
 
 _CAMPAIGN_BODY_FIELDS = frozenset(
