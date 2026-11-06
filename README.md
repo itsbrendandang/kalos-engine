@@ -6,6 +6,28 @@
 > The optimizer is **not scientifically validated**. See [Scientific methodology](#scientific-methodology-and-benchmark-limitations).
 > Nothing here claims enterprise readiness, regulatory compliance, or security certification.
 
+## Quickstart
+
+Python 3.11+. Everything runs locally; nothing is sent off the machine by default.
+
+```bash
+python -m pip install -e ".[ml,portal]"   # engine + BoTorch + the FastAPI service
+python -m kalos.portal                     # serves http://127.0.0.1:8050 (loopback only)
+```
+
+In a second shell, upload the bundled synthetic run sheet and read the proposal:
+
+```bash
+curl -F file=@examples/synthetic_bioprocess/synthetic_bioprocess.csv http://127.0.0.1:8050/api/run
+curl http://127.0.0.1:8050/api/latest
+```
+
+That returns a validated analysis and the next proposed batch of experiments.
+From here: the [API](#api) lists every route, [Local development](#local-development)
+has the full setup and the CI checks, and [Scientific methodology](#scientific-methodology-and-benchmark-limitations)
+states plainly what is and is not validated. The optional grounded assistant
+(cited chat over your own data, local-first model) is in [`docs/ASSISTANT.md`](docs/ASSISTANT.md).
+
 ## Overview
 
 Kalos proposes the next batch of experiments for a bioprocess campaign. A campaign runs in rounds. Each round has three steps: propose, measure, and re-propose.
