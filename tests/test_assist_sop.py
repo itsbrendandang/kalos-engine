@@ -644,3 +644,19 @@ def test_revise_refuses_a_new_line_restating_record_values(tmp_path, planted):
     anchor = "It is a starting point for the lab's own procedure, not a procedure in itself."
     assert sop.check_revision(d, md.replace(anchor, anchor + "\n\n" + planted)), planted
     assert sop.check_revision(d, md + planted + "\n"), planted
+
+
+def test_revise_refuses_reordering_steps_that_hold_values(tmp_path):
+    """sec-assist re-check nit: numbered procedure steps with locked values keep their order."""
+    d = _two_recipe_draft(tmp_path)
+    lines = d.markdown.splitlines()
+    proc = lines.index("## Procedure")
+    steps = [i for i in range(proc, len(lines)) if re.match(r"\d+\. ", lines[i])]
+    locked = [i for i in steps if i in [j for j, ln in enumerate(lines)
+                                       if ln in sop.locked_lines(d)]]
+    assert len(locked) >= 2, "need two locked steps to swap"
+    a, b = locked[0], locked[1]
+    swapped = list(lines)
+    swapped[a], swapped[b] = lines[b], lines[a]
+    reasons = sop.check_revision(d, "\n".join(swapped) + "\n")
+    assert any("reordered" in r for r in reasons), reasons

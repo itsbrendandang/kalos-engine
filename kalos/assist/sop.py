@@ -732,6 +732,9 @@ def check_revision(previous: Draft, revised: str) -> list[str]:
         reasons.append(
             f"{len(extra)} new line(s) hold record values or Predicted/Measured wording"
         )
+    if not changed and not extra and _locked_sequence(previous, new) != _locked_sequence(previous, old):
+        # Same locked lines, different order: e.g. numbered steps with values swapped.
+        reasons.append("lines holding record values were reordered")
     old_header = old.split("\n", 1)[0]
     new_header = new.split("\n", 1)[0] if new else ""
     if new_header != old_header:
