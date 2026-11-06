@@ -64,6 +64,11 @@ from kalos.portal.analysis_parts.identifiers import (
     identifier_pattern,
     is_identifier_name,
 )
+from kalos.portal.analysis_parts.near_constant import (
+    near_constant_findings,
+    near_constant_inputs,
+    with_fixed_inputs,
+)
 from kalos.portal.analysis_parts.noise_blocks import (
     _alternative_scale_block,
     _noise_block,
@@ -578,6 +583,14 @@ def _analyze_body(
         if constant_on_fitted:
             cont_feats = [c for c in cont_feats if c not in set(constant_on_fitted)]
             Xc_all = Xc_all.drop(columns=constant_on_fitted)
+    # Inputs whose spread is within sensor precision are fixed at their median
+    # (analysis_parts/near_constant.py), not searched.
+    fixed_inputs: dict[str, dict] = {}
+    if cont_feats and fit1.any():
+        fixed_inputs = near_constant_inputs(Xc_all[fit1], cont_feats)
+        if fixed_inputs:
+            cont_feats = [c for c in cont_feats if str(c) not in fixed_inputs]
+            Xc_all = Xc_all.drop(columns=[c for c in Xc_all.columns if str(c) in fixed_inputs])
     inc, cens = _row_flags(cont_feats, kept_cats)
     fit = keep & ~inc & ~cens
     fit_pos = np.flatnonzero(fit)
@@ -1511,7 +1524,10 @@ def _analyze_body(
             declared={str(c) for c in declared},
             declared_ids={str(c) for c in roles.ids} if roles is not None else set(),
             declared_features={str(c) for c in roles.features} if roles is not None else set(),
-            status_overrides=role_safety.overrides,
+            status_overrides={
+                **role_safety.overrides,
+                **{c: ("fixed_near_constant", "near_constant") for c in fixed_inputs},
+            },
             reasons=role_safety.reasons,
         )
     )
@@ -1668,7 +1684,10 @@ def _analyze_body(
         # How distinct the batch is and how many collapsed (near-duplicate) rows
         # of the joint optimization were replaced by sequential selection.
         "batch_diversity": proposal.diversity_report(),
-        "proposals": proposals,
+        "proposals": with_fixed_inputs(proposals, fixed_inputs),
+        # Inputs fixed at their median because their spread is within sensor
+        # precision (analysis_parts/near_constant.py). Not searched.
+        "fixed_inputs": {c: v["value"] for c, v in fixed_inputs.items()},
         # Context for `proposals[].nearest_training_distance` (same metric): the
         # median distance from each training row to its nearest other row.
         "training_nn_distance_median": nn_median,
@@ -1688,7 +1707,7 @@ def _analyze_body(
                     by_column, n_rows_dropped, n_censored_rows, zero_filled,
                     auto_cats=[str(c) for c in auto_cats if c in kept_cats],
                     header=header_info,
-                ) + role_safety.findings + (
+                ) + role_safety.findings + near_constant_findings(fixed_inputs) + (
                     [Finding(
                         check="cv_ci_unavailable", severity="info", message=ci95_reason,
                         detail={"cv_n_groups": int(rep["n_groups"])},

@@ -35,6 +35,7 @@ ColumnStatus = Literal[
     "dropped_non_numeric",
     "dropped_all_blank",
     "dropped_recipe_label",
+    "fixed_near_constant",
 ]
 
 

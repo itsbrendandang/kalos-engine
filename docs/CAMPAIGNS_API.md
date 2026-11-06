@@ -409,6 +409,7 @@ only added; a field never changes meaning or disappears within a version.
 - `provenance[].role_inferred`: the role the engine gave the column (`target`, `input`, `identifier`, `outcome`, `group`, `fixed_input`, `unused`).
 - `provenance[].reason`: a short code for why the column has its status (docs/UPLOADS.md, "Column-role safety").
 - `validation.findings[].code`: a machine code for the finding.
+- `fixed_inputs`: `{input: value}` for inputs fixed at their median because their spread is within sensor precision. Proposals carry the value in `recipe`. Provenance status `fixed_near_constant` is new.
 
 ## Not in this slice
 

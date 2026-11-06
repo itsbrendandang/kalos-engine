@@ -31,6 +31,10 @@ Newest first.
 - With fewer than 3 CV groups `cv_ci95` and `reliability.ci95` are now null, with `cv_ci95_reason` and a `cv_ci_unavailable` finding. They were NaN, which JSON cannot encode.
 - Every analysis passes a last check that turns any NaN or infinity into null and logs the top-level keys.
 - Reanalyze checks the analysis encodes before the fold is committed. On any error nothing is committed: campaign, runs and `/api/latest` stay as they were.
+### Fixed - near-constant inputs are fixed at their median
+
+- Inputs whose spread is within sensor precision (an inline pH of 6.98-7.03, a temperature of 36.98-37.01 C) were searched. They are now fixed at their median and left out of the model. Proposals carry the value; `fixed_inputs`, a `fixed_near_constant` provenance status and a `near_constant_input` finding say so.
+
 ### Fixed - coded columns are not read as flow rates
 
 - A coded or pseudonymised factor with negative values (the Rudt `feed_code`) failed validation as a negative flow rate and its search range was cut to [0, 1]. Unit-based checks now skip coded columns with an `info` finding (`coded_column`), and the observed range is kept. Columns with a unit are still checked.
