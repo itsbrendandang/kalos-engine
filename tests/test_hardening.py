@@ -309,6 +309,10 @@ def test_response_contract_fields_preserved():
     assert required.issubset(out.keys())
     # new fields are additive
     assert {"provenance", "seed", "timestamp", "engine_version"}.issubset(out.keys())
+    # versioned additions (docs/CAMPAIGNS_API.md, "Contract version")
+    from kalos.portal.analysis import ANALYSIS_CONTRACT_VERSION
+
+    assert out["contract_version"] == ANALYSIS_CONTRACT_VERSION >= 2
 
 
 # --- bounds-sanity ----------------------------------------------------------- #

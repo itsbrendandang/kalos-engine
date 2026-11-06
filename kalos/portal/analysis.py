@@ -64,6 +64,7 @@ from kalos.portal.analysis_parts.noise_blocks import (
 )
 from kalos.portal.analysis_parts.policy import (
     _ERR_VALIDATION_FAILED,
+    ANALYSIS_CONTRACT_VERSION,
     ANALYZE_SEED,
     CONFORMAL_ALPHA,
     CONSTRAINT_MIN_ROWS,
@@ -118,7 +119,7 @@ from kalos.validation import apply_unit_conversions, report_dict, validate_frame
 # Re-exported: each name below was defined in this module before the split into
 # `kalos.portal.analysis_parts`; callers and tests keep importing it from here.
 __all__ = [
-    "ANALYZE_SEED", "AUTO_CATEGORICAL_MAX_LEVELS", "CONFORMAL_ALPHA", "CONSTRAINT_MIN_ROWS",
+    "ANALYSIS_CONTRACT_VERSION", "ANALYZE_SEED", "AUTO_CATEGORICAL_MAX_LEVELS", "CONFORMAL_ALPHA", "CONSTRAINT_MIN_ROWS",
     "CV_N_REPEATS", "CV_TOPK_K", "DRIVER_FDR_Q", "DRIVER_TOP_K", "GATE_MIN_N_INFEASIBLE",
     "GROUP_MEAN_BASELINE_MIN_GROUPS", "LOGO_MAX_GROUPS", "RELIABILITY_SPEARMAN_FLOOR",
     "_ERR_NO_PROCESS_INPUTS", "_ERR_VALIDATION_FAILED", "_absent_is_zero_columns",
@@ -1540,6 +1541,8 @@ def _analyze_body(
         "seed": ANALYZE_SEED,
         "timestamp": int(time.time()),
         "engine_version": ENGINE_VERSION,
+        # Response-shape version (docs/CAMPAIGNS_API.md, "Contract version").
+        "contract_version": ANALYSIS_CONTRACT_VERSION,
     }
     if anonymize:
         result = _anonymize_result(

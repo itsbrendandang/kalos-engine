@@ -346,6 +346,15 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
 - `training_nn_distance_median`: the same metric between training rows (median
   distance from each row to its nearest other row), for scale.
 
+### Contract version
+
+Every analysis (`/api/run`, `/api/latest`, reanalyze, job results) carries
+`contract_version`, an integer. A response without it is version 1. Fields are
+only added; a field never changes meaning or disappears within a version.
+
+- **v2**: adds `contract_version`. The fields added in v2 are listed below this
+  line, one bullet per field.
+
 ## Not in this slice
 
 - Background jobs for reanalyze (it still runs synchronously; upload has a job route).
