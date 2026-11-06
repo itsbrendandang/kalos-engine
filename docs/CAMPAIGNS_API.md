@@ -515,6 +515,20 @@ only added; a field never changes meaning or disappears within a version.
 
 - **v3** (branch desktop-engine-2): the fields added in v3 are listed below this
   line, one bullet per field.
+- `model_optimum`: the model's best bet, the recipe with the highest predicted
+  value inside the search box: `recipe`, `predicted`, `likely_range` [low, high]
+  (the conformal band; `likely_range_source`), `in_batch` (its index in
+  `proposals`, 0 = P1, or null when it is already running), `already_running`,
+  `near_best_run` (it is the recipe of the best measured run, within the batch
+  tolerance), `predicted_vs_best`.
+- `proposals[].pick`: `best_bet` (P1, the model optimum) or `learn`. Every batch
+  has one best bet unless it is already running. The best bet has `mode`
+  `exploit` even when it is predicted at or slightly below the best run, so a
+  batch is never all exploration when a best bet exists.
+- `proposals[].predicted_vs_best`: `difference` (predicted minus best measured,
+  in the better direction), `likely_half_width`, `relation` (`better`,
+  `about_best` = within the likely range, `worse`) and `plain`. A `worse` run
+  says it is there to learn, not to win, and what it tests.
 
 ## Not in this slice
 

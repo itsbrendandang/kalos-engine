@@ -49,6 +49,11 @@ from kalos.portal.analysis_parts.applicability import (
     applicability_block,
     proposal_applicability,
 )
+from kalos.portal.analysis_parts.best_bet import (
+    label_proposals,
+    place_best_bet,
+    predicted_vs_best,
+)
 from kalos.portal.analysis_parts.column_kinds import column_kinds, with_blank_columns
 from kalos.portal.analysis_parts.columns import (
     AUTO_CATEGORICAL_MAX_LEVELS,
@@ -377,7 +382,13 @@ def _analyze_body(
             GatesConfig,
             check_gates,
         )
-        from kalos.core.optimize import mixed_strategy, propose_batch
+        from kalos.core.optimize import (
+            NEAR_DUPLICATE_TOL,
+            mixed_strategy,
+            posterior_mean_optimum,
+            proposal_separation,
+            propose_batch,
+        )
         from kalos.core.surrogate import FitError, Surrogate, proposal_restarts
         from kalos.portal.viz_utils import (
             _correlation_spearman,
@@ -1381,6 +1392,25 @@ def _analyze_body(
         constraint_floor=constraint_floor_val if constraint_applied else None,
     )
     batch = proposal.X
+    # BEST BET (first-time-user study, Finding 1; analysis_parts/best_bet.py): the
+    # recipe with the highest predicted value inside the box is always in the
+    # batch, first, unless it is already running. Computed after the batch so the
+    # batch acquisition and its seeds are unchanged.
+    optimum_x = posterior_mean_optimum(
+        s, bounds, cat_dims=cat_dims, cat_cardinalities=cat_cardinalities, seed=ANALYZE_SEED,
+    )
+    if len(batch):
+        _batch_model_mean, _ = s.posterior(batch)
+    else:
+        _batch_model_mean = np.empty(0)
+    batch, best_bet_idx, optimum_running = place_best_bet(
+        batch, optimum_x, _batch_model_mean, bounds, cat_dims, X_pending, PROPOSAL_BATCH_Q,
+    )
+    opt_mean, opt_std = s.posterior(optimum_x.reshape(1, -1))
+    _best_row = X[int(np.argmin(y) if minimize else np.argmax(y))]
+    near_best_run = proposal_separation(
+        optimum_x, _best_row, bounds[0], bounds[1], list(cat_dims or []),
+    ) < NEAR_DUPLICATE_TOL
     show = [d["name"] for d in drv[:4]]
     show_idx = [d["_idx"] for d in drv[:4]]  # carry the feature index, not a name lookup
     for d in drv:
@@ -1589,6 +1619,40 @@ def _analyze_body(
         proposals, proposal_applicability(batch, distances, design, applicability)
     ):
         row["applicability"] = flags
+    likely_half_width = conformal_q
+    label_proposals(
+        proposals, best_bet_idx, best=best_single, half_width=likely_half_width,
+        maximize=not minimize, target=str(target),
+    )
+    opt_pred = float(sign * np.asarray(opt_mean, float)[0])
+    opt_hw = (
+        float(likely_half_width) if likely_half_width is not None
+        else 1.96 * float(np.asarray(opt_std, float)[0])
+    )
+    opt_recipe = dict(zip(design.names, design.decode_row(optimum_x)))
+    for _c, _v in fixed_inputs.items():
+        opt_recipe.setdefault(_c, _v["value"])
+    model_optimum: dict[str, Any] = {
+        "recipe": opt_recipe,
+        "predicted": round(opt_pred, 4),
+        "likely_range": [round(opt_pred - opt_hw, 4), round(opt_pred + opt_hw, 4)],
+        "likely_range_source": "conformal" if likely_half_width is not None else "model_sd",
+        # Index in `proposals` (0 = P1), or None when it is already running.
+        "in_batch": best_bet_idx,
+        "already_running": bool(optimum_running),
+        "predicted_vs_best": predicted_vs_best(
+            opt_pred, best_single, likely_half_width, maximize=not minimize,
+            target=str(target), is_best_bet=True, mode="exploit",
+        ),
+        # True when the best bet is (within the batch tolerance) the recipe of the
+        # best measured run: the model's best guess is to repeat it.
+        "near_best_run": bool(near_best_run),
+    }
+    if near_best_run:
+        model_optimum["predicted_vs_best"]["plain"] += (
+            " It is close to the recipe of your best run, so running it again checks "
+            "whether that result repeats."
+        )
 
     result = {
         "n": len(y), "d": len(kept_features), "target": str(target), "group_col": gcol,
@@ -1724,6 +1788,10 @@ def _analyze_body(
         # of the joint optimization were replaced by sequential selection.
         "batch_diversity": proposal.diversity_report(),
         "proposals": with_fixed_inputs(proposals, fixed_inputs),
+        # The model's best bet (analysis_parts/best_bet.py): the recipe with the
+        # highest predicted value inside the search box, its likely range, and
+        # where it is in `proposals`.
+        "model_optimum": model_optimum,
         # Inputs fixed at their median because their spread is within sensor
         # precision (analysis_parts/near_constant.py). Not searched.
         "fixed_inputs": {c: v["value"] for c, v in fixed_inputs.items()},

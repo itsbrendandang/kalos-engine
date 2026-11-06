@@ -265,6 +265,53 @@ def proposal_separation(
     return float(np.max(np.abs(a[cont] - b[cont]) / width))
 
 
+def posterior_mean_optimum(
+    surrogate: Surrogate,
+    bounds,
+    *,
+    cat_dims: list[int] | None = None,
+    cat_cardinalities: list[int] | None = None,
+    seed: int | None = None,
+    num_restarts: int = 10,
+    raw_samples: int = 256,
+) -> np.ndarray:
+    """The model's best bet: the recipe inside the box with the highest
+    predicted mean (BoTorch `PosteriorMean`, in the surrogate's own sign, so a
+    minimize analysis that fits on -y gets its lowest predicted value).
+
+    Unlike the batch acquisition this does not reward uncertainty, so it is
+    the answer to "where does the model think the best result is?". Seeded
+    inside `fork_rng` when `seed` is given, so the caller's RNG is untouched.
+    Returns one row (d,) with categorical coordinates as integer level codes."""
+    from botorch.acquisition.analytic import PosteriorMean
+
+    assert surrogate.model is not None, "fit the surrogate first"
+    lower, upper = sanitize_bounds(bounds)
+    b = torch.as_tensor(np.vstack([lower, upper]), dtype=DTYPE, device=DEVICE)
+    cats = [int(j) for j in (cat_dims or [])]
+
+    def _solve() -> np.ndarray:
+        acq = PosteriorMean(surrogate.model)
+        if cats:
+            cards = _resolve_cardinalities(cats, cat_cardinalities, lower, upper)
+            cand = _optimize_mixed(acq, b, 1, num_restarts, raw_samples, cats, cards)
+        else:
+            cand, _ = optimize_acqf(
+                acq_function=acq, bounds=b, q=1,
+                num_restarts=num_restarts, raw_samples=raw_samples,
+            )
+        out = np.clip(cand.detach().cpu().numpy().reshape(-1), lower, upper)
+        for j in cats:
+            out[j] = np.rint(out[j])
+        return out
+
+    if seed is None:
+        return _solve()
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(int(seed))
+        return _solve()
+
+
 def _is_distinct(
     x: np.ndarray,
     accepted: list[np.ndarray],
