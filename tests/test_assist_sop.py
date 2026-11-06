@@ -309,6 +309,7 @@ def test_a_good_revision_stores_v2_and_leaves_v1_untouched(env):
     assert tc.get(f"/api/assist/sop/{d['draft_id']}?version=3", headers=H("a-read")).status_code == 404
     listed = tc.get("/api/assist/sop", headers=H("a-read")).json()["drafts"]
     assert listed[0]["latest_version"] == 2 and listed[0]["updated_at"] == v2["created_at"]
+    assert listed[0]["source_ids"] == v2["source_ids"]
     audit = [e for e in store.audit_entries(tenant="acme") if e["action"] == "sop.revise"]
     assert audit and audit[0]["campaign_id"] == cid
 
@@ -507,3 +508,30 @@ def test_check_revision_refuses_every_kind_of_drift(tmp_path):
         md + "This will work.\n",
     ):
         assert sop.check_revision(d, bad), bad[-80:]
+
+
+def test_campaign_id_omitted_uses_the_tenant_default(env):
+    tc, store = env
+    r = tc.post("/api/assist/sop/draft", json={"source": {"round": 0}, "template": "custom"}, headers=H("a-write"))
+    assert r.status_code == 404 and r.json() == {"error": "campaign not found", "code": "not_found"}
+    cid = store.create_campaign(tenant="acme", name="default", created_by="x", make_default=True)["id"]
+    store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant="acme", campaign_id=cid, analysis=ANALYSIS)
+    assert store.default_campaign_id(tenant="acme") == cid
+    r = tc.post("/api/assist/sop/draft", json={"source": {"proposal_index": [0]}, "template": "batch_recipe"},
+                headers=H("a-write"))
+    assert r.status_code == 201, r.text
+    assert r.json()["campaign_id"] == cid
+    assert r.json()["source_ids"] == ["proposal:0.0"]
+
+
+@pytest.mark.parametrize("template", ["batch_recipe", "media_prep", "custom"])
+def test_markdown_uses_only_the_agreed_constructs(env, template):
+    tc, store = env
+    cid, _runs = _seed(store)
+    md = _draft(tc, cid, {"round": 0}, template)["markdown"]
+    assert "<" not in md and "](" not in md and "![" not in md
+    for line in md.splitlines():
+        if not line.strip():
+            continue
+        assert not line.startswith((" ", "\t")), f"nested or indented line: {line!r}"
+        assert re.match(r"(#{1,3} |> |[-*] |\d+\. |\|)", line) or line[0].isalnum() or line[0] in "[`*", line

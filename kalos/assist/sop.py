@@ -564,6 +564,7 @@ def list_drafts(store: CampaignStore, tenant: str) -> list[dict[str, Any]]:
             "template": latest.template,
             "campaign_id": latest.campaign_id,
             "latest_version": latest.version,
+            "source_ids": list(latest.source_ids),
             "created_at": first.created_at,
             "updated_at": latest.created_at,
         })

@@ -40,6 +40,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from kalos.assist.hooks import after_write as _assist_after_write
 from kalos.assist.routes import router as _assist_router
+from kalos.assist.sop_routes import router as _assist_sop_router
 from kalos.portal.analysis import _analyze, _annotate
 from kalos.portal.auth import (
     READ,
@@ -904,6 +905,7 @@ app.include_router(_campaign_router)
 app.include_router(_campaigns_router)  # /api/campaigns* (kalos.portal.campaigns_api)
 app.include_router(_jobs_router)  # background jobs (kalos.portal.jobs_api, docs/JOBS.md)
 app.include_router(_assist_router)  # /api/assist/* (kalos.assist, docs/ASSISTANT.md)
+app.include_router(_assist_sop_router)  # /api/assist/sop* (kalos.assist.sop)
 
 
 _CAMPAIGN_BODY_FIELDS = frozenset(

@@ -70,7 +70,8 @@ class _Source(BaseModel):
 class _DraftBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    campaign_id: Annotated[str, StringConstraints(max_length=64)]
+    # Omitted: the tenant's default campaign (as `/api/assist/next`).
+    campaign_id: Annotated[str, StringConstraints(max_length=64)] | None = None
     source: _Source
     template: Literal["batch_recipe", "media_prep", "custom"]
     title: str | None = None
@@ -110,9 +111,9 @@ def draft_sop(
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
     """Version 1 of a draft from this campaign's records. 201 with the draft."""
-    campaign_id = body.campaign_id
+    campaign_id = body.campaign_id or store.default_campaign_id(tenant=principal.tenant)
     source = body.source.as_dict()
-    if not _valid_campaign_id(campaign_id):
+    if campaign_id is None or not _valid_campaign_id(campaign_id):
         response = campaign_not_found_response()
     elif len(source) != 1:
         response = JSONResponse(
@@ -132,7 +133,8 @@ def draft_sop(
             response = campaign_not_found_response()
         except sop.SopError as exc:
             response = JSONResponse({"error": str(exc), "code": exc.code}, status_code=400)
-    _audit(store, principal, "sop.draft", response.status_code, campaign_id)
+    _audit(store, principal, "sop.draft", response.status_code,
+           campaign_id if response.status_code != 404 else None)
     return response
 
 
