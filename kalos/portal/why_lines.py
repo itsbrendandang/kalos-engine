@@ -67,6 +67,7 @@ GLOSSARY_LINES: dict[str, str] = {
     'outcome_like_name': 'A column whose name reads like a result is not used as a setting, so no suggestion changes it.',
     'stopping_advice_only': 'Kalos never ends a campaign; this advice has been tried only on one small simulated case, not on real assays, so whether another round is worth it is your call.',
     'specs_treated_independently': 'Kalos judges each spec on its own, so when two results rise and fall together the chance of meeting all of them at once can be too high or too low; read it as a rough guide.',
+    'possibly_measured_driver': 'The model leans most on a column that might be measured during the run; until you confirm it is a setting, the model is not called reliable.',
     'possibly_measured_after_run': 'A column that might be measured during the run, used as a setting, would let the model look better than it is; untick it if it is a result.',
     'payload_too_large': 'A sheet over the size limit cannot be read, so nothing from it reaches the model until it is trimmed.',
     'too_many_fit_rows': 'The model takes a fixed number of complete runs, and a campaign that outgrows it stops updating until older runs are removed.',
