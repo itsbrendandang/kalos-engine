@@ -131,6 +131,7 @@ from kalos.portal.cells import (
     classify_cells,
     is_null_label,
 )
+from kalos.portal.gate_text import checks_block
 from kalos.portal.uploads import (
     _ERR_TOO_MANY_FIT_ROWS,
     MAX_FIT_ROWS,
@@ -1105,6 +1106,13 @@ def _analyze_body(
         # non-producers to score feasibility). Same verdict as `passed`.
         "status": promotion_result.status,
         "unmeasured": list(promotion_result.unmeasured),
+        # Additive: one entry per check in plain words (what it checks, why it
+        # matters, what to do, whether it is optional); kalos/portal/gate_text.py.
+        "checks": checks_block(
+            failures=promotion_result.failures, unmeasured=list(promotion_result.unmeasured),
+            not_judged=promotion_result.not_judged, stats=gate_stats,
+            min_groups=GROUP_MEAN_BASELINE_MIN_GROUPS, min_ece_n=GatesConfig().min_ece_n,
+        ),
         # FAIL-CLOSED IS CORRECT, BUT ILLEGIBLE WITHOUT THIS. On an all-producer
         # sheet (no non-producers to build a feasibility classifier from) or
         # any sheet too small to measure one of the four gates,

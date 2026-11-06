@@ -350,6 +350,16 @@ proposals did not change.
   as `passed`; `not_judged` gates do not block and are not counted here.
 - `promotion.unmeasured`: the gate keys that blocked only because their metric
   was missing or NaN.
+- `promotion.checks`: one entry per check, in this order:
+  `surrogate_spearman`, `group_mean_margin`, `feasibility_auc`, `ece`, `brier`.
+  Each is `{code, state, checks, why, advice, optional}`. `state` is `passed`,
+  `failed`, `not_measurable` (the check could not run on this sheet) or
+  `not_judged` (too little data; it does not block). `checks`, `why` and
+  `advice` are plain sentences (`advice` is `null` when there is nothing to
+  do). The texts live in one table, `kalos/portal/gate_text.py`; codes match
+  the assistant's glossary. `feasibility_auc`, `ece` and `brier` are
+  `optional: true`: they only matter if some recipes can fail outright, and
+  the advice never asks for failed runs on purpose.
 - Group-mean floor gate: the surrogate must beat the leave-one-row-out recipe
   mean on the same out-of-fold rows by more than a paired bootstrap's
   uncertainty (lower bound of the 95% CI of the Spearman difference above 0).
@@ -641,6 +651,7 @@ only added; a field never changes meaning or disappears within a version.
 - `pending[].likely_range_at_start` on `/api/campaign` and the runs routes:
   `{low, high}`, the published analysis's likely range around the run's `pred`
   when the run was started, or null.
+- `promotion.checks`: each promotion check in plain words, with its state and whether it is optional (see "Promotion gate changes").
 
 ## Not in this slice
 
