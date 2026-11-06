@@ -315,8 +315,8 @@ def field_definitions(client: BenchlingClient, schema_id: str) -> list[dict[str,
 def fetch_study(
     client: BenchlingClient, study_id: str, *, target_field_id: str, result_schema_id: str | None = None,
 ) -> StudyData:
-    """Fetch everything `map_study` needs. Call counts for a study with R runs and
-    N replicates: about 2R + 4*ceil(N/100) + result pages (docs/BENCHLING.md)."""
+    """Fetch everything `map_study` needs. Calls: about 2 per run, plus 1 per 100
+    replicates, per 100 parameter values and per 100 results (docs/BENCHLING.md)."""
     fetched_at = datetime.now(UTC).replace(microsecond=0)
     runs = list(client.paginate(f"{V3}/procedure-run/items",
                                 {"study.eq": study_id, "archived.anyOf": [False], "sort": "createdAt:asc"}))

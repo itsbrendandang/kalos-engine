@@ -153,9 +153,10 @@ automatically.
   waits for `Retry-After` (v3) or `x-rate-limit-reset` (v2), or backs off
   exponentially, then tries again (up to 5 times). Several Kalos processes do not
   share the budget.
-- **Size of a study.** About 2 calls per procedure run, plus 4 per 100 replicates,
-  plus 1 per 100 results. A 1,000-row study takes roughly 100 calls, so allow about
-  a minute.
+- **Size of a study.** About 2 calls per procedure run, plus 1 per 100 replicates,
+  plus 1 per 100 parameter values, plus 1 per 100 results. The 1,050-row test
+  study (15 runs, 4 planned and 1 measured parameter) took 109 calls. At 60
+  requests per 30 s that is about 30 to 60 seconds.
 - **Tokens.** App tokens last 15 minutes. Kalos asks for a new one a minute before
   expiry and once after a 401.
 - **Retries.** Reads are retried after 5xx errors. Writes are not, because a write
