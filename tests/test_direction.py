@@ -197,3 +197,29 @@ def test_cv_topk_ranks_the_lowest_rows_when_minimizing(results):
         assert res["cv_topk"]["evaluable"] is True
         assert res["cv_topk"]["overlap"] == round(float(want["overlap"]), 3), name
 
+
+
+def test_promotion_does_not_judge_the_feasibility_gates_when_minimizing(results):
+    """P(feasible) scores y > 0: under minimize its AUC/ECE/Brier gates are
+    neither passed nor failed, and never block, they are not judged with a reason."""
+    mn, mx = results["minimize"]["promotion"], results["default"]["promotion"]
+    assert {"feasibility_auc: not applicable when minimizing", "ece: not applicable when minimizing",
+            "brier: not applicable when minimizing"} <= set(mn["not_judged"])
+    for key in ("feasibility_auc", "ece", "brier"):
+        assert not any(f.startswith(key) for f in mn["failures"])
+        assert key not in mn["unmeasured"] and key not in mn["metrics"]
+    assert not any("when minimizing" in n for n in mx["not_judged"])
+
+
+def test_check_gates_moves_feasibility_gates_to_not_judged():
+    from kalos.core.gates import check_gates
+
+    bad = {"surrogate_spearman": 0.9, "feasibility_auc": 0.1, "ece": 0.9, "brier": 0.9}
+    assert not check_gates(bad).passed
+    res = check_gates({**bad, "feasibility_not_applicable": "not applicable when minimizing"})
+    assert res.passed and res.status == "passed" and res.failures == []
+    assert len(res.not_judged) == 3
+    # The surrogate floor still applies.
+    low = check_gates({"surrogate_spearman": 0.0,
+                       "feasibility_not_applicable": "not applicable when minimizing"})
+    assert not low.passed and res.metrics == {"surrogate_spearman": 0.9}

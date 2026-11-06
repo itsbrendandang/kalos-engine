@@ -372,7 +372,11 @@ def _analyze_body(
             feasibility_cv_report,
             feasible_labels,
         )
-        from kalos.core.gates import GatesConfig, check_gates
+        from kalos.core.gates import (
+            NOT_APPLICABLE_WHEN_MINIMIZING,
+            GatesConfig,
+            check_gates,
+        )
         from kalos.core.optimize import mixed_strategy, propose_batch
         from kalos.core.surrogate import FitError, Surrogate, proposal_restarts
         from kalos.portal.viz_utils import (
@@ -1047,6 +1051,10 @@ def _analyze_body(
         "ece_n": feas["n"] if feas.get("evaluable") else None,
         "brier": feas["brier"],
     }
+    if minimize:
+        # P(feasible) scores y > 0, a maximize notion: its AUC/ECE/Brier gates are
+        # reported as not judged rather than passing or failing a minimize run.
+        gate_stats["feasibility_not_applicable"] = NOT_APPLICABLE_WHEN_MINIMIZING
     promotion_result = check_gates(gate_stats)
     promotion = {
         "passed": promotion_result.passed,

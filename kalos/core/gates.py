@@ -27,6 +27,7 @@ class GatesConfig:
 
 
 NOT_ENOUGH_RUNS_FOR_CALIBRATION = "not enough runs to judge calibration"
+NOT_APPLICABLE_WHEN_MINIMIZING = "not applicable when minimizing"
 
 
 @dataclass
@@ -88,15 +89,22 @@ def check_gates(stats: dict[str, Any], config: GatesConfig | None = None) -> Pro
 
     not_judged: list[str] = []
     floor("surrogate_spearman", cfg.min_spearman)
-    floor("feasibility_auc", cfg.min_feasibility_auc)
-    ece_n = stats.get("ece_n")
-    if _finite(ece_n) and ece_n < cfg.min_ece_n:
-        not_judged.append(
-            f"ece: {NOT_ENOUGH_RUNS_FOR_CALIBRATION} (n={int(ece_n)}, need {cfg.min_ece_n})"
-        )
+    # The feasibility classifier scores P(y > 0), a maximize notion. When the
+    # caller says it does not apply (minimize), its three gates are reported as
+    # not judged with that reason instead of passing or failing.
+    feas_na = stats.get("feasibility_not_applicable")
+    if isinstance(feas_na, str) and feas_na:
+        not_judged.extend(f"{key}: {feas_na}" for key in ("feasibility_auc", "ece", "brier"))
     else:
-        ceiling("ece", cfg.max_ece)
-    ceiling("brier", cfg.max_brier)
+        floor("feasibility_auc", cfg.min_feasibility_auc)
+        ece_n = stats.get("ece_n")
+        if _finite(ece_n) and ece_n < cfg.min_ece_n:
+            not_judged.append(
+                f"ece: {NOT_ENOUGH_RUNS_FOR_CALIBRATION} (n={int(ece_n)}, need {cfg.min_ece_n})"
+            )
+        else:
+            ceiling("ece", cfg.max_ece)
+        ceiling("brier", cfg.max_brier)
     # Group-mean floor (compmodel PLAN E13): only when the caller passes the
     # paired comparison (`group_mean_margin` in kalos/core/evaluation.py).
     gm = stats.get("group_mean_margin")
@@ -119,4 +127,4 @@ def check_gates(stats: dict[str, Any], config: GatesConfig | None = None) -> Pro
     return PromotionResult(passed, f, m, summary, not_judged, unmeasured)
 
 
-__all__ = ["NOT_ENOUGH_RUNS_FOR_CALIBRATION", "GatesConfig", "PromotionResult", "check_gates"]
+__all__ = ["NOT_APPLICABLE_WHEN_MINIMIZING", "NOT_ENOUGH_RUNS_FOR_CALIBRATION", "GatesConfig", "PromotionResult", "check_gates"]

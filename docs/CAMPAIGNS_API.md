@@ -332,12 +332,16 @@ proposals did not change.
 ### Promotion gate changes (additive fields)
 
 - `promotion.not_judged`: list of gates that were neither passed nor failed,
-  with the reason. Two cases today:
+  with the reason. Three cases today:
   - `ece: not enough runs to judge calibration (n=<n>, need 20)`: the classifier
     ECE is judged only from 20 pooled out-of-fold runs (`GatesConfig.min_ece_n`).
     Below that it is still reported in `feasibility`-side metrics, but does not
     pass or fail the gate.
   - `group-mean floor: <reason>`: too few recipes with 2+ rows to form the floor.
+  - `feasibility_auc: not applicable when minimizing` (and the same for `ece`
+    and `brier`): the feasibility classifier scores P(y > 0), a maximize
+    notion, so under `direction: minimize` its three gates do not pass or fail.
+    The surrogate Spearman and group-mean floors still apply.
   `promotion.summary` appends `(not judged: ...)` when the list is not empty.
 - `promotion.status`: `passed`, `failed` or `not_measurable`. `failed` means a
   measured gate missed its floor or ceiling. `not_measurable` means every gate
