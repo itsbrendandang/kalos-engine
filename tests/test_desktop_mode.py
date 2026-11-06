@@ -24,10 +24,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _tokens(secret: str = "desk-secret") -> str:
-    return json.dumps([{
-        "token_sha256": hashlib.sha256(secret.encode()).hexdigest(),
-        "subject": "desktop-app", "tenant": "local", "scopes": ["read", "write"],
-    }])
+    return json.dumps([
+        {"token_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+         "subject": "desktop-app", "tenant": "local", "scopes": ["read", "write"]},
+        {"token_sha256": hashlib.sha256(b"admin-secret").hexdigest(),
+         "subject": "operator", "tenant": "ops", "scopes": ["read", "admin"]},
+    ])
 
 
 def _env(tmp_path: Path, **extra: str) -> dict[str, str]:
@@ -192,7 +194,22 @@ def test_health_needs_the_token(client):
     assert client.get("/api/health").status_code == 401
 
 
-def test_health_reports_versions_state_and_schema(client, tmp_path):
+@pytest.fixture
+def desktop_app(monkeypatch):
+    from kalos.portal import app as app_module
+
+    monkeypatch.setattr(app_module, "_DESKTOP", True)
+
+
+def test_health_hides_host_facts_from_a_tenant_token_in_server_mode(client):
+    body = client.get("/api/health", headers={"Authorization": "Bearer desk-secret"}).json()
+    assert body["status"] == "ok" and body["mode"] == "server"
+    assert not {"state_dir", "pid", "analysis_in_flight"} & set(body)
+    admin = client.get("/api/health", headers={"Authorization": "Bearer admin-secret"}).json()
+    assert {"state_dir", "pid", "analysis_in_flight"} <= set(admin)
+
+
+def test_health_reports_versions_state_and_schema(client, tmp_path, desktop_app):
     from kalos.portal.migrate import SCHEMA_VERSION
 
     r = client.get("/api/health", headers={"Authorization": "Bearer desk-secret"})
@@ -204,8 +221,9 @@ def test_health_reports_versions_state_and_schema(client, tmp_path):
     assert body["contract_version"] >= 2
     assert isinstance(body["torch_version"], str) and isinstance(body["torch_loaded"], bool)
     assert body["analysis_in_flight"] == 0 and body["pid"] == os.getpid()
+    assert body["mode"] == "desktop"
     assert set(body) >= {"engine_version", "python_version", "botorch_version", "torch_threads",
-                         "uptime_s", "mode"}
+                         "uptime_s"}
 
 
 def test_health_is_503_with_a_plain_reason_when_the_store_fails(client):

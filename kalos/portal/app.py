@@ -41,6 +41,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from kalos.portal import desktop as _desktop
 from kalos.portal.analysis import _analyze, _annotate
 from kalos.portal.auth import (
+    ADMIN,
     READ,
     WRITE,
     AuthConfigError,
@@ -532,12 +533,15 @@ async def healthz() -> dict:
 
 @app.get("/api/health")
 def health(
-    _principal: Principal = Depends(require_scope(READ)),
+    principal: Principal = Depends(require_scope(READ)),
 ) -> JSONResponse:
     """What the desktop shell (and an operator) needs to know: versions, where
     the state lives, the schema, and whether an analysis is running.
 
-    Needs the read scope, unlike `/healthz`: it names the state directory. Never
+    Needs the read scope, unlike `/healthz`. `state_dir`, `pid` and
+    `analysis_in_flight` (process-wide, every tenant) are host facts: they are
+    returned in desktop mode (one user, one token) and to an admin token, and
+    left out for any other caller in server mode. Never
     imports torch: versions come from package metadata, `torch_loaded` says
     whether the GP stack is in memory yet. 503 with a fixed plain reason when the
     store cannot be read (the exception is logged, not returned)."""
@@ -579,11 +583,17 @@ def health(
         body["schema_version"] = store.schema_version()
     except Exception:  # noqa: BLE001 - reported as unavailable, never as a 500
         log.exception("health check: campaign store unavailable")
+        if not (_DESKTOP or principal.has(ADMIN)):
+            for key in ("state_dir", "pid", "analysis_in_flight"):
+                body.pop(key, None)
         return JSONResponse(
             {**body, "status": "unavailable", "code": "store_unavailable",
              "error": "The engine cannot read its database. See the engine log."},
             status_code=503,
         )
+    if not (_DESKTOP or principal.has(ADMIN)):
+        for key in ("state_dir", "pid", "analysis_in_flight"):
+            body.pop(key, None)
     if body["schema_version"] != SCHEMA_VERSION:
         return JSONResponse(
             {**body, "status": "unavailable", "code": "schema_mismatch",
