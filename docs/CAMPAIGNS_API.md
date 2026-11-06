@@ -328,6 +328,13 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
     pass or fail the gate.
   - `group-mean floor: <reason>`: too few recipes with 2+ rows to form the floor.
   `promotion.summary` appends `(not judged: ...)` when the list is not empty.
+- `promotion.status`: `passed`, `failed` or `not_measurable`. `failed` means a
+  measured gate missed its floor or ceiling. `not_measurable` means every gate
+  that blocked could not be measured on this data (for example
+  `feasibility_auc` on a sheet with no non-producers). The verdict is the same
+  as `passed`; `not_judged` gates do not block and are not counted here.
+- `promotion.unmeasured`: the gate keys that blocked only because their metric
+  was missing or NaN.
 - Group-mean floor gate: the surrogate must beat the leave-one-row-out recipe
   mean on the same out-of-fold rows by more than a paired bootstrap's
   uncertainty (lower bound of the 95% CI of the Spearman difference above 0).
@@ -409,6 +416,8 @@ only added; a field never changes meaning or disappears within a version.
 - `provenance[].role_inferred`: the role the engine gave the column (`target`, `input`, `identifier`, `outcome`, `group`, `fixed_input`, `unused`).
 - `provenance[].reason`: a short code for why the column has its status (docs/UPLOADS.md, "Column-role safety").
 - `validation.findings[].code`: a machine code for the finding.
+- `promotion.status` and `promotion.unmeasured` (see "Promotion gate changes").
+- `validation.findings[].code` is never null: it is the check name when no more specific code exists.
 - `fixed_inputs`: `{input: value}` for inputs fixed at their median because their spread is within sensor precision. Proposals carry the value in `recipe`. Provenance status `fixed_near_constant` is new.
 
 ## Not in this slice

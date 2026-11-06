@@ -38,6 +38,18 @@ class PromotionResult:
     # Gates that were neither passed nor failed, with the reason (e.g. ECE on
     # fewer than `min_ece_n` runs).
     not_judged: list[str] = field(default_factory=list)
+    # Gates that blocked only because their metric could not be measured
+    # (missing/NaN), e.g. `feasibility_auc` on a sheet with no non-producers.
+    unmeasured: list[str] = field(default_factory=list)
+
+    @property
+    def status(self) -> str:
+        """`passed`, `failed` (a measured gate missed its floor or ceiling), or
+        `not_measurable` (every blocking gate was unmeasured). Same verdict as
+        `passed`; it only says why a `False` is false."""
+        if self.passed:
+            return "passed"
+        return "not_measurable" if len(self.unmeasured) == len(self.failures) else "failed"
 
 
 def _finite(x: Any) -> TypeGuard[float]:
@@ -52,6 +64,7 @@ def check_gates(stats: dict[str, Any], config: GatesConfig | None = None) -> Pro
 
     f: list[str] = []
     m: dict[str, float] = {}
+    unmeasured: list[str] = []
 
     def floor(key: str, lo: float) -> None:
         v = stats.get(key)
@@ -61,6 +74,7 @@ def check_gates(stats: dict[str, Any], config: GatesConfig | None = None) -> Pro
                 f.append(f"{key}={v:.3f} < min {lo}")
         else:
             f.append(f"{key} missing/NaN (unmeasured)")  # fail closed
+            unmeasured.append(key)
 
     def ceiling(key: str, hi: float) -> None:
         v = stats.get(key)
@@ -70,6 +84,7 @@ def check_gates(stats: dict[str, Any], config: GatesConfig | None = None) -> Pro
                 f.append(f"{key}={v:.3f} > max {hi}")
         else:
             f.append(f"{key} missing/NaN (unmeasured)")  # fail closed
+            unmeasured.append(key)
 
     not_judged: list[str] = []
     floor("surrogate_spearman", cfg.min_spearman)
@@ -101,7 +116,7 @@ def check_gates(stats: dict[str, Any], config: GatesConfig | None = None) -> Pro
     summary = "ALL GATES PASSED" if passed else "GATES FAILED: " + "; ".join(f)
     if not_judged:
         summary += " (not judged: " + "; ".join(not_judged) + ")"
-    return PromotionResult(passed, f, m, summary, not_judged)
+    return PromotionResult(passed, f, m, summary, not_judged, unmeasured)
 
 
 __all__ = ["NOT_ENOUGH_RUNS_FOR_CALIBRATION", "GatesConfig", "PromotionResult", "check_gates"]

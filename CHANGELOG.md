@@ -31,6 +31,11 @@ Newest first.
 - With fewer than 3 CV groups `cv_ci95` and `reliability.ci95` are now null, with `cv_ci95_reason` and a `cv_ci_unavailable` finding. They were NaN, which JSON cannot encode.
 - Every analysis passes a last check that turns any NaN or infinity into null and logs the top-level keys.
 - Reanalyze checks the analysis encodes before the fold is committed. On any error nothing is committed: campaign, runs and `/api/latest` stay as they were.
+### Fixed - every finding has a code; promotion says why it did not pass
+
+- `validation.findings[].code` was null everywhere. It is now a stable string: a specific code where one exists (`coded_column`, `row_number_column`, `near_constant_input`, ...), else the check name.
+- `promotion.status` (`passed`, `failed`, `not_measurable`) and `promotion.unmeasured` tell a missed gate from one that could not be measured. `promotion.passed` is unchanged.
+
 ### Fixed - near-constant inputs are fixed at their median
 
 - Inputs whose spread is within sensor precision (an inline pH of 6.98-7.03, a temperature of 36.98-37.01 C) were searched. They are now fixed at their median and left out of the model. Proposals carry the value; `fixed_inputs`, a `fixed_near_constant` provenance status and a `near_constant_input` finding say so.

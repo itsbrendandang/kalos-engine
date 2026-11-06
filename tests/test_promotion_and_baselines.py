@@ -294,7 +294,10 @@ def _replicated_sheet_many_groups(n_groups: int = 20, reps: int = 3, seed: int =
 def test_promotion_block_appears_with_the_documented_shape():
     out = _analyze(_strong_signal_with_producers())
     promo = out["promotion"]
-    assert set(promo) == {"passed", "failures", "metrics", "summary", "meaning", "not_judged"}
+    assert set(promo) == {
+        "passed", "failures", "metrics", "summary", "meaning", "not_judged", "status",
+        "unmeasured",
+    }
     assert isinstance(promo["passed"], bool)
     assert isinstance(promo["failures"], list)
     assert isinstance(promo["metrics"], dict)

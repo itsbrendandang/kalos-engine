@@ -1054,6 +1054,11 @@ def _analyze_body(
         # Gates neither passed nor failed, e.g. "ece: not enough runs to judge
         # calibration (n=14, need 20)". Additive.
         "not_judged": promotion_result.not_judged,
+        # Additive: `passed`, `failed` (a measured gate missed), or
+        # `not_measurable` (every blocking gate was unmeasured, e.g. no
+        # non-producers to score feasibility). Same verdict as `passed`.
+        "status": promotion_result.status,
+        "unmeasured": list(promotion_result.unmeasured),
         # FAIL-CLOSED IS CORRECT, BUT ILLEGIBLE WITHOUT THIS. On an all-producer
         # sheet (no non-producers to build a feasibility classifier from) or
         # any sheet too small to measure one of the four gates,

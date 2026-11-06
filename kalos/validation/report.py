@@ -61,12 +61,14 @@ class Finding:
     rows: tuple[int, ...] = ()
     detail: dict = field(default_factory=dict)
     # Stable machine code for the finding (additive; see docs/CAMPAIGNS_API.md).
+    # Serialized as the check name when no more specific code was set, so a
+    # finding's `code` is never null.
     code: str | None = None
 
     def to_dict(self) -> dict:
         return {
             "check": self.check,
-            "code": self.code,
+            "code": self.code or self.check,
             "severity": self.severity,
             "message": self.message,
             "column": self.column,
