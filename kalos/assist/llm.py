@@ -27,9 +27,18 @@ from kalos.providers.ollama_provider import (
     ollama_model,
     ollama_url,
 )
+from kalos.providers.openai_compatible_provider import (
+    OpenAICompatibleProvider,
+    OpenAICompatUnavailable,
+    openai_model,
+    openai_url,
+)
+from kalos.providers.openai_compatible_provider import (
+    is_loopback_url as openai_is_loopback_url,
+)
 
-AssistProvider = Literal["ollama", "anthropic", "none"]
-_PROVIDERS: tuple[AssistProvider, ...] = ("ollama", "anthropic", "none")
+AssistProvider = Literal["ollama", "openai", "anthropic", "none"]
+_PROVIDERS: tuple[AssistProvider, ...] = ("ollama", "openai", "anthropic", "none")
 _ANTHROPIC_MODEL_ENV = "KALOS_ASSIST_ANTHROPIC_MODEL"
 _DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
 
@@ -80,6 +89,23 @@ class OllamaChat:
 
 
 @dataclass
+class OpenAICompatChat:
+    model: str
+    url: str
+    provider: str = "openai"
+
+    @property
+    def local(self) -> bool:
+        return openai_is_loopback_url(self.url)
+
+    def complete(self, system: str, prompt: str) -> str:
+        try:
+            return OpenAICompatibleProvider().chat(system, prompt, model=self.model)
+        except OpenAICompatUnavailable as exc:
+            raise ModelUnavailable(str(exc)) from exc
+
+
+@dataclass
 class AnthropicChat:
     model: str
     provider: str = "anthropic"
@@ -114,6 +140,8 @@ def model_info() -> dict[str, object]:
     provider = assist_provider()
     if provider == "ollama":
         return {"provider": "ollama", "model": ollama_model(), "local": is_loopback_url(ollama_url())}
+    if provider == "openai":
+        return {"provider": "openai", "model": openai_model(), "local": openai_is_loopback_url(openai_url())}
     if provider == "anthropic":
         model = os.environ.get(_ANTHROPIC_MODEL_ENV) or _DEFAULT_ANTHROPIC_MODEL
         return {"provider": "anthropic", "model": model, "local": False}
@@ -126,6 +154,8 @@ def get_chat_model() -> ChatModel | None:
     provider = assist_provider()
     if provider == "ollama":
         return OllamaChat(model=ollama_model(), url=ollama_url())
+    if provider == "openai":
+        return OpenAICompatChat(model=openai_model(), url=openai_url())
     if provider == "anthropic":
         return AnthropicChat(model=os.environ.get(_ANTHROPIC_MODEL_ENV) or _DEFAULT_ANTHROPIC_MODEL)
     return None
@@ -137,6 +167,7 @@ __all__ = [
     "ChatModel",
     "ModelUnavailable",
     "OllamaChat",
+    "OpenAICompatChat",
     "assist_provider",
     "get_chat_model",
     "model_info",

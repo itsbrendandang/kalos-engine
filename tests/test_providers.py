@@ -20,6 +20,10 @@ _ALL_ENV_VARS = (
     "HF_TOKEN",
     "KALOS_LLM_PROVIDER",
     "KALOS_DESKTOP",
+    "KALOS_OPENAI_BASE_URL",
+    "KALOS_OPENAI_MODEL",
+    "KALOS_OPENAI_API_KEY",
+    "KALOS_OPENAI_TIMEOUT_S",
 )
 
 
@@ -92,9 +96,9 @@ def test_status_never_leaks_a_credential_value(monkeypatch):
 
 # --- registry ------------------------------------------------------------------- #
 
-def test_all_providers_returns_the_three_known_providers():
+def test_all_providers_returns_the_known_providers():
     names = {p.name for p in all_providers()}
-    assert names == {"anthropic", "bionemo", "ollama"}
+    assert names == {"anthropic", "bionemo", "ollama", "openai"}
 
 
 def test_get_returns_provider_by_name_or_none():
@@ -105,12 +109,13 @@ def test_get_returns_provider_by_name_or_none():
 
 def test_provider_status_is_json_dumps_able():
     payload = provider_status()
+    assert len(payload) == 4
     assert isinstance(payload, list)
-    assert len(payload) == 3
+
     # must not raise
     text = json.dumps(payload)
     data = json.loads(text)
-    assert {entry["name"] for entry in data} == {"anthropic", "bionemo", "ollama"}
+    assert {entry["name"] for entry in data} == {"anthropic", "bionemo", "ollama", "openai"}
     for entry in data:
         assert set(entry) == {
             "name", "available", "required_env", "missing_env", "capability", "fallback",
@@ -148,7 +153,7 @@ def test_providers_route_returns_all(monkeypatch):
     body = resp.json()
     assert "providers" in body
     names = {entry["name"] for entry in body["providers"]}
-    assert names == {"anthropic", "bionemo", "ollama"}
+    assert names == {"anthropic", "bionemo", "ollama", "openai"}
     anthropic_entry = next(e for e in body["providers"] if e["name"] == "anthropic")
     assert anthropic_entry["available"] is True
     # a live key must never leak into the response, even though it's set
@@ -232,3 +237,59 @@ def test_ollama_calls_ignore_proxy_environment(monkeypatch):
 
     assert with_proxies(urllib.request.build_opener())  # the default would use the proxy
     assert with_proxies(_opener()) == []
+
+
+# --- openai-compatible (local or self-hosted OpenAI-style server) ---------------- #
+
+def test_openai_provider_selected_only_when_env_says_so(monkeypatch):
+    from kalos.providers.openai_compatible_provider import OpenAICompatibleProvider
+
+    provider = OpenAICompatibleProvider()
+    assert provider.available() is False
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "openai")
+    assert provider.available() is True
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "ollama")
+    assert provider.available() is False
+
+
+def test_openai_provider_local_flag_follows_the_url(monkeypatch):
+    from kalos.providers.openai_compatible_provider import OpenAICompatibleProvider
+
+    provider = OpenAICompatibleProvider()
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", "http://127.0.0.1:59601/v1")
+    assert provider.local() is True
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", "http://10.0.0.5:8080/v1")
+    assert provider.local() is False
+
+
+def test_openai_provider_status_is_a_slot_with_no_required_env():
+    from kalos.providers.openai_compatible_provider import OpenAICompatibleProvider
+
+    status = OpenAICompatibleProvider().status()
+    assert status.name == "openai"
+    assert status.required_env == ()
+    assert status.missing_env == ()
+
+
+def test_openai_chat_rejects_non_http_url(monkeypatch):
+    from kalos.providers.openai_compatible_provider import (
+        OpenAICompatibleProvider,
+        OpenAICompatUnavailable,
+    )
+
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", "ftp://example.com/v1")
+    monkeypatch.setenv("KALOS_OPENAI_MODEL", "x")
+    with pytest.raises(OpenAICompatUnavailable):
+        OpenAICompatibleProvider().chat("sys", "hi")
+
+
+def test_openai_chat_refuses_when_no_model_set(monkeypatch):
+    from kalos.providers.openai_compatible_provider import (
+        OpenAICompatibleProvider,
+        OpenAICompatUnavailable,
+    )
+
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", "http://127.0.0.1:59601/v1")
+    monkeypatch.delenv("KALOS_OPENAI_MODEL", raising=False)
+    with pytest.raises(OpenAICompatUnavailable):
+        OpenAICompatibleProvider().chat("sys", "hi")
