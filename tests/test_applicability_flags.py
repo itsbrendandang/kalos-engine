@@ -172,3 +172,25 @@ def test_reanalyze_keeps_a_roles_threshold(client, monkeypatch):
     monkeypatch.setattr(portal_module, "_analyze", spy)
     assert c.post("/api/campaign/reanalyze").status_code == 400
     assert seen["applicability_distance"] == 0.33
+
+
+def test_vals_and_recipe_are_the_same_clipped_numbers():
+    """`vals` (the driver columns) and `recipe` come from one decode: rounded
+    to 3 places and clipped into the box."""
+    from kalos.domains import DesignSpace, Dimension
+    from kalos.portal.analysis_parts.proposals import _annotate
+
+    design = DesignSpace((
+        Dimension("pH", "continuous", lower=6.0004, upper=7.9996),
+        Dimension("temp", "continuous", lower=30.0, upper=37.0),
+        Dimension("medium", "categorical", levels=("A", "B")),
+    ))
+    batch = np.array([[6.00041, 36.99999, 1.0], [7.99962, 30.0004, 0.0]])
+    rows = _annotate(batch, np.array([1.0, 2.0]), np.array([0.1, 0.2]), 1.5,
+                     cols=[0, 1], design=design)
+    for row in rows:
+        assert row["vals"] == [row["recipe"]["pH"], row["recipe"]["temp"]]
+        assert 6.0004 <= row["vals"][0] <= 7.9996
+    full = _annotate(batch, np.array([1.0, 2.0]), np.array([0.1, 0.2]), 1.5, design=design)
+    assert full[0]["vals"][:2] == [full[0]["recipe"]["pH"], full[0]["recipe"]["temp"]]
+    assert full[0]["vals"][2] == 1.0  # categorical code, not the label

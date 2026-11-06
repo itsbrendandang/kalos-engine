@@ -70,10 +70,17 @@ def _annotate(
         else:
             mode, reason = "explore", f"diversifies the batch (predicted {m:.3g}, ±{sd:.3g})"
         row = {"pred": round(m, 3), "std": round(sd, 3), "mode": mode, "reason": reason}
-        row["vals"] = (np.round(batch[i], 3).tolist() if cols is None
-                       else [round(float(batch[i][j]), 3) for j in cols])
+        # One source of truth: with a design, `vals` holds the same rounded and
+        # box-clipped numbers as `recipe` (categorical dims keep their codes).
+        numeric = [round(float(v), 3) for v in batch[i]]
         if design is not None:
-            row["recipe"] = dict(zip(design.names, design.decode_row(batch[i])))
+            decoded = design.decode_row(batch[i])
+            row["recipe"] = dict(zip(design.names, decoded))
+            numeric = [
+                numeric[k] if dim.is_categorical else decoded[k]
+                for k, dim in enumerate(design.dims)
+            ]
+        row["vals"] = numeric if cols is None else [numeric[j] for j in cols]
         if p_feasible is not None:
             pf = float(p_feasible[i])
             row["p_feasible"] = None if pf != pf else round(pf, 3)  # NaN -> null (ungated)
