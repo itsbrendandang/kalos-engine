@@ -300,7 +300,22 @@ def finalize(run: RunResult, *, present: Any = None, store: RunStore | None = No
         raise ToolCallError("bad_state", f"finalize needs analysis_complete, not {receipt.state}")
     outputs = list(receipt.outputs)
     for name, filename, blob, label in (present(run.run_dir, receipt) if present else []):
-        _write_artifact(run.run_dir, filename, blob)
+        try:
+            _write_artifact(run.run_dir, filename, blob)
+        except (_Fault, OSError):
+            # An escaping, clashing or unwritable report path fails the run: the
+            # receipt becomes terminal/fail and keeps only the analysis outputs.
+            now = utcnow()
+            err = ErrorInfo(error_code="path_escape", message=ERROR_MESSAGES["path_escape"],
+                            receipt_id=receipt.receipt_id)
+            receipt = receipt.model_copy(update={
+                "state": "terminal", "result": "fail", "status": "error", "error": err,
+                "summary": f"{receipt.tool}: {ERROR_MESSAGES['path_escape']}",
+                "updated_at": now, "finished_at": now})
+            store.update(receipt)
+            status = run.status.model_copy(update={"status": "error", "error": err,
+                                                   "summary": receipt.summary})
+            return RunResult(status=status, receipt=receipt, run_dir=run.run_dir)
         outputs.append(Artifact(name=name, path=filename, sha256=sha256_hex(blob),
                                 bytes=len(blob), label=label))
     now = utcnow()

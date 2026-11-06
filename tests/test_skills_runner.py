@@ -352,6 +352,22 @@ def test_hold_then_finalize(reg, ctx):
         finalize(done)  # only from analysis_complete
 
 
+@pytest.mark.parametrize("bad_path", ["../escape.md", "/tmp/escape.md", "drivers.json",
+                                      "missing_dir/report.md"])
+def test_finalize_write_failure_marks_receipt_failed(reg, ctx, bad_path):
+    sk = reg.get("driver-ranking", "acme")
+    res = invoke(sk, "engine.rank_drivers", {**MODEL, "n_boot": 20}, ctx, hold=True)
+    out = finalize(res, present=lambda d, r: [("report", bad_path, b"# x\n", "derived")])
+    assert out.status.status == "error" and out.status.error.error_code == "path_escape"
+    stored = ctx.runs.get("acme", res.status.receipt_id)
+    assert (stored.state, stored.result, stored.status) == ("terminal", "fail", "error")
+    assert [a.path for a in stored.outputs] == ["drivers.json"]
+    assert not (res.run_dir.parent / "escape.md").exists()
+    assert not verify_receipt(res.run_dir, sk).ok
+    with pytest.raises(ToolCallError):
+        finalize(res)  # terminal now
+
+
 def test_verify_detects_changes(reg, ctx):
     sk = reg.get("driver-ranking", "acme")
     res = invoke(sk, "engine.rank_drivers", {**MODEL, "n_boot": 20}, ctx)
