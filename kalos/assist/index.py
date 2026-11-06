@@ -46,7 +46,7 @@ from kalos.assist.paths import tenant_dir
 
 log = logging.getLogger("kalos.assist")
 
-INDEX_VERSION = 1
+INDEX_VERSION = 2
 MAX_CHUNK_CHARS = 1200
 _TOKEN = re.compile(r"[a-z0-9]+(?:\.[0-9]+)?")
 _STOP = frozenset(
@@ -73,6 +73,62 @@ class Chunk:
     campaign_id: str | None
     title: str
     text: str
+    # Strings in `text` the lab wrote (campaign name, column names, labels). A
+    # claim word inside one of them never supports a claim in an answer.
+    user_terms: tuple[str, ...] = ()
+    # False for text the lab or a third party wrote as a whole (a tenant skills
+    # folder): it can be quoted, but supports no claim word.
+    trusted_text: bool = True
+
+    def kalos_text(self) -> str:
+        """The chunk text with every lab-written string removed: what Kalos
+        itself wrote. Claim words are checked against this only."""
+        if not self.trusted_text:
+            return ""
+        return strip_terms(self.text, self.user_terms)
+
+
+def strip_terms(text: str, terms: Iterable[str]) -> str:
+    """`text` with each of `terms` removed (case-insensitive, longest first)."""
+    for term in sorted({t for t in terms if t and t.strip()}, key=len, reverse=True):
+        text = re.sub(re.escape(term), " ", text, flags=re.IGNORECASE)
+    return text
+
+
+def _user_terms(info: dict[str, Any], state: dict[str, Any] | None, a: dict[str, Any]) -> tuple[str, ...]:
+    """Every string in one campaign's record that the lab wrote."""
+    terms: set[str] = set()
+
+    def add(value: Any) -> None:
+        if isinstance(value, str) and value.strip():
+            terms.add(value.strip()[:200])
+
+    add(info.get("name"))
+    add(a.get("dataset"))
+    add(a.get("target"))
+    add((state or {}).get("target"))
+    for key in ("features", "categorical_features", "targets", "auto_categorical"):
+        for v in a.get(key) or []:
+            add(v)
+    for v in (state or {}).get("features") or []:
+        add(v)
+    columns = a.get("columns") or a.get("column_provenance") or a.get("provenance") or []
+    for col in columns if isinstance(columns, list) else []:
+        if isinstance(col, dict):
+            add(col.get("name"))
+    for f in ((a.get("validation") or {}).get("findings") or []):
+        if isinstance(f, dict):
+            add(f.get("column"))
+    recipes = [p.get("recipe") for p in a.get("proposals") or [] if isinstance(p, dict)]
+    recipes += [r.get("recipe") for r in (state or {}).get("pending") or [] if isinstance(r, dict)]
+    for row in (state or {}).get("base_rows") or []:
+        recipes.append(row)
+    for recipe in recipes:
+        if isinstance(recipe, dict):
+            for k, v in recipe.items():
+                add(k)
+                add(v)
+    return tuple(sorted(terms))
 
 
 def _chunk(kind: str, source_id: str, campaign_id: str | None, title: str, text: str) -> Chunk:
@@ -184,7 +240,20 @@ def campaign_chunks(
     analysis: dict[str, Any] | None,
     refusal: dict[str, Any] | None = None,
 ) -> list[Chunk]:
-    """The chunks for one campaign, from its record only."""
+    """The chunks for one campaign, from its record only, each carrying the
+    lab-written strings it may contain (`Chunk.user_terms`)."""
+    from dataclasses import replace
+
+    terms = _user_terms(info, state, analysis or {})
+    return [replace(c, user_terms=terms) for c in _campaign_chunks(info, state, analysis, refusal)]
+
+
+def _campaign_chunks(
+    info: dict[str, Any],
+    state: dict[str, Any] | None,
+    analysis: dict[str, Any] | None,
+    refusal: dict[str, Any] | None = None,
+) -> list[Chunk]:
     cid = str(info["id"])
     name = str(info.get("name") or "campaign")
     out: list[Chunk] = []
@@ -477,9 +546,11 @@ def doc_chunks(files: list[Path]) -> list[Chunk]:
 def skill_chunks(files: list[Path]) -> list[Chunk]:
     """SKILL.md files: the frontmatter is skipped except name and summary; the
     body is split by heading like a doc."""
-    out = []
+    out: list[Chunk] = []
+    builtin = (Path(__file__).resolve().parents[1] / "skills" / "builtin").resolve()
     for path in files:
         slug = path.parent.name
+        trusted = builtin in path.resolve().parents
         text = path.read_text(encoding="utf-8", errors="replace")
         head = ""
         if text.startswith("---"):
@@ -488,10 +559,13 @@ def skill_chunks(files: list[Path]) -> list[Chunk]:
                 front, text = text[3:end], text[end + 4:]
                 keep = [ln for ln in front.splitlines() if ln.startswith(("name:", "summary:"))]
                 head = "\n".join(keep)
-        if head:
-            out.append(_chunk("skill", slug, None, f"Skill {slug}", head))
-        for heading, body in _split_markdown(text):
-            out.append(_chunk("skill", slug, None, f"Skill {slug} - {heading}", body))
+        pieces = ([_chunk("skill", slug, None, f"Skill {slug}", head)] if head else []) + [
+            _chunk("skill", slug, None, f"Skill {slug} - {heading}", body)
+            for heading, body in _split_markdown(text)
+        ]
+        from dataclasses import replace
+
+        out.extend(replace(c, trusted_text=trusted) for c in pieces)
     return out
 
 
@@ -665,7 +739,10 @@ class AssistIndex:
 
     def chunks(self) -> list[Chunk]:
         groups = self._load().get("groups") or {}
-        return [Chunk(**c) for g in groups.values() for c in g.get("chunks") or []]
+        return [
+            Chunk(**{**c, "user_terms": tuple(c.get("user_terms") or ())})
+            for g in groups.values() for c in g.get("chunks") or []
+        ]
 
     def search(
         self, query: str, *, campaign_id: str | None = None, k: int = 6, min_similarity: float = 0.35,

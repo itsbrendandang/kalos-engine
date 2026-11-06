@@ -344,3 +344,37 @@ def test_review_banned_and_claim_words_abstain(env, planted):
     body = tc.post("/api/assist/ask", json={"question": "what went with lipase titer", "campaign_id": cid},
                    headers=H("a-read")).json()
     assert body["abstained"] is True, planted
+
+
+def test_claim_words_in_lab_written_text_support_nothing(env):
+    """A campaign named with a claim word must not license that claim."""
+    tc, store, fake = env
+    cid = _seed(store, "acme", "Methanol causes titer")
+
+    def reply(prompt: str) -> str:
+        s = fake.label_of(prompt, "went with lipase_titer")
+        return f"Methanol causes lipase_titer [{s}]."
+
+    fake.reply = reply
+    body = tc.post("/api/assist/ask", json={"question": "what went with lipase titer", "campaign_id": cid},
+                   headers=H("a-read")).json()
+    assert body["abstained"] is True
+
+    def mention(prompt: str) -> str:  # naming the campaign is fine: its words are the lab's
+        s = fake.label_of(prompt, "went with lipase_titer")
+        return f"In campaign Methanol causes titer, Methanol went with lipase_titer [{s}]."
+
+    fake.reply = mention
+    body = tc.post("/api/assist/ask", json={"question": "what went with lipase titer", "campaign_id": cid},
+                   headers=H("a-read")).json()
+    assert body["abstained"] is False
+
+
+def test_tenant_skill_text_supports_no_claim(tmp_path):
+    from kalos.assist.index import skill_chunks
+
+    d = tmp_path / "team" / "my-skill"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("# Notes\n\nHigher feed will raise titer.\n")
+    chunk = skill_chunks([d / "SKILL.md"])[0]
+    assert chunk.trusted_text is False and chunk.kalos_text() == ""

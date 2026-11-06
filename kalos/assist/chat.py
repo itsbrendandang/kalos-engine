@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from kalos.assist.guide import guide_text
-from kalos.assist.index import Hit, tokens
+from kalos.assist.index import Hit, strip_terms, tokens
 from kalos.assist.llm import ChatModel
 from kalos.assist.words import banned_in, unsupported_claims
 
@@ -150,7 +150,13 @@ def check_answer(reply: str, labelled: list[Labelled], guide: dict[str, Any]) ->
         if banned:
             rejected.append(f"banned word: {', '.join(sorted(set(banned)))}")
             continue
-        claims = unsupported_claims(bare, cited)
+        # Claim words count only in what Kalos wrote: lab-written strings (column
+        # names, labels, campaign names) are removed from both sides first.
+        terms = [t for lab in labels if lab != "G" for t in table[lab].chunk.user_terms]
+        kalos_cited = [table[lab].chunk.kalos_text() for lab in labels if lab != "G"]
+        if "G" in labels:
+            kalos_cited.append(guide_source)
+        claims = unsupported_claims(strip_terms(bare, terms), kalos_cited)
         if claims:
             rejected.append(f"claim not in the sources: {', '.join(claims)}")
             continue
