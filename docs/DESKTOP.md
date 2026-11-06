@@ -190,13 +190,16 @@ the extras `ml`, `portal` and, when the checkout defines it, `assist`
 (`KALOS_BUNDLE_EXTRAS` overrides the list; `assist-embed` is left out on
 purpose). It builds
 `OUT_DIR/kalos-engine` (a launcher) and `OUT_DIR/python/` (a relocatable
-CPython from python-build-standalone with the dependencies from `uv.lock` and
-the engine installed). The launcher runs `python -I -m kalos.portal "$@"`, so
-the user's `PYTHON*` variables and user site-packages are ignored. The script
-trims headers and the CPython test suite, byte-compiles everything, then
-starts the engine once in desktop mode with a temp folder, checks
-`/api/health` (and 401 without the token), stops it with SIGTERM, and writes
-`BUILD_INFO.txt`.
+CPython 3.12.5 from python-build-standalone, `KALOS_BUNDLE_PYTHON` overrides
+the exact version, with the dependencies from `uv.lock` installed with
+`--require-hashes`, and the engine installed). The launcher runs
+`python -I -m kalos.portal "$@"`, so the user's `PYTHON*` variables and user
+site-packages are ignored. The script trims headers and the CPython test suite,
+byte-compiles everything, then starts the engine once in desktop mode with a
+temp folder, checks `/api/health`, and fails the build unless a request
+without the token gets 401 and SIGTERM ends the engine with exit 0. It writes
+`BUILD_INFO.txt`. It refuses to replace an `OUT_DIR` that is not empty and has
+no `BUILD_INFO.txt`.
 
 Measured: 955 MB on disk (torch is 468 MB of it), 272 MB as a zip, built in
 about 20 s with a warm uv cache.
