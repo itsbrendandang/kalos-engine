@@ -116,6 +116,9 @@ def _value_numbers(sentence: str) -> set[str]:
 
 GUIDE_OVERLAP = 0.6
 GUIDE_EXTRA_WORDS = 2
+# Words a guide-only sentence may never add: they turn a next step into a
+# verdict or a permission the guide did not give.
+GUIDE_FORBIDDEN_EXTRA = frozenset({"safe", "skip", "approved", "approve", "ready"})
 
 
 def _restates(sentence: str, guide_text: str) -> bool:
@@ -127,6 +130,8 @@ def _restates(sentence: str, guide_text: str) -> bool:
         return False
     guide_words = set(tokens(guide_text))
     extra = words - guide_words
+    if extra & GUIDE_FORBIDDEN_EXTRA:
+        return False
     return len(extra) <= GUIDE_EXTRA_WORDS and len(words & guide_words) / len(words) >= GUIDE_OVERLAP
 
 
@@ -181,7 +186,7 @@ def check_answer(reply: str, labelled: list[Labelled], guide: dict[str, Any]) ->
         kalos_cited = [table[lab].chunk.kalos_text() for lab in labels if lab != "G"]
         if "G" in labels:
             kalos_cited.append(guide_source)
-        claims = unsupported_claims(strip_terms(bare, terms), kalos_cited)
+        claims = unsupported_claims(strip_terms(bare, terms, keep_claims=True), kalos_cited)
         if claims:
             rejected.append(f"claim not in the sources: {', '.join(claims)}")
             continue

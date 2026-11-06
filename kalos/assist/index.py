@@ -88,11 +88,19 @@ class Chunk:
         return strip_terms(self.text, self.user_terms)
 
 
-def strip_terms(text: str, terms: Iterable[str]) -> str:
+def strip_terms(text: str, terms: Iterable[str], *, keep_claims: bool = False) -> str:
     """`text` with each of `terms` removed as a whole word or phrase
     (case-insensitive, longest first). A one-letter label such as 'A' removes
     only a standalone 'A', never the letter inside other words."""
+    from kalos.assist.words import claims_in
+
     for term in sorted({t.strip() for t in terms if t and t.strip()}, key=len, reverse=True):
+        if keep_claims and claims_in(term) == [re.sub(r"\s+", " ", term.lower())]:
+            # In an ANSWER, a lab term that IS a claim word ("increases", "leads
+            # to") stays, so the claim word is still checked. A longer name that
+            # merely contains one is a mention and is removed. (In a source every
+            # lab term is removed: lab text supports nothing.)
+            continue
         text = re.sub(r"(?<![\w])" + re.escape(term) + r"(?![\w])", " ", text, flags=re.IGNORECASE)
     return text
 

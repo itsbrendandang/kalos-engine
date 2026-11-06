@@ -484,3 +484,30 @@ def test_a_guide_only_sentence_adds_at_most_two_new_words():
              "and Methanol looks safe here [G].")
     assert check_answer(long_, [], guide).answer == ""
     assert check_answer("Please record 2 results for round 1 [G].", [], guide).answer  # one new word
+
+
+@pytest.mark.parametrize("term,planted", [("increases", "Methanol increases titer [S1]."),
+                                          ("will", "Methanol will raise titer [S1]."),
+                                          ("leads to", "Methanol leads to titer [S1]."),
+                                          ("optimal", "Recipe 1 is optimal [S1].")])
+def test_a_lab_term_that_is_a_claim_word_is_not_stripped(term, planted):
+    """sec-assist final: a column or label named with a claim word must not hide
+    that claim word in an answer."""
+    from kalos.assist.chat import Labelled, check_answer
+    from kalos.assist.index import Chunk, Hit, strip_terms
+
+    assert term in strip_terms(f"x {term} y", [term], keep_claims=True)
+    assert term not in strip_terms(f"x {term} y", [term])
+    chunk = Chunk("c1", "analysis", "drivers", None, "t", f"Column {term}. Higher Methanol went with higher titer.",
+                  user_terms=(term, "Methanol"))
+    checked = check_answer(planted, [Labelled("S1", Hit(chunk, 1.0))], {"step": "", "why": "", "why_it_matters": ""})
+    assert checked.rejected, planted
+
+
+@pytest.mark.parametrize("word", ["safe", "skip", "approved", "ready"])
+def test_a_guide_only_sentence_cannot_add_permission_words(word):
+    from kalos.assist.chat import check_answer
+
+    guide = {"step": "Record 2 results for round 1", "why": "1 of 3 started runs have a result.",
+             "why_it_matters": "Every result you enter sharpens the next suggestions."}
+    assert check_answer(f"Record 2 results for round 1, {word} [G].", [], guide).answer == ""
