@@ -73,7 +73,8 @@ def test_get_campaign_before_any_seed_has_campaign_false(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["has_campaign"] is False
-    assert set(body) == {"has_campaign", "stage", "next_action"}
+    assert set(body) == {"has_campaign", "stage", "next_action", "verdict"}
+    assert body["verdict"] is None
 
 
 def test_seed_then_get_campaign_has_campaign_true(store, client):
@@ -601,7 +602,7 @@ def test_stage_advances_through_start_result_reanalyze(client):
 def test_existing_fields_unchanged(store, client):
     store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
     body = client.get("/api/campaign").json()
-    assert set(body) - {"stage", "next_action", "direction"} == {
+    assert set(body) - {"stage", "next_action", "direction", "verdict"} == {
         "has_campaign", "target", "features", "n_base", "best", "round",
         "history", "pending", "n_awaiting", "n_measured", "analysis_in_sync",
     }

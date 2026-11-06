@@ -95,7 +95,9 @@ def campaign_view(
         tenant=tenant, campaign_id=campaign_id,
         analysis_generation=analysis.get("campaign_generation"),
     )
-    return {**summary, **stage_fields(summary, analysis)}
+    # `verdict` is the stored analysis's own object (never recomputed here), so
+    # every route says the same thing; None for an analysis written before it.
+    return {**summary, **stage_fields(summary, analysis), "verdict": analysis.get("verdict")}
 
 
 def campaign_error_response(exc: CampaignError) -> JSONResponse:

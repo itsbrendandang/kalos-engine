@@ -468,6 +468,48 @@ recipe never sits outside `feature_ranges` (replay F9).
 | `unique_per_row` | text with about one value per row |
 | `date_or_time` | dates or times |
 
+### Verdict
+
+Every analysis carries `verdict`: one answer to "can I trust the model's
+suggestions?". `reliability` and `promotion` are unchanged; `verdict` is
+read from them. The campaign summary (`GET /api/campaign`,
+`GET /api/campaigns/{id}` `summary`, reanalyze `campaign`) returns the stored
+analysis's own `verdict` object, never a recomputed one (`null` for an analysis
+written before this field).
+
+Fields: `state` (`reliable`, `not_yet`, `refused`), `code` (`reliable`,
+`not-yet`, `insufficient`, `no_ordering`), `headline` (one plain sentence),
+`reasons` (`[{code, plain}]`, empty when reliable; codes `too_few_rows`,
+`too_few_groups`, `surrogate_spearman`, `cv_ci_unavailable`), `ordering`
+(`{state: ok | unsure | weak | absent | unchecked, plain}`), `range_width`
+(`{state: ok | too_narrow | too_wide | unchecked, code: bands_*, plain}`,
+from `reliability.calibration.z_std`: above 1.15 too narrow, below 0.85 too
+wide; reported, not part of the state), `n_runs`, `min_runs` (20),
+`n_groups`, `min_groups` (8), `rule`.
+
+"Score" is the held-out rank agreement (`reliability.spearman`), "interval" its
+95% interval (`reliability.ci95`), "groups" the CV groups (`cv_n_groups`).
+Checked top to bottom:
+
+| state | code | rule | plain sentence |
+|---|---|---|---|
+| `refused` | `insufficient` | no score, or fewer than 3 groups (no interval) | Kalos cannot suggest recipes from this sheet: there are too few groups of runs to check whether the model is any good. |
+| `refused` | `no_ordering` | upper end of the interval at or below 0 | Kalos cannot suggest recipes from this sheet: the model does no better than chance at putting your past runs in order. |
+| `reliable` | `reliable` | score at or above 0.20, lower end of the interval above 0, at least 20 runs and 8 groups | Kalos put your past runs in the right order, with enough runs to be sure, so its suggestions are worth running. |
+| `not_yet` | `not-yet` | everything else | Kalos cannot yet show that it puts your past runs in the right order, so its suggestions are closer to guesses. When only the run or group count holds it back: "The model put your past runs in the right order, but N runs in G groups are too few to be sure, so treat its suggestions as ideas to test." |
+
+Why 20 runs and 8 groups: at 13 runs a score of 0.5 has an interval of about
+-0.06 to 0.82, so one lucky fold can carry it; 20 is also where the engine
+starts judging the likely range. 8 groups leaves the 5-fold grouped check at
+least one group per fold.
+
+When `state` is `refused` the analysis has `proposals: []`, `refusal:
+{code, plain, what_would_help}` and `proposal_notice: {code: "model_refused",
+reason, requested, returned: 0, message}`. Otherwise `refusal` is `null`. The
+campaign stage then stays on `plan` with the plan step "No recipes proposed"
+and `next_action.action` "Add runs and upload again". Starting an empty batch
+returns `{"started": []}`.
+
 ### Contract version
 
 Every analysis (`/api/run`, `/api/latest`, reanalyze, job results) carries
@@ -543,6 +585,9 @@ only added; a field never changes meaning or disappears within a version.
   was not used as an input (declare it in roles to use it).
 - `validation.findings[]` code `search_box` (info, always present): where
   Kalos searches, in plain words, and how to widen it.
+- `verdict`: the one verdict on the model, on every analysis and on the campaign summary (see "Verdict").
+- `refusal`: `{code, plain, what_would_help}` when `verdict.state` is `refused` (then `proposals` is empty), else `null`.
+- `proposal_notice.code` can be `model_refused` (with `reason`, the refusal code).
 
 ## Not in this slice
 

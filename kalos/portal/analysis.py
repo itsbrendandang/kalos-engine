@@ -139,6 +139,7 @@ from kalos.portal.uploads import (
     clip_name,
 )
 from kalos.portal.validate import column_provenance, provenance_dicts
+from kalos.portal.verdict import model_verdict, refusal_for, refusal_notice
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
 from kalos.validation.report import Finding
 
@@ -1122,6 +1123,15 @@ def _analyze_body(
         ),
     }
 
+    # ONE VERDICT (kalos/portal/verdict.py): reliable / not_yet / refused, from
+    # the numbers above. Stored on the analysis; every route returns this object.
+    # `refused` means no proposals (applied where `result` is assembled below).
+    verdict = model_verdict(
+        n_runs=len(y), n_groups=int(rep["n_groups"]), spearman=None if rho != rho else float(rho),
+        ci95=ci95, floor=RELIABILITY_SPEARMAN_FLOOR, calibration=calibration,
+    )
+    refusal = refusal_for(verdict)
+
     # LEAVE-ONE-GROUP-OUT. Grouped K-fold above tests generalization to a FEW
     # unseen groups among many familiar ones; LOGO is the harder question -
     # generalization to the NEXT group the model has seen nothing like - and
@@ -1752,6 +1762,10 @@ def _analyze_body(
         # above where `promotion` is assembled for why this must never change
         # what the API accepts).
         "promotion": promotion,
+        # The one verdict (kalos/portal/verdict.py, docs/CAMPAIGNS_API.md "Verdict")
+        # and, when it is `refused`, why there are no proposals.
+        "verdict": verdict,
+        "refusal": refusal,
         # PART 1: whether/why the proposal acquisition was gated by P(feasible)
         # (see the GATE POLICY block above `promotion` is assembled near, for
         # the full three-condition reasoning). `threshold` is the label
@@ -1881,6 +1895,9 @@ def _analyze_body(
         # Response-shape version (docs/CAMPAIGNS_API.md, "Contract version").
         "contract_version": ANALYSIS_CONTRACT_VERSION,
     }
+    if refusal is not None:  # verdict `refused`: no recipes, and the notice says why
+        result["proposals"] = []
+        result["proposal_notice"] = refusal_notice(refusal, PROPOSAL_BATCH_Q)
     if anonymize:
         result = _anonymize_result(
             result,
