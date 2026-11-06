@@ -156,7 +156,22 @@ GLOSSARY: dict[str, str] = {
 }
 
 ENGINE_ONLY: dict[str, str] = {
+    # Model verdict codes from the desktop engine (kalos/portal/verdict.py and
+    # gate_text.py on desktop-engine-2); the engine texts match word for word.
+    "no_ordering": "If the model does no better than chance at putting your past runs in order, its suggestions would be guesses, so Kalos proposes none until the sheet changes.",
+    "too_few_groups": "With too few groups of runs there is no way to check the model on runs it has not seen, so its order cannot be trusted yet.",
+    "model_refused": "When Kalos cannot check the model, it proposes no recipes rather than send you guesses; adding runs of different recipes is what helps.",
+    # Column and campaign finding codes from the same round, not in the glossary yet.
+    "headerless_column": "A column with no header cannot be named in the model, so Kalos cannot use it.",
+    "search_box": "Kalos searched only inside the range of each setting you have tried, so a recipe outside it was not considered.",
+    "inputs_changed": "The settings in this sheet differ from the campaign's earlier rounds, so results from before and after may not compare.",
+    "coded_column": "A column of codes was kept as it is and not checked against physical limits, since its numbers stand for labels.",
+    "outcome_like_name": "A column whose name reads like a result is not used as a setting, so no suggestion changes it.",
 }
+
+# The desktop engine names the verdict states reliable / not_yet / refused; the
+# glossary key for the middle one is "not-yet".
+VERDICT_STATE_KEYS = {"reliable": "reliable", "not_yet": "not-yet", "refused": "model_refused"}
 
 WHY: dict[str, str] = {**ENGINE_ONLY, **GLOSSARY}
 
@@ -173,4 +188,4 @@ def why_for(code: str | None) -> str:
     return _FALLBACK
 
 
-__all__ = ["ENGINE_ONLY", "GLOSSARY", "MODEL_CHECKS", "WHY", "why_for"]
+__all__ = ["ENGINE_ONLY", "GLOSSARY", "MODEL_CHECKS", "VERDICT_STATE_KEYS", "WHY", "why_for"]

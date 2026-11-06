@@ -74,3 +74,14 @@ def test_engine_only_does_not_shadow_the_glossary():
 def test_unknown_code_falls_back():
     assert why_for("does_not_exist") == why_for(None) == GLOSSARY["generic"]
     assert why_for("too_many_fit_rows") == GLOSSARY["too_many_fit_rows"]
+
+
+def test_desktop_engine_codes_have_why_lines():
+    """Codes engine-desktop added (verdict.py, gate_text.py, campaign_findings)."""
+    from kalos.assist.why import VERDICT_STATE_KEYS
+
+    for code in ("no_ordering", "too_few_groups", "model_refused", "category_not_modeled", "headerless_column",
+                 "search_box", "inputs_changed", "coded_column", "near_constant_input", "outcome_like_name"):
+        assert code in WHY, code
+    assert WHY["no_ordering"].startswith("If the model does no better than chance at putting your past runs")
+    assert all(v in WHY for v in VERDICT_STATE_KEYS.values())
