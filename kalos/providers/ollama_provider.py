@@ -63,6 +63,17 @@ def _timeout() -> float:
     return max(1.0, min(value, 900.0))
 
 
+def _opener() -> urllib.request.OpenerDirector:
+    """An opener that ignores HTTP(S)_PROXY: a prompt for a local model must
+    never be routed through a proxy (which would send it off the machine)."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _open(request: urllib.request.Request, timeout: float) -> bytes:
+    with _opener().open(request, timeout=timeout) as response:
+        return bytes(response.read())
+
+
 def is_loopback_url(url: str) -> bool:
     host = (urlparse(url).hostname or "").lower()
     return host in _LOOPBACK
@@ -117,8 +128,7 @@ class OllamaProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=_timeout()) as response:  # noqa: S310 - configured local URL
-                data = json.loads(response.read().decode("utf-8"))
+            data = json.loads(_open(request, _timeout()).decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             raise OllamaUnavailable("the Ollama server did not answer") from exc
         content = (data.get("message") or {}).get("content") if isinstance(data, dict) else None

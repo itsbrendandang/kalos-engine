@@ -185,28 +185,17 @@ def test_ollama_local_only_for_a_loopback_url(monkeypatch):
 
 
 def test_ollama_chat_posts_one_turn_and_reads_the_reply(monkeypatch):
-    import urllib.request
-
+    from kalos.providers import ollama_provider
     from kalos.providers.ollama_provider import OllamaProvider
 
     seen = {}
 
-    class _Resp:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def read(self):
-            return json.dumps({"message": {"role": "assistant", "content": "hello [c1]"}}).encode()
-
-    def fake_urlopen(request, timeout):
+    def fake_open(request, timeout):
         seen["url"] = request.full_url
         seen["body"] = json.loads(request.data)
-        return _Resp()
+        return json.dumps({"message": {"role": "assistant", "content": "hello [c1]"}}).encode()
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(ollama_provider, "_open", fake_open)
     monkeypatch.setenv("KALOS_OLLAMA_MODEL", "tiny")
     assert OllamaProvider().chat("sys", "q") == "hello [c1]"
     assert seen["url"].endswith("/api/chat")
@@ -217,13 +206,29 @@ def test_ollama_chat_posts_one_turn_and_reads_the_reply(monkeypatch):
 
 def test_ollama_unreachable_raises_a_fixed_message(monkeypatch):
     import urllib.error
-    import urllib.request
 
+    from kalos.providers import ollama_provider
     from kalos.providers.ollama_provider import OllamaProvider, OllamaUnavailable
 
     def boom(request, timeout):
         raise urllib.error.URLError("refused")
 
-    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    monkeypatch.setattr(ollama_provider, "_open", boom)
     with pytest.raises(OllamaUnavailable, match="did not answer"):
         OllamaProvider().chat("sys", "secret question text")
+
+
+def test_ollama_calls_ignore_proxy_environment(monkeypatch):
+    """sec-assist (g): with HTTP(S)_PROXY set, the Ollama call still goes direct."""
+    import urllib.request
+
+    from kalos.providers.ollama_provider import _opener
+
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example:3128")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:3128")
+    monkeypatch.setenv("ALL_PROXY", "http://proxy.example:3128")
+    def with_proxies(opener):
+        return [h for h in opener.handlers if isinstance(h, urllib.request.ProxyHandler) and h.proxies]
+
+    assert with_proxies(urllib.request.build_opener())  # the default would use the proxy
+    assert with_proxies(_opener()) == []
