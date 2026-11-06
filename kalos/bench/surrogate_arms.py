@@ -31,10 +31,12 @@ Protocol (identical for every arm, so the comparison is paired):
     pooled per seed, and per seed we score RMSE, Spearman, PICP at the nominal level
     (default 90%) and mean interval width; the table reports mean +/- sd over seeds.
 
-Verdict per non-GP arm: ``beats_gp`` is True only when there are >= 5 seeds, the
-arm's mean RMSE is below the GP's, AND its mean PICP is within `picp_tol` of
-nominal. With fewer seeds the verdict is ``insufficient_seeds`` and ``beats_gp`` is
-None. A "True" on synthetic surfaces is NOT the guardrail's evidence; only the six
+Verdict per non-GP arm (PAIRED over seeds): ``beats_gp`` is True only when there
+are >= 5 seeds, the arm beats the GP's RMSE on >= 80% of seeds, the 95% bootstrap
+CI of the paired RMSE gain is above 0, AND its mean PICP is within `picp_tol` of
+nominal; otherwise ``not_distinguishable``, ``does_not_beat_gp`` or
+``miscalibrated``. With fewer seeds the verdict is ``insufficient_seeds`` and
+``beats_gp`` is None. A "True" on synthetic surfaces is NOT the guardrail's evidence; only the six
 AMII datasets are.
 """
 from __future__ import annotations
@@ -371,16 +373,43 @@ def run_surrogate_bench(
     }
 
 
+MIN_WIN_SHARE = 0.8  # paired: the arm must beat the GP on >= 80% of seeds (4/5)
+N_BOOT = 2000
+
+
+def _paired_ci(diff: np.ndarray, *, seed: int = 0) -> tuple[float, float]:
+    """95% percentile bootstrap CI of the mean paired difference (gp - arm)."""
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(diff), size=(N_BOOT, len(diff)))
+    means = diff[idx].mean(axis=1)
+    return float(np.quantile(means, 0.025)), float(np.quantile(means, 0.975))
+
+
 def _verdict(rows, gp_rows, gp_rmse, agg, nominal, picp_tol) -> dict:
+    """PAIRED verdict over seeds (same folds per seed for both arms).
+
+    `beats_gp` needs all of: >= 5 seeds; the arm's RMSE below the GP's on at
+    least `MIN_WIN_SHARE` of seeds; the 95% bootstrap CI of the paired mean
+    (gp_rmse - arm_rmse) above 0; and PICP within `picp_tol` of nominal. A lower
+    mean RMSE without that is `not_distinguishable`, never a win."""
     if gp_rows is None or gp_rmse is None:
         return {"beats_gp": None, "verdict": "no_gp_reference"}
-    wins = sum(r["rmse"] < g["rmse"] for r, g in zip(rows, gp_rows, strict=True))
-    out = {"rmse_wins_vs_gp": f"{wins}/{len(rows)}"}
+    diff = np.array([g["rmse"] - r["rmse"] for r, g in zip(rows, gp_rows, strict=True)], float)
+    wins = int((diff > 0).sum())
+    out: dict = {"rmse_wins_vs_gp": f"{wins}/{len(rows)}"}
     if len(rows) < MIN_SEEDS_FOR_VERDICT:
         return {**out, "beats_gp": None, "verdict": "insufficient_seeds"}
+    lo, hi = _paired_ci(diff)
+    out["paired_rmse_gain_ci95"] = [lo, hi]
     calibrated = abs(agg["picp"] - nominal) <= picp_tol
-    beats = bool(agg["rmse"] < gp_rmse and calibrated)
-    return {**out, "beats_gp": beats, "verdict": "beats_gp" if beats else "does_not_beat_gp"}
+    consistent = wins >= MIN_WIN_SHARE * len(rows) and lo > 0
+    if consistent and calibrated:
+        return {**out, "beats_gp": True, "verdict": "beats_gp"}
+    if consistent and not calibrated:
+        return {**out, "beats_gp": False, "verdict": "miscalibrated"}
+    if hi < 0:
+        return {**out, "beats_gp": False, "verdict": "does_not_beat_gp"}
+    return {**out, "beats_gp": False, "verdict": "not_distinguishable"}
 
 
 # --------------------------------------------------------------------------- #

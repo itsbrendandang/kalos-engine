@@ -59,8 +59,22 @@ def test_verdict_rule_needs_rmse_and_coverage():
     rows = [{"rmse": 0.5}] * 5
     assert sa._verdict(rows, gp, 1.0, agg_ok, 0.9, 0.05)["beats_gp"] is True
     assert sa._verdict(rows, gp, 1.0, {"rmse": 0.5, "picp": 0.7}, 0.9, 0.05)["beats_gp"] is False
-    assert sa._verdict(rows, gp, 1.0, {"rmse": 1.5, "picp": 0.9}, 0.9, 0.05)["beats_gp"] is False
+    worse = [{"rmse": 1.5}] * 5
+    v = sa._verdict(worse, gp, 1.0, {"rmse": 1.5, "picp": 0.9}, 0.9, 0.05)
+    assert v["beats_gp"] is False and v["verdict"] == "does_not_beat_gp"
     assert sa._verdict(rows[:4], gp[:4], 1.0, agg_ok, 0.9, 0.05)["verdict"] == "insufficient_seeds"
+
+
+def test_verdict_is_paired_a_lower_mean_alone_is_not_a_win():
+    gp = [{"rmse": 1.0}] * 5
+    # lower mean RMSE (0.88) but only 2/5 seed wins -> not distinguishable
+    mixed = [{"rmse": r} for r in (0.5, 0.6, 1.1, 1.1, 1.1)]
+    v = sa._verdict(mixed, gp, 1.0, {"rmse": 0.88, "picp": 0.9}, 0.9, 0.05)
+    assert v["beats_gp"] is False and v["verdict"] == "not_distinguishable"
+    assert v["rmse_wins_vs_gp"] == "2/5"
+    # tie on every seed -> not a win either
+    tie = [{"rmse": 1.0}] * 5
+    assert sa._verdict(tie, gp, 1.0, {"rmse": 1.0, "picp": 0.9}, 0.9, 0.05)["beats_gp"] is False
 
 
 def test_grouped_folds_keep_groups_together():
