@@ -150,8 +150,7 @@ class FakeBenchling:
                 return self._page(self.projects, params, key="projects")
             if path == f"{v3}/procedure-run/items":
                 items = [r for r in self.runs if r["_study"] == params.get("study.eq")]
-                if "modifiedAt.gt" in params:
-                    items = [r for r in items if r["modifiedAt"] > params["modifiedAt.gt"]]
+                items = _modified_filter(items, params)
                 if params.get("sort") == "modifiedAt:asc":
                     items = sorted(items, key=lambda r: r["modifiedAt"])
                 return self._page(items, params)
@@ -178,8 +177,7 @@ class FakeBenchling:
                 return _ok({"items": self.field_defs.get(sid, [])})
             if path == f"{v3}/result/items":
                 items = [r for r in self.results if r["schema"]["id"] == params.get("schema.eq")]
-                if "modifiedAt.gt" in params:
-                    items = [r for r in items if r["modifiedAt"] > params["modifiedAt.gt"]]
+                items = _modified_filter(items, params)
                 return self._page(items, params)
             if path == "/api/v2/assay-runs":
                 items = [r for r in self.assay_runs if r["schema"]["id"] == params.get("schemaId")]
@@ -299,6 +297,14 @@ def _problem(status: int, title: str) -> httpx.Response:
 def _v2_error(status: int, message: str) -> httpx.Response:
     return httpx.Response(status, json={"error": {"message": message, "type": "invalid_request_error",
                                                   "userMessage": message}})
+
+
+def _modified_filter(items: list[dict], params: dict) -> list[dict]:
+    if "modifiedAt.gt" in params:
+        items = [r for r in items if r["modifiedAt"] > params["modifiedAt.gt"]]
+    if "modifiedAt.gte" in params:
+        items = [r for r in items if r["modifiedAt"] >= params["modifiedAt.gte"]]
+    return items
 
 
 def _any_of(items: list[dict], params: dict) -> list[dict]:
