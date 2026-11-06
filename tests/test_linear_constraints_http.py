@@ -64,6 +64,22 @@ def test_too_many_constraints_are_refused():
         ColumnRoles.from_dict({"target": "y", "linear_constraints": many})
 
 
+def test_a_long_label_is_refused():
+    ok = [{"terms": {"A": 1}, "op": "<=", "rhs": 1, "label": "x" * 80}]
+    assert ColumnRoles.from_dict({"target": "y", "linear_constraints": ok}).linear_constraints[0].label
+    long = [{"terms": {"A": 1}, "op": "<=", "rhs": 1, "label": "x" * 81}]
+    with pytest.raises(InvalidLinearConstraint, match="label has 81 characters"):
+        ColumnRoles.from_dict({"target": "y", "linear_constraints": long})
+
+
+def test_a_long_label_is_a_400(client):
+    roles = {"target": "Titer", "features": ["Glucose", "Glycerol"], "linear_constraints": [
+        {"terms": {"Glucose": 1}, "op": "<=", "rhs": 30, "label": "budget " * 40}]}
+    r = _post(client, roles, path="/api/preflight")
+    assert r.status_code == 400 and r.json()["code"] == "invalid_linear_constraint"
+    assert "most allowed is 80" in r.json()["error"]
+
+
 # ---- through _analyze ---------------------------------------------------------------
 
 def _roles(cons, feats, target="Titer"):

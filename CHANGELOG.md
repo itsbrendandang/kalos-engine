@@ -21,6 +21,8 @@ Newest first.
 - Security review B1: the best bet is the highest predicted recipe among the optimizer's answer, every batch row, every training row and a Sobol sample of the box (within the linear constraints), so a local optimum can no longer leave a higher-predicted proposal labelled `learn` (pichia_HSA: 74.9 -> 110.0). `model_optimum.beyond_tried_range` added.
 ### Fixed - desktop-engine-2-secb (security review)
 
+- A linear-constraint `label` longer than 80 characters is refused with 400 `invalid_linear_constraint` (it is echoed in every analysis and stored with the campaign).
+
 - The in-memory analysis cache is keyed by campaign too: the same sheet uploaded to two campaigns is fit for each and gets two `analysis_id`s (it used to return the first campaign's analysis and id).
 
 - Campaign rows: an upload row with a blank target is `_kind: no_result`, not `measured`; a sheet column named like a row label (`_origin`, `_kind`, ...) is shown as `<name> (sheet)` and listed in `renamed_columns` instead of being overwritten.

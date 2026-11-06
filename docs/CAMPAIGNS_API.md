@@ -772,7 +772,7 @@ only added; a field never changes meaning or disappears within a version.
 - `linear_constraints`: `{constraints, tolerance, all_satisfied}`. Set them in the
   column roles as `"linear_constraints": [{"terms": {"A": 1, "B": 1, "C": 1},
   "op": "==", "rhs": 100, "label": "sums to 100"}]` (`op` is `<=`, `>=` or `==`;
-  at most 20; continuous inputs only). Each listed constraint adds `text` and its
+  at most 20; continuous inputs only; `label` at most 80 characters). Each listed constraint adds `text` and its
   `tolerance` (0.001 x the sum of its absolute coefficients, because recipes are
   shown to 3 decimals). The batch, the repair of near-duplicates and the best bet
   are all searched inside them. 400 codes: `invalid_linear_constraint` (malformed,
@@ -816,6 +816,8 @@ only added; a field never changes meaning or disappears within a version.
   the name was ignored and that input stayed at its tried range.
 - `GET /api/campaigns/{id}/rows`: `_kind` can be `no_result`; `renamed_columns`
   and `renamed_note` (see "Campaign rows").
+- 400 `invalid_linear_constraint` also for a `roles.linear_constraints[].label`
+  longer than 80 characters.
 
 ## Not in this slice
 

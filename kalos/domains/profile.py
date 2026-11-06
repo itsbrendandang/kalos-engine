@@ -141,6 +141,9 @@ def parse_per_recipe_noise(value: object) -> bool:
 # At most this many `roles.linear_constraints` per upload.
 MAX_LINEAR_CONSTRAINTS = 20
 LINEAR_OPS: tuple[str, ...] = ("<=", ">=", "==")
+# A `roles.linear_constraints[].label` is echoed in every analysis and stored
+# with the campaign: at most this many characters.
+MAX_LINEAR_LABEL_CHARS = 80
 
 
 class InvalidLinearConstraint(ValueError):
@@ -225,6 +228,11 @@ def parse_linear_constraints(value: object) -> tuple[LinearConstraint, ...]:
         label = item.get("label")
         if label is not None and not isinstance(label, str):
             raise InvalidLinearConstraint(f"{where}: label must be text")
+        if label is not None and len(label) > MAX_LINEAR_LABEL_CHARS:
+            raise InvalidLinearConstraint(
+                f"{where}: label has {len(label)} characters; the most allowed is "
+                f"{MAX_LINEAR_LABEL_CHARS}"
+            )
         out.append(LinearConstraint(tuple(pairs), str(op), rhs, (label or None)))
     return tuple(out)
 
