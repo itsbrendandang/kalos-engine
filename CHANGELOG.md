@@ -18,6 +18,7 @@ Newest first.
 - Mixed (categorical) proposals enumerate every combination only while combinations x batch size stays within 64 solves (`MAX_MIXED_SOLVES`); larger cases use the alternating optimizer and report `proposal_optimizer: "mixed_alternating"`. The benchmark's mixed task (12 combinations, q=4) is unchanged. 20 combinations x 5 proposals went from 44 s to 10 s with the same predicted means on the shared proposals.
 - The same upload is not refit: the engine keeps the last 4 analyses in memory (`KALOS_ANALYSIS_CACHE`, 0 = off) keyed on the bytes, file name, sheet, target, roles, anonymize, profile, engine version and every `KALOS_*` setting. A repeat returns the same analysis with `analysis_cache: {"hit": true}`. Off in the test suite by default.
 - `scripts/build_desktop_engine.sh` builds a self-contained engine for arm64 macOS (python-build-standalone + the locked dependencies, launcher `kalos-engine`), smoke-tests it in desktop mode and writes `BUILD_INFO.txt`. 955 MB on disk, 272 MB zipped. `docs/DESKTOP.md` lists what the shell passes and what the engine answers.
+- The desktop build also bundles the `assist` extra when the checkout defines it (`KALOS_BUNDLE_EXTRAS` overrides the list); `docs/DESKTOP.md` lists the assistant's Ollama defaults.
 - Graceful stop in desktop mode: on SIGTERM an in-flight analysis gets 12 s to finish; after that no store write can commit, and the process exits.
 ### Added - conformal caveat
 

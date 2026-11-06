@@ -28,6 +28,13 @@ From the packaged engine: `<bundle>/kalos-engine --desktop`.
 | `KALOS_CORS_ORIGINS` | yes | `http://127.0.0.1:<web port>`, the app's own origin. |
 | `KALOS_TORCH_THREADS` | no | Threads for one fit. Default: half the cores, between 1 and 4. |
 
+Local assistant (branch `assistant`, `kalos/assist/`, not on this branch yet):
+`KALOS_LLM_PROVIDER` defaults to `ollama` in desktop mode when unset,
+`KALOS_OLLAMA_URL` to `http://127.0.0.1:11434` and `KALOS_OLLAMA_MODEL` to
+`llama3.1:8b`. Ollama is not bundled. When it is not running, the chat route
+answers 503 `assist_provider_unavailable` and the rest of the engine is
+unaffected. The assistant's index lives under `$KALOS_STATE_DIR/assist/`.
+
 The shell must not pass `KALOS_AUTH_TOKENS_FILE` or `KALOS_ALLOW_OPEN_ACCESS`.
 The tenant `default` is reserved for open mode and is refused on a token; the
 desktop app uses `local`.
@@ -162,7 +169,10 @@ workers are separate processes and do not share the cache.
 
 ## Packaged engine
 
-`scripts/build_desktop_engine.sh [OUT_DIR]` (arm64 macOS, needs `uv`) builds
+`scripts/build_desktop_engine.sh [OUT_DIR]` (arm64 macOS, needs `uv`) bundles
+the extras `ml`, `portal` and, when the checkout defines it, `assist`
+(`KALOS_BUNDLE_EXTRAS` overrides the list; `assist-embed` is left out on
+purpose). It builds
 `OUT_DIR/kalos-engine` (a launcher) and `OUT_DIR/python/` (a relocatable
 CPython from python-build-standalone with the dependencies from `uv.lock` and
 the engine installed). The launcher runs `python -I -m kalos.portal "$@"`, so

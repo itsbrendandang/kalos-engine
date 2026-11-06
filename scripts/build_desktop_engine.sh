@@ -52,8 +52,20 @@ PY="$OUT/python/bin/python3"
 # The copy is ours: let pip-style installs write to its site-packages.
 find "$OUT/python/lib" -maxdepth 2 -name EXTERNALLY-MANAGED -delete
 
-# 2. Locked dependencies (ml + portal extras, no dev tools), then the engine itself.
-(cd "$ROOT" && uv export --frozen --no-dev --extra ml --extra portal --no-emit-project \
+# 2. Locked dependencies, then the engine itself. Extras: ml + portal, plus
+#    `assist` (the local assistant: BM25 retrieval + an Ollama client) when this
+#    checkout defines it. `assist-embed` (sentence-transformers) is not bundled:
+#    the BM25 path works offline. Override with KALOS_BUNDLE_EXTRAS="ml portal ...".
+EXTRA_ARGS=()
+for extra in ${KALOS_BUNDLE_EXTRAS:-ml portal assist}; do
+  if "$PY" -I -c 'import sys, tomllib; sys.exit(0 if sys.argv[2] in tomllib.load(open(sys.argv[1], "rb"))["project"]["optional-dependencies"] else 1)' "$ROOT/pyproject.toml" "$extra"; then
+    EXTRA_ARGS+=(--extra "$extra")
+  else
+    echo "build_desktop_engine: extra '$extra' is not defined in pyproject.toml; skipped" >&2
+  fi
+done
+echo "extras: ${EXTRA_ARGS[*]}"
+(cd "$ROOT" && uv export --frozen --no-dev "${EXTRA_ARGS[@]}" --no-emit-project \
   --no-hashes --format requirements-txt -o "$WORK/requirements.txt" >/dev/null)
 uv pip install --python "$PY" --break-system-packages --quiet -r "$WORK/requirements.txt"
 (cd "$ROOT" && uv build --wheel --quiet -o "$WORK/wheel" >/dev/null)
@@ -118,6 +130,7 @@ SIZE="$(du -sh "$OUT" | cut -f1)"
   echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ) on $(sw_vers -productVersion 2>/dev/null) $(uname -m)"
   echo "git: $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null)$(git -C "$ROOT" diff --quiet 2>/dev/null || echo ' (dirty)')"
   echo "python: $("$PY" -I -c 'import platform; print(platform.python_version())')"
+  echo "extras: ${EXTRA_ARGS[*]}"
   echo "health: $HEALTH"
   echo "size: $SIZE"
   echo "smoke: start to first /api/health ${COLD_S} s (first launch of a fresh bundle), without token HTTP $UNAUTH, SIGTERM exit $EXIT_CODE"
