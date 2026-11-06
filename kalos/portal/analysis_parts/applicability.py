@@ -8,7 +8,7 @@ data and on the edge, or far from the data in the middle of the box.
 The threshold is a product default unless a lab sets one. The default rule is
 `max(0.25, 3 x training_nn_distance_median)`: three times the typical spacing
 between training rows, and never below a quarter of one box width. It is a
-starting point, not a validated number. A lab sets its own value with
+starting point, not a tested threshold. A lab sets its own value with
 `roles.applicability_distance` (per upload) or `KALOS_APPLICABILITY_DISTANCE`
 (per deployment); roles wins.
 """
@@ -32,7 +32,7 @@ EDGE_FRACTION = 0.01
 
 DEFAULT_RULE = (
     f"product default: max({DEFAULT_DISTANCE_FLOOR}, {DEFAULT_NN_MULTIPLE:g} x "
-    "training_nn_distance_median); not a validated number"
+    "training_nn_distance_median); not a tested threshold"
 )
 
 

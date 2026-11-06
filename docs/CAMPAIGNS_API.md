@@ -384,7 +384,7 @@ box edge, or far from the data in the middle of the box.
   `edge_fraction` (0.01).
 
 The default threshold is `max(0.25, 3 x training_nn_distance_median)`. It is a
-product default, not a validated number. A lab sets its own with
+product default, not a tested threshold. A lab sets its own with
 `roles.applicability_distance` (a positive number; anything else is a `400`
 `invalid_applicability_distance`) or `KALOS_APPLICABILITY_DISTANCE`. Roles
 wins. A reanalyze keeps a roles-set threshold.
