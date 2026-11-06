@@ -166,6 +166,7 @@ from kalos.portal.verdict import (
     refusal_for,
     refusal_notice,
 )
+from kalos.portal.why_lines import with_why
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
 from kalos.validation.report import Finding
 
@@ -875,7 +876,8 @@ def _analyze_body(
             "orientation": df.attrs.get("kalos_orientation"),
             "provenance": provenance,
             "columns": columns_block,
-            "validation": report_dict(_with_data_findings(validation, _sheet_findings(kind_findings))),
+            "validation": with_why(report_dict(
+                _with_data_findings(validation, _sheet_findings(kind_findings)))),
             "contract_version": ANALYSIS_CONTRACT_VERSION,
             "engine_version": ENGINE_VERSION,
         }
@@ -2098,7 +2100,7 @@ def _analyze_body(
         # normalized before analysis, so the client can see the frame they sent is
         # not byte-for-byte the frame that was modeled. None for a standard sheet.
         "orientation": df.attrs.get("kalos_orientation"),
-        "validation": report_dict(
+        "validation": with_why(report_dict(
             _with_data_findings(
                 validation,
                 _sheet_findings(kind_findings)
@@ -2112,7 +2114,7 @@ def _analyze_body(
                 ),
             ),
             sheet_row=sheet_row,
-        ),
+        )),
         # Features whose search range was narrowed because some observed cells
         # were physically impossible. Reported, never silent: the client needs to
         # know the box they are being optimized over is not their full data range.

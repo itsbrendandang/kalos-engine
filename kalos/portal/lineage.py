@@ -17,6 +17,8 @@ import json
 import uuid
 from typing import Any
 
+from kalos.portal.why_lines import why_for
+
 
 def new_analysis_id() -> str:
     """A fresh id for a newly computed analysis."""
@@ -109,7 +111,7 @@ def inputs_changed(new: dict[str, Any], previous: dict[str, Any]) -> dict[str, A
     return {
         "code": "inputs_changed", "severity": "warn",
         "message": "The inputs changed since the last model. " + " ".join(parts),
-        "added": added, "removed": removed,
+        "added": added, "removed": removed, "why": why_for("inputs_changed"),
     }
 
 

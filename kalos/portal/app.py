@@ -101,6 +101,7 @@ from kalos.portal.uploads import (
 from kalos.portal.uploads import (
     rejection_counts as _rejection_counts,
 )
+from kalos.portal.why_lines import coded_body
 from kalos.providers import provider_status
 
 log = logging.getLogger("kalos.portal")
@@ -974,7 +975,7 @@ async def _run_uploaded(
         from kalos.portal import jobs  # deferred: jobs_api imports this module
 
         refusal = jobs.CampaignHasRuns(awaiting, measured)
-        return JSONResponse({"error": str(refusal), "code": refusal.code}, status_code=409)
+        return JSONResponse(coded_body(str(refusal), refusal.code), status_code=409)
     if not replace:
         expected_generation = generation
     # One byte past the cap is enough for `_parse_upload` to reject it; never

@@ -798,6 +798,11 @@ only added; a field never changes meaning or disappears within a version.
   campaign (`settings.roles`) cannot be read. Nothing is committed. Before, the
   reanalyze quietly fitted with roles inferred from the column names. Upload the
   sheet again with valid roles.
+- `validation.findings[].why` and `campaign_findings[].why`: one plain sentence
+  on what the finding means for the lab's work, keyed by `code`
+  (kalos/portal/why_lines.py). Coded 400/409 refusals that go through the upload
+  refusal envelope or the campaign routes also carry `why` next to `code`.
+  `tests/test_why_lines.py` fails when the engine gains a code without a line.
 
 ## Not in this slice
 

@@ -20,6 +20,7 @@ import pandas as pd
 
 from kalos.normalize.orientation import detect_orientation
 from kalos.portal.cells import BLANK, CENSORED, NON_NUMERIC, NUMERIC, classify_cells
+from kalos.portal.why_lines import why_for
 
 log = logging.getLogger("kalos.portal")
 
@@ -201,8 +202,12 @@ class UploadRejected(ValueError):
         body: dict = {"error": self.message}
         if self.code:
             body["code"] = self.code
+            # The plain why-line for the code (kalos/portal/why_lines.py), additive.
+            why = why_for(self.code)
+            if why:
+                body["why"] = why
         for key, value in safe_context(self.context).items():
-            if key not in ("error", "code"):
+            if key not in ("error", "code", "why"):
                 body[key] = value
         return body
 
