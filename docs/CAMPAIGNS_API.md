@@ -217,6 +217,7 @@ schema `run.schema_version` = 1). It says what produced the result:
 | `gates` | Keys in this result where the gate decisions live: `promotion`, `proposal_gating`, `validation`. The decisions are not copied into `run`. |
 | `data_drops` | What the fit excluded, as counts only (no column names, so it is safe under `anonymize`): `rows_dropped` (runs excluded for a missing or non-numeric target/feature cell), `censored_rows_excluded` (runs excluded for a censored value such as `<LOD` or `>100`; not imputed), `cells_by_reason` (`missing`, `non_numeric`, `censored`, counted over cells), and `auto_categorical_count`. Per-column detail is in the result's `data_drops.cells_by_column` and in `validation.findings`. |
 | `header_row` | The sheet row (0-based) the column names were read from. `1` when row 0 was a merged-header group label row. `null` for a reanalysis. |
+| `direction` | The direction the analysis optimized: `maximize` or `minimize`. Set from `roles.direction`, the `direction` form field, or (reanalyze) the campaign's stored direction. Part of `config_sha256`, so maximize and minimize on the same bytes hash differently. |
 
 Compatibility:
 
@@ -277,7 +278,7 @@ reanalyze and job results). Analyses written before it existed have no such key.
 | `seed` | The fit seed (as `run.seed`). |
 | `input_sha256` | As `run.input_sha256`. |
 | `config_sha256` | SHA-256 of the `run` fields named in `config_fields`, as canonical JSON (sorted keys, no spaces). |
-| `config_fields` | `kind`, `target`, `roles_declared`, `profile`, `anonymize`, `seed`, `torch_threads`, `max_fit_rows`, `validation_mode`, `sheet_index`, `header_row`, `pending_runs`, and `proposal_fit_restarts` (from `model_diagnostics.restarts`). |
+| `config_fields` | `kind`, `target`, `roles_declared`, `profile`, `anonymize`, `seed`, `torch_threads`, `max_fit_rows`, `validation_mode`, `sheet_index`, `header_row`, `pending_runs`, `direction`, and `proposal_fit_restarts` (from `model_diagnostics.restarts`). |
 | `model_artifact_stored` | Always `false`: no fitted model, weights or pickle is stored. A refit needs the input, the config, the seed and the same stack. |
 | `provenance_sha256` | SHA-256 over every field above (not `timestamp` / `created_at`). The same input, config, seed, engine and libraries give the same value. It identifies the inputs, config and stack; it is not a guarantee that the proposals repeat (see "Determinism" above), and not a signature. |
 | `timestamp`, `created_at` | When the analysis ran: epoch seconds (the result's `timestamp`) and the same instant as UTC ISO 8601. |
@@ -373,6 +374,13 @@ only added; a field never changes meaning or disappears within a version.
     needs at least 3 CV groups. A `cv_ci_unavailable` info finding says the same.
   - `direction`: `maximize` or `minimize`, what the proposals optimize. `best`
     is the max or the min accordingly. Also on the campaign summary.
+  - `proposals[].applicability`: per-proposal `far_from_data` and `at_box_edge`
+    flags (see "Applicability flags").
+  - `applicability`: the threshold used, its source and rule.
+  - `model_diagnostics.kernel`: the GP kernel name (see "Model diagnostics").
+  - `run.direction`: the effective direction, also in `config_sha256`.
+  - `proposal_gating.off_for_minimize`: true when the P(feasible) gate was not
+    applied because the target is minimized. `proposal_gating.reason` says so.
 
 ## Not in this slice
 

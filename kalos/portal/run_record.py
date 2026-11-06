@@ -104,6 +104,9 @@ class RunRecord:
     # no column names, so the block is safe under `anonymize`.
     data_drops: dict[str, Any] | None = None
     header_row: int | None = None
+    # The EFFECTIVE direction the analysis optimized (roles, the form field, or
+    # the campaign's stored one on reanalyze). Part of `config_sha256`.
+    direction: str = "maximize"
 
     def to_dict(self) -> dict[str, Any]:
         """The JSON-ready block. Under `anonymize`, `filename` and `sheet` are
@@ -141,6 +144,7 @@ class RunRecord:
             "data_drops": dict(self.data_drops) if self.data_drops is not None else None,
             # Which sheet row held the column names (0 = the first row).
             "header_row": self.header_row,
+            "direction": self.direction,
         }
         if not self.anonymize:
             out["filename"] = self.filename
@@ -174,6 +178,7 @@ def build(
     torch_threads_actual: int | None = None,
     data_drops: dict[str, Any] | None = None,
     header_row: int | None = None,
+    direction: str | None = None,
 ) -> RunRecord:
     """Assemble the record for one analysis. `raw_bytes` is the exact input the
     parser saw (an upload) or `fold_bytes(df)` (a reanalyze); the hash is over
@@ -217,6 +222,7 @@ def build(
         pending_runs=int(pending_runs),
         data_drops=data_drops,
         header_row=header_row,
+        direction="minimize" if direction == "minimize" else "maximize",
     )
 
 
@@ -254,7 +260,7 @@ PROVENANCE_LIBRARIES: tuple[str, ...] = (
 CONFIG_FIELDS: tuple[str, ...] = (
     "kind", "target", "roles_declared", "profile", "anonymize", "seed",
     "torch_threads", "max_fit_rows", "validation_mode", "sheet_index",
-    "header_row", "pending_runs",
+    "header_row", "pending_runs", "direction",
 )
 
 

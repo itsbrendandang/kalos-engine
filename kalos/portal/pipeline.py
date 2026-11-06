@@ -278,6 +278,7 @@ def compute_upload_analysis(
         len(parsed.df), int(result["d"]), sheet_index=parsed.sheet_index,
         sheet_hash=parsed.sheet_hash, torch_threads_actual=torch_threads_actual(),
         data_drops=run_record.drops_summary(result), header_row=result.get("header_row"),
+        direction=result.get("direction"),
     )
     run = record.to_dict()
     return parsed.df, {**result, **parsed.context(), "run": run,
@@ -300,6 +301,7 @@ def attach_reanalyze_run(
         len(df), int(result["d"]), kind="reanalyze", pending_runs=pending_runs,
         torch_threads_actual=torch_threads_actual(),
         data_drops=run_record.drops_summary(result),
+        direction=result.get("direction"),
     )
     run = record.to_dict()
     return {**result, "run": run, "proposal_provenance": _provenance(run, result)}

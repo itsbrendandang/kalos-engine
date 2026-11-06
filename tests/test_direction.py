@@ -64,6 +64,9 @@ def test_minimize_proposes_toward_the_low_region(results):
     assert rho["a"] > 0
     assert mn["drivers"] == mx["drivers"]
     assert mn["proposal_gating"]["gated"] is False
+    assert mn["proposal_gating"]["off_for_minimize"] is True
+    assert "minimize" in mn["proposal_gating"]["reason"]
+    assert mx["proposal_gating"]["off_for_minimize"] is False
 
 
 def test_invalid_direction_is_refused():
@@ -143,3 +146,39 @@ def test_http_form_direction_is_stored_and_reused_by_reanalyze(client, monkeypat
     assert r.status_code == 200, r.text
     assert seen["direction"] == "minimize"
     assert r.json()["analysis"]["direction"] == "minimize"
+    # The run record of the reanalyze carries the stored direction.
+    assert r.json()["analysis"]["run"]["direction"] == "minimize"
+    assert r.json()["analysis"]["proposal_gating"]["off_for_minimize"] is True
+
+
+def _stub(df, target, *, direction=None, roles=None, **_):
+    eff = (roles.direction if roles is not None and roles.direction else None) or direction
+    return {"target": target or "y", "proposal_features": ["a", "b"], "d": 2, "n": len(df),
+            "proposals": [], "seed": 1234, "timestamp": 1, "direction": eff or "maximize"}
+
+
+@pytest.mark.parametrize("how", ["form", "roles"])
+def test_direction_changes_the_config_hash_on_identical_bytes(how):
+    from kalos.portal.pipeline import compute_upload_analysis
+
+    def run(direction):
+        if how == "form":
+            return compute_upload_analysis(_csv(), "y", False, "s.csv", analyze=_stub,
+                                           direction=direction)[1]
+        roles = json.dumps({"target": "y", "direction": direction})
+        return compute_upload_analysis(_csv(), "y", False, "s.csv", roles, analyze=_stub)[1]
+
+    mx, mn = run("maximize"), run("minimize")
+    assert (mx["run"]["direction"], mn["run"]["direction"]) == ("maximize", "minimize")
+    assert mx["run"]["input_sha256"] == mn["run"]["input_sha256"]
+    assert mx["proposal_provenance"]["config_sha256"] != mn["proposal_provenance"]["config_sha256"]
+    assert "direction" in mx["proposal_provenance"]["config_fields"]
+
+
+def test_reanalyze_record_carries_the_direction():
+    from kalos.portal.pipeline import attach_reanalyze_run
+
+    df = _sheet()
+    out = attach_reanalyze_run(df, _stub(df, "y", direction="minimize"), anonymize=False,
+                               pending_runs=0)
+    assert out["run"]["direction"] == "minimize"

@@ -17,6 +17,7 @@ Newest first.
 ### Added - per-target direction (maximize or minimize)
 
 - `roles.direction` (and a plain `direction` form field on `POST /api/run`) takes `maximize` (default) or `minimize`. Other values: `400 invalid_direction`. The response, the stored campaign and the campaign summary carry `direction`; reanalyze reuses it.
+- The run record has `run.direction` (upload, job and reanalyze), and `direction` is in `CONFIG_FIELDS`, so maximize and minimize on identical bytes get different `config_sha256`. `proposal_gating.off_for_minimize` says when the gate was off for a minimize target.
 - Minimize fits the proposal model on -y. Predictions, `best` (now the min), drivers and `gp_shapes` stay in original units and sign. The P(feasible) gate is off when minimizing. Maximize output is unchanged.
 
 ### Fixed - reanalyze 500 with 2 CV groups (replay F1)

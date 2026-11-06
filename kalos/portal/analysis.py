@@ -1576,6 +1576,9 @@ def _analyze_body(
             "n_infeasible": n_infeasible,
             "feasibility_auc": None if feas_auc != feas_auc else round(float(feas_auc), 3),
             "threshold": 0.0,
+            # True when the gate was not applied because the target is minimized
+            # (P(feasible) scores y > 0); `reason` says so too.
+            "off_for_minimize": bool(minimize),
         },
         # PART 2: whether/why the requested constraint (if any) was applied to
         # the proposal below. Always present (even with no `constraint`
