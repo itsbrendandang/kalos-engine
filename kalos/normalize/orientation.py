@@ -100,6 +100,17 @@ _NUMERIC_DENSITY_THRESHOLD = 0.7  # fraction of cells that must parse numeric
 # heuristics below are noisy on exactly that shape (see
 # `_score_signals`'s docstring).
 _FIRST_COLUMN_NUMERIC_STANDARD_RATE = 0.7
+# Two structural gates for a text first column (see `detect_orientation`):
+# a first column whose labels repeat (on average at least twice each, over at
+# least `_REPEAT_MIN_ROWS` rows) is a categorical FACTOR, one level per run,
+# not a list of parameter names, which are unique. And a sheet with fewer than
+# `_MIN_TRANSPOSED_RUNS` value columns but at least `_TALL_MIN_ROWS` rows would
+# turn into one or two runs if transposed, which no model can use. Both were
+# met by a `condition,y` sheet with labels such as "A pH 4": the "ph" keyword
+# made it look transposed and it was refused as "1 data row".
+_REPEAT_MIN_ROWS = 4
+_MIN_TRANSPOSED_RUNS = 3
+_TALL_MIN_ROWS = 6
 
 
 @dataclass(frozen=True)
@@ -318,6 +329,22 @@ def detect_orientation(df: pd.DataFrame) -> OrientationReport:
                 orientation="standard",
                 confidence=id_rate,
                 signals={"first_column_id_rate": id_rate},
+            )
+
+        labels = df.iloc[:, 0].dropna().astype(str).str.strip()
+        labels = labels[labels != ""]
+        n_levels = int(labels.nunique())
+        if len(labels) >= _REPEAT_MIN_ROWS and 2 * n_levels <= len(labels):
+            return OrientationReport(
+                orientation="standard",
+                confidence=1.0,
+                signals={"first_column_repeated_levels": float(n_levels)},
+            )
+        if df.shape[1] - 1 < _MIN_TRANSPOSED_RUNS and len(df) >= _TALL_MIN_ROWS:
+            return OrientationReport(
+                orientation="standard",
+                confidence=1.0,
+                signals={"too_few_columns_to_be_runs": float(df.shape[1] - 1)},
             )
 
         signals = _score_signals(df)

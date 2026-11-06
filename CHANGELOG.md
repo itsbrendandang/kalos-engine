@@ -31,6 +31,10 @@ Newest first.
 - With fewer than 3 CV groups `cv_ci95` and `reliability.ci95` are now null, with `cv_ci95_reason` and a `cv_ci_unavailable` finding. They were NaN, which JSON cannot encode.
 - Every analysis passes a last check that turns any NaN or infinity into null and logs the top-level keys.
 - Reanalyze checks the analysis encodes before the fold is committed. On any error nothing is committed: campaign, runs and `/api/latest` stay as they were.
+### Fixed - two-column sheets read as transposed
+
+- A `condition,y` sheet (labels such as `A pH 4`) and its 3-column variant were read as transposed and refused as "1 data row". A first column with repeated labels, or a sheet too narrow to hold 3 runs, now stays a normal sheet. A transposed sheet that is still too short gets a message with its real rows and columns (`rows_as_written`).
+
 ### Fixed - column-role safety
 
 - A headerless row index and a 0..N row-number column are no longer model inputs by default. Outcome-like columns after the target (OD readings) are left out too. A concentration input before a given target (`Carbon_conc`) is kept. Declared features are never excluded. Each `provenance` entry adds `role_inferred` and `reason`; findings add `code`.

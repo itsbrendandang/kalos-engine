@@ -379,6 +379,7 @@ def _analyze_body(
     # Header decision from the upload parser (`uploads.choose_header`), read before
     # any frame operation below could drop the attrs.
     header_info: dict = dict(df.attrs.get("kalos_header") or {})
+    shape_as_written = df.attrs.get("kalos_shape_as_written")
     original_columns = {str(c) for c in df.columns}
     n_header_columns = int(df.shape[1])
     df = _dedupe_columns(df.dropna(axis=1, how="all"))
@@ -400,7 +401,7 @@ def _analyze_body(
         )
     n_data_rows = len(df.dropna(axis=0, how="all"))
     if n_data_rows < MIN_FIT_ROWS:
-        raise _too_few_rows(n_data_rows)
+        raise _too_few_rows(n_data_rows, as_written=shape_as_written)
     requested_target = roles.target if roles is not None else target
     if requested_target is not None and str(requested_target) not in {str(c) for c in df.columns}:
         if str(requested_target) in original_columns:

@@ -21,8 +21,18 @@ _ERR_NO_PROCESS_INPUTS = (
 )
 
 
-def _too_few_rows(n: int, target: str | None = None) -> UploadRejected:
-    if target is None:
+def _too_few_rows(
+    n: int, target: str | None = None, *, as_written: list[int] | None = None
+) -> UploadRejected:
+    if target is None and as_written:
+        rows, cols = int(as_written[0]), int(as_written[1])
+        msg = (
+            f"The sheet was read as transposed (one run per column), which gives {n} "
+            f"run{'s' if n != 1 else ''}. As written it has {rows} data rows and {cols} "
+            f"columns. At least {MIN_FIT_ROWS} runs are needed to fit a model. Put one run "
+            "per row with the column names in the first row, and upload again."
+        )
+    elif target is None:
         msg = (
             f"The sheet has {n} data row{'s' if n != 1 else ''}; at least {MIN_FIT_ROWS} "
             "runs are needed to fit a model. Add more runs and upload again."
@@ -36,6 +46,8 @@ def _too_few_rows(n: int, target: str | None = None) -> UploadRejected:
     ctx: dict = {"min_rows": MIN_FIT_ROWS, "n_rows": int(n)}
     if target is not None:
         ctx["target"] = str(target)
+    if target is None and as_written:
+        ctx["rows_as_written"] = int(as_written[0])
     return UploadRejected(msg, code="too_few_rows", context=ctx)
 
 

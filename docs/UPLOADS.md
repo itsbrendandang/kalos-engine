@@ -22,7 +22,7 @@ Because the sheet comes from an external client, the upload path is guarded:
   | `corrupt_excel` | a zip/xlsx that cannot be opened, or a sheet that cannot be read | `sheets`, `sheet` when known |
   | `not_a_table` | text whose lines have inconsistent numbers of comma/tab fields | |
   | `too_few_columns` | fewer than 2 columns (e.g. prose in a `.txt`, a one-column CSV) | `n_columns` |
-  | `too_few_rows` | fewer than 6 data rows, or fewer than 6 rows with a numeric target (even if those few values are identical) | `min_rows`, `n_rows`, `target` |
+  | `too_few_rows` | fewer than 6 data rows, or fewer than 6 rows with a numeric target (even if those few values are identical) | `min_rows`, `n_rows`, `target`; `rows_as_written` when the sheet was read as transposed |
   | `no_numeric_inputs` | no numeric column at all | |
   | `no_process_inputs` | numeric columns exist, but all are the target, ids, other outputs, or constant | |
   | `target_not_found` | the requested `target` is not a column | `target`, `available_targets` |
@@ -44,6 +44,8 @@ Because the sheet comes from an external client, the upload path is guarded:
 - **Header row.**
   The column names are read from row 1. When row 1 is mostly blank, or is a merged-cell group label ("Process", "Analytics" above the real headers), the engine reads the names from row 2 instead and records `header_row: 1`, with an `info` finding. A row of text labels over a complete header row is treated the same way.
   If the sheet is ambiguous (a group row with a few gaps, a units row under a partly blank header, or no usable names), the upload is refused with `ambiguous_header`, which lists the detected columns. A single data column with no header name is named by its position (`column 4`) and flagged with a `warning` finding (`unnamed_column`), so `Unnamed: N` never reaches a client.
+- **Orientation.**
+  A sheet is read as transposed (one run per column) only when its first column reads like parameter names. A first column whose labels repeat (a factor such as `condition`) is never read as transposed, and neither is a sheet with fewer than 3 value columns and at least 6 rows. If a transposed sheet still has too few runs, the `too_few_rows` message gives the run count and the sheet's rows and columns as written.
 - **Workbooks and sheets.**
   `POST /api/run` accepts an optional `sheet` (multipart form field, or `?sheet=` query parameter; the form field wins) naming the sheet to analyze; an exact name, else a unique case- and whitespace-insensitive match.
   Without it, the engine analyzes the FIRST sheet in workbook order that holds a usable table: at least 2 columns, at least 6 data rows, and a numeric column. A workbook whose first sheet is the data therefore behaves exactly as before; a workbook with a notes sheet in front of the data now finds the data.

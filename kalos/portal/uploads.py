@@ -472,6 +472,9 @@ def _apply_orientation_prepass(df: pd.DataFrame) -> pd.DataFrame:
         "confidence": report.confidence,
         "signals": dict(report.signals),
     }
+    if out is not df:
+        # The sheet as written, so a later row-count refusal can name it.
+        out.attrs["kalos_shape_as_written"] = [int(df.shape[0]), int(df.shape[1])]
     return out
 
 
