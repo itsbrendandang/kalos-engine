@@ -4,6 +4,8 @@ Newest first.
 
 ## Unreleased
 
+- Verdict wording: "reliable" now says "with enough runs to check the ranking" instead of "to be sure".
+
 - Search box: a shown value within 0.0005 of the tried edge (3-decimal rounding) is no longer flagged as beyond the tried range.
 
 - Security review S7: at most 5 `roles.specs` per upload (was 20). Each spec is one more model fit.

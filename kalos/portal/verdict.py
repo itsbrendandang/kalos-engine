@@ -50,8 +50,8 @@ Z_STD_TOO_WIDE = 0.85
 
 HEADLINES = {
     "reliable": (
-        "Kalos put your past runs in the right order, with enough runs to be sure, "
-        "so its suggestions are worth running."
+        "Kalos put your past runs in the right order, with enough runs to check the "
+        "ranking, so its suggestions are worth running."
     ),
     "not-yet": (
         "Kalos cannot yet show that it puts your past runs in the right order, "

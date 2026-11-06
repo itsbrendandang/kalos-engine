@@ -167,3 +167,12 @@ def test_refused_sheet_has_no_proposals_and_nothing_500s(client):
     # Starting an empty batch is harmless.
     started = c.post("/api/campaign/start", json={"recipes": []})
     assert started.status_code == 200 and started.json() == {"started": []}
+
+
+
+def test_reliable_headline_does_not_claim_certainty():
+    """Security review nit: 'enough runs to be sure' overclaims."""
+    from kalos.portal.verdict import HEADLINES
+
+    assert "to be sure" not in HEADLINES["reliable"]
+    assert "enough runs to check the ranking" in HEADLINES["reliable"]

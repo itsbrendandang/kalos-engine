@@ -541,7 +541,7 @@ Checked top to bottom:
 |---|---|---|---|
 | `refused` | `insufficient` | no score, or fewer than 3 groups (no interval) | Kalos cannot suggest recipes from this sheet: there are too few groups of runs to check whether the model is any good. |
 | `refused` | `no_ordering` | upper end of the interval at or below 0 | Kalos cannot suggest recipes from this sheet: the model does no better than chance at putting your past runs in order. |
-| `reliable` | `reliable` | score at or above 0.20, lower end of the interval above 0, at least 20 runs and 8 groups | Kalos put your past runs in the right order, with enough runs to be sure, so its suggestions are worth running. |
+| `reliable` | `reliable` | score at or above 0.20, lower end of the interval above 0, at least 20 runs and 8 groups | Kalos put your past runs in the right order, with enough runs to check the ranking, so its suggestions are worth running. |
 | `not_yet` | `not-yet` | everything else | Kalos cannot yet show that it puts your past runs in the right order, so its suggestions are closer to guesses. When only the run or group count holds it back: "The model put your past runs in the right order, but N runs in G groups are too few to be sure, so treat its suggestions as ideas to test." |
 
 Why 20 runs and 8 groups: at 13 runs a score of 0.5 has an interval of about
