@@ -38,17 +38,23 @@ def _fmt(v: float) -> str:
     return f"{v:.4g}"
 
 
+# Shown recipes are rounded to 3 decimals, so a value at the tried edge can read
+# up to 0.0005 past it; that is not "beyond the tried range" (security review nit).
+BEYOND_TOL = 0.0005
+
+
 def beyond_tried(recipe: Mapping[str, Any], tried: Mapping[str, list[float]]) -> list[dict[str, Any]]:
-    """The inputs a proposed recipe sets outside their tried range."""
+    """The inputs a proposed recipe sets outside their tried range (by more
+    than the 3-decimal rounding, `BEYOND_TOL`)."""
     out: list[dict[str, Any]] = []
     for name, (lo, hi) in tried.items():
         v = recipe.get(name)
         if not isinstance(v, (int, float)) or isinstance(v, bool):
             continue
         width = hi - lo
-        if v > hi:
+        if v > hi + BEYOND_TOL:
             side, limit, by = "upper", hi, v - hi
-        elif v < lo:
+        elif v < lo - BEYOND_TOL:
             side, limit, by = "lower", lo, lo - v
         else:
             continue

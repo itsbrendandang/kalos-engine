@@ -4,6 +4,8 @@ Newest first.
 
 ## Unreleased
 
+- Search box: a shown value within 0.0005 of the tried edge (3-decimal rounding) is no longer flagged as beyond the tried range.
+
 - Security review S7: at most 5 `roles.specs` per upload (was 20). Each spec is one more model fit.
 
 - Security review S4: the spread design computes nearest distances in blocks with `cdist`. At 2000 rows x 40 inputs, peak memory drops from about 2.8 GB to under 200 MB.

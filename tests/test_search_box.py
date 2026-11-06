@@ -81,3 +81,12 @@ def test_allow_beyond_widens_and_flags_proposals():
     assert best["beyond_tried_range"][0]["side"] == "upper"
     box = next(f for f in out["validation"]["findings"] if f["code"] == "search_box")
     assert "25% past each end" in box["message"] and "flagged" in box["message"]
+
+
+def test_rounding_at_the_edge_is_not_beyond():
+    """Planted (security review nit): a shown value 0.0004 past the tried edge
+    is 3-decimal rounding, not a recipe beyond the tried range."""
+    tried = {"a": [0.0, 1.0]}
+    assert beyond_tried({"a": 1.0004}, tried) == []
+    assert beyond_tried({"a": -0.0004}, tried) == []
+    assert beyond_tried({"a": 1.002}, tried)[0]["side"] == "upper"
