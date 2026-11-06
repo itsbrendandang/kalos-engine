@@ -694,9 +694,84 @@ def _analyze_body(
         if str(c) in absent_zero and int((feat_kind[c][fit_pos] == BLANK).sum())
     }
 
+    def _column_reading() -> tuple[list[dict], list[dict], list[Finding]]:
+        """Provenance, `columns` and the column findings: everything known
+        about the columns before any model is fit (also served by preflight)."""
+        # per-column provenance: what was kept as a feature, used as the target, or
+        # dropped (id / other output / constant / sparse), so the client is never left
+        # guessing about a silently dropped column. Mirrors the selection logic above.
+        kept_features = [str(c) for c in cont_feats] + [str(c) for c in kept_cats]
+        provenance = provenance_dicts(
+            column_provenance(
+                df,
+                target=str(target),
+                features=kept_features,
+                numeric_cols=[str(c) for c in num],
+                is_identifier=lambda name: is_identifier_name(name, profile.id_hint),
+                outcome_hint=profile.outcome_hint,
+                constant_on_fitted_rows=[str(c) for c in constant_on_fitted]
+                + [str(c) for c in constant_cats],
+                recipe_labels={str(c) for c in recipe_labels},
+                declared={str(c) for c in declared},
+                declared_ids={str(c) for c in roles.ids} if roles is not None else set(),
+                declared_features={str(c) for c in roles.features} if roles is not None else set(),
+                status_overrides={
+                    **role_safety.overrides,
+                    **{c: ("fixed_near_constant", "near_constant") for c in fixed_inputs},
+                },
+                reasons=role_safety.reasons,
+            )
+        )
+
+        # What kind of data each column holds and what the engine did with it, so a
+        # client never draws a text input on a numeric axis (analysis_parts/column_kinds.py).
+        columns_block, kind_findings = column_kinds(
+            df, provenance, kept_cont=[str(c) for c in cont_feats],
+            kept_cats=[str(c) for c in kept_cats], max_auto_levels=AUTO_CATEGORICAL_MAX_LEVELS,
+            declared_cats=[str(c) for c in roles.categoricals] if roles is not None else [],
+            is_identifier=lambda name: is_identifier_name(name, profile.id_hint),
+        )
+        columns_block = with_blank_columns(columns_block, sheet_names, sheet_blank)
+        return provenance, columns_block, kind_findings
+
+    def _sheet_findings(kind_findings: list[Finding]) -> list[Finding]:
+        """The data findings that need no model (the sheet check's own list)."""
+        return _data_findings(
+            by_column, n_rows_dropped, n_censored_rows, zero_filled,
+            auto_cats=[str(c) for c in auto_cats if c in kept_cats],
+            header=header_info,
+            row_sets=data_finding_rows(
+                df, active=active, incomplete=inc, censored=cens, target=target,
+                tgt_kinds=tgt_kinds, cont_feats=cont_feats, feat_kind=feat_kind,
+                absent_zero=absent_zero, kept_cats=kept_cats, cat_ok=cat_ok,
+                fit_pos=fit_pos,
+            ),
+        ) + role_safety.findings + near_constant_findings(fixed_inputs) + kind_findings
+
     if preflight_only:
-        # Every refusal that does not need a fitted model has run.
-        return {}
+        # Every refusal that does not need a fitted model has run. The column
+        # reading and the sheet check are returned too (POST /api/preflight).
+        provenance, columns_block, kind_findings = _column_reading()
+        return {
+            "preflight": True,
+            "target": str(target),
+            "targets": [str(c) for c in candidate_targets],
+            "features": [str(c) for c in cont_feats] + [str(c) for c in kept_cats],
+            "categorical_features": [str(c) for c in kept_cats],
+            "group_col": gcol,
+            "fixed_inputs": {c: v["value"] for c, v in fixed_inputs.items()},
+            "n_rows": int(n_data_rows),
+            "n_usable": int(len(fit_pos)),
+            "n_dropped_incomplete": n_rows_dropped,
+            "n_censored_excluded": n_censored_rows,
+            "header_row": header_info.get("header_row"),
+            "orientation": df.attrs.get("kalos_orientation"),
+            "provenance": provenance,
+            "columns": columns_block,
+            "validation": report_dict(_with_data_findings(validation, _sheet_findings(kind_findings))),
+            "contract_version": ANALYSIS_CONTRACT_VERSION,
+            "engine_version": ENGINE_VERSION,
+        }
 
     keep_index = df.index[fit_pos]
     y = y_all[fit_pos]
@@ -1600,41 +1675,8 @@ def _analyze_body(
         grouped_cv_report=grouped_cv_report, interval_calibration=interval_calibration,
     )
 
-    # per-column provenance: what was kept as a feature, used as the target, or
-    # dropped (id / other output / constant / sparse), so the client is never left
-    # guessing about a silently dropped column. Mirrors the selection logic above.
+    provenance, columns_block, kind_findings = _column_reading()
     kept_features = [str(c) for c in cont_feats] + [str(c) for c in kept_cats]
-    provenance = provenance_dicts(
-        column_provenance(
-            df,
-            target=str(target),
-            features=kept_features,
-            numeric_cols=[str(c) for c in num],
-            is_identifier=lambda name: is_identifier_name(name, profile.id_hint),
-            outcome_hint=profile.outcome_hint,
-            constant_on_fitted_rows=[str(c) for c in constant_on_fitted]
-            + [str(c) for c in constant_cats],
-            recipe_labels={str(c) for c in recipe_labels},
-            declared={str(c) for c in declared},
-            declared_ids={str(c) for c in roles.ids} if roles is not None else set(),
-            declared_features={str(c) for c in roles.features} if roles is not None else set(),
-            status_overrides={
-                **role_safety.overrides,
-                **{c: ("fixed_near_constant", "near_constant") for c in fixed_inputs},
-            },
-            reasons=role_safety.reasons,
-        )
-    )
-
-    # What kind of data each column holds and what the engine did with it, so a
-    # client never draws a text input on a numeric axis (analysis_parts/column_kinds.py).
-    columns_block, kind_findings = column_kinds(
-        df, provenance, kept_cont=[str(c) for c in cont_feats],
-        kept_cats=[str(c) for c in kept_cats], max_auto_levels=AUTO_CATEGORICAL_MAX_LEVELS,
-        declared_cats=[str(c) for c in roles.categoricals] if roles is not None else [],
-        is_identifier=lambda name: is_identifier_name(name, profile.id_hint),
-    )
-    columns_block = with_blank_columns(columns_block, sheet_names, sheet_blank)
 
     # Which acquisition optimizer actually served these proposals, so the audit
     # trail is explicit (mirrors seed / timestamp / engine_version): a large
@@ -1875,18 +1917,7 @@ def _analyze_body(
         "validation": report_dict(
             _with_data_findings(
                 validation,
-                _data_findings(
-                    by_column, n_rows_dropped, n_censored_rows, zero_filled,
-                    auto_cats=[str(c) for c in auto_cats if c in kept_cats],
-                    header=header_info,
-                    row_sets=data_finding_rows(
-                        df, active=active, incomplete=inc, censored=cens, target=target,
-                        tgt_kinds=tgt_kinds, cont_feats=cont_feats, feat_kind=feat_kind,
-                        absent_zero=absent_zero, kept_cats=kept_cats, cat_ok=cat_ok,
-                        fit_pos=fit_pos,
-                    ),
-                ) + role_safety.findings + near_constant_findings(fixed_inputs)
-                + kind_findings
+                _sheet_findings(kind_findings)
                 + [search_box_finding(tried_ranges, beyond_applied, design)] + (
                     [Finding(
                         check="cv_ci_unavailable", severity="info", message=ci95_reason,

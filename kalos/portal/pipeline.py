@@ -151,6 +151,36 @@ def preflight_upload(
     return parsed
 
 
+def preflight_report(
+    raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
+    *, sheet: str | None = None, direction: str | None = None,
+) -> dict[str, Any]:
+    """`POST /api/preflight`: how Kalos reads the sheet, without a fit. The same
+    parse and the same pre-fit refusals as an upload (`_analyze(...,
+    preflight_only=True)`), plus the column reading (`columns`, `provenance`)
+    and the sheet check (`validation`). Torch is not imported."""
+    from kalos.portal.analysis import _analyze, _anonymize_result
+
+    parsed = _parse(raw, filename, sheet, anonymize)
+    try:
+        roles, profile = _roles_and_profile(roles_json)
+        kwargs: dict[str, Any] = {"anonymize": anonymize, "profile": profile,
+                                  "preflight_only": True}
+        if roles is not None:
+            kwargs["roles"] = roles
+        if direction:
+            kwargs["direction"] = direction
+        report = _analyze(parsed.df, target, **kwargs)
+    except Exception as exc:
+        annotated = _annotated(parsed, exc, anonymize)
+        if annotated is exc:
+            raise
+        raise annotated from exc
+    if anonymize:
+        report = _anonymize_result(report)
+    return {**report, **parsed.context()}
+
+
 # --- same upload, same analysis: an in-process result cache ------------------ #
 # A re-upload of identical bytes with identical settings (the "replace" retry, a
 # page reload, the desktop app re-sending its sheet) returned the same seeded

@@ -107,7 +107,7 @@ log = logging.getLogger("kalos.portal")
 
 # Routes that accept a multipart file upload, and so get the upload-sized body
 # cap rather than the small JSON one (kalos/portal/limits.py).
-UPLOAD_PATHS = frozenset({"/api/run", "/api/scale/readout"})
+UPLOAD_PATHS = frozenset({"/api/run", "/api/preflight", "/api/scale/readout"})
 
 # --- CPU thread budget ------------------------------------------------------- #
 # The upload handler offloads its CPU-bound body (pandas parse + ~7 GP fits +
@@ -889,6 +889,37 @@ def _run_uploaded_sync(
     if stored and stored.get("analysis_id") == result.get("analysis_id"):
         return stored
     return result
+
+
+@app.post("/api/preflight")
+async def preflight(
+    file: UploadFile = File(...),
+    target: str = Form(default=""),
+    anonymize: bool = Form(default=False),
+    roles: str = Form(default=""),
+    sheet: str = Form(default=""),
+    direction: str = Form(default=""),
+    _principal: Principal = Depends(require_scope(WRITE)),
+) -> JSONResponse:
+    """How Kalos reads a sheet, before any fit: the columns (`columns`,
+    `provenance`), the target and inputs it would use, and the sheet check
+    (`validation`). Same multipart fields and the same refusals (400 with a
+    code) as `POST /api/run`; nothing is stored, no model is fit, and the
+    analysis slot is not taken (docs/CAMPAIGNS_API.md, "Preflight")."""
+    from kalos.portal.pipeline import preflight_report
+
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    filename = file.filename or "uploaded dataset"
+    try:
+        body = await run_in_threadpool(
+            functools.partial(
+                preflight_report, raw, target or None, anonymize, filename, roles,
+                sheet=sheet or None, direction=direction or None,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - the upload error envelopes
+        return upload_error_response(exc)
+    return JSONResponse(body)
 
 
 @app.post("/api/run")

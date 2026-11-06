@@ -407,6 +407,21 @@ wins. A reanalyze keeps a roles-set threshold.
 Proposed values are rounded to 3 places and then clipped into the box, so a
 recipe never sits outside `feature_ranges` (replay F9).
 
+### Preflight (additive route)
+
+`POST /api/preflight` takes the same multipart fields as `POST /api/run`
+(`file`, `target`, `roles`, `sheet`, `anonymize`, `direction`; write scope) and
+answers how Kalos reads the sheet without fitting a model: `preflight: true`,
+`target`, `targets`, `features`, `categorical_features`, `group_col`,
+`fixed_inputs`, `n_rows`, `n_usable`, `n_dropped_incomplete`,
+`n_censored_excluded`, `header_row`, `orientation`, `provenance`, `columns`
+(see "Column kinds"), `validation`, `contract_version`, `engine_version`, and
+for workbooks `sheets` / `sheet_used`. It refuses exactly what an upload
+refuses, with the same 400 codes. Nothing is stored, no model is fit, torch is
+not loaded, and the analysis slot is not taken, so it answers in about a
+second. The fit-dependent findings (`search_box`, `cv_ci_unavailable`) only
+come with the analysis.
+
 ### Column kinds (additive)
 
 `columns`: one entry per uploaded column, in sheet order.
