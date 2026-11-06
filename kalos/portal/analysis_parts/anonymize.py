@@ -79,6 +79,13 @@ def _anonymize_result(
             {**p, "recipe": alias_recipe(p["recipe"])} if isinstance(p, dict) and "recipe" in p else p
             for p in out["proposals"]
         ]
+        for p in out["proposals"]:
+            app = p.get("applicability") if isinstance(p, dict) else None
+            if isinstance(app, dict) and isinstance(app.get("at_box_edge"), list):
+                p["applicability"] = {**app, "at_box_edge": [
+                    {**e, "feature": alias(str(e["feature"]))} if isinstance(e, dict) else e
+                    for e in app["at_box_edge"]
+                ]}
     corr = out.get("correlation")
     if isinstance(corr, dict) and isinstance(corr.get("labels"), list):
         out["correlation"] = {**corr, "labels": [alias(str(c)) for c in corr["labels"]]}

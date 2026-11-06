@@ -350,6 +350,31 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
 - `training_nn_distance_median`: the same metric between training rows (median
   distance from each row to its nearest other row), for scale.
 
+### Applicability flags (additive)
+
+Two separate flags per proposal. A proposal can be near the data and on the
+box edge, or far from the data in the middle of the box.
+
+- `proposals[].applicability`:
+  - `distance`: the same number as `nearest_training_distance`.
+  - `threshold`, `threshold_source` (`default` or `lab`).
+  - `far_from_data`: `distance > threshold`.
+  - `at_box_edge`: list of `{feature, side}` for each continuous input within
+    1% of the box width of a bound (`side` is `lower` or `upper`). Empty when
+    none. The box is `feature_ranges`.
+- `applicability` (top level): `threshold`, `source` (`default` or `lab`),
+  `set_by` (`default`, `env` or `roles`), `rule` (in words) and
+  `edge_fraction` (0.01).
+
+The default threshold is `max(0.25, 3 x training_nn_distance_median)`. It is a
+product default, not a validated number. A lab sets its own with
+`roles.applicability_distance` (a positive number; anything else is a `400`
+`invalid_applicability_distance`) or `KALOS_APPLICABILITY_DISTANCE`. Roles
+wins. A reanalyze keeps a roles-set threshold.
+
+Proposed values are rounded to 3 places and then clipped into the box, so a
+recipe never sits outside `feature_ranges` (replay F9).
+
 ### Contract version
 
 Every analysis (`/api/run`, `/api/latest`, reanalyze, job results) carries

@@ -45,6 +45,29 @@ class InvalidDirection(ValueError):
         super().__init__('direction must be "maximize" or "minimize"')
 
 
+class InvalidApplicabilityDistance(ValueError):
+    """`roles.applicability_distance` that is not a positive finite number
+    (HTTP 400 `invalid_applicability_distance`)."""
+
+    code = "invalid_applicability_distance"
+
+    def __init__(self) -> None:
+        super().__init__("roles.applicability_distance must be a positive number")
+
+
+def parse_applicability_distance(value: object) -> float | None:
+    """None when not given, else a positive finite float. Raises
+    `InvalidApplicabilityDistance` for anything else (bools and strings too)."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InvalidApplicabilityDistance()
+    v = float(value)
+    if not np.isfinite(v) or v <= 0:
+        raise InvalidApplicabilityDistance()
+    return v
+
+
 def parse_direction(value: object) -> str | None:
     """None for no stated direction, else "maximize"/"minimize". Raises
     `InvalidDirection` for anything else (case and surrounding spaces are
@@ -90,6 +113,8 @@ class ColumnRoles:
     name, take a blank as 0; every other blank feature cell drops its run.
     `direction` is "maximize" or "minimize"; None means not stated (the
     request or the profile decides; default "maximize").
+    `applicability_distance` is a lab-set threshold for
+    `proposals[].applicability.far_from_data` (None: the product default).
     """
 
     target: str
@@ -99,6 +124,7 @@ class ColumnRoles:
     categoricals: tuple[str, ...] = ()
     sparse: tuple[str, ...] = ()
     direction: str | None = None
+    applicability_distance: float | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> ColumnRoles:
@@ -131,6 +157,9 @@ class ColumnRoles:
             categoricals=as_tuple(data.get("categoricals")),
             sparse=as_tuple(data.get("sparse")),
             direction=parse_direction(data.get("direction")),
+            applicability_distance=parse_applicability_distance(
+                data.get("applicability_distance")
+            ),
         )
 
 
@@ -238,7 +267,13 @@ class DesignSpace:
                 k = max(0, min(k, len(d.levels) - 1))
                 out.append(d.levels[k])
             else:
-                out.append(round(float(vals[i]), 3))
+                # Rounded to 3 places, then clipped into the box (replay F9:
+                # rounding put values up to 5e-4 outside it). The clip bounds
+                # sit inside both the box and its 6-place `feature_ranges`.
+                lo = max(float(d.lower), round(float(d.lower), 6))
+                hi = min(float(d.upper), round(float(d.upper), 6))
+                v = round(float(vals[i]), 3)
+                out.append(min(max(v, lo), hi) if lo <= hi else v)
         return out
 
 

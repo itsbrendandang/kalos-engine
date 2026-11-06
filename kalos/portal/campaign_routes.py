@@ -317,6 +317,11 @@ async def _reanalyze(
         }
         if direction != "maximize":
             analyze_kwargs["direction"] = direction
+        # A lab threshold set by the upload's roles is kept (env and default
+        # thresholds are re-read, not copied).
+        prev_app = previous.get("applicability")
+        if isinstance(prev_app, dict) and prev_app.get("set_by") == "roles":
+            analyze_kwargs["applicability_distance"] = float(prev_app["threshold"])
         result = await run_in_slot(
             functools.partial(_analyze, df, target, **analyze_kwargs),
             tenant=tenant,

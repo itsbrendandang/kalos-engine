@@ -109,6 +109,9 @@ def check_env_settings() -> None:
     validation_mode_setting()
     audit_retention_days()
     provider_setting()
+    from kalos.portal.analysis_parts.applicability import env_applicability_distance
+
+    env_applicability_distance()
 
 
 def is_production() -> bool:

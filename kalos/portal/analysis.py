@@ -45,6 +45,10 @@ from kalos.portal.analysis_parts.anonymize import (
     anonymize_sheet_rejection,
     sheet_alias,
 )
+from kalos.portal.analysis_parts.applicability import (
+    applicability_block,
+    proposal_applicability,
+)
 from kalos.portal.analysis_parts.columns import (
     AUTO_CATEGORICAL_MAX_LEVELS,
     _dedupe_columns,
@@ -230,6 +234,7 @@ def _analyze(
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
     direction: str | None = None,
+    applicability_distance: float | None = None,
 ) -> dict:
     """See `_analyze_body`. Every fitting analysis runs inside `_seeded_analysis`,
     so its proposals depend only on its inputs, not on other analyses in flight."""
@@ -237,7 +242,7 @@ def _analyze(
     kwargs: dict[str, Any] = dict(
         anonymize=anonymize, roles=roles, profile=profile, pending=pending,
         constraint=constraint, progress=progress, preflight_only=preflight_only,
-        direction=direction,
+        direction=direction, applicability_distance=applicability_distance,
     )
     if preflight_only:
         return _analyze_body(df, target, **kwargs)
@@ -257,6 +262,7 @@ def _analyze_body(
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
     direction: str | None = None,
+    applicability_distance: float | None = None,
 ) -> dict:
     """Run the engine on an arbitrary run sheet: pick the target (the value to
     maximize), use the process INPUTS as features (other measured outputs are
@@ -314,7 +320,12 @@ def _analyze_body(
     acquisition, incumbent and explore/exploit labels look for LOW values.
     Everything reported (predictions, `best`, drivers, `gp_shapes`, CV) stays
     in the original units and sign. Feasibility gating (P(y > 0)) is not
-    applied when minimizing."""
+    applied when minimizing.
+
+    `applicability_distance` is a lab-set `far_from_data` threshold (the
+    reanalyze passes the one the upload's roles set); `roles.applicability_distance`
+    wins. Neither: `KALOS_APPLICABILITY_DISTANCE`, else the product default
+    (kalos/portal/analysis_parts/applicability.py)."""
     try:
         stated_direction = parse_direction(direction)
     except InvalidDirection as exc:
@@ -1499,6 +1510,26 @@ def _analyze_body(
     else:
         proposal_optimizer = mixed_strategy(cat_cardinalities, PROPOSAL_BATCH_Q)
 
+    # Applicability flags per proposal (analysis_parts/applicability.py): far
+    # from the data, and at the box edge, as two separate flags.
+    nn_median = training_nn_distance_median(X, bounds, cat_dims)
+    applicability = applicability_block(
+        nn_median,
+        roles.applicability_distance
+        if roles is not None and roles.applicability_distance is not None
+        else applicability_distance,
+    )
+    distances = nearest_training_distance(batch, X, bounds, cat_dims)
+    proposals = _annotate(
+        batch, p_mean, p_std, incumbent, cols=show_idx, design=design,
+        p_feasible=p_feasible_arr, constraint=constraint_pred, maximize=not minimize,
+        distance=distances,
+    )
+    for row, flags in zip(
+        proposals, proposal_applicability(batch, distances, design, applicability)
+    ):
+        row["applicability"] = flags
+
     result = {
         "n": len(y), "d": len(kept_features), "target": str(target), "group_col": gcol,
         # "maximize" or "minimize": what the proposals optimize. `best` is the
@@ -1622,14 +1653,12 @@ def _analyze_body(
         # How distinct the batch is and how many collapsed (near-duplicate) rows
         # of the joint optimization were replaced by sequential selection.
         "batch_diversity": proposal.diversity_report(),
-        "proposals": _annotate(
-            batch, p_mean, p_std, incumbent, cols=show_idx, design=design,
-            p_feasible=p_feasible_arr, constraint=constraint_pred, maximize=not minimize,
-            distance=nearest_training_distance(batch, X, bounds, cat_dims),
-        ),
+        "proposals": proposals,
         # Context for `proposals[].nearest_training_distance` (same metric): the
         # median distance from each training row to its nearest other row.
-        "training_nn_distance_median": training_nn_distance_median(X, bounds, cat_dims),
+        "training_nn_distance_median": nn_median,
+        # The `far_from_data` threshold used, where it came from, and the rule.
+        "applicability": applicability,
         "oof": [[round(a, 4), round(p, 4)] for a, p in zip(oof_a, oof_p)],
         "provenance": provenance,
         # Orientation pre-pass fact from the upload path (kalos/portal/uploads.py):

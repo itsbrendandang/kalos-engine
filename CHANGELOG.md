@@ -14,6 +14,12 @@ Newest first.
 - Mixed (categorical) proposals enumerate every combination only while combinations x batch size stays within 64 solves (`MAX_MIXED_SOLVES`); larger cases use the alternating optimizer and report `proposal_optimizer: "mixed_alternating"`. The benchmark's mixed task (12 combinations, q=4) is unchanged. 20 combinations x 5 proposals went from 44 s to 10 s with the same predicted means on the shared proposals.
 - The same upload is not refit: the engine keeps the last 4 analyses in memory (`KALOS_ANALYSIS_CACHE`, 0 = off) keyed on the bytes, file name, sheet, target, roles, anonymize, profile, engine version and every `KALOS_*` setting. A repeat returns the same analysis with `analysis_cache: {"hit": true}`. Off in the test suite by default.
 - Graceful stop in desktop mode: on SIGTERM an in-flight analysis gets 12 s to finish; after that no store write can commit, and the process exits.
+### Added - applicability flags per proposal
+
+- `proposals[].applicability` has `distance`, `threshold`, `threshold_source`, `far_from_data` and `at_box_edge` (inputs within 1% of the box width of a bound). The two flags are separate.
+- Top-level `applicability` records the threshold, its source and rule. Default: `max(0.25, 3 x training_nn_distance_median)`, a product default. Labs set `roles.applicability_distance` or `KALOS_APPLICABILITY_DISTANCE`.
+- Fixed (replay F9): rounded proposal values are clipped into the search box.
+
 ### Added - per-target direction (maximize or minimize)
 
 - `roles.direction` (and a plain `direction` form field on `POST /api/run`) takes `maximize` (default) or `minimize`. Other values: `400 invalid_direction`. The response, the stored campaign and the campaign summary carry `direction`; reanalyze reuses it.
