@@ -227,10 +227,21 @@ def test_block_is_purely_additive():
         analysis_mod._alternative_scale_block = original
 
     # `timestamp` is `int(time.time())`, wall-clock and unrelated to this block;
-    # excluded alongside `alternative_scale` itself.
+    # excluded alongside `alternative_scale` itself. `model_diagnostics.fit_seconds`
+    # is also a measured wall-clock duration (the GP fit time), so it varies by a
+    # millisecond between two otherwise-identical runs - normalise it out rather
+    # than skip the whole `model_diagnostics` block, which carries real results.
     skip = {"alternative_scale", "timestamp"}
-    a = {k: v for k, v in with_block.items() if k not in skip}
-    b = {k: v for k, v in without_block.items() if k not in skip}
+
+    def _without_timings(resp: dict) -> dict:
+        out = {k: v for k, v in resp.items() if k not in skip}
+        diag = out.get("model_diagnostics")
+        if isinstance(diag, dict) and "fit_seconds" in diag:
+            out["model_diagnostics"] = {**diag, "fit_seconds": None}
+        return out
+
+    a = _without_timings(with_block)
+    b = _without_timings(without_block)
     assert a == b, "alternative_scale must be purely additive to the rest of the response"
 
 

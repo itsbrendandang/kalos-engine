@@ -73,6 +73,13 @@ include = ["kalos*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `slow` marks the handful of GP-heavy tests (full BoTorch fits / pool replays)
+# that dominate wall time. The full suite still runs them; a fast inner-loop run
+# skips them with `-m "not slow"`. Registered here so `--strict-markers` (and a
+# plain run) never warns about an unknown marker.
+markers = [
+    "slow: a GP-heavy test (full BoTorch fit or pool replay); deselect with -m 'not slow'",
+]
 
 [tool.ruff]
 # Floor matches requires-python (ax-platform needs 3.11). Explicit so ruff does not

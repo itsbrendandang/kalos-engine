@@ -88,6 +88,7 @@ def _mixed_sheet(n=60, seed=0):
     })
 
 
+@pytest.mark.slow
 def test_mixed_surrogate_fit_and_propose_picks_favorable_level():
     pytest.importorskip("botorch")
     import torch

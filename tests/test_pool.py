@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from kalos.bench.pool import pool_from_frame, run_pool
 
@@ -37,6 +38,7 @@ def test_pool_bo_beats_random_on_a_clean_pool():
     assert res["bo"]["mean"][-1] > res["random"]["mean"][-1]
 
 
+@pytest.mark.slow
 def test_pool_feasibility_gated_strategies_trajectories_are_well_formed():
     # Shape/monotonicity/finiteness check for the two feasibility-gated
     # strategies, mirroring the same properties expected of "bo" and "random".
