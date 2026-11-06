@@ -70,6 +70,24 @@ def test_every_column_gets_a_kind_and_a_text_input_is_never_numeric():
     assert row_index["used_in_fit"] is False
 
 
+def test_blank_columns_are_listed_in_sheet_order():
+    df = _sheet().drop(columns=["", "Sample", "Vessel", "OD_Prod"])
+    df.insert(1, "Notes", np.nan)
+    df["Empty_end"] = np.nan
+    out = _analyze(df, "Titer")
+    names = [c["name"] for c in out["columns"]]
+    assert names == [str(c) for c in df.columns]
+    by = _by_name(out)
+    for name in ("Notes", "Empty_end"):
+        assert by[name] == {
+            "name": name, "kind": "constant", "role": "excluded", "used_in_fit": False,
+            "n_values": 0, "n_levels": None, "levels": None,
+            "finding_code": None, "reason": "all_blank",
+        }
+    prov = [p["name"] for p in out["provenance"]]
+    assert [n for n in names if n not in ("Notes", "Empty_end")] == prov
+
+
 def test_a_small_category_is_a_categorical_input_and_proposals_carry_labels():
     df = _sheet(n=36, n_sources=3).drop(columns=["", "Sample", "Vessel", "OD_Prod"])
     out = _analyze(df, "Titer")

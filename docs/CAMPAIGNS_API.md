@@ -427,7 +427,9 @@ recipe never sits outside `feature_ranges` (replay F9).
   `outcome_like`, `constant`, `date` (dates or times; never binned as numbers).
 - `levels` is present for every `category` column, used or excluded.
 - `name` is the same string as `provenance[].name` (a headerless column is
-  `column N` in both). `provenance`, `features`, `categorical_features` and
+  `column N` in both). An entirely blank column has no `provenance` row but is
+  listed in `columns`, in its sheet position: `kind` `constant`, `reason`
+  `all_blank`, `used_in_fit` false, `n_values` 0. `provenance`, `features`, `categorical_features` and
   `feature_ranges` are unchanged; `columns` is additive.
 - `finding_code` is null or `category_not_modeled`.
 - `reason` is null or one of these codes (closed list; the same codes appear in

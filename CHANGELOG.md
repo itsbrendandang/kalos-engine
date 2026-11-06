@@ -4,6 +4,8 @@ Newest first.
 
 ## Unreleased
 
+- `columns[]` lists entirely blank columns too (kind `constant`, reason `all_blank`, in sheet order).
+
 - `proposals[].vals` holds the same rounded, box-clipped numbers as `proposals[].recipe` (they could differ by the clip before).
 
 - `run.schema_version` is 2: `direction` is in the run record and in `config_sha256`, so new hashes do not match version-1 hashes of the same upload.

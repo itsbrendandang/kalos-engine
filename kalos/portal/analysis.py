@@ -49,7 +49,7 @@ from kalos.portal.analysis_parts.applicability import (
     applicability_block,
     proposal_applicability,
 )
-from kalos.portal.analysis_parts.column_kinds import column_kinds
+from kalos.portal.analysis_parts.column_kinds import column_kinds, with_blank_columns
 from kalos.portal.analysis_parts.columns import (
     AUTO_CATEGORICAL_MAX_LEVELS,
     _dedupe_columns,
@@ -388,6 +388,10 @@ def _analyze_body(
     shape_as_written = df.attrs.get("kalos_shape_as_written")
     original_columns = {str(c) for c in df.columns}
     n_header_columns = int(df.shape[1])
+    # Which uploaded columns are entirely blank, in sheet order: they are dropped
+    # here but still listed in `columns` (kind constant, reason all_blank).
+    sheet_blank = [bool(df.iloc[:, i].isna().all()) for i in range(df.shape[1])]
+    sheet_names = [str(c) for c in df.columns]
     df = _dedupe_columns(df.dropna(axis=1, how="all"))
 
     # Shape problems that no model can work around get a specific, actionable
@@ -1546,6 +1550,7 @@ def _analyze_body(
         declared_cats=[str(c) for c in roles.categoricals] if roles is not None else [],
         is_identifier=lambda name: is_identifier_name(name, profile.id_hint),
     )
+    columns_block = with_blank_columns(columns_block, sheet_names, sheet_blank)
 
     # Which acquisition optimizer actually served these proposals, so the audit
     # trail is explicit (mirrors seed / timestamp / engine_version): a large

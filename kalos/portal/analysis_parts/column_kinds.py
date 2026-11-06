@@ -183,6 +183,28 @@ def column_kinds(
     return out, findings
 
 
+def with_blank_columns(
+    columns: list[dict[str, Any]], sheet_names: list[str], blank: list[bool],
+) -> list[dict[str, Any]]:
+    """Put the sheet's entirely blank columns back into `columns`, in sheet order.
+    The analysis drops them before anything else, so `columns` (built from the
+    remaining ones, in the same order) gets one `constant` / `all_blank` entry
+    per blank column. They have no `provenance` row."""
+    rest = iter(columns)
+    out: list[dict[str, Any]] = []
+    for name, is_blank in zip(sheet_names, blank, strict=True):
+        if is_blank:
+            out.append({
+                "name": name, "kind": "constant", "role": "excluded", "used_in_fit": False,
+                "n_values": 0, "n_levels": None, "levels": None,
+                "finding_code": None, "reason": "all_blank",
+            })
+        else:
+            out.append(next(rest))
+    out.extend(rest)  # defensive: never drop an entry
+    return out
+
+
 def anonymize_columns(columns: list[dict[str, Any]], alias: Any, hash_level: Any) -> list[dict[str, Any]]:
     """`columns` under `anonymize=True`: identifier-like names are aliased, and
     the level labels of an aliased column are replaced too (a level can be a
