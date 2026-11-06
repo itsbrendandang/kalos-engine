@@ -230,7 +230,7 @@ def parse_linear_constraints(value: object) -> tuple[LinearConstraint, ...]:
 
 
 # At most this many `roles.specs` per upload.
-MAX_SPECS = 20
+MAX_SPECS = 5
 
 
 class InvalidSpecs(ValueError):

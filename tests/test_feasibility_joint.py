@@ -145,3 +145,12 @@ def test_http_invalid_specs_is_a_400(tmp_path, monkeypatch):
             assert r.status_code == 400 and r.json()["code"] == "invalid_specs", r.text
     finally:
         app.dependency_overrides.pop(get_campaign_store, None)
+
+
+def test_at_most_five_specs():
+    """Planted (security review S7): every spec is one more model fit, so the
+    count is capped at 5 per upload (was 20)."""
+    five = [{"column": f"c{i}", "min": 0} for i in range(5)]
+    ColumnRoles.from_dict({"target": "y", "specs": five})
+    with pytest.raises(InvalidSpecs):
+        ColumnRoles.from_dict({"target": "y", "specs": [*five, {"column": "c5", "min": 0}]})

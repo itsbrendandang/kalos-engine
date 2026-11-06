@@ -780,7 +780,7 @@ only added; a field never changes meaning or disappears within a version.
   "specs_treated_independently", plain}`: each spec is judged on its own, so the
   joint chance can be off when results move together): `{specs, n_samples, method, predicts, seed, available,
   reason}`. Set specs in the column roles: `"specs": [{"column": "Purity", "min":
-  95}]` (outcome columns, the target may be one; `min`, `max` or both; at most 20;
+  95}]` (outcome columns, the target may be one; `min`, `max` or both; at most 5;
   a spec on a declared input or a malformed spec is 400 `invalid_specs`). One model
   per spec column (rows with a value, at least 6). `specs[]` adds
   `n_rows_with_value`, `available`, `reason`. `method` is `independent_mc`: draws

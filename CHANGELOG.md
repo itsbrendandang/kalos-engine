@@ -4,6 +4,8 @@ Newest first.
 
 ## Unreleased
 
+- Security review S7: at most 5 `roles.specs` per upload (was 20). Each spec is one more model fit.
+
 - Security review S4: the spread design computes nearest distances in blocks with `cdist`. At 2000 rows x 40 inputs, peak memory drops from about 2.8 GB to under 200 MB.
 
 - Security review S3: a best bet predicted below the best run says the model does not expect any recipe in the box to beat it; "to learn, not to win" is no longer used for the best bet.
