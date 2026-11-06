@@ -30,6 +30,11 @@ Startup self-check (exit 3, one plain line on stderr, nothing written): the
 state directory must be writable, and an existing `portal.db` must pass SQLite's
 `quick_check` and the engine's schema checks (kalos/portal/migrate.py).
 
+The server itself could not start (exit 4, one line naming the cause): the port
+is in use, another engine schedules this folder's jobs, or the database upgrade
+failed. uvicorn exits 3 for all of these; desktop mode maps them to 4 so the
+shell never reads them as a damaged database.
+
 Torch-free at import time on purpose: `__main__` imports this before the app.
 """
 from __future__ import annotations
@@ -47,6 +52,7 @@ _TRUE = {"1", "true", "yes", "on"}
 # Exit codes the shell reads (docs/DESKTOP.md).
 EXIT_CONFIG = 2
 EXIT_DAMAGED_STATE = 3
+EXIT_SERVER_START = 4
 
 # Seconds uvicorn waits for an in-flight request on SIGTERM before it cancels
 # it. Below the shell's 15 s SIGKILL deadline, so the engine always gets to
@@ -187,6 +193,44 @@ def self_check(directory: Path) -> str:
             )
         raise DesktopStartupError(_plain.format(why=reason))
     return f"state dir {directory}: database ok"
+
+
+# --- server start failures (exit 4) ----------------------------------------- #
+# The app's lifespan records why it refused to start (one plain line), because
+# uvicorn only logs the exception and exits 3. `__main__` reads it back.
+_STARTUP_FAILURE: dict[str, str | None] = {"cause": None}
+
+
+def note_startup_failure(cause: str) -> None:
+    _STARTUP_FAILURE["cause"] = cause
+
+
+def startup_failure() -> str | None:
+    return _STARTUP_FAILURE["cause"]
+
+
+def port_in_use(host: str, port: int) -> bool:
+    import socket
+
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return True
+    return False
+
+
+def server_start_failure(host: str, port: int) -> str:
+    """The `kalos engine:` line for a server that did not start (exit 4)."""
+    cause = startup_failure()
+    if cause:
+        return f"the engine could not start: {cause}"
+    if port_in_use(host, port):
+        return (f"the engine could not start: port {port} on {host} is already in use "
+                "(another program, or another Kalos engine)")
+    return "the engine could not start: the server stopped during startup (see the lines above)"
 
 
 # --- shutdown --------------------------------------------------------------- #

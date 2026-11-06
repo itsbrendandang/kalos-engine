@@ -225,13 +225,21 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     from kalos.portal.jobs import job_settings
     from kalos.portal.migrate import MigrationError, SchemaError
 
-    check_startup_config()  # a malformed KALOS_JOB* value fails the boot, not the first job
+    try:
+        check_startup_config()  # a malformed KALOS_JOB* value fails the boot, not the first job
+    except (ValueError, RunnerLocked) as exc:
+        _desktop.note_startup_failure(f"background-job settings: {exc}")
+        raise
     expect_runner(job_settings().enabled)  # /readyz is 503 while an expected runner is down
 
     store = None
     try:
         store = app.dependency_overrides.get(get_campaign_store, get_campaign_store)()
-    except (MigrationError, SchemaError):
+    except MigrationError as exc:
+        _desktop.note_startup_failure(f"the database upgrade could not run safely and changed nothing ({exc})")
+        raise
+    except SchemaError as exc:
+        _desktop.note_startup_failure(f"the database cannot be used by this engine ({exc})")
         raise
     except Exception:  # noqa: BLE001 - surfaced by /readyz instead
         log.exception("campaign store could not be opened at startup")
@@ -254,10 +262,11 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             audit_task = asyncio.ensure_future(_audit_archive_loop(store))
         try:
             runner = start_job_runner(store)
-        except RunnerLocked:
+        except RunnerLocked as exc:
             # Refused on purpose: a second scheduler on this state dir would double-run
             # jobs. Boot fails loudly, because job submissions would otherwise be accepted
             # and never run.
+            _desktop.note_startup_failure(f"another engine runs the jobs of this data folder ({exc})")
             raise
         except Exception:  # noqa: BLE001 - jobs are optional; the sync routes still work
             log.exception("background job runner could not be started")

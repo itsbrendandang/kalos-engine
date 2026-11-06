@@ -141,13 +141,22 @@ def main(argv: list[str] | None = None) -> None:
         # and raises the signal again; this handler is that previous one, so the
         # process ends with exit 0 and a last log line instead of dying by signal.
         signal.signal(signal.SIGTERM, _desktop_exit)
-    uvicorn.run(
-        "kalos.portal.app:app", host=host, port=port, log_level="warning",
-        proxy_headers=bool(trusted), forwarded_allow_ips=trusted or None,
-        # SIGTERM: stop accepting, give an in-flight analysis this long to finish,
-        # then cancel it; the lifespan exit marks it abandoned so it commits nothing.
-        timeout_graceful_shutdown=desktop.SHUTDOWN_GRACE_S if is_desktop else None,
-    )
+    try:
+        uvicorn.run(
+            "kalos.portal.app:app", host=host, port=port, log_level="warning",
+            proxy_headers=bool(trusted), forwarded_allow_ips=trusted or None,
+            # SIGTERM: stop accepting, give an in-flight analysis this long to finish,
+            # then cancel it; the lifespan exit marks it abandoned so it commits nothing.
+            timeout_graceful_shutdown=desktop.SHUTDOWN_GRACE_S if is_desktop else None,
+        )
+    except SystemExit as exc:
+        # uvicorn exits 3 (1 for an app that fails to load) when the server does not
+        # start: port in use, RunnerLocked, a failed migration. The desktop shell reads
+        # 3 as "damaged database, restore a backup", so desktop mode reports these as
+        # 4 with the cause. A damaged database is refused earlier (self_check, exit 3).
+        if not is_desktop or exc.code in (None, 0):
+            raise
+        _refuse(desktop.server_start_failure(host, port), desktop.EXIT_SERVER_START)
     if is_desktop:
         _desktop_exit()
 

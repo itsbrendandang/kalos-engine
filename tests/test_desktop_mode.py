@@ -177,6 +177,68 @@ def test_damaged_state_dir_exits_3_before_binding(tmp_path):
     assert (state / "portal.db").read_bytes() == before  # nothing written
 
 
+def test_port_in_use_exits_4_not_3(tmp_path):
+    """uvicorn exits 3 when the port is taken; the shell reads 3 as a damaged
+    database. Desktop mode answers 4 with a line naming the port."""
+    import socket
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    try:
+        out = _run_main(tmp_path, "--desktop", KALOS_AUTH_TOKENS=_tokens(), KALOS_PORT=str(port))
+    finally:
+        listener.close()
+    assert out.returncode == desktop.EXIT_SERVER_START == 4, out.stderr
+    line = out.stderr.strip().splitlines()[-1]
+    assert line == (f"kalos engine: the engine could not start: port {port} on 127.0.0.1 is "
+                    "already in use (another program, or another Kalos engine)")
+
+
+def test_runner_locked_in_the_lifespan_exits_4_naming_it(tmp_path):
+    """Another process holds this folder's job-runner lock: the lifespan refuses
+    (RunnerLocked) and the desktop engine exits 4, not uvicorn's 3."""
+    import fcntl
+    import socket
+
+    from kalos.portal.job_runner import RUNNER_LOCK_NAME
+
+    state = tmp_path / "state"
+    state.mkdir()
+    fd = os.open(state / RUNNER_LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    try:
+        out = _run_main(tmp_path, "--desktop", KALOS_AUTH_TOKENS=_tokens(), KALOS_PORT=str(port),
+                        KALOS_JOBS_ENABLED="1")
+    finally:
+        os.close(fd)
+    assert out.returncode == 4, out.stderr
+    line = out.stderr.strip().splitlines()[-1]
+    assert line.startswith("kalos engine: the engine could not start: another engine runs the jobs")
+
+
+def test_lifespan_records_a_failed_migration_for_exit_4(tmp_path):
+    from kalos.portal.migrate import MigrationError
+
+    def _fails():
+        raise MigrationError("backup verification failed (x)")
+
+    app.dependency_overrides[get_campaign_store] = _fails
+    try:
+        with pytest.raises(MigrationError), TestClient(app):
+            pass
+        assert "database upgrade could not run safely" in (desktop.startup_failure() or "")
+        assert "the database upgrade" in desktop.server_start_failure("127.0.0.1", 1)
+    finally:
+        app.dependency_overrides.pop(get_campaign_store, None)
+        desktop.note_startup_failure("")
+
+
 # --- shutdown guard ------------------------------------------------------------ #
 
 

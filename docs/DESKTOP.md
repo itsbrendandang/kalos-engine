@@ -66,10 +66,20 @@ shell shows that line.
 | 2 | A setting the engine does not accept. | `kalos engine: desktop mode needs a token: set KALOS_AUTH_TOKENS (the desktop app does this)` |
 | 3 | The data folder cannot be used. Nothing was written. | `kalos engine: the database in /path is damaged (SQLite integrity check failed). Your data was not changed. Restore a backup, or move the folder aside to start fresh.` |
 
+| 4 | The server did not start; the data folder was not judged damaged. Do not offer a restore. | `kalos engine: the engine could not start: port 8050 on 127.0.0.1 is already in use (another program, or another Kalos engine)` |
+
 Exit 3 covers: a folder that cannot be written, a `portal.db` that SQLite
 cannot read or whose `quick_check` fails, tables that do not have the shape
 this engine expects, and a database written by a newer engine. The check runs
 before the port opens.
+
+Exit 4 covers what uvicorn itself reports as a failed start (it exits 3 for
+all of them, so desktop mode maps them to 4): the port is already in use,
+another engine runs the background jobs of this data folder, and a database
+upgrade that could not run safely (it changes nothing). The line names the
+cause. Note for the desktop shell owner (kalos-web `desktop/src-tauri`,
+`main.rs`): exit 4 is new; show the line and offer a retry or another port,
+never the restore-a-backup message of exit 3.
 
 ## Readiness: `GET /api/health`
 
