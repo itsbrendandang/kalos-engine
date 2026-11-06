@@ -162,17 +162,15 @@ GLOSSARY: dict[str, str] = {
     'inputs_changed': "The settings in this sheet differ from the campaign's earlier rounds, so results from before and after may not compare.",
     'coded_column': 'A column of codes was kept as it is and not checked against physical limits, since its numbers stand for labels.',
     'outcome_like_name': 'A column whose name reads like a result is not used as a setting, so no suggestion changes it.',
+    'stopping_advice_only': 'Kalos never ends a campaign; this advice has been tried only on one small simulated case, not on real assays, so whether another round is worth it is your call.',
+    'specs_treated_independently': 'Kalos judges each spec on its own, so when two results rise and fall together the chance of meeting all of them at once can be too high or too low; read it as a rough guide.',
+    'possibly_measured_after_run': 'A column that might be measured during the run, used as a setting, would let the model look better than it is; untick it if it is a result.',
     # Review tool findings
     'divergence_handling': 'If repeated wells disagree more than they should, handling was uneven and the difference may not be the recipe.',
     'divergence_unknown': 'Without repeated wells and a record of what was done, a difference cannot be pinned on handling or on the recipe.',
 }
 
 ENGINE_ONLY: dict[str, str] = {
-    # From desktop-engine-2 d10169c (stopping.caveat, joint_feasibility.caveat,
-    # a column finding); sent to the glossary owner to adopt.
-    "stopping_advice_only": "Kalos never ends a campaign; this advice has been tried only on one small simulated case, not on real assays, so whether another round is worth it is your call.",
-    "specs_treated_independently": "Kalos judges each spec on its own, so when two results rise and fall together the chance of meeting all of them at once can be too high or too low; read it as a rough guide.",
-    "possibly_measured_after_run": "A column that might be measured during the run, used as a setting, would let the model look better than it is; untick it if it is a result.",
 }
 
 # The desktop engine names the verdict states reliable / not_yet / refused; the
