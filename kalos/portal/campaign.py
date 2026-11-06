@@ -54,6 +54,7 @@ from typing import Any
 
 import pandas as pd
 
+from kalos.portal.desktop import check_not_abandoned
 from kalos.portal.migrate import (
     CAMPAIGN_ID_PATTERN,
     DB_FILENAME,
@@ -327,6 +328,10 @@ class CampaignStore:
                     conn.execute("ROLLBACK")
                 raise
             try:
+                if write:
+                    # Desktop shutdown past its grace period: an analysis still
+                    # running must not commit (kalos/portal/desktop.py).
+                    check_not_abandoned()
                 conn.execute("COMMIT")
             except BaseException:
                 if conn.in_transaction:

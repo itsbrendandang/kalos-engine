@@ -4,6 +4,13 @@ Newest first.
 
 ## Unreleased
 
+### Added - desktop engine (`docs/DESKTOP.md`)
+
+- Importing the portal no longer imports torch. The scale readout module is loaded on first use.
+- Desktop mode (`python -m kalos.portal --desktop` or `KALOS_DESKTOP=1`): loopback only, a token is required, `KALOS_TORCH_THREADS` defaults to half the cores (1-4), `KALOS_JOB_WORKERS=1`, no API docs, no audit-archive timer, a Host-header allowlist, torch imported in the background after start. Refusals print one line starting `kalos engine:` and exit 2.
+- Startup self-check in desktop mode: an unwritable state dir, a damaged `portal.db` (SQLite `quick_check`), a wrong table shape or a newer schema stops the engine before the port opens (exit 3, one plain line, nothing written).
+- Graceful stop in desktop mode: on SIGTERM an in-flight analysis gets 12 s to finish; after that no store write can commit, and the process exits.
+
 ### Changed - audit trail and recorded results (schema v5, `docs/MIGRATIONS.md`)
 
 - **Recorded results are append-only.** A re-submitted campaign result is a new `run_results` row (value, value replaced, reason, actor, server time). A correction needs a `reason` (`400 reason_required` without one). The run's current value is the latest. Response fields are added (`result_version`, `previous_result`, `result_reason`, `result_actor`, `result_recorded_at`); none is removed.

@@ -38,6 +38,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from kalos.portal import desktop as _desktop
 from kalos.portal.analysis import _analyze, _annotate
 from kalos.portal.auth import (
     READ,
@@ -140,6 +141,8 @@ from kalos.portal.pipeline import (  # noqa: E402
 #     loops), so they are 404. Outside production they now run under the same
 #     admission limiter as every analysis, with a wall-clock timeout.
 _PRODUCTION = is_production()
+# Desktop mode (kalos/portal/desktop.py, docs/DESKTOP.md): decided once, at startup.
+_DESKTOP = _desktop.is_desktop()
 
 
 def _startup_auth_posture() -> bool:
@@ -241,7 +244,11 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         from kalos.portal.config import audit_retention_days
 
-        if audit_retention_days() is not None:
+        if _DESKTOP and audit_retention_days() is not None:
+            # No timers on a laptop: the archive is a server feature. Nothing is
+            # deleted either way (audit rows are append-only, schema v4).
+            log.warning("desktop mode: KALOS_AUDIT_RETENTION_DAYS is ignored (no archive timer)")
+        elif audit_retention_days() is not None:
             _archive_audit_log_once(store)
             audit_task = asyncio.ensure_future(_audit_archive_loop(store))
         try:
@@ -253,9 +260,18 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             raise
         except Exception:  # noqa: BLE001 - jobs are optional; the sync routes still work
             log.exception("background job runner could not be started")
+    if _DESKTOP:
+        _desktop.reset_abandon()
+        # Import torch/botorch in the background now that the port is about to
+        # open, so the first upload does not pay for it (GET /api/health shows it).
+        _desktop.prewarm_torch()
     try:
         yield
     finally:
+        if _DESKTOP:
+            # Reached after uvicorn's graceful wait (desktop.SHUTDOWN_GRACE_S): an
+            # analysis still running now is dropped and cannot commit.
+            _desktop.abandon_in_flight()
         if audit_task is not None:
             audit_task.cancel()
         if runner is not None:
@@ -266,7 +282,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 # The interactive docs and the schema exist only in development (KALOS_ENV, see
 # docs/HARDENING.md). Any other value refuses to start, so this is never a
 # production-by-accident exposure.
-_DEVELOPMENT = deployment_env() == "development"
+_DEVELOPMENT = deployment_env() == "development" and not _DESKTOP
 
 app = FastAPI(
     title="Kalos Engine API",
@@ -375,6 +391,13 @@ app.add_middleware(
     auth_enforced=lambda: get_authenticator().enforces(),
 )
 app.add_middleware(CORSMiddleware, **cors_config())
+if _DESKTOP:
+    # The desktop engine answers only requests addressed to this machine by
+    # name, so a page that rebinds its own DNS name to 127.0.0.1 is refused even
+    # before the token check (defense in depth; the token is still required).
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "::1"])
 
 # Log the effective security posture (auth + CORS) once at import/startup.
 log_security_posture(auth_enforced=_AUTH_ENFORCED_AT_STARTUP)
