@@ -156,7 +156,8 @@ def preflight_upload(
 # now kept for the last few distinct inputs and returned on a repeat, so the
 # same upload is not refit and gives the same proposals every time.
 #
-# The key covers everything the analysis reads: the uploaded bytes, the file
+# The key covers the tenant (one tenant never gets another's analysis, even for
+# the same bytes) and everything the analysis reads: the uploaded bytes, the file
 # name (it picks the parser), the sheet, target, roles, anonymize, the profile,
 # the engine version, the analyze function, and every KALOS_* setting (the
 # validation mode, the row caps, ...). Only successful analyses are kept; a
@@ -224,6 +225,7 @@ def compute_upload_analysis(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
     *, sheet: str | None = None, progress: ProgressFn | None = None,
     analyze: Callable[..., dict] | None = None, direction: str | None = None,
+    tenant: str | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """parse -> `_analyze` -> the response dict. Returns `(df, result)`; writes
     nothing. `analyze` defaults to `kalos.portal.analysis._analyze` (the sync
@@ -247,9 +249,10 @@ def compute_upload_analysis(
         if roles is not None:
             kwargs["roles"] = roles
         profile_name = profile.name
-        # Every argument the analysis receives is in the key (progress aside).
+        # Every argument the analysis receives is in the key (progress aside),
+        # and the tenant, so a cached analysis is never served across tenants.
         cache_key = ANALYSIS_CACHE.key(
-            raw, filename, sheet, target, roles_json, bool(anonymize), profile_name,
+            raw, tenant, filename, sheet, target, roles_json, bool(anonymize), profile_name,
             direction or None,
         )
         cached = ANALYSIS_CACHE.get(cache_key, analyze)

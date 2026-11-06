@@ -832,7 +832,7 @@ def _run_uploaded_sync(
     validate_tenant_id(tenant)
     df, result = compute_upload_analysis(
         raw, target, anonymize, filename, roles_json, sheet=sheet, analyze=_analyze,
-        direction=direction or None,
+        direction=direction or None, tenant=tenant,
     )
     # A fresh upload starts a fresh campaign state (docs/CAMPAIGN_LOOP.md,
     # "Seeding") in THIS tenant's default campaign (or the explicit

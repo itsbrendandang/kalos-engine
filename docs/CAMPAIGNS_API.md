@@ -477,7 +477,7 @@ only added; a field never changes meaning or disappears within a version.
   proposals do not carry it. A declared categorical is never dropped this way.
 - `cv_logo.reason` can say that the group column labels exactly the recipes;
   leave-one-group-out is then not run (it would repeat the grouped CV).
-- `analysis_cache`: `{"hit": true}` when an upload with the same bytes, target,
+- `analysis_cache`: `{"hit": true}` when an upload by the same tenant with the same bytes, target,
   roles, sheet, anonymize flag and engine settings was answered from the
   engine's in-memory copy of an earlier analysis instead of a new fit
   (`KALOS_ANALYSIS_CACHE`, docs/DESKTOP.md); `{"hit": false}` after a fit.

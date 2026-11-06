@@ -140,7 +140,7 @@ def run_job(
         df, result = compute_upload_analysis(
             raw, params.get("target") or None, bool(params.get("anonymize")),
             filename, str(params.get("roles") or ""),
-            sheet=params.get("sheet"), progress=progress, analyze=analyze,
+            sheet=params.get("sheet"), progress=progress, analyze=analyze, tenant=tenant,
         )
         progress("publishing", 0.95)
         publish_upload_analysis(
