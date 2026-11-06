@@ -25,7 +25,7 @@ GLOSSARY: dict[str, str] = {
     'surrogate_spearman': 'If the model cannot rank the runs it was tested on, it cannot tell a good recipe from a poor one, and its suggestions are guesses.',
     'group_mean_margin': 'If the model does no better than the average of each group of runs, it has learned the groups, not the recipes, and suggests more of the same.',
     'feasibility_auc': 'If the model cannot tell which recipes fail outright, it can suggest runs that produce nothing.',
-    'ece': 'If the likely range is wrong about how often it is right, you cannot tell a safe bet from a long shot.',
+    'ece': "If the model's chance that a recipe works does not match how often it does, you cannot tell a safe bet from a long shot.",
     'brier': "If the model's confidence that a recipe works is unreliable, runs get spent on recipes that fail.",
     'unmeasured': 'A check that could not be run on this sheet is a check the model has not passed, so its suggestions have not been tested that way.',
     # Likely-range check (calibration)
@@ -150,28 +150,29 @@ GLOSSARY: dict[str, str] = {
     'row_number_like': 'A column that counts rows is not a setting, so it was left out; used as an input, the model memorises runs instead of learning recipes.',
     'outcome_like': 'A column measured after the run is a result, not a setting you choose, so suggesting a value for it would be meaningless.',
     'category_not_modeled': 'A text column with many different labels has too few runs per label to learn from, so it was left out.',
+    # Model verdict and refusals from the desktop build
+    'not_yet': 'If the model cannot yet rank your past runs, its suggestions are closer to guesses, and you would spend runs on them.',
+    'refused': 'When Kalos cannot check the model, it proposes no recipes rather than send you guesses; adding runs of different recipes is what helps.',
+    'no_ordering': 'If the model does no better than chance at putting your past runs in order, its suggestions would be guesses, so Kalos proposes none until the sheet changes.',
+    'too_few_groups': 'With too few groups of runs there is no way to check the model on runs it has not seen, so its order cannot be trusted yet.',
+    'model_refused': 'When Kalos cannot check the model, it proposes no recipes rather than send you guesses; adding runs of different recipes is what helps.',
+    # Sheet facts from the upload (more codes)
+    'headerless_column': 'A column with no header cannot be named in the model, so Kalos cannot use it.',
+    'search_box': 'Kalos searched only inside the range of each setting you have tried, so a recipe outside it was not considered.',
+    'inputs_changed': "The settings in this sheet differ from the campaign's earlier rounds, so results from before and after may not compare.",
+    'coded_column': 'A column of codes was kept as it is and not checked against physical limits, since its numbers stand for labels.',
+    'outcome_like_name': 'A column whose name reads like a result is not used as a setting, so no suggestion changes it.',
     # Review tool findings
     'divergence_handling': 'If repeated wells disagree more than they should, handling was uneven and the difference may not be the recipe.',
     'divergence_unknown': 'Without repeated wells and a record of what was done, a difference cannot be pinned on handling or on the recipe.',
 }
 
 ENGINE_ONLY: dict[str, str] = {
-    # Model verdict codes from the desktop engine (kalos/portal/verdict.py and
-    # gate_text.py on desktop-engine-2); the engine texts match word for word.
-    "no_ordering": "If the model does no better than chance at putting your past runs in order, its suggestions would be guesses, so Kalos proposes none until the sheet changes.",
-    "too_few_groups": "With too few groups of runs there is no way to check the model on runs it has not seen, so its order cannot be trusted yet.",
-    "model_refused": "When Kalos cannot check the model, it proposes no recipes rather than send you guesses; adding runs of different recipes is what helps.",
-    # Column and campaign finding codes from the same round, not in the glossary yet.
-    "headerless_column": "A column with no header cannot be named in the model, so Kalos cannot use it.",
-    "search_box": "Kalos searched only inside the range of each setting you have tried, so a recipe outside it was not considered.",
-    "inputs_changed": "The settings in this sheet differ from the campaign's earlier rounds, so results from before and after may not compare.",
-    "coded_column": "A column of codes was kept as it is and not checked against physical limits, since its numbers stand for labels.",
-    "outcome_like_name": "A column whose name reads like a result is not used as a setting, so no suggestion changes it.",
 }
 
 # The desktop engine names the verdict states reliable / not_yet / refused; the
-# glossary key for the middle one is "not-yet".
-VERDICT_STATE_KEYS = {"reliable": "reliable", "not_yet": "not-yet", "refused": "model_refused"}
+# glossary carries those keys (and "not-yet", the web's older key, as an alias).
+VERDICT_STATE_KEYS = {"reliable": "reliable", "not_yet": "not_yet", "refused": "refused"}
 
 WHY: dict[str, str] = {**ENGINE_ONLY, **GLOSSARY}
 

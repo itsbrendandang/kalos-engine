@@ -84,4 +84,5 @@ def test_desktop_engine_codes_have_why_lines():
                  "search_box", "inputs_changed", "coded_column", "near_constant_input", "outcome_like_name"):
         assert code in WHY, code
     assert WHY["no_ordering"].startswith("If the model does no better than chance at putting your past runs")
-    assert all(v in WHY for v in VERDICT_STATE_KEYS.values())
+    assert all(v in GLOSSARY for v in VERDICT_STATE_KEYS.values())
+    assert GLOSSARY["ece"].startswith("If the model's chance that a recipe works does not match how often it does")
