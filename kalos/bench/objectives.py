@@ -280,6 +280,13 @@ def cho_fed_batch() -> Objective:
     return cho_objective()
 
 
+def cho_screen() -> Objective:
+    """49-d sparse CHO-screen surface (`kalos.bench.cho_screen_sim`, seed 0)."""
+    from .cho_screen_sim import cho_screen_objective
+
+    return cho_screen_objective(0)
+
+
 # The benchmark objective registry: name -> zero-argument factory. Bench
 # harnesses and CLIs look objectives up here instead of importing each builder.
 OBJECTIVES: dict[str, Callable[[], Objective | MixedObjective]] = {
@@ -289,6 +296,7 @@ OBJECTIVES: dict[str, Callable[[], Objective | MixedObjective]] = {
     "bioprocess_like_mixed": bioprocess_like,
     "cho_fed_batch_4d": cho_fed_batch,
     "zero_inflated_titer_5d": zero_inflated_titer,
+    "cho_screen_49d": cho_screen,
 }
 
 
