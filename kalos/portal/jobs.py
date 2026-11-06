@@ -392,7 +392,7 @@ def check_queue_capacity(store: CampaignStore, *, tenant: str) -> None:
 def enqueue(
     store: CampaignStore, *, tenant: str, campaign_id: str, raw: bytes, filename: str,
     target: str, anonymize: bool, roles: str, sheet: str | None, requested_by: str | None,
-    replace: bool = False,
+    replace: bool = False, direction: str = "",
 ) -> dict[str, Any]:
     """Queue one upload analysis for `campaign_id` (which must be `tenant`'s and
     not archived). The upload is written to the state directory first, then the
@@ -419,7 +419,7 @@ def enqueue(
     rel = _relative_input_path(tenant, job_id)
     path = store.state_dir / rel
     _write_input(path, raw)
-    params = _params_for_storage(filename, target, anonymize, roles, sheet, replace)
+    params = _params_for_storage(filename, target, anonymize, roles, sheet, replace, direction)
     try:
         with store._txn(write=True) as conn:
             campaign = store._resolve(conn, tenant, campaign_id, create=False)
@@ -476,16 +476,18 @@ def job_filename(params: dict[str, Any]) -> str:
 
 def _params_for_storage(
     filename: str, target: str, anonymize: bool, roles: str, sheet: str | None,
-    replace: bool = False,
+    replace: bool = False, direction: str = "",
 ) -> dict[str, Any]:
     # `replace` is read by the worker (job_worker: an upload job refuses to replace
     # a campaign's runs unless the caller confirmed it), so it is stored with the job.
+    # `direction` is the plain form field (maximize/minimize), as on /api/run.
     base: dict[str, Any] = {
         "target": target[:256],
         "anonymize": bool(anonymize),
         "roles": roles,
         "sheet": sheet[:256] if sheet else None,
         "replace": bool(replace),
+        "direction": (direction or "")[:16],
     }
     if anonymize:
         return {**base, "ext": _safe_extension(filename)}

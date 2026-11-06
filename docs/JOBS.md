@@ -33,7 +33,7 @@ or headers.
 
 | Method and path | Scope | Result |
 |---|---|---|
-| `POST /api/campaigns/{id}/jobs` | `write` | `202` + `{"job": ...}`, `Location: /api/jobs/<id>`. Multipart: `file`, `target`, `anonymize`, `roles`, `sheet` (same fields as `/api/run`), and `replace` (`true` to confirm that the upload replaces the campaign's runs; see below). |
+| `POST /api/campaigns/{id}/jobs` | `write` | `202` + `{"job": ...}`, `Location: /api/jobs/<id>`. Multipart: `file`, `target`, `anonymize`, `roles`, `sheet`, `direction` (same fields as `/api/run`; an invalid `direction` is refused before the job is queued), and `replace` (`true` to confirm that the upload replaces the campaign's runs; see below). |
 | `GET /api/campaigns/{id}/jobs?limit=N` | `read` | `{"jobs": [...]}`, newest first, `N` 1-200 (default 50). |
 | `GET /api/jobs/{id}` | `read` | `{"job": ...}`. |
 | `POST /api/jobs/{id}/cancel` | `write` | `200` + `{"job": ...}`. Idempotent; a finished job is returned unchanged. |

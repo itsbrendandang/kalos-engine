@@ -128,7 +128,7 @@ def _annotated(parsed: ParsedUpload, exc: BaseException, anonymize: bool) -> Bas
 
 def preflight_upload(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
-    *, sheet: str | None = None,
+    *, sheet: str | None = None, direction: str | None = None,
 ) -> ParsedUpload:
     """Parse the upload and run every refusal `_analyze` raises before its first
     model fit (`_analyze(..., preflight_only=True)`: the same code, stopped
@@ -140,7 +140,7 @@ def preflight_upload(
     try:
         roles, profile = _roles_and_profile(roles_json)
         _analyze(parsed.df, target, anonymize=anonymize, roles=roles, profile=profile,
-                 preflight_only=True)
+                 preflight_only=True, direction=direction or None)
     except Exception as exc:
         annotated = _annotated(parsed, exc, anonymize)
         if annotated is exc:

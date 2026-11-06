@@ -303,6 +303,7 @@ async def upload_to_campaign(
     sheet: str = Form(default=""),
     sheet_query: str | None = Query(default=None, alias="sheet"),
     replace: bool = Form(default=False),
+    direction: str = Form(default=""),
     principal: Principal = Depends(require_scope(WRITE)),
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
@@ -328,7 +329,7 @@ async def upload_to_campaign(
             else:
                 response = await _run_uploaded(
                     file, target, anonymize, roles, sheet, sheet_query, principal, store,
-                    campaign_id=campaign_id, replace=replace,
+                    campaign_id=campaign_id, replace=replace, direction=direction,
                 )
     _audit(store, principal, "campaign.upload", response.status_code, campaign_id)
     return response

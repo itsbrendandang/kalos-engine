@@ -93,9 +93,10 @@ archive.
 
 The form fields and errors match `POST /api/run`:
 
-- Fields: `file`, `target`, `anonymize`, `roles`, `sheet`. `?sheet=` also
-  works; the form field wins if both are set. `roles.direction`
-  (`maximize`, the default, or `minimize`) sets the optimisation direction
+- Fields: `file`, `target`, `anonymize`, `roles`, `sheet`, `direction`. `?sheet=` also
+  works; the form field wins if both are set. `roles.direction` or the
+  `direction` form field (`maximize`, the default, or `minimize`; two different
+  values are a `400` `direction_conflict`) sets the optimisation direction
   (docs/UPLOADS.md, "Direction"); any other value is a `400`
   `invalid_direction`. The campaign stores it and reanalyze reuses it.
 - Responses: the same `{"error", "code", ...}` error envelope and the same

@@ -141,6 +141,7 @@ def run_job(
             raw, params.get("target") or None, bool(params.get("anonymize")),
             filename, str(params.get("roles") or ""),
             sheet=params.get("sheet"), progress=progress, analyze=analyze, tenant=tenant,
+            direction=str(params.get("direction") or "") or None,
         )
         progress("publishing", 0.95)
         publish_upload_analysis(

@@ -786,3 +786,52 @@ def test_a_run_added_during_a_sync_fit_is_not_silently_discarded(env, monkeypatc
                    data={"target": "lipase_titer"}, headers=H("a-write"))
     assert resp.status_code == 409, resp.text
     assert store.get(tenant="acme", campaign_id=cid)["pending"], "the run added mid-fit was discarded"
+
+
+# --- the direction form field (sec-desktop should-fix) ------------------------------ #
+
+
+def test_direction_form_field_reaches_the_job_analysis(env, monkeypatch):
+    tc, store = env
+    seen: list = []
+
+    def recording(df, target, **kw):
+        seen.append(kw.get("direction"))
+        return _stub_analyze(df, target, **kw)
+
+    def spawn(job_id, _tenant, _state_dir):
+        return ThreadWorker(lambda should_stop: job_worker.run_job(
+            store, job_id, analyze=recording, should_stop=should_stop))
+
+    cid = _campaign(tc, "a-write")
+    r = tc.post(f"/api/campaigns/{cid}/jobs", files={"file": ("runs.csv", _csv(), "text/csv")},
+                data={"target": "lipase_titer", "direction": "minimize"}, headers=H("a-write"))
+    assert r.status_code == 202, r.text
+    done = _drain(JobRunner(store, spawn=spawn, timeout_s=60, poll_s=0.01), store, "acme",
+                  r.json()["job"]["id"])
+    assert done["state"] == "succeeded" and seen == ["minimize"]
+
+
+def test_invalid_direction_is_refused_before_a_job_is_queued(env):
+    tc, store = env
+    cid = _campaign(tc, "a-write")
+    r = tc.post(f"/api/campaigns/{cid}/jobs", files={"file": ("runs.csv", _csv(), "text/csv")},
+                data={"target": "lipase_titer", "direction": "lower"}, headers=H("a-write"))
+    assert r.status_code == 400 and r.json()["code"] == "invalid_direction", r.text
+    assert jobs.list_jobs(store, tenant="acme", campaign_id=cid) == []
+
+
+def test_direction_form_field_reaches_the_campaign_upload(env, monkeypatch):
+    tc, _store = env
+    seen: list = []
+
+    def recording(df, target, **kw):
+        seen.append(kw.get("direction"))
+        return {**_stub_analyze(df, target, **kw), "direction": kw.get("direction")}
+
+    monkeypatch.setattr(portal_module, "_analyze", recording)
+    cid = _campaign(tc, "a-write")
+    r = tc.post(f"/api/campaigns/{cid}/upload", files={"file": ("runs.csv", _csv(), "text/csv")},
+                data={"target": "lipase_titer", "direction": "minimize"}, headers=H("a-write"))
+    assert r.status_code == 200, r.text
+    assert seen == ["minimize"] and r.json()["run"]["direction"] == "minimize"

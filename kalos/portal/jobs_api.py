@@ -253,6 +253,7 @@ async def submit_job(
     sheet: str = Form(default=""),
     sheet_query: str | None = Query(default=None, alias="sheet"),
     replace: bool = Form(default=False),
+    direction: str = Form(default=""),
     principal: Principal = Depends(require_scope(WRITE)),
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
@@ -267,7 +268,7 @@ async def submit_job(
     else:
         response, job_id = await _submit(
             campaign_id, file, target, anonymize, roles, sheet or sheet_query or None,
-            principal, store, upload_error_response, replace=replace,
+            principal, store, upload_error_response, replace=replace, direction=direction,
         )
     _audit(store, principal, "job.submit", response.status_code,
            campaign_id=campaign_id, job_id=job_id)
@@ -277,7 +278,7 @@ async def submit_job(
 async def _submit(
     campaign_id: str, file: UploadFile, target: str, anonymize: bool, roles: str,
     sheet: str | None, principal: Principal, store: CampaignStore, upload_error: Any,
-    *, replace: bool = False,
+    *, replace: bool = False, direction: str = "",
 ) -> tuple[JSONResponse, str | None]:
     """The submit steps in order; returns the response and the new job id (if any)."""
     try:
@@ -312,7 +313,7 @@ async def _submit(
     try:
         return await _read_and_queue(
             settings, campaign_id, file, target, anonymize, roles, sheet, principal, store,
-            upload_error, replace=replace,
+            upload_error, replace=replace, direction=direction,
         )
     finally:
         _submit_gate.leave(principal.tenant)
@@ -321,7 +322,7 @@ async def _submit(
 async def _read_and_queue(
     settings: jobs.JobSettings, campaign_id: str, file: UploadFile, target: str,
     anonymize: bool, roles: str, sheet: str | None, principal: Principal, store: CampaignStore,
-    upload_error: Any, *, replace: bool = False,
+    upload_error: Any, *, replace: bool = False, direction: str = "",
 ) -> tuple[JSONResponse, str | None]:
     # One byte past the tenant's limit is enough to refuse; never hold more.
     raw = await file.read(settings.max_upload_bytes + 1)
@@ -346,6 +347,7 @@ async def _read_and_queue(
     try:
         await _preflight_gated(functools.partial(
             preflight_upload, raw, target or None, anonymize, filename, roles, sheet=sheet,
+            direction=direction or None,
         ))
     except PreflightBusy:
         return JSONResponse(
@@ -359,7 +361,7 @@ async def _read_and_queue(
         job = jobs.enqueue(
             store, tenant=principal.tenant, campaign_id=campaign_id, raw=raw, filename=filename,
             target=target, anonymize=anonymize, roles=roles, sheet=sheet,
-            requested_by=principal.subject, replace=replace,
+            requested_by=principal.subject, replace=replace, direction=direction,
         )
     except CampaignError as exc:
         return _job_error_response(exc), None
