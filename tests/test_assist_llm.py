@@ -67,3 +67,25 @@ def test_docs_say_revise_sends_the_whole_draft():
     text = (Path(__file__).resolve().parents[1] / "docs" / "ASSISTANT.md").read_text()
     assert "For an SOP revise, the **whole draft**" in text
     assert "For an SOP revise: the whole draft" in text
+
+
+def test_anthropic_client_has_a_timeout_and_one_retry(monkeypatch):
+    """sec-assist (h): the cloud call is bounded (60 s, one retry)."""
+    import sys
+    import types
+
+    seen = {}
+
+    class _Messages:
+        def create(self, **kwargs):
+            return types.SimpleNamespace(content=[types.SimpleNamespace(text="ok [S1]")])
+
+    class _Client:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+            self.messages = _Messages()
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=_Client))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    assert AnthropicChat(model="m").complete("s", "p") == "ok [S1]"
+    assert seen == {"timeout": 60.0, "max_retries": 1}

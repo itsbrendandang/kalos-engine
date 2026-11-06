@@ -95,7 +95,7 @@ class AnthropicChat:
         except ImportError as exc:
             raise ModelUnavailable("the anthropic package is not installed") from exc
         try:
-            client = anthropic.Anthropic()
+            client = anthropic.Anthropic(timeout=60.0, max_retries=1)
             reply = client.messages.create(
                 model=self.model, max_tokens=1200, system=system,
                 messages=[{"role": "user", "content": prompt}],
