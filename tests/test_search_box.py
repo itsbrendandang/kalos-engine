@@ -19,7 +19,7 @@ def _rising_sheet(n: int = 13) -> pd.DataFrame:
     mol = np.tile([80.0, 100.0, 120.0], n)[:n]
     amm = np.tile([5.0, 12.5, 20.0, 12.5], n)[:n]
     bio = (0.15 * mol - 0.02 * (amm - 12.5) ** 2 + rng.normal(0, 0.2, n)).round(3)
-    return pd.DataFrame({"molasses_g_L": mol, "ammonium_g_L": amm, "biomass_g_L": bio})
+    return pd.DataFrame({"molasses_g_L": mol, "nitrogen_g_L": amm, "biomass_g_L": bio})
 
 
 def test_parse_allow_beyond():
@@ -73,7 +73,7 @@ def test_allow_beyond_widens_and_flags_proposals():
     assert out["allow_beyond"]["applied"] == {"molasses_g_L": 0.25}
     assert out["feature_ranges"]["molasses_g_L"] == [70.0, 130.0]
     assert out["tried_ranges"]["molasses_g_L"] == [80.0, 120.0]
-    assert out["feature_ranges"]["ammonium_g_L"] == out["tried_ranges"]["ammonium_g_L"]
+    assert out["feature_ranges"]["nitrogen_g_L"] == out["tried_ranges"]["nitrogen_g_L"]
     # Biomass rises with molasses to the top of the tried range: the best bet goes past it.
     best = out["proposals"][0]
     assert best["pick"] == "best_bet" and best["recipe"]["molasses_g_L"] > 120

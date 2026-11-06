@@ -119,4 +119,8 @@ def test_first_time_study_sheets_have_a_best_bet(path):
 
     target = "Titer" if path.stem in {"pichia_RBDJ", "my_messy_sheet"} else None
     _, out = compute_upload_analysis(path.read_bytes(), target, False, path.name)
+    if out["verdict"]["state"] == "refused":
+        # A refused verdict has no recipes and therefore no best bet.
+        assert out["proposals"] == [] and out["model_optimum"] is None
+        return
     _check(out)
