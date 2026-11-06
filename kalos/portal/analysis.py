@@ -1919,6 +1919,8 @@ def _analyze_body(
     if refusal is not None:  # verdict `refused`: no recipes, and the notice says why
         result["proposals"] = []
         result["proposal_notice"] = refusal_notice(refusal, PROPOSAL_BATCH_Q)
+        # No best bet either: a refused model has no recipe to recommend.
+        result["model_optimum"] = None
     if anonymize:
         result = _anonymize_result(
             result,
