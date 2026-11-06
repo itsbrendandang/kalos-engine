@@ -1151,8 +1151,9 @@ def _analyze_body(
     # advance", not "how well-ranked is the whole held-out set" - Spearman can
     # look fine while the model gets exactly the recipes that matter out of
     # order (see `top_k_overlap`'s docstring). Computed on the same repeat-0
-    # pooled OOF everything else in this function reads off.
-    topk = top_k_overlap(oof_a, oof_p, CV_TOPK_K)
+    # pooled OOF everything else in this function reads off. Under minimize the
+    # recipes that matter are the LOWEST k, so both sides are ranked on sign * y.
+    topk = top_k_overlap(sign * np.asarray(oof_a, float), sign * np.asarray(oof_p, float), CV_TOPK_K)
     cv_topk: dict[str, Any] = {
         "overlap": None if not topk["evaluable"] else round(float(topk["overlap"]), 3),
         "k": topk["k"],

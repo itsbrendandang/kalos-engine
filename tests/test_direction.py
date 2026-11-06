@@ -182,3 +182,18 @@ def test_reanalyze_record_carries_the_direction():
     out = attach_reanalyze_run(df, _stub(df, "y", direction="minimize"), anonymize=False,
                                pending_runs=0)
     assert out["run"]["direction"] == "minimize"
+
+
+def test_cv_topk_ranks_the_lowest_rows_when_minimizing(results):
+    """The decision under minimize is which LOW-valued recipes to advance, so
+    cv_topk compares the true and predicted bottom k (sign * oof), not the top k."""
+    from kalos.core.evaluation import top_k_overlap
+
+    for name, sign in (("default", 1.0), ("minimize", -1.0)):
+        res = results[name]
+        oof = np.asarray(res["oof"], float)
+        k = res["cv_topk"]["k"]
+        want = top_k_overlap(sign * oof[:, 0], sign * oof[:, 1], k)
+        assert res["cv_topk"]["evaluable"] is True
+        assert res["cv_topk"]["overlap"] == round(float(want["overlap"]), 3), name
+
