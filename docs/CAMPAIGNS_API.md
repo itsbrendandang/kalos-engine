@@ -509,6 +509,25 @@ reason, requested, returned: 0, message}`. Otherwise `refusal` is `null`. The
 campaign stage then stays on `plan` with the plan step "No recipes proposed"
 and `next_action.action` "Add runs and upload again". Starting an empty batch
 returns `{"started": []}`.
+### Analysis identity
+
+Each analysis has an `analysis_id` (for example `an_3f9c0d1e2b4a5c6d`). It is
+made when the model is fit and stored with the analysis. `/api/run`,
+`/api/latest`, `/api/campaign`, `/api/campaigns/{id}`,
+`/api/campaigns/{id}/analysis`, the reanalyze response and the job view show
+the same id for the same stored analysis. `/api/run` returns the stored
+analysis, so it has the same fields as `/api/latest` (without `has_data`).
+
+The same file with the same target, roles and settings is not fit again while
+the engine runs (`analysis_cache`). It gets the same analysis and the same id,
+on `/api/run` and on `/api/campaigns/{id}/upload`. Background jobs run in
+their own process and fit again.
+
+When a campaign gets a new analysis, `supersedes` names the one it replaced:
+`{analysis_id, code, why}`. `code` is `new_upload`, `target_changed`,
+`roles_changed`, `direction_changed`, `refit` or `results_added`. `why` is one
+plain sentence. `supersedes` is null for a campaign's first analysis. A stored
+analysis written before ids existed gets an id derived from its record.
 
 ### Contract version
 
@@ -588,6 +607,13 @@ only added; a field never changes meaning or disappears within a version.
 - `verdict`: the one verdict on the model, on every analysis and on the campaign summary (see "Verdict").
 - `refusal`: `{code, plain, what_would_help}` when `verdict.state` is `refused` (then `proposals` is empty), else `null`.
 - `proposal_notice.code` can be `model_refused` (with `reason`, the refusal code).
+- `analysis_id`: the stored analysis's id, the same on every route that reads it
+  (see "Analysis identity"). Also on `/api/campaign` and `/api/campaigns/{id}`
+  `summary` (the analysis the stage comes from) and on the job view (null until
+  the job's analysis is published, or once a newer one replaced it).
+- `supersedes`: `{analysis_id, code, why}` for the analysis this one replaced in
+  the campaign, or null. `/api/run` now also returns the stored fields `dataset`,
+  `updated` and `campaign_generation`.
 
 ## Not in this slice
 

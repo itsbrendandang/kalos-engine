@@ -33,6 +33,7 @@ from typing import Any
 
 import pandas as pd
 
+from kalos.portal.lineage import new_analysis_id
 from kalos.portal.uploads import (
     ParsedUpload,
     UploadRejected,
@@ -264,7 +265,10 @@ def compute_upload_analysis(
                 progress("proposing", 0.8)
             result = {**cached, "analysis_cache": {"hit": True}}
         else:
-            result = analyze(parsed.df, target, profile=profile, **kwargs)
+            # The id is minted with the fit and cached with it: a repeat of the
+            # same upload is the same analysis (kalos/portal/lineage.py).
+            result = {**analyze(parsed.df, target, profile=profile, **kwargs),
+                      "analysis_id": new_analysis_id()}
             ANALYSIS_CACHE.put(cache_key, analyze, result)
             result = {**result, "analysis_cache": {"hit": False}}
     except Exception as exc:
@@ -313,7 +317,8 @@ def attach_reanalyze_run(
         direction=result.get("direction"),
     )
     run = record.to_dict()
-    return {**result, "run": run, "proposal_provenance": _provenance(run, result)}
+    return {**result, "run": run, "proposal_provenance": _provenance(run, result),
+            "analysis_id": new_analysis_id()}
 
 
 def _provenance(run: dict, result: dict) -> dict:

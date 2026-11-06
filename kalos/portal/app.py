@@ -874,10 +874,20 @@ def _run_uploaded_sync(
     publish_kwargs: dict[str, Any] = (
         {} if expected_generation is _NO_GUARD else {"expected_generation": expected_generation}
     )
+    target_store = store if store is not None else get_campaign_store()
     publish_upload_analysis(
-        store if store is not None else get_campaign_store(), result, filename,
+        target_store, result, filename,
         tenant=tenant, campaign_id=campaign_id, df=df, **publish_kwargs,
     )
+    # The response is the stored analysis (same `analysis_id`, `supersedes`,
+    # `dataset`, `updated` as /api/latest), plus the upload-only fields that are
+    # stored too. If the publish did not land this analysis, the computed one.
+    try:
+        stored = target_store.load_analysis(tenant=tenant, campaign_id=campaign_id)
+    except CampaignError:
+        stored = None
+    if stored and stored.get("analysis_id") == result.get("analysis_id"):
+        return stored
     return result
 
 

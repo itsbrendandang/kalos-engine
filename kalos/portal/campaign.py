@@ -54,6 +54,7 @@ from typing import Any
 
 import pandas as pd
 
+from kalos.portal import lineage
 from kalos.portal.desktop import check_not_abandoned
 from kalos.portal.migrate import (
     CAMPAIGN_ID_PATTERN,
@@ -670,6 +671,8 @@ class CampaignStore:
             expected = row.generation if expected_generation is _UNCHECKED else expected_generation
             generation = self._cas_write(conn, tenant, row, state, expected)
             if analysis is not None:
+                # `analysis_id` and `supersedes` (kalos/portal/lineage.py).
+                analysis = lineage.link(analysis, self._stored_analysis(conn, tenant, row.id))
                 blob = self._analysis_blob(analysis, dataset or "uploaded dataset", generation, now)
                 if blob is not None:
                     self._write_analysis(conn, tenant, row.id, blob, dataset, generation, now)
@@ -765,11 +768,11 @@ class CampaignStore:
         return row, state
 
     @staticmethod
-    def _published_provenance(
+    def _stored_analysis(
         conn: sqlite3.Connection, tenant: str, campaign_id: str
     ) -> dict[str, Any] | None:
-        from kalos.portal.run_record import provenance_ref
-
+        """The campaign's published analysis inside a transaction, with its
+        `analysis_id` (derived for an old record); None if none or corrupt."""
         arow = conn.execute(
             "SELECT state FROM analyses WHERE campaign_id = ? AND tenant = ?",
             (campaign_id, tenant),
@@ -780,7 +783,15 @@ class CampaignStore:
             data = json.loads(arow[0])
         except ValueError:
             return None
-        return provenance_ref(data if isinstance(data, dict) else None)
+        return lineage.with_id(data) if isinstance(data, dict) else None
+
+    @classmethod
+    def _published_provenance(
+        cls, conn: sqlite3.Connection, tenant: str, campaign_id: str
+    ) -> dict[str, Any] | None:
+        from kalos.portal.run_record import provenance_ref
+
+        return provenance_ref(cls._stored_analysis(conn, tenant, campaign_id))
 
     def start(
         self, recipes: list[dict[str, Any]], *, tenant: str, campaign_id: str | None = None
@@ -1047,9 +1058,11 @@ class CampaignStore:
                 raise CampaignConflict(changed)
             target = state["target"]
             still_pending: list[dict[str, Any]] = []
+            n_folded = 0
             for run in state["pending"]:
                 if run["result"] is not None:
                     state["base_rows"].append({**run["recipe"], target: run["result"]})
+                    n_folded += 1
                 else:
                     still_pending.append(run)
             state["pending"] = still_pending
@@ -1074,6 +1087,9 @@ class CampaignStore:
                 raise CampaignConflict(changed) from None
             if analysis is not None:
                 label = dataset or f"campaign round {state['round']}"
+                analysis = lineage.link(
+                    analysis, self._stored_analysis(conn, tenant, row.id), n_folded=n_folded,
+                )
                 blob = self._analysis_blob(
                     analysis, label, new_generation, now, allow_nan=False
                 )
@@ -1098,14 +1114,15 @@ class CampaignStore:
         used, created (unseeded) if the tenant has none yet."""
         self._check(tenant, campaign_id)
         now = time.time()
-        blob = self._analysis_blob(result, dataset, campaign_generation, now)
-        if blob is None:
-            return
         with self._txn(write=True) as conn:
             row = self._resolve(conn, tenant, campaign_id, create=True)
             assert row is not None
             if row.archived_at is not None:
                 raise CampaignArchived()
+            result = lineage.link(result, self._stored_analysis(conn, tenant, row.id))
+            blob = self._analysis_blob(result, dataset, campaign_generation, now)
+            if blob is None:
+                return
             self._write_analysis(conn, tenant, row.id, blob, dataset, campaign_generation, now)
 
     def load_analysis(
@@ -1127,7 +1144,7 @@ class CampaignStore:
             data = json.loads(arow[0])
         except ValueError:
             return None
-        return data if isinstance(data, dict) else None
+        return lineage.with_id(data) if isinstance(data, dict) else None
 
     # --- audit log ----------------------------------------------------------- #
 

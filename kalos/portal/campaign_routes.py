@@ -97,7 +97,11 @@ def campaign_view(
     )
     # `verdict` is the stored analysis's own object (never recomputed here), so
     # every route says the same thing; None for an analysis written before it.
-    return {**summary, **stage_fields(summary, analysis), "verdict": analysis.get("verdict")}
+    out = {**summary, **stage_fields(summary, analysis), "verdict": analysis.get("verdict")}
+    if summary.get("has_campaign"):
+        # The id of the analysis `stage` was derived from (the one /api/latest serves).
+        out["analysis_id"] = analysis.get("analysis_id")
+    return out
 
 
 def campaign_error_response(exc: CampaignError) -> JSONResponse:
