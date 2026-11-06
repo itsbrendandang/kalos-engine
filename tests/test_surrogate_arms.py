@@ -130,3 +130,21 @@ def test_main_prints_table(capsys, monkeypatch):
     assert sa.main(["--arms", "gp,sk_gbr_quantile,ngboost", "--seeds", "1", "--n", "25"]) == 0
     out = capsys.readouterr().out
     assert "remains the default" in out and "gaussian_bump_4d" in out and "ackley_4d" in out
+
+
+def test_table_prints_the_paired_ci_and_seed_count():
+    res = {"ds": {"arms": {
+        "gp": {"status": "ok", **{m: 1.0 for m in ("rmse", "spearman", "picp", "width")},
+               **{f"{m}_sd": 0.1 for m in ("rmse", "spearman", "picp", "width")}},
+        "sk_gbr_quantile": {"status": "ok", **{m: 0.9 for m in ("rmse", "spearman", "picp", "width")},
+                            **{f"{m}_sd": 0.1 for m in ("rmse", "spearman", "picp", "width")},
+                            "verdict": "beats_gp", "rmse_wins_vs_gp": "5/5",
+                            "paired_rmse_gain_ci95": [0.05, 0.15]},
+    }}}
+    out = sa.format_table(res)
+    assert "gain CI95 [+0.050, +0.150]" in out and "rmse wins 5/5" in out
+
+
+def test_main_states_the_seed_count(capsys):
+    assert sa.main(["--arms", "gp", "--seeds", "1", "--n", "25"]) == 0
+    assert "n=1 seeds" in capsys.readouterr().out

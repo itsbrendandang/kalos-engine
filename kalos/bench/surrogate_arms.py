@@ -479,7 +479,12 @@ def format_table(results: dict[str, dict]) -> str:
             def cell(m, a=a):
                 return f"{a[m]:.3f}±{a[m + '_sd']:.3f}"
 
-            v = "(reference)" if arm == GP_ARM else f"{a['verdict']} (rmse wins {a['rmse_wins_vs_gp']})"
+            if arm == GP_ARM:
+                v = "(reference)"
+            else:
+                ci = a.get("paired_rmse_gain_ci95")
+                ci_s = f", gain CI95 [{ci[0]:+.3f}, {ci[1]:+.3f}]" if ci else ""
+                v = f"{a['verdict']} (rmse wins {a['rmse_wins_vs_gp']}{ci_s})"
             lines.append(f"{ds:<20} {arm:<18} {cell('rmse'):>14} {cell('spearman'):>14} "
                          f"{cell('picp'):>14} {cell('width'):>14}  {v}")
     return "\n".join(lines)
@@ -498,7 +503,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     arms = [s.strip() for s in a.arms.split(",") if s.strip()]
     kw = {"arms": arms, "seeds": range(a.seeds), "alpha": a.alpha, "conformal": not a.no_conformal}
     print("Surrogate remains the default GP; this harness only reports.")
-    print(f"arms: {arm_availability(arms)}  nominal coverage: {1 - a.alpha:.0%}")
+    print(f"arms: {arm_availability(arms)}  nominal coverage: {1 - a.alpha:.0%}  "
+          f"n={a.seeds} seeds (mean±sd over seeds; gain = GP RMSE - arm RMSE, paired)")
     if a.suite in ("synthetic", "both"):
         print(format_table(run_synthetic(n=a.n, noise=a.noise, **kw)))
     if a.suite in ("amii", "both"):
