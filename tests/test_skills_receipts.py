@@ -132,3 +132,11 @@ def test_state_dir_is_required(monkeypatch, value):
         default_root()
     with pytest.raises(StateDirNotSet):
         RunStore()
+
+
+@pytest.mark.parametrize("tenant", ["..", ".", "../acme", "a/b", "", "x" * 200, "ten ant"])
+def test_get_with_bad_tenant_returns_none(tmp_path, tenant):
+    store = RunStore(tmp_path)
+    r = make()
+    store.create_run(r)
+    assert store.get(tenant, r.receipt_id) is None

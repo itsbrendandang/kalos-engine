@@ -262,10 +262,15 @@ class RunStore:
             raise
 
     def get(self, tenant: str, receipt_id: str) -> SkillRunReceipt | None:
-        """The receipt, or None when absent or owned by another tenant."""
+        """The receipt, or None when absent, owned by another tenant, or asked
+        for with a malformed tenant or receipt id (a lookup never raises on
+        caller-supplied ids)."""
         if not RECEIPT_ID_RE.match(receipt_id):
             return None
-        d = self.run_dir(tenant, receipt_id)
+        try:
+            d = self.run_dir(tenant, receipt_id)
+        except ValueError:
+            return None
         if not (d / RECEIPT_FILE).is_file():
             return None
         return self.read(d)
