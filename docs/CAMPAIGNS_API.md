@@ -406,6 +406,9 @@ only added; a field never changes meaning or disappears within a version.
   - `run.direction`: the effective direction, also in `config_sha256`.
   - `proposal_gating.off_for_minimize`: true when the P(feasible) gate was not
     applied because the target is minimized. `proposal_gating.reason` says so.
+- `provenance[].role_inferred`: the role the engine gave the column (`target`, `input`, `identifier`, `outcome`, `group`, `fixed_input`, `unused`).
+- `provenance[].reason`: a short code for why the column has its status (docs/UPLOADS.md, "Column-role safety").
+- `validation.findings[].code`: a machine code for the finding.
 
 ## Not in this slice
 

@@ -60,10 +60,13 @@ class Finding:
     column: str | None = None
     rows: tuple[int, ...] = ()
     detail: dict = field(default_factory=dict)
+    # Stable machine code for the finding (additive; see docs/CAMPAIGNS_API.md).
+    code: str | None = None
 
     def to_dict(self) -> dict:
         return {
             "check": self.check,
+            "code": self.code,
             "severity": self.severity,
             "message": self.message,
             "column": self.column,

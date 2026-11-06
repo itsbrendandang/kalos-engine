@@ -52,6 +52,14 @@ Because the sheet comes from an external client, the upload path is guarded:
 - **Provenance.**
   The response includes a `provenance` list: for every column, its status (`kept_feature`, `target`, `dropped_id`, `dropped_output`, `dropped_constant`, `dropped_constant_on_fitted_rows`, `dropped_sparse`, `dropped_all_blank`) and how many cells had to be coerced from non-numeric text (units like "34.6 C").
   A feature that varies over the full sheet but is constant on the target-present rows the GP actually fits is dropped and flagged (`dropped_constant_on_fitted_rows`), never silently pinned to a zero-width bound.
+  Each entry also has `role_inferred` (`target`, `input`, `identifier`, `outcome`, `group`, `fixed_input`, `unused`) and a short `reason` code (`declared`, `requested_target`, `numeric_input`, `headerless`, `monotone_row_number`, `after_target_in_sheet`, `name_matches_target_candidate`, `concentration_before_target`, `recipe_label`, `not_declared`, ...). The rules are in `kalos/portal/analysis_parts/roles.py`.
+- **Column-role safety.**
+  These rules apply unless the column is declared in `roles.features`.
+  - A column with no header that holds unique whole numbers, one per row, is a saved row index. It is not an input (`dropped_id`, reason `headerless`).
+  - A named column of 8 or more rows holding 0, 1, 2, ... or 1, 2, 3, ... in sheet order is a row number. It is not an input (`dropped_id`, reason `monotone_row_number`).
+  - A column after the target whose name reads like a measurement taken during the run (OD, optical density, biomass, VCD, viability, DCW, final, harvest, measured, lactate, ammonia) is not an input (`dropped_output`, reason `after_target_in_sheet`). Both the position and the name must match, so inputs that follow the target with plain names (pH, temperature) stay inputs.
+  - When the caller names the target, a column before it whose only outcome-like part is a concentration word (`Carbon_conc`) is kept as an input (reason `concentration_before_target`, `info` finding).
+  - Each exclusion has a `warning` finding (`row_number_column`, `after_target_in_sheet`). An input whose name reads like an outcome gets `feature_looks_outcome_like`. An input after the target with |Spearman| >= 0.9 to it gets `after_target_high_correlation`. Those two only warn; the input stays.
 - **Every drop is counted and reported.**
   Each cell the model reads is classified: a number; blank; a null token (`n/a`, `NA`, `nan`, `null`, `-`, `?`); a censored value (`<LOD`, `>100`, `<x`, `>x`, `≤x`, `BLQ`, `LOQ`); or any other non-number (`ERR`).
   - A **missing or non-numeric** cell in the target or in a fitted feature (or a categorical with no level) **excludes its run** from the fit. Nothing is imputed.

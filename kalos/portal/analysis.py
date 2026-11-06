@@ -100,6 +100,7 @@ from kalos.portal.analysis_parts.refusals import (
     _too_few_rows,
     _validate_constraint,
 )
+from kalos.portal.analysis_parts.roles import column_role_safety
 from kalos.portal.analysis_parts.sanitize import sanitize_non_finite
 from kalos.portal.cells import (
     BLANK,
@@ -449,6 +450,14 @@ def _analyze_body(
     target, cont_feats, cat_feats, gcol, declared = _resolve_columns(
         df, num, target, roles, profile
     )
+    # Column-role safety (analysis_parts/roles.py): row-number columns and
+    # outcome-like columns after the target are not inputs unless declared.
+    role_safety = column_role_safety(
+        df, num, target, cont_feats, cat_feats, declared=declared, roles=roles,
+        profile=profile, headerless=list(header_info.get("named_by_position") or []),
+        target_given=requested_target is not None,
+    )
+    cont_feats, cat_feats = role_safety.cont_feats, role_safety.cat_feats
     # A RECIPE LABEL is not a factor. An inferred group column is chosen only when
     # each of its levels is one recipe of the other inputs (`_auto_group_column`),
     # so with no declared roles a text group column such as `recipe` = R1..R10
@@ -1498,6 +1507,8 @@ def _analyze_body(
             declared={str(c) for c in declared},
             declared_ids={str(c) for c in roles.ids} if roles is not None else set(),
             declared_features={str(c) for c in roles.features} if roles is not None else set(),
+            status_overrides=role_safety.overrides,
+            reasons=role_safety.reasons,
         )
     )
 
@@ -1673,7 +1684,7 @@ def _analyze_body(
                     by_column, n_rows_dropped, n_censored_rows, zero_filled,
                     auto_cats=[str(c) for c in auto_cats if c in kept_cats],
                     header=header_info,
-                ) + (
+                ) + role_safety.findings + (
                     [Finding(
                         check="cv_ci_unavailable", severity="info", message=ci95_reason,
                         detail={"cv_n_groups": int(rep["n_groups"])},

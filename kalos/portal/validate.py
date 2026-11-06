@@ -22,6 +22,8 @@ from typing import Literal
 
 import pandas as pd
 
+from kalos.portal.analysis_parts.roles import default_reason, role_for_status
+
 ColumnStatus = Literal[
     "kept_feature",
     "target",
@@ -53,6 +55,11 @@ class ColumnProvenance:
     coerced_cells: int  # non-blank cells that did not parse as a plain number
     non_null: int  # count of non-blank cells
     source: RoleSource = "inferred"
+    # The role the engine gave the column (`target`, `input`, `identifier`,
+    # `outcome`, `group`, `fixed_input`, `unused`) and a short reason code
+    # (`kalos.portal.analysis_parts.roles`). Additive fields.
+    role_inferred: str = "unused"
+    reason: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -88,6 +95,8 @@ def column_provenance(
     declared_ids: set[str] | None = None,
     declared_features: set[str] | None = None,
     recipe_labels: set[str] | None = None,
+    status_overrides: dict[str, tuple[str, str]] | None = None,
+    reasons: dict[str, str] | None = None,
 ) -> list[ColumnProvenance]:
     """Build a per-column provenance report mirroring `_analyze`'s selection.
 
@@ -110,6 +119,9 @@ def column_provenance(
         column is non-numeric (and not a categorical the engine used) it is
         reported as `dropped_non_numeric` - an honest "you likely meant to mark
         this categorical" - rather than the misleading `dropped_sparse`.
+      - `status_overrides`: `{column: (status, reason)}` for columns a role-safety
+        rule excluded (a row number, an outcome-like column after the target).
+      - `reasons`: `{column: reason}` for a specific reason on a kept column.
 
     Status precedence per column:
       target -> kept_feature -> dropped_id(declared) -> dropped_recipe_label
@@ -123,12 +135,17 @@ def column_provenance(
     declared_set = declared or set()
     declared_id_set = declared_ids or set()
     declared_feat_set = declared_features or set()
+    overrides = status_overrides or {}
+    reason_map = reasons or {}
     report: list[ColumnProvenance] = []
     for col in df.columns:
         name = str(col)
         non_null, coerced = _coerced_count(df[col])
         status: ColumnStatus
-        if name == str(target):
+        reason = reason_map.get(name, "")
+        if name in overrides and col not in feat_set and name != str(target):
+            status, reason = overrides[name]  # type: ignore[assignment]
+        elif name == str(target):
             status = "target"
         elif col in feat_set:
             status = "kept_feature"
@@ -162,10 +179,16 @@ def column_provenance(
             std = col_num.std(skipna=True)
             status = "dropped_constant" if (std != std or std <= 1e-9) else "dropped_sparse"
         source: RoleSource = "declared" if name in declared_set else "inferred"
+        if not reason and status == "dropped_sparse" and declared_feat_set and col in num_set:
+            reason = "not_declared"  # roles listed the features; this one was not listed
+        if not reason:
+            reason = "declared" if source == "declared" else default_reason(
+                status, numeric=col in num_set
+            )
         report.append(
             ColumnProvenance(
                 name=name, status=status, coerced_cells=coerced, non_null=non_null,
-                source=source,
+                source=source, role_inferred=role_for_status(status), reason=reason,
             )
         )
     return report
