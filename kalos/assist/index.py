@@ -235,7 +235,7 @@ def campaign_chunks(
             out.append(_chunk("analysis", "noise", cid, "Run-to-run spread", text))
         drivers = [d for d in a.get("drivers") or [] if isinstance(d, dict) and d.get("name")]
         if drivers:
-            text = f"Inputs that moved with {target} in campaign {name!r} (association, not cause): " + "; ".join(
+            text = f"Inputs that went with {target} in campaign {name!r} (went with, not a cause): " + "; ".join(
                 f"{d['name']} (rank association {d.get('rho')}, range {d.get('ci95')})" for d in drivers[:8]
             ) + "."
             out.append(_chunk("analysis", "drivers", cid, "Drivers", text))
@@ -246,8 +246,8 @@ def campaign_chunks(
                 f"{_fmt(p.get('pred'))} (plus or minus {_fmt(p.get('std'))})"
                 for i, p in enumerate(proposals)
             ]
-            text = f"Proposed batch for campaign {name!r} (predicted values, not measured):\n" + "\n".join(rows)
-            out.append(_chunk("analysis", "proposals", cid, "Proposed batch", text[:MAX_CHUNK_CHARS * 3]))
+            text = f"Proposed recipes for campaign {name!r} (predicted values, not measured):\n" + "\n".join(rows)
+            out.append(_chunk("analysis", "proposals", cid, "Proposed recipes", text[:MAX_CHUNK_CHARS * 3]))
 
     if refusal and refusal.get("code"):
         from kalos.assist.why import why_for

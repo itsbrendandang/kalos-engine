@@ -1,6 +1,6 @@
 """SOP drafts (`kalos.assist.sop`, `/api/assist/sop*`).
 
-- every number in the parameters table is in `fields_from_record` with a
+- every number in the settings table is in `fields_from_record` with a
   source id that resolves to the campaign record;
 - a revision may change prose only: placeholders, numbers, record values and
   the header are checked after the model answers (422, nothing stored);
@@ -130,7 +130,7 @@ def _draft(tc, cid: str, source: dict, template: str = "batch_recipe", token: st
     return r.json()
 
 
-def _table_numbers(markdown: str, heading: str = "## Parameters") -> set[str]:
+def _table_numbers(markdown: str, heading: str = "## Settings") -> set[str]:
     section = markdown.split(heading, 1)[1].split("\n## ", 1)[0]
     rows = [ln for ln in section.splitlines() if ln.startswith("|") and not ln.startswith("|---")]
     return set(sop.NUMBER_RE.findall("\n".join(rows[1:])))
@@ -164,7 +164,7 @@ def test_every_number_in_the_parameters_table_is_sourced(env, template, kind):
     d = _draft(tc, cid, {kind: source}, template)
     md = d["markdown"]
     assert md.split("\n")[0] == f"{sop.HEADER_PREFIX}{d['created_at'][:10]}{sop.HEADER_SUFFIX}"
-    assert [f"## {t}" in md for t in ("Purpose", "Scope", "Materials", "Equipment", "Parameters",
+    assert [f"## {t}" in md for t in ("Purpose", "Scope", "Materials", "Equipment", "Settings",
                                         "Procedure", "In-process checks", "Acceptance criteria",
                                         "Deviations and notes", "Revision table")] == [True] * 10
     values = {f["value"] for f in d["fields_from_record"]}

@@ -76,7 +76,7 @@ def test_round_trip_on_a_temp_state_dir(store):
     again = AssistIndex(store, "acme")
     assert {c.chunk_id for c in again.chunks()} == {c.chunk_id for c in index.chunks()}
 
-    hits = again.search("which inputs moved with lipase titer", campaign_id=cid)
+    hits = again.search("which inputs went with lipase titer", campaign_id=cid)
     assert hits and hits[0].chunk.campaign_id in (cid, None)
     assert any(h.chunk.source_id == "drivers" for h in hits)
 
@@ -174,10 +174,10 @@ def test_refusal_note_round_trip(store):
     assert latest_refusal(store, "acme", cid) is None
 
 
-def test_chunks_never_call_a_driver_a_cause():
+def test_chunks_never_call_an_input_a_cause():
     chunks = campaign_chunks({"id": "cmp_" + "1" * 32, "name": "x"}, None, ANALYSIS)
     drivers = next(c for c in chunks if c.source_id == "drivers")
-    assert "association, not cause" in drivers.text
+    assert "went with, not a cause" in drivers.text
 
 
 def test_builtin_bm25_matches_without_rank_bm25(store, monkeypatch):

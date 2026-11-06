@@ -61,7 +61,7 @@ _SECTION_TITLES = {
     "scope": "Scope",
     "materials": "Materials",
     "equipment": "Equipment",
-    "parameters": "Parameters",
+    "parameters": "Settings",
     "procedure": "Procedure",
     "in_process_checks": "In-process checks",
     "acceptance_criteria": "Acceptance criteria",
@@ -69,7 +69,7 @@ _SECTION_TITLES = {
     "revision": "Revision table",
 }
 _TEMPLATE_TITLES = {
-    "batch_recipe": "Batch recipe",
+    "batch_recipe": "Run recipe",
     "media_prep": "Media preparation",
     "custom": "Procedure",
 }
@@ -208,7 +208,7 @@ def resolve_source(
             raise SourceError("run_ids holds a repeated id")
         by_id = {str(r.get("id")): r for r in pending}
         if any(i not in by_id for i in ids):
-            raise SourceError("one or more run ids are not pending runs of this campaign")
+            raise SourceError("one or more run ids are not started runs of this campaign")
         runs = [by_id[i] for i in ids]
     elif key == "round":
         rnd = source[key]
@@ -216,7 +216,7 @@ def resolve_source(
             raise SourceError("round must be a whole number")
         runs = [r for r in pending if r.get("round") == rnd]
         if not runs:
-            raise SourceError("no pending run of this campaign belongs to that round")
+            raise SourceError("no started run of this campaign belongs to that round")
     elif key == "proposal_index":
         idx = _int_list(source[key])
         if idx is None:
@@ -225,7 +225,7 @@ def resolve_source(
             raise SourceError("proposal_index holds a repeated index")
         proposals = (analysis or {}).get("proposals") or []
         if not isinstance(proposals, list) or any(i >= len(proposals) for i in idx):
-            raise SourceError("one or more proposal indexes are outside the published batch")
+            raise SourceError("one or more proposed-recipe positions are outside the published list")
         rnd = int((state or {}).get("round") or 0)
         for n, i in enumerate(idx):
             p = proposals[i]
@@ -339,20 +339,20 @@ def build_markdown(
 
     # Purpose
     b.section("purpose")
-    noun = {"batch_recipe": "batch", "media_prep": "medium", "custom": "procedure"}[template]
+    noun = {"batch_recipe": "run", "media_prep": "medium", "custom": "procedure"}[template]
     if target_text:
         b.line(
             f"This draft describes how to prepare each {noun} listed below and record "
-            f"`{target_text}` for it, using the setpoints held in the campaign record."
+            f"`{target_text}` for it, using the settings held in the campaign record."
         )
     else:
         b.line(f"This draft describes how to prepare each {noun} listed below, using the "
-               "setpoints held in the campaign record.")
+               "settings held in the campaign record.")
     b.line("It is a starting point for the lab's own procedure, not a procedure in itself.")
 
     # Scope
     b.section("scope")
-    b.line("Covers the recipes in the parameters table, each identified by its record reference.")
+    b.line("Covers the recipes in the settings table, each identified by its record reference.")
     if template == "custom":
         b.line(b.fill("scope", "scope_statement", "the lab decides what this procedure covers and what it leaves out"))
     b.line("Safety: " + b.fill("scope", "safety_notes", "safety notes are not held in the campaign record"))
@@ -365,7 +365,7 @@ def build_markdown(
     for name in features:
         b.line(
             f"| {name} | "
-            + b.fill("materials", "material_quantities", "the record holds setpoints, not quantities to weigh or measure out")
+            + b.fill("materials", "material_quantities", "the record holds settings, not quantities to weigh or measure out")
             + " | "
             + b.fill("materials", "material_lot_numbers", "lot numbers are not held in the campaign record")
             + " | |"
@@ -388,13 +388,13 @@ def build_markdown(
     b.line("|---|---|---|---|")
     for r in records:
         for name, v in r.recipe.items():
-            b.line(f"| {r.label} | {name} | {b.value('parameters', name, v, r.source_id)} | Setpoint |")
+            b.line(f"| {r.label} | {name} | {b.value('parameters', name, v, r.source_id)} | Setting |")
         if target_text and _is_number(r.pred):
-            b.line(f"| {r.label} | {target_text} | {b.value('parameters', 'pred', r.pred, r.source_id)} | Predicted |")
+            b.line(f"| {r.label} | {target_text} | {b.value('parameters', 'predicted', r.pred, r.source_id)} | Predicted |")
         if target_text and _is_number(r.std):
-            b.line(f"| {r.label} | {target_text} | {b.value('parameters', 'std', r.std, r.source_id)} | Predicted spread |")
+            b.line(f"| {r.label} | {target_text} | {b.value('parameters', 'predicted spread', r.std, r.source_id)} | Predicted spread |")
         if target_text and _is_number(r.result):
-            b.line(f"| {r.label} | {target_text} | {b.value('parameters', 'result', r.result, r.source_id)} | Measured |")
+            b.line(f"| {r.label} | {target_text} | {b.value('parameters', 'measured', r.result, r.source_id)} | Measured |")
     for name in features:
         rng = ranges.get(name)
         if isinstance(rng, list) and len(rng) == 2 and all(_is_number(x) for x in rng):
@@ -414,7 +414,7 @@ def build_markdown(
     # In-process checks
     b.section("in_process_checks")
     b.line("- " + b.fill("in_process_checks", "in_process_checks", "the record does not say what is checked during the run"))
-    b.line("- Record the value reached for each setpoint next to the setpoint in the parameters table.")
+    b.line("- Record the value reached for each setting next to it in the settings table.")
 
     # Acceptance criteria
     b.section("acceptance_criteria")
@@ -456,35 +456,35 @@ def _recipe_text(b: _Builder, r: _Record) -> str:
 def _procedure_steps(
     b: _Builder, template: Template, records: list[_Record], target_text: str | None,
 ) -> list[str]:
-    setpoints = " ".join(_recipe_text(b, r) + "." for r in records)
+    settings = " ".join(_recipe_text(b, r) + "." for r in records)
 
     def measure() -> str:
         head = f"Measure `{target_text}` as described in " if target_text else "Measure the result as described in "
         return head + b.fill(
             "procedure", "measurement_method", "the record holds results, not how they were measured"
-        ) + " and record it in the parameters table as Measured."
+        ) + " and record it in the settings table as Measured."
     if template == "batch_recipe":
         return [
             "Check that every material and piece of equipment listed above is at hand, and write the lot numbers into the materials table.",
-            "Prepare one batch per recipe. Set each parameter to its setpoint: " + setpoints,
-            "Record the value reached for each setpoint before going on.",
-            "Run the batch as described in " + b.fill("procedure", "run_method", "the record does not describe how a batch is run") + ".",
+            "Prepare one run per recipe. Set each input to its setting: " + settings,
+            "Record the value reached for each setting before going on.",
+            "Carry out the run as described in " + b.fill("procedure", "run_method", "the record does not describe how a run is carried out") + ".",
             measure(),
         ]
     if template == "media_prep":
         return [
             "Check that every material and piece of equipment listed above is at hand, and write the lot numbers into the materials table.",
-            "Prepare one medium per recipe. Set each component or condition to its setpoint: " + setpoints,
+            "Prepare one medium per recipe. Set each component or condition to its setting: " + settings,
             "Dissolve and mix as described in " + b.fill("procedure", "mixing_method", "the record does not describe how the medium is mixed") + ".",
-            "Adjust and confirm each condition, then record the value reached for each setpoint.",
+            "Adjust and confirm each condition, then record the value reached for each setting.",
             "Sterilise and store as described in " + b.fill("procedure", "sterilisation_and_storage", "the record does not describe sterilisation or storage") + ".",
             measure(),
         ]
     return [
-        b.fill("procedure", "step_before_setpoints", "the lab writes what happens before the setpoints are applied"),
-        "Apply the setpoints for each recipe: " + setpoints,
-        "Record the value reached for each setpoint.",
-        b.fill("procedure", "step_after_setpoints", "the lab writes what happens after the setpoints are applied"),
+        b.fill("procedure", "step_before_settings", "the lab writes what happens before the settings are applied"),
+        "Apply the settings for each recipe: " + settings,
+        "Record the value reached for each setting.",
+        b.fill("procedure", "step_after_settings", "the lab writes what happens after the settings are applied"),
         measure(),
     ]
 

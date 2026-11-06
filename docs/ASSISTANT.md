@@ -15,7 +15,7 @@ It can answer questions about things Kalos has recorded for your tenant:
 - your run sheets: the target, the inputs, how many runs were used, which columns were left out;
 - the sheet checks and what each one found;
 - each round: the recipes that were started and the results you recorded;
-- the model checks, the inputs that moved with the target, and the proposed batch (predicted values are always called predicted);
+- the model checks, the inputs that went with the target, and the proposed recipes (predicted values are always called predicted);
 - the last sheet Kalos could not analyse, and why;
 - these docs (`docs/*.md`), and skill files (`SKILL.md`) when the engine has them.
 

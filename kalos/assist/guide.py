@@ -250,7 +250,7 @@ def _gate_blockers(analysis: dict[str, Any] | None) -> list[dict[str, str]]:
     if not out:
         out.append({
             "code": "model_check",
-            "text": "Kalos has not yet shown this model fit to rely on.",
+            "text": "The model has not passed every check yet.",
             "why": why_for("model_check"),
         })
     return out
@@ -261,7 +261,7 @@ def _notice_blocker(analysis: dict[str, Any] | None) -> list[dict[str, str]]:
     if not isinstance(notice, dict):
         return []
     returned, requested = notice.get("returned"), notice.get("requested")
-    text = "The batch is shorter than asked for."
+    text = "Fewer recipes were proposed than asked for."
     if isinstance(returned, int) and isinstance(requested, int):
         text = f"Kalos proposed {returned} of the {requested} recipes asked for."
     code = str(notice.get("code") or "fewer_distinct_candidates")
@@ -304,7 +304,7 @@ def next_step(
         step = "Fix the sheet and upload it again"
         why = f"{blocker['text']} {_REFUSAL_FIX.get(code, 'The reason is below.')}"
         matters = (
-            "Kalos did not build a model from the last sheet, so there is no batch yet. "
+            "Kalos did not build a model from the last sheet, so there are no recipes to run yet. "
             "Uploading the same sheet again gives the same result."
         )
         route = ROUTE_SETUP
@@ -319,28 +319,28 @@ def next_step(
         why = f"Kalos found {_plural(f.n_errors, 'error')} in the sheet. They are listed below."
         matters = (
             "An error in the sheet can point the model the wrong way. "
-            "If you plan from it anyway, the batch may chase a typing mistake."
+            "If you plan from it anyway, the next recipes may chase a typing mistake."
         )
         route = ROUTE_SETUP
         blockers.extend(_finding_blockers(analysis, "error"))
     elif state == "not_trusted":
-        step = "Read why the model is not yet shown fit, then decide on the batch"
+        step = "Read why the model is not yet reliable, then decide whether to run these recipes"
         why = (
             f"Kalos proposed {_plural(f.n_proposed, 'recipe')}, but its own checks did not show "
-            "the model fit to rely on."
+            "the model reliable yet."
         )
         blockers.extend(_gate_blockers(analysis))
         all_unmeasured = all(b["why"] == WHY["unmeasured"] for b in blockers)
         matters = WHY["insufficient" if all_unmeasured else "not-yet"]
         route = ROUTE_PLAN
     elif state == "sheet_warnings":
-        step = f"Review {_plural(f.n_warnings, 'warning')}, then start the batch"
+        step = f"Review {_plural(f.n_warnings, 'warning')}, then start the round"
         why = (
             f"Kalos proposed {_plural(f.n_proposed, 'recipe')}. "
             f"The sheet has {_plural(f.n_warnings, 'warning')} worth a look first."
         )
         matters = (
-            "A warning does not stop the batch. "
+            "A warning does not stop the round. "
             "Some warnings mean a run was left out or a value looks unusual."
         )
         route = ROUTE_PLAN

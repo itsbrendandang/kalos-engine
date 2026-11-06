@@ -155,13 +155,13 @@ def test_ask_keeps_only_cited_sentences_and_returns_sources(env):
     cid = _seed(store, "acme", A_SECRET)
 
     def reply(prompt: str) -> str:
-        s = fake.label_of(prompt, "moved with lipase_titer")
-        return (f"Methanol moved with lipase_titer in this campaign [{s}]. "
+        s = fake.label_of(prompt, "went with lipase_titer")
+        return (f"Methanol went with lipase_titer in this campaign [{s}]. "
                 "Methanol is the setting to push hardest. "
                 f"Its rank association is 0.62 [{s}].")
 
     fake.reply = reply
-    r = tc.post("/api/assist/ask", json={"question": "Which inputs moved with lipase titer?",
+    r = tc.post("/api/assist/ask", json={"question": "Which inputs went with lipase titer?",
                                          "campaign_id": cid}, headers=H("a-read"))
     assert r.status_code == 200, r.text
     body = r.json()
@@ -181,7 +181,7 @@ def test_ask_drops_a_number_the_source_does_not_hold(env):
     cid = _seed(store, "acme", A_SECRET)
 
     def reply(prompt: str) -> str:
-        s = fake.label_of(prompt, "moved with lipase_titer")
+        s = fake.label_of(prompt, "went with lipase_titer")
         return f"Methanol has a rank association of 0.97 [{s}]."
 
     fake.reply = reply
@@ -197,11 +197,11 @@ def test_ask_rejects_claim_and_banned_words_and_abstains_with_the_guide(env, bad
     cid = _seed(store, "acme", A_SECRET)
 
     def reply(prompt: str) -> str:
-        s = fake.label_of(prompt, "moved with lipase_titer")
-        return f"Methanol moved with lipase_titer [{s}]. {bad} [{s}]."
+        s = fake.label_of(prompt, "went with lipase_titer")
+        return f"Methanol went with lipase_titer [{s}]. {bad} [{s}]."
 
     fake.reply = reply
-    body = tc.post("/api/assist/ask", json={"question": "what moved with lipase titer", "campaign_id": cid},
+    body = tc.post("/api/assist/ask", json={"question": "what went with lipase titer", "campaign_id": cid},
                    headers=H("a-read")).json()
     assert body["abstained"] is True
     assert body["sources"] == []
@@ -222,7 +222,7 @@ def test_ask_model_down_is_503(env):
     tc, store, fake = env
     _seed(store, "acme", A_SECRET)
     fake.fail = True
-    r = tc.post("/api/assist/ask", json={"question": "which inputs moved with lipase titer"}, headers=H("a-read"))
+    r = tc.post("/api/assist/ask", json={"question": "which inputs went with lipase titer"}, headers=H("a-read"))
     assert r.status_code == 503 and r.json()["code"] == "assist_provider_unavailable"
 
 
