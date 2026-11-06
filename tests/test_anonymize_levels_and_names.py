@@ -80,3 +80,14 @@ def test_the_recipes_carry_pseudonyms_not_the_level_values():
             if isinstance(value, str):
                 assert value not in _NAMES
                 assert value.startswith("level_")
+
+
+def test_fixed_inputs_keys_are_aliased_under_anonymize():
+    """A declared identifier-named input that is fixed (near-constant) must not
+    leak its real name through `fixed_inputs`."""
+    from kalos.portal.analysis_parts.anonymize import _anonymize_result
+
+    out = _anonymize_result({"fixed_inputs": {"Operator": 3.0, "pH": 7.0}, "provenance": []})
+    assert "Operator" not in out["fixed_inputs"] and "pH" in out["fixed_inputs"]
+    assert sorted(out["fixed_inputs"].values()) == [3.0, 7.0]
+    assert next(iter(k for k in out["fixed_inputs"] if k != "pH")).startswith("col_")
