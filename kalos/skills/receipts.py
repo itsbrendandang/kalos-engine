@@ -3,7 +3,8 @@ they live in.
 
 Every tool call gets a fresh run directory
 `<root>/<tenant>/<receipt_id>/` holding `receipt.json` and the call's output
-artifacts. `root` defaults to `$KALOS_STATE_DIR/skill_runs`.
+artifacts. `root` defaults to `$KALOS_STATE_DIR/skill_runs`. KALOS_STATE_DIR is
+required; there is no ~/.kalos fallback.
 
 A receipt moves through a small state machine, forward only:
 
@@ -189,8 +190,18 @@ def library_versions() -> dict[str, str | None]:
     return out
 
 
+class StateDirNotSet(RuntimeError):
+    """`KALOS_STATE_DIR` is required for skill runs; there is no home-directory
+    fallback, so runs never land in a developer's real ~/.kalos by accident."""
+
+
 def default_root() -> Path:
-    return Path(os.environ.get("KALOS_STATE_DIR", Path.home() / ".kalos")) / "skill_runs"
+    state = os.environ.get("KALOS_STATE_DIR", "").strip()
+    if not state:
+        raise StateDirNotSet(
+            "KALOS_STATE_DIR is not set: skill runs and receipts need an explicit state "
+            "directory (set KALOS_STATE_DIR, or pass RunStore(root=...))")
+    return Path(state) / "skill_runs"
 
 
 class TransitionError(RuntimeError):
@@ -278,6 +289,7 @@ __all__ = [
     "ErrorInfo",
     "RunStore",
     "SkillRunReceipt",
+    "StateDirNotSet",
     "TransitionError",
     "canonical_json",
     "engine_build_sha",

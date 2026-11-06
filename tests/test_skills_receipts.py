@@ -16,6 +16,7 @@ from kalos.skills.receipts import (
     RECEIPT_FILE,
     RunStore,
     SkillRunReceipt,
+    StateDirNotSet,
     TransitionError,
     canonical_json,
     default_root,
@@ -119,3 +120,15 @@ def test_tenant_scoping(tmp_path):
 def test_default_root_follows_state_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("KALOS_STATE_DIR", str(tmp_path))
     assert default_root() == tmp_path / "skill_runs"
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_state_dir_is_required(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("KALOS_STATE_DIR", raising=False)
+    else:
+        monkeypatch.setenv("KALOS_STATE_DIR", value)
+    with pytest.raises(StateDirNotSet, match="KALOS_STATE_DIR"):
+        default_root()
+    with pytest.raises(StateDirNotSet):
+        RunStore()

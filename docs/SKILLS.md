@@ -235,7 +235,7 @@ An error has an `error_code` (`timeout`, `input_unreadable`, `invalid_result`, `
 
 ### Run directories
 
-Each run writes to a fresh directory: `$KALOS_STATE_DIR/skill_runs/<tenant>/<receipt_id>/`. It holds `receipt.json` and the artifacts. Kalos resolves every output path and refuses a path that leaves the directory. Inputs are hashed, never copied into the run directory.
+Each run writes to a fresh directory: `$KALOS_STATE_DIR/skill_runs/<tenant>/<receipt_id>/`. `KALOS_STATE_DIR` must be set. There is no fallback to `~/.kalos`; without it, a run stops with `StateDirNotSet`. It holds `receipt.json` and the artifacts. Kalos resolves every output path and refuses a path that leaves the directory. Inputs are hashed, never copied into the run directory.
 
 ### Timeouts
 
