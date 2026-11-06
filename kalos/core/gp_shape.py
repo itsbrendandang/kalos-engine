@@ -25,7 +25,7 @@ were problems with the gradient-boosted-tree approach this replaces:
      separated from the profile's endpoints by more than the posterior's own
      credible width. A boosted tree gives a point prediction, so the equivalent
      claim there rests on nothing.
-  3. RELEVANCE COMES FREE. The Matern kernel is fitted with ARD, one lengthscale
+  3. RELEVANCE COMES FREE. The RBF kernel (BoTorch default, kalos/core/gp_pin.py) is fitted with ARD, one lengthscale
      per input dimension. A short lengthscale means the response varies quickly
      along that input, which is exactly per-feature relevance, already paid for
      during the fit.

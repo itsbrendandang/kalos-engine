@@ -1,6 +1,8 @@
 """GP surrogate on BoTorch.
 
-A `SingleTaskGP` with input normalization and output standardization — the
+A `SingleTaskGP` (BoTorch default kernel: ARD RBF, dimension-scaled LogNormal
+lengthscale prior, no ScaleKernel; pinned in kalos/core/gp_pin.py) with input
+normalization and output standardization — the
 production-grade replacement for the lean hand-rolled GP. Fits by exact marginal
 likelihood and returns a posterior mean + standard deviation in the target's
 original units.
@@ -29,6 +31,8 @@ from botorch.models.transforms.outcome import Standardize
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from gpytorch.utils.errors import NotPSDError
 from linear_operator.utils.warnings import NumericalWarning
+
+from kalos.core.gp_pin import check_pinned_gp
 
 log = logging.getLogger("kalos.core.surrogate")
 
@@ -380,6 +384,9 @@ def _build_mixed_gp(
     normalized (via `Normalize(indices=...)`); normalizing the categorical codes
     would corrupt the CategoricalKernel's equality test. When every dim is
     categorical there is nothing to normalize, so no input transform is applied.
+
+    Kernel: BoTorch's default for this model, an ARD RBF on the continuous dims
+    combined with a CategoricalKernel (asserted in kalos/core/gp_pin.py).
     """
     cat_set = set(cat_dims)
     cont_dims = [i for i in range(d) if i not in cat_set]
@@ -434,8 +441,8 @@ class Surrogate:
 
         `cat_dims` optionally marks a subset of columns as categorical (their
         values are integer level codes, not measurements). When given, the GP is
-        a `MixedSingleTaskGP` with a CategoricalKernel on those dims and a Matern
-        kernel on the rest; the continuous dims are input-normalized to the box
+        a `MixedSingleTaskGP` with a CategoricalKernel on those dims and an ARD RBF
+        kernel on the rest (kalos/core/gp_pin.py); the continuous dims are input-normalized to the box
         and the categorical codes pass through untouched. When `None`/empty the
         continuous `SingleTaskGP` path is unchanged.
 
@@ -482,7 +489,8 @@ class Surrogate:
             if yvar is None:
                 # No explicit likelihood is passed, so SingleTaskGP uses BoTorch's
                 # default noise model: a GaussianLikelihood with a
-                # LogNormalPrior(-4, 1) on the noise and a positive floor. That
+                # LogNormalPrior(-4, 1) on the noise and a 1e-4 floor (asserted
+                # in kalos/core/gp_pin.py). That
                 # default is the right noise prior for the small-sample regime, so
                 # we deliberately do not override it here.
                 self.model = SingleTaskGP(Xt, yt, input_transform=normalize, outcome_transform=Standardize(m=1))
@@ -490,6 +498,9 @@ class Surrogate:
                 self.model = SingleTaskGP(
                     Xt, yt, train_Yvar=yvar, input_transform=normalize, outcome_transform=Standardize(m=1)
                 )
+        # Kernel and priors are BoTorch defaults, asserted (not rebuilt) so an
+        # upgrade cannot change them silently (kalos/core/gp_pin.py).
+        kernel = check_pinned_gp(self.model, d=d, cat_dims=cats, fixed_noise=yvar is not None)
         mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
         if restarts > 1:
             diag, self.model = _multi_start_fit(mll, restarts=int(restarts), seed=int(restart_seed))
@@ -499,6 +510,7 @@ class Surrogate:
         else:
             diag = dict(_fit_mll_with_retry(mll))
         diag.update(hyperparameter_report(self.model, fixed_noise=yvar is not None))
+        diag["kernel"] = kernel
         if check_conditioning:
             # Only the fit whose posterior is served (the analysis's proposal
             # surrogate) pays for the eigendecomposition and can be refused here;

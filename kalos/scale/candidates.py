@@ -41,7 +41,8 @@ once the trend is subtracted, because the trend IS most of what the kernel
 learned). `PhysicsMeanSurrogate` instead gives the GP a mean function that is
 LINEAR in a fixed subset of the physics scale features
 (`DEFAULT_PHYSICS_MEAN_FEATURES`: log-volume, the kLa proxy, the
-hydrostatic-pressure/pCO2-driver proxy), leaving the Matern kernel to model
+hydrostatic-pressure/pCO2-driver proxy), leaving the kernel (BoTorch's default
+ARD RBF) to model
 the RESIDUAL - the recipe-driven variation that should carry the ranking
 signal - rather than re-deriving the scale trend from scratch inside the
 kernel every fold.

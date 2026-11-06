@@ -317,6 +317,16 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
 | `lengthscales` | Fitted lengthscales (normalized inputs: 1.0 = the design box width). |
 | `median_nn_distance` | Median distance from each training row to its nearest neighbour (normalized inputs). |
 | `boundary_flags` | Plain sentences, recorded not refused: noise at its lower bound; lengthscales above 10x the box; lengthscales at their lower bound; lengthscales shorter than `median_nn_distance` (the fit may be following noise; seen on a pure-noise target). |
+| `kernel` | `rbf_ard` (continuous inputs), `rbf_ard+categorical` (mixed) or `categorical` (all categorical). |
+
+The kernel is BoTorch's default, not Matern: an ARD RBF kernel with no output
+scale, a LogNormal lengthscale prior with loc `sqrt(2) + log(d)/2` and scale
+`sqrt(3)` (d = continuous inputs), and a lengthscale floor of 0.025. With
+categorical inputs a CategoricalKernel is added (sum and product terms, each
+scaled). Inferred noise has a `LogNormal(-4, 1)` prior and a `1e-4` floor
+(standardized units). Every fit checks this (`kalos/core/gp_pin.py`) and fails
+if a library upgrade changes it. The model was not rebuilt by hand, so
+proposals did not change.
 
 ### Promotion gate changes (additive fields)
 

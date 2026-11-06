@@ -14,6 +14,12 @@ Newest first.
 - Mixed (categorical) proposals enumerate every combination only while combinations x batch size stays within 64 solves (`MAX_MIXED_SOLVES`); larger cases use the alternating optimizer and report `proposal_optimizer: "mixed_alternating"`. The benchmark's mixed task (12 combinations, q=4) is unchanged. 20 combinations x 5 proposals went from 44 s to 10 s with the same predicted means on the shared proposals.
 - The same upload is not refit: the engine keeps the last 4 analyses in memory (`KALOS_ANALYSIS_CACHE`, 0 = off) keyed on the bytes, file name, sheet, target, roles, anonymize, profile, engine version and every `KALOS_*` setting. A repeat returns the same analysis with `analysis_cache: {"hit": true}`. Off in the test suite by default.
 - Graceful stop in desktop mode: on SIGTERM an in-flight analysis gets 12 s to finish; after that no store write can commit, and the process exits.
+### Fixed - the GP kernel is pinned, and documented as what it is
+
+- The surrogate uses BoTorch's default kernel: an ARD RBF with a dimension-scaled LogNormal lengthscale prior and no output scale (plus a CategoricalKernel for categorical inputs). Comments and docs said Matern; they now say RBF.
+- Every fit checks the kernel, lengthscale prior and constraint, noise prior and floor (`kalos/core/gp_pin.py`) and fails if a BoTorch upgrade changes them. The model is not rebuilt, so proposals are unchanged.
+- `model_diagnostics.kernel` names the kernel.
+
 ### Added - applicability flags per proposal
 
 - `proposals[].applicability` has `distance`, `threshold`, `threshold_source`, `far_from_data` and `at_box_edge` (inputs within 1% of the box width of a bound). The two flags are separate.
@@ -954,7 +960,7 @@ The optimum is recovered at exactly 7.000, and both views ship side by side so a
 
 - **One authority.** The shapes describe the same posterior that produced `proposals`, so the report cannot rank features differently from the model being optimized.
 - **Uncertainty is free.** `Surrogate.posterior` returns a mean AND a standard deviation, so an interior optimum is claimed only when the peak clears the better endpoint by at least `PEAK_SD_MULTIPLE` combined posterior sds. `peak_gain` and `peak_separation_sd` are both reported so a stricter bar can be applied without re-running. A point-predicting tree cannot make this check at all.
-- **Relevance is free.** The Matern kernel is fitted with ARD, one lengthscale per dimension. A short lengthscale means the response moves fast along that axis, which is per-feature relevance already paid for during the fit.
+- **Relevance is free.** The kernel (an ARD RBF; this entry first said Matern, which was wrong) is fitted with ARD, one lengthscale per dimension. A short lengthscale means the response moves fast along that axis, which is per-feature relevance already paid for during the fit.
 
 **Swept at the incumbent, not the medians.** Sweeping one feature means fixing the rest, and the usual choice - column medians - is a recipe that may never have been run, putting the whole profile where the GP has no data and reporting the shape of its prior. The sweep is taken around the best observed row instead: a real recipe, near data, and the question a scientist is actually asking. `swept_at` names this in the response rather than leaving it implied.
 
@@ -1235,7 +1241,7 @@ process choices (which catalyst, which resin), not just continuous recipes.
   default path is unchanged) and `GENERIC_PROFILE` (domain-neutral). Importing `kalos.domains` never
   loads torch (`tests/test_domains.py`).
 - `kalos/core/surrogate.py`: `Surrogate.fit(..., cat_dims=)` fits a BoTorch `MixedSingleTaskGP`
-  (CategoricalKernel on the categorical dims, Matern on the continuous, continuous dims normalized to
+  (CategoricalKernel on the categorical dims, RBF on the continuous (this entry first said Matern), continuous dims normalized to
   the box) when categoricals are present; the continuous `SingleTaskGP` path is unchanged.
 - `kalos/core/optimize.py`: `propose(..., cat_dims=, cat_cardinalities=)` uses `optimize_acqf_mixed`
   (enumerating categorical assignments, exact) for small categorical spaces and falls back to
