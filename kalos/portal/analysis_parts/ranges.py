@@ -77,6 +77,27 @@ def _physical_range(
     return lo, hi, n_excluded
 
 
+def widen_box(
+    name: str, lower: float, upper: float, fraction: float, *, coded: bool = False,
+) -> tuple[float, float]:
+    """The search box for one input when the lab allows `fraction` of the tried
+    range past each end (`roles.allow_beyond`). Never past the input's hard
+    physical bounds (`kalos.validation.bounds`), and an input of unknown kind
+    that was never negative is not taken below 0. A coded input is widened
+    without a floor. A zero-width range is not widened."""
+    width = float(upper) - float(lower)
+    if fraction <= 0 or not width > 0:
+        return float(lower), float(upper)
+    lo, hi = float(lower) - fraction * width, float(upper) + fraction * width
+    dim = None if coded else infer_dimension(name)
+    if dim is not None:
+        b = DIMENSION_BOUNDS[dim]
+        lo, hi = max(lo, b.hard_lo), min(hi, b.hard_hi)
+    elif not coded and lower >= 0:
+        lo = max(lo, 0.0)
+    return lo, hi
+
+
 def _with_absent(lo: float, hi: float, absent: int) -> tuple[float, float]:
     """Widen the box to include 0 when blank cells were read as absent (0).
 

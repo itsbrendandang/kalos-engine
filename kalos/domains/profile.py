@@ -68,6 +68,40 @@ def parse_applicability_distance(value: object) -> float | None:
     return v
 
 
+class InvalidAllowBeyond(ValueError):
+    """`roles.allow_beyond` that is not a fraction in [0, 1], or a mapping of
+    input name to such a fraction (HTTP 400 `invalid_allow_beyond`)."""
+
+    code = "invalid_allow_beyond"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "roles.allow_beyond must be a number from 0 to 1 (0.10 = 10% past the tried "
+            'range), or an object of input name to such a number ("*" for every other input)'
+        )
+
+
+def parse_allow_beyond(value: object) -> tuple[tuple[str, float], ...]:
+    """`allow_beyond` as sorted (input, fraction) pairs; "*" is the default for
+    every input not named. A plain number means "*". Empty when not given."""
+    if value is None:
+        return ()
+
+    def frac(v: object) -> float:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise InvalidAllowBeyond()
+        f = float(v)
+        if not np.isfinite(f) or f < 0 or f > 1:
+            raise InvalidAllowBeyond()
+        return f
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return (("*", frac(value)),)
+    if isinstance(value, dict):
+        return tuple(sorted((str(k), frac(v)) for k, v in value.items()))
+    raise InvalidAllowBeyond()
+
+
 def parse_direction(value: object) -> str | None:
     """None for no stated direction, else "maximize"/"minimize". Raises
     `InvalidDirection` for anything else (case and surrounding spaces are
@@ -115,6 +149,9 @@ class ColumnRoles:
     request or the profile decides; default "maximize").
     `applicability_distance` is a lab-set threshold for
     `proposals[].applicability.far_from_data` (None: the product default).
+    `allow_beyond` lets the search go past the tried range of an input, as a
+    fraction of that range at each end (("*", 0.1) = 10% for every input).
+    Empty: the search box is the tried range.
     """
 
     target: str
@@ -125,6 +162,7 @@ class ColumnRoles:
     sparse: tuple[str, ...] = ()
     direction: str | None = None
     applicability_distance: float | None = None
+    allow_beyond: tuple[tuple[str, float], ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict) -> ColumnRoles:
@@ -160,6 +198,7 @@ class ColumnRoles:
             applicability_distance=parse_applicability_distance(
                 data.get("applicability_distance")
             ),
+            allow_beyond=parse_allow_beyond(data.get("allow_beyond")),
         )
 
 

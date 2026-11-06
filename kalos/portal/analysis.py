@@ -104,6 +104,7 @@ from kalos.portal.analysis_parts.proposals import (
 from kalos.portal.analysis_parts.ranges import (
     _absent_is_zero_columns,
     _physical_range,
+    widen_box,
 )
 from kalos.portal.analysis_parts.refusals import (
     _ERR_NO_PROCESS_INPUTS,
@@ -113,6 +114,11 @@ from kalos.portal.analysis_parts.refusals import (
 )
 from kalos.portal.analysis_parts.roles import column_role_safety
 from kalos.portal.analysis_parts.sanitize import sanitize_non_finite
+from kalos.portal.analysis_parts.search_box import (
+    _allow_beyond_map,
+    beyond_tried,
+    search_box_finding,
+)
 from kalos.portal.cells import (
     BLANK,
     CENSORED,
@@ -247,6 +253,7 @@ def _analyze(
     preflight_only: bool = False,
     direction: str | None = None,
     applicability_distance: float | None = None,
+    allow_beyond: float | Mapping[str, float] | None = None,
 ) -> dict:
     """See `_analyze_body`. Every fitting analysis runs inside `_seeded_analysis`,
     so its proposals depend only on its inputs, not on other analyses in flight."""
@@ -255,6 +262,7 @@ def _analyze(
         anonymize=anonymize, roles=roles, profile=profile, pending=pending,
         constraint=constraint, progress=progress, preflight_only=preflight_only,
         direction=direction, applicability_distance=applicability_distance,
+        allow_beyond=allow_beyond,
     )
     if preflight_only:
         return _analyze_body(df, target, **kwargs)
@@ -275,6 +283,7 @@ def _analyze_body(
     preflight_only: bool = False,
     direction: str | None = None,
     applicability_distance: float | None = None,
+    allow_beyond: float | Mapping[str, float] | None = None,
 ) -> dict:
     """Run the engine on an arbitrary run sheet: pick the target (the value to
     maximize), use the process INPUTS as features (other measured outputs are
@@ -702,6 +711,11 @@ def _analyze_body(
     cont_arr = Xc_zf.to_numpy(float) if cont_feats else np.empty((len(y), 0))
     box_exclusions: list[dict] = []
     coded_columns = {f.column for f in validation.findings if f.code == "coded_column"}
+    # How far past the tried range each input may be searched (roles.allow_beyond,
+    # or the `allow_beyond` argument; default 0 = the tried range). Finding 11.
+    beyond = _allow_beyond_map(roles, allow_beyond)
+    tried_ranges: dict[str, list[float]] = {}
+    beyond_applied: dict[str, float] = {}
     for c in cont_feats:
         # The box is built from OBSERVED cells only: blanks (absent-zero columns
         # only) are counted, not read as values.
@@ -715,6 +729,13 @@ def _analyze_body(
             box_exclusions.append(
                 {"column": str(c), "n_excluded": n_excluded, "lower": lower, "upper": upper}
             )
+        tried_ranges[str(c)] = [lower, upper]
+        frac = beyond.get(str(c), beyond.get("*", 0.0))
+        if frac > 0:
+            lower, upper = widen_box(
+                str(c), lower, upper, frac, coded=str(c) in coded_columns
+            )
+            beyond_applied[str(c)] = frac
         dims.append(Dimension(str(c), "continuous", lower=lower, upper=upper))
     for c in kept_cats:
         dims.append(Dimension(str(c), "categorical", levels=cat_dims_map[c]))
@@ -1619,6 +1640,8 @@ def _analyze_body(
         proposals, proposal_applicability(batch, distances, design, applicability)
     ):
         row["applicability"] = flags
+    for row in proposals:
+        row["beyond_tried_range"] = beyond_tried(row.get("recipe") or {}, tried_ranges)
     likely_half_width = conformal_q
     label_proposals(
         proposals, best_bet_idx, best=best_single, half_width=likely_half_width,
@@ -1792,6 +1815,17 @@ def _analyze_body(
         # highest predicted value inside the search box, its likely range, and
         # where it is in `proposals`.
         "model_optimum": model_optimum,
+        # Observed (tried) range of each continuous input, and how far past it
+        # the search was allowed (roles.allow_beyond). `feature_ranges` is the
+        # search box actually used.
+        "tried_ranges": {
+            k: [round(float(v[0]), 6), round(float(v[1]), 6)] for k, v in tried_ranges.items()
+        },
+        "allow_beyond": {
+            "default": beyond.get("*", 0.0),
+            "per_input": {k: v for k, v in beyond.items() if k != "*"},
+            "applied": beyond_applied,
+        },
         # Inputs fixed at their median because their spread is within sensor
         # precision (analysis_parts/near_constant.py). Not searched.
         "fixed_inputs": {c: v["value"] for c, v in fixed_inputs.items()},
@@ -1818,7 +1852,8 @@ def _analyze_body(
                     auto_cats=[str(c) for c in auto_cats if c in kept_cats],
                     header=header_info,
                 ) + role_safety.findings + near_constant_findings(fixed_inputs)
-                + kind_findings + (
+                + kind_findings
+                + [search_box_finding(tried_ranges, beyond_applied, design)] + (
                     [Finding(
                         check="cv_ci_unavailable", severity="info", message=ci95_reason,
                         detail={"cv_n_groups": int(rep["n_groups"])},

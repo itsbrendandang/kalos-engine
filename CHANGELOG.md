@@ -6,6 +6,8 @@ Newest first.
 
 ### Added - desktop-engine-2 (first-time-user study)
 
+- `roles.allow_beyond` lets the search go past the tried range of an input (0.10 = 10% past each end; per input or for all; physical limits still apply). Proposals outside the tried range carry `beyond_tried_range`, the analysis reports `tried_ranges` and `allow_beyond`, and a `search_box` finding always says in plain words where Kalos searches and how to widen it (Finding 11).
+
 - Every batch has the model's best bet as P1 (`proposals[].pick`, `model_optimum`): the highest predicted value inside the search box. It replaces the proposal with the lowest prediction, or the proposal already within 5% of it. Each proposal says how its prediction compares with the best run (`predicted_vs_best`); a run predicted below the best says it is there to learn, not to win. Before, all five proposals were predicted below the best run on 4 of 4 study sheets.
 
 - README rewritten in plain words: what Kalos is, one round, the desktop app, the hosted mode, the evidence with the open-replay numbers verbatim (BO beats random clearly on 1 of 15 datasets), what Kalos does not do, every `KALOS_*` setting with its default and range, the branch and PR map. `tests/test_readme_env.py` fails when the settings table and the code disagree. `docs/ARCHITECTURE.md`, `deploy/RUNBOOK.md`, `deploy/compose.yaml` and `deploy/.env.example` no longer say the web app has no login or sends a static token: kalos-web `main` signs people in and mints a token per request; the desktop app uses a per-launch secret; the compose file has not been wired for sign-in yet.

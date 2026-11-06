@@ -529,6 +529,18 @@ only added; a field never changes meaning or disappears within a version.
   in the better direction), `likely_half_width`, `relation` (`better`,
   `about_best` = within the likely range, `worse`) and `plain`. A `worse` run
   says it is there to learn, not to win, and what it tests.
+- `tried_ranges`: the observed range of each continuous input. `feature_ranges`
+  stays the search box actually used; it equals `tried_ranges` unless
+  `roles.allow_beyond` widened it.
+- `allow_beyond`: `{default, per_input, applied}`. Set it in the column roles:
+  `"allow_beyond": 0.10` (10% of the tried range past each end, every input) or
+  `{"molasses_g_L": 0.25, "*": 0}`. Fractions 0 to 1; anything else is 400
+  `invalid_allow_beyond`. Hard physical limits still apply (pH 0-14, no negative
+  amounts). Roles persist with the campaign, so this is a per-campaign setting.
+- `proposals[].beyond_tried_range`: `[{feature, side, tried_limit, proposed, by,
+  fraction}]` for inputs a proposal sets outside the tried range.
+- `validation.findings[]` code `search_box` (info, always present): where
+  Kalos searches, in plain words, and how to widen it.
 
 ## Not in this slice
 

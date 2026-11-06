@@ -98,6 +98,7 @@ def _roles_and_profile(roles_json: str) -> tuple[Any, Any]:
         BIOPROCESS_PROFILE,
         GENERIC_PROFILE,
         ColumnRoles,
+        InvalidAllowBeyond,
         InvalidApplicabilityDistance,
         InvalidDirection,
     )
@@ -105,7 +106,7 @@ def _roles_and_profile(roles_json: str) -> tuple[Any, Any]:
     if roles_json.strip():
         try:
             return ColumnRoles.from_dict(json.loads(roles_json)), GENERIC_PROFILE
-        except (InvalidDirection, InvalidApplicabilityDistance) as exc:
+        except (InvalidDirection, InvalidApplicabilityDistance, InvalidAllowBeyond) as exc:
             raise UploadRejected(str(exc), code=exc.code) from None
     return None, BIOPROCESS_PROFILE
 
