@@ -52,9 +52,8 @@ def test_every_guide_code_has_a_why_line():
 
 
 # Glossary lines that use a claim word ("will", "caused"). Mirrored verbatim,
-# so any is pinned here and sent to the glossary owner; the list may only shrink.
-# (Three appeared when the review added because / led to to the claim words.)
-KNOWN_GLOSSARY_CLAIMS: set[str] = {"reliable", "provenance_metadata", "near_constant_input"}
+# so any is pinned here and sent to the glossary owner; the list stays empty.
+KNOWN_GLOSSARY_CLAIMS: set[str] = set()
 
 
 def test_why_lines_are_plain():

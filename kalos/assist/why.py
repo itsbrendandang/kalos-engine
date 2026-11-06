@@ -18,7 +18,7 @@ from __future__ import annotations
 
 GLOSSARY: dict[str, str] = {
     # Model verdict (reliability state)
-    'reliable': 'If the model puts your past runs in the right order, its suggestions are worth lab time; still measure each one, because a prediction is not a result.',
+    'reliable': 'If the model puts your past runs in the right order, its suggestions are worth lab time; still measure each one, since a prediction is not a result.',
     'not-yet': 'If the model cannot yet rank your past runs, its suggestions are closer to guesses, and you would spend runs on them.',
     'insufficient': 'With too few measured runs there is no way to tell whether the model is any good, so treat its suggestions as ideas to try, not predictions.',
     # Model checks (promotion gates)
@@ -49,7 +49,7 @@ GLOSSARY: dict[str, str] = {
     'duplicate_rows': 'A run entered twice counts double, so one lucky run can pull the model toward its recipe.',
     'missingness': 'Blank cells shrink what the model can learn from, and a column that is mostly blank teaches it almost nothing.',
     'outliers': 'A value far from the rest is either a real extreme run or a data-entry mistake; the model cannot tell which, and one mistake can bend its suggestions.',
-    'provenance_metadata': 'Without who ran it, when, and with which materials, a surprising result cannot be traced back to what led to it.',
+    'provenance_metadata': 'Without who ran it, when, and with which materials, a surprising result cannot be traced back to its source.',
     'replicate_adequacy': 'Runs that were never repeated hide how much your results vary, so a "best" run may just be a lucky one.',
     'controls_present': 'Without a control run there is no baseline, so a change in the result cannot be told apart from ordinary run-to-run variation.',
     'constant_columns': 'An input that never changes cannot show any effect, so the model learns nothing from it and cannot suggest changing it.',
@@ -144,7 +144,7 @@ GLOSSARY: dict[str, str] = {
     'dropped_rows': 'Runs with blank or unreadable cells were left out, so fewer runs teach the model than the sheet holds.',
     'header_row': 'If Kalos picked the wrong row as the column names, every column is misnamed and settings and results get mixed up.',
     'unnamed_column': 'A column with no name cannot be traced back to a setting or a result, so Kalos cannot use it.',
-    'near_constant_input': 'A setting that barely changed was held fixed, because the sheet cannot show its effect and any suggestion about it would be a guess.',
+    'near_constant_input': 'A setting that barely changed was held fixed: the sheet cannot show its effect, so any suggestion about it would be a guess.',
     'cv_ci_unavailable': 'With too few groups of runs there is no way to say how sure the check of the model is, so treat its score as rough.',
     'coverage_not_guaranteed': 'The likely range was checked on past runs, not on new recipes, so read it as a guide and not a promise about the next run.',
     'row_number_like': 'A column that counts rows is not a setting, so it was left out; used as an input, the model memorises runs instead of learning recipes.',
