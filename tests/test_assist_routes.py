@@ -441,3 +441,18 @@ def test_read_routes_do_not_rewrite_an_unchanged_index(env):
     tc.get("/api/assist/index/status", headers=H("a-read"))
     tc.post("/api/assist/ask", json={"question": "zebra saxophone", "campaign_id": cid}, headers=H("a-read"))
     assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+
+
+def test_ask_on_a_real_analysis_shape_is_not_a_500(env):
+    """sec-assist (and assist-web's report): real analyses carry `provenance` as the
+    per-column LIST; /ask used to raise AttributeError at index.py:184."""
+    tc, store, fake = env
+    cid = store.create_campaign(tenant="acme", name="Real", created_by="t")["id"]
+    store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant="acme", campaign_id=cid,
+               analysis={**ANALYSIS, "provenance": [{"name": "Methanol", "status": "kept_feature"}],
+                         "run": {"input_sha256": "ab" * 32}})
+    fake.reply = "Nothing [G]."
+    r = tc.post("/api/assist/ask", json={"question": "which inputs went with lipase titer", "campaign_id": cid},
+                headers=H("a-read"))
+    assert r.status_code == 200, r.text
+    assert tc.get("/api/assist/index/status", headers=H("a-read")).json()["chunks"] > 0
