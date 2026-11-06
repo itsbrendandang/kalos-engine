@@ -6,6 +6,8 @@ Newest first.
 
 ### Added - desktop-engine-2 (first-time-user study)
 
+- `GET /api/campaigns/{id}/rows`: the campaign's rows (upload and folded rounds) with `_origin`, `_round`, `_run_id`, `_kind` (`measured`), paged.
+
 - `POST /api/preflight`: the column reading (`columns`, `provenance`, target and inputs) and the sheet check, with the same refusals as an upload, without fitting or storing anything.
 
 - A refused verdict also clears `model_optimum` (no best bet without proposals). `tests/test_firsttime_flow.py` runs the study path end to end with the real engine.

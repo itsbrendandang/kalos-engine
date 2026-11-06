@@ -158,6 +158,7 @@ def _route_matrix(run_id: str) -> list[tuple[str, str, dict]]:
         ("POST", "/api/campaigns/{cid}/upload",
          {"files": {"file": ("runs.csv", _csv(_df()), "text/csv")}}),
         ("GET", "/api/campaigns/{cid}/analysis", {}),
+        ("GET", "/api/campaigns/{cid}/rows", {}),
         ("POST", "/api/campaigns/{cid}/runs", {"json": {"recipes": [_recipe()]}}),
         ("POST", "/api/campaigns/{cid}/runs/" + run_id + "/result", {"json": {"value": 9.9}}),
         ("POST", "/api/campaigns/{cid}/reanalyze", {}),

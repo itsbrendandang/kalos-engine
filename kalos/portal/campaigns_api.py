@@ -353,6 +353,32 @@ def campaign_analysis(
     return JSONResponse({"has_data": True, **data})
 
 
+@router.get("/api/campaigns/{campaign_id}/rows")
+def campaign_rows_route(
+    campaign_id: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(2_000, ge=1, le=10_000),
+    principal: Principal = Depends(require_scope(READ)),
+    store: CampaignStore = Depends(get_campaign_store),
+) -> JSONResponse:
+    """Every row this campaign's model learns from: the uploaded sheet and each
+    measured run folded in by a reanalyze, labelled with `_origin` (`upload` or
+    `round`), `_round`, `_run_id`, `_kind` (`measured`) and `_index`
+    (kalos/portal/campaign_rows.py). 404 outside the caller's tenant."""
+    from kalos.portal.campaign_rows import campaign_rows
+
+    if not _valid_campaign_id(campaign_id):
+        return campaign_not_found_response()
+    try:
+        state = store.get(tenant=principal.tenant, campaign_id=campaign_id)
+    except CampaignNotFound:
+        return campaign_not_found_response()
+    if not state:
+        return JSONResponse({"has_data": False, "rows": [], "n_rows": 0})
+    return JSONResponse({"has_data": True, "campaign_id": campaign_id,
+                         **campaign_rows(state, offset=offset, limit=limit)})
+
+
 @router.post("/api/campaigns/{campaign_id}/runs")
 def start_runs(
     campaign_id: str,

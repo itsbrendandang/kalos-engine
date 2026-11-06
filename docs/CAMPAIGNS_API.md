@@ -407,6 +407,20 @@ wins. A reanalyze keeps a roles-set threshold.
 Proposed values are rounded to 3 places and then clipped into the box, so a
 recipe never sits outside `feature_ranges` (replay F9).
 
+### Campaign rows (additive route)
+
+`GET /api/campaigns/{id}/rows` (read scope; 404 outside the caller's tenant,
+byte-identical to a missing id) returns every row the campaign's model learns
+from, in order: the uploaded sheet, then each measured run folded in by a
+reanalyze. Fields: `target`, `columns`, `n_rows`, `n_upload`, `n_from_rounds`,
+`offset`, `limit` (query `offset`, `limit` 1-10,000, default 2,000), `rows`,
+`kinds`, `kinds_note`. Each row carries its values plus `_origin` (`upload` or
+`round`), `_round` (0 for the upload, 1 for runs started before the first
+reanalyze, ...; null when the campaign was folded before this was recorded),
+`_run_id` (the started run, or null), `_upload_row` (1-based position in the
+uploaded sheet, upload rows only), `_kind` (`measured` for every row today;
+simulated and synthetic rows are not stored in a campaign) and `_index`.
+
 ### Preflight (additive route)
 
 `POST /api/preflight` takes the same multipart fields as `POST /api/run`
