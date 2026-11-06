@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import numpy as np
-from scipy.stats import spearmanr
+from scipy.stats import chi2, spearmanr
 
 # Per-row recipe keys. An ndarray is included because `kalos.core.splits.
 # row_hash_groups` - the canonical grouper callers should be passing - returns
@@ -43,7 +43,23 @@ ICC_GAIN_FLOOR = 0.05
 # the signal-to-noise verdict; below that, changing the scale every reported
 # number lives on is not worth it.
 
-__all__ = ["aggregate_replicates", "estimate_noise_floor", "heteroscedasticity_report", "noise_report"]
+__all__ = [
+    "aggregate_replicates",
+    "estimate_noise_floor",
+    "heteroscedasticity_report",
+    "noise_report",
+    "pooled_noise_floor",
+    "shrunken_recipe_variances",
+]
+
+NOISE_CI_LEVEL = 0.95
+# Coverage of the chi-square interval on the pooled assay variance.
+
+PER_RECIPE_DF0 = 4.0
+# Prior degrees of freedom when shrinking a recipe's own variance toward the
+# pooled one: (df_g * s_g^2 + DF0 * sigma^2) / (df_g + DF0). Four means a
+# recipe with 5 replicates (df 4) gets half its own variance and half the
+# pooled one. A convention, stated in the analysis (`noise.per_recipe.df0`).
 
 
 def _group_indices_from_keys(keys: GroupKeys) -> list[np.ndarray]:
@@ -187,6 +203,51 @@ def estimate_noise_floor(
     if not np.any(replicated):
         return float("nan")
     return float(y_var[replicated].mean())
+
+
+def pooled_noise_floor(y_var: np.ndarray, n_reps: np.ndarray) -> dict:
+    """Degrees-of-freedom-weighted pooled assay variance with a chi-square CI.
+
+    `var_pooled = sum((n_g - 1) * s_g^2) / sum(n_g - 1)` over recipes with 2+
+    replicates, `df = sum(n_g - 1)`. Under normal, equal-variance noise
+    `df * var_pooled / sigma^2` is chi-square with `df` degrees of freedom, so
+    the 95% interval for sigma^2 is
+    `[df * var_pooled / chi2.ppf(0.975, df), df * var_pooled / chi2.ppf(0.025, df)]`
+    and the interval for sigma is its square root. Differs from the
+    mean-of-variances `noise_var` only when recipes have unequal replicate
+    counts. All values are `nan` (df 0) when no recipe is replicated.
+    """
+    y_var = np.asarray(y_var, dtype=float)
+    n_reps = np.asarray(n_reps, dtype=int)
+    rep = n_reps >= 2
+    df = int((n_reps[rep] - 1).sum())
+    nan = float("nan")
+    if df <= 0:
+        return {"var_pooled": nan, "df": 0, "var_ci95": [nan, nan], "sd_ci95": [nan, nan]}
+    var_pooled = float(((n_reps[rep] - 1) * y_var[rep]).sum() / df)
+    alpha = 1.0 - NOISE_CI_LEVEL
+    lo = df * var_pooled / float(chi2.ppf(1.0 - alpha / 2.0, df))
+    hi = df * var_pooled / float(chi2.ppf(alpha / 2.0, df))
+    return {
+        "var_pooled": var_pooled,
+        "df": df,
+        "var_ci95": [lo, hi],
+        "sd_ci95": [float(np.sqrt(lo)), float(np.sqrt(hi))],
+    }
+
+
+def shrunken_recipe_variances(
+    y_var: np.ndarray, n_reps: np.ndarray, sigma2: float, *, df0: float = PER_RECIPE_DF0
+) -> np.ndarray:
+    """Each recipe's assay variance, shrunk toward the pooled `sigma2`.
+
+    `(df_g * s_g^2 + df0 * sigma2) / (df_g + df0)` with `df_g = n_g - 1`; a
+    singleton (df 0) gets `sigma2`. The variance of a single measurement, not of
+    the recipe mean: divide by `n_reps` for that.
+    """
+    y_var = np.asarray(y_var, dtype=float)
+    dfg = np.maximum(np.asarray(n_reps, dtype=float) - 1.0, 0.0)
+    return (dfg * y_var + df0 * float(sigma2)) / (dfg + df0)
 
 
 def heteroscedasticity_report(
@@ -368,6 +429,8 @@ def noise_report(
         the fraction of total variance attributable to real recipe-to-recipe
         differences rather than assay noise; `nan` if either input is `nan`
         or the denominator is 0.
+      - `noise_var_pooled`, `noise_df`, `noise_var_ci95`, `noise_sd_ci95`: see
+        `pooled_noise_floor`.
     """
     n_rows = int(np.asarray(X).shape[0])
     X_nc, y_nc, groups_nc, n_copies = _without_exact_copies(
@@ -398,4 +461,8 @@ def noise_report(
         "icc": icc,
         # Exact copies removed before the statistics above; they are not replicates.
         "n_exact_duplicates": int(n_copies),
+        # Degrees-of-freedom-weighted pooled variance, its df and 95% chi-square
+        # intervals for sigma^2 and sigma (`pooled_noise_floor`). `noise_var`
+        # above keeps its meaning (mean of the per-recipe variances).
+        **{f"noise_{k}": v for k, v in pooled_noise_floor(y_var, n_reps).items()},
     }

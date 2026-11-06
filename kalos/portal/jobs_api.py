@@ -56,6 +56,7 @@ from kalos.portal.limits import (
 )
 from kalos.portal.migrate import CAMPAIGN_ID_PATTERN
 from kalos.portal.pipeline import preflight_upload
+from kalos.portal.why_lines import coded_body
 
 log = logging.getLogger("kalos.portal")
 
@@ -232,7 +233,7 @@ def _job_error_response(exc: CampaignError) -> JSONResponse:
     if isinstance(exc, jobs.JobsDisabled):
         return JSONResponse({"error": str(exc), "code": "service_unavailable"}, status_code=503)
     if isinstance(exc, (jobs.UploadPending, jobs.CampaignHasRuns)):
-        return JSONResponse({"error": str(exc), "code": exc.code}, status_code=409)
+        return JSONResponse(coded_body(str(exc), exc.code), status_code=409)
     if isinstance(exc, (jobs.QueueFull, jobs.EngineQueueFull)):
         return JSONResponse(
             {"error": str(exc), "code": "rate_limited"}, status_code=429,

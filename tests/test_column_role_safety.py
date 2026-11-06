@@ -62,10 +62,12 @@ def test_pichia_like_default_roles_exclude_row_index_and_post_target_od():
     }
 
 
-def test_carbon_conc_still_dropped_when_target_is_not_given():
+def test_carbon_conc_is_kept_when_target_is_not_given():
+    """Owner decision (desktop-engine-2): a concentration word is not outcome
+    evidence, whether or not the target was named."""
     df = _parse_upload(_pichia_like_csv())
     out = _safety(df, None)
-    assert "Carbon_conc" not in out.cont_feats
+    assert "Carbon_conc" in out.cont_feats
 
 
 def test_named_consecutive_row_number_is_excluded_but_unsorted_integer_input_is_not():
@@ -169,21 +171,29 @@ def test_a_declared_row_number_like_feature_is_kept():
     assert out.cont_feats == ["Line", "pH"] and "Line" not in out.overrides
 
 
-def test_outcome_like_column_before_the_target_is_excluded_by_default():
-    """Owner decision: a column named like a run measurement is left out of the
-    fit even when it sits before the target, with a code and a reason."""
+def test_measurement_names_before_the_target_stay_inputs_and_are_flagged():
+    """Owner decision (desktop-engine-2): before the target, measurement words
+    alone (lactate, viability, OD, ammonium) do not exclude a column: it stays an
+    input with an info finding to check it. An outcome word excludes it."""
     rng = np.random.default_rng(6)
     n = 12
     df = pd.DataFrame({
         "Lactate_end": rng.uniform(1, 5, n), "Viability_pct": rng.uniform(1, 9, n),
+        "ammonium_g_L": rng.uniform(1, 9, n), "Yield_prev": rng.uniform(1, 9, n),
+        "biomass_g_L": rng.uniform(1, 9, n),
+        "Final Urea (M)": rng.uniform(1, 4, n), "Final_OD": rng.uniform(1, 4, n),
         "pH": rng.uniform(6, 7.5, n), "titer": rng.uniform(1, 5, n),
     })
     out = _safety(df, "titer")
-    assert out.cont_feats == ["pH"]
-    assert out.overrides["Lactate_end"] == ("dropped_output", "outcome_like_name")
-    assert out.overrides["Viability_pct"] == ("dropped_output", "outcome_like_name")
-    codes = {(f.code, f.column) for f in out.findings}
-    assert {("outcome_like_name", "Lactate_end"), ("outcome_like_name", "Viability_pct")} <= codes
+    assert out.cont_feats == [
+        "Lactate_end", "Viability_pct", "ammonium_g_L", "biomass_g_L", "Final Urea (M)", "pH",
+    ]
+    assert "Yield_prev" not in out.cont_feats  # an outcome word: left out by name
+    assert out.overrides["Final_OD"] == ("dropped_output", "outcome_like_name")
+    flagged = {f.column for f in out.findings if f.code == "possibly_measured_after_run"}
+    # "Final" with a unit is kept but ambiguous, so it is flagged too.
+    assert flagged == {"Lactate_end", "Viability_pct", "ammonium_g_L", "biomass_g_L", "Final Urea (M)"}
+    assert all(f.severity == "warning" for f in out.findings if f.code == "possibly_measured_after_run")
 
 
 def test_a_declared_role_keeps_an_outcome_like_column_before_the_target():
@@ -197,7 +207,7 @@ def test_a_declared_role_keeps_an_outcome_like_column_before_the_target():
                for f in out.findings)
 
 
-def test_outcome_like_before_target_in_a_real_analysis_is_not_fitted():
+def test_outcome_word_before_target_in_a_real_analysis_is_not_fitted():
     pytest.importorskip("torch")
     from kalos.portal.analysis import _analyze
 
@@ -205,13 +215,104 @@ def test_outcome_like_before_target_in_a_real_analysis_is_not_fitted():
     n = 14
     ph = rng.uniform(6, 7.5, n)
     titer = 3 + ph + rng.normal(0, 0.2, n)
-    df = pd.DataFrame({"VCD_end": titer * 2 + rng.normal(0, 0.1, n), "pH": ph,
+    df = pd.DataFrame({"Harvest_VCD": titer * 2 + rng.normal(0, 0.1, n), "pH": ph,
                        "temp": rng.uniform(30, 37, n), "titer": titer})
     out = _analyze(df, target="titer")
-    assert "VCD_end" not in out["features"]
+    assert "Harvest_VCD" not in out["features"]
     prov = {r["name"]: r for r in out["provenance"]}
-    assert prov["VCD_end"]["status"] == "dropped_output"
-    assert prov["VCD_end"]["reason"] == "outcome_like_name"
+    assert prov["Harvest_VCD"]["status"] == "dropped_output"
+    assert prov["Harvest_VCD"]["reason"] == "outcome_like_name"
     cols = {c["name"]: c for c in out["columns"]}
-    assert cols["VCD_end"]["kind"] == "outcome_like" and cols["VCD_end"]["used_in_fit"] is False
+    assert cols["Harvest_VCD"]["kind"] == "outcome_like"
+    assert cols["Harvest_VCD"]["used_in_fit"] is False
+    assert cols["Harvest_VCD"]["finding_code"] == "outcome_like_name"
     assert "outcome_like_name" in {f["code"] for f in out["validation"]["findings"]}
+
+def test_duplicated_rows_do_not_hide_a_row_number_and_a_headerless_text_column_is_not_an_input():
+    """First-time-user study, Finding 2 (my_messy_sheet): a `Row` counter whose
+    rows were pasted twice, and a scratch column of letters with no header."""
+    pytest.importorskip("botorch")
+    from kalos.portal.analysis import _analyze
+    from kalos.portal.uploads import parse_upload
+
+    lines = ["Row,Strain,Glucose_gL,Titer,,Temp_C"]
+    rng = np.random.default_rng(0)
+    rows = []
+    for i in range(1, 17):
+        strain = ["WT", "dPEP4", "clone7"][i % 3]
+        glu = [10, 20, 30, 40, 50][i % 5]
+        temp = [28, 30, 32][i % 3]
+        titer = round(10 + 0.1 * glu - 0.3 * abs(temp - 31) + rng.normal(0, 0.5), 2)
+        rows.append(f"{i},{strain},{glu},{titer},{'abc'[i % 3]},{temp}")
+    rows += [rows[3], rows[9]]  # two rows entered twice
+    raw = ("\n".join(lines + rows) + "\n").encode()
+    df = parse_upload(raw, filename="messy.csv").df
+    out = _analyze(df, "Titer")
+    assert "Row" not in out["features"]
+    headerless = [c for c in out["columns"] if c["reason"] == "headerless"]
+    assert {c["name"] for c in headerless} >= {"Row"} or any(
+        c["name"] == "Row" and c["kind"] == "row_number" for c in out["columns"]
+    )
+    blank_header = next(c for c in out["columns"] if c["name"].startswith("column "))
+    assert blank_header["used_in_fit"] is False and blank_header["kind"] == "category"
+    assert blank_header["name"] not in out["features"]
+    codes = {f["code"] for f in out["validation"]["findings"]}
+    assert {"row_number_column", "headerless_column"} <= codes
+    assert out["categorical_features"] == ["Strain"]
+
+
+
+@pytest.mark.parametrize("name", ["IVCD_e6", "mAb_g_L", "IgG_titre_x", "lactate_end", "VCD_day14",
+                                  "peak_VCD", "residual_glucose_g_L"])
+def test_new_measurement_words_flag_before_the_target(name):
+    """Security review S1: IVCD, mAb, IgG, _end, dayN, peak, residual are
+    measurement words: flagged (warning) before the target, excluded after it."""
+    rng = np.random.default_rng(3)
+    n = 12
+    before = pd.DataFrame({name: rng.uniform(1, 9, n), "pH": rng.uniform(6, 7.5, n),
+                           "Titer": rng.uniform(1, 5, n)})
+    out = _safety(before, "Titer")
+    if "titre" in name.lower():
+        assert name not in out.cont_feats  # an outcome word wins
+        return
+    assert name in out.cont_feats
+    assert any(f.code == "possibly_measured_after_run" and f.column == name
+               and f.severity == "warning" for f in out.findings)
+    after = pd.DataFrame({"pH": rng.uniform(6, 7.5, n), "Titer": rng.uniform(1, 5, n),
+                          name: rng.uniform(1, 9, n)})
+    assert name not in _safety(after, "Titer").cont_feats
+
+
+def test_a_flagged_top_driver_holds_the_verdict_at_not_yet():
+    """Planted (security review S1): VCD_day14 tracks the target; before the fix
+    the verdict read 'reliable' (0.995). It must not."""
+    pytest.importorskip("botorch")
+    from kalos.portal.analysis import _analyze
+
+    rng = np.random.default_rng(0)
+    n = 30
+    df = pd.DataFrame({"Glucose": rng.uniform(1, 10, n), "Temp": rng.uniform(30, 37, n)})
+    y = np.sin(df["Glucose"]) * 3 + rng.normal(0, 1.5, n)
+    df["VCD_day14"] = y + rng.normal(0, 0.2, n)
+    df["Titer"] = y
+    out = _analyze(df, "Titer")
+    assert out["verdict"]["state"] != "reliable"
+    assert any(r["code"] == "possibly_measured_driver" for r in out["verdict"]["reasons"])
+
+
+def test_declaring_the_inputs_releases_the_hold():
+    """Ticking the flagged input as a setting (declared roles) is the lab's
+    confirmation: no flag, no hold."""
+    pytest.importorskip("botorch")
+    from kalos.domains import ColumnRoles
+    from kalos.portal.analysis import _analyze
+
+    rng = np.random.default_rng(0)
+    n = 30
+    df = pd.DataFrame({"Glucose": rng.uniform(1, 10, n), "Temp": rng.uniform(30, 37, n)})
+    y = np.sin(df["Glucose"]) * 3 + rng.normal(0, 1.5, n)
+    df["VCD_day14"] = y + rng.normal(0, 0.2, n)
+    df["Titer"] = y
+    roles = ColumnRoles.from_dict({"target": "Titer", "features": ["Glucose", "Temp", "VCD_day14"]})
+    out = _analyze(df, "Titer", roles=roles)
+    assert not any(r["code"] == "possibly_measured_driver" for r in out["verdict"]["reasons"])

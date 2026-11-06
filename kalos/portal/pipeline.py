@@ -33,6 +33,7 @@ from typing import Any
 
 import pandas as pd
 
+from kalos.portal.lineage import new_analysis_id, roles_used
 from kalos.portal.uploads import (
     ParsedUpload,
     UploadRejected,
@@ -98,14 +99,22 @@ def _roles_and_profile(roles_json: str) -> tuple[Any, Any]:
         BIOPROCESS_PROFILE,
         GENERIC_PROFILE,
         ColumnRoles,
+        InvalidAllowBeyond,
         InvalidApplicabilityDistance,
         InvalidDirection,
+        InvalidExplorationDesign,
+        InvalidLinearConstraint,
+        InvalidPerRecipeNoise,
+        InvalidSpecs,
     )
 
     if roles_json.strip():
         try:
             return ColumnRoles.from_dict(json.loads(roles_json)), GENERIC_PROFILE
-        except (InvalidDirection, InvalidApplicabilityDistance) as exc:
+        except (
+            InvalidDirection, InvalidApplicabilityDistance, InvalidAllowBeyond, InvalidPerRecipeNoise,
+            InvalidExplorationDesign, InvalidLinearConstraint, InvalidSpecs,
+        ) as exc:
             raise UploadRejected(str(exc), code=exc.code) from None
     return None, BIOPROCESS_PROFILE
 
@@ -149,6 +158,36 @@ def preflight_upload(
     return parsed
 
 
+def preflight_report(
+    raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
+    *, sheet: str | None = None, direction: str | None = None,
+) -> dict[str, Any]:
+    """`POST /api/preflight`: how Kalos reads the sheet, without a fit. The same
+    parse and the same pre-fit refusals as an upload (`_analyze(...,
+    preflight_only=True)`), plus the column reading (`columns`, `provenance`)
+    and the sheet check (`validation`). Torch is not imported."""
+    from kalos.portal.analysis import _analyze, _anonymize_result
+
+    parsed = _parse(raw, filename, sheet, anonymize)
+    try:
+        roles, profile = _roles_and_profile(roles_json)
+        kwargs: dict[str, Any] = {"anonymize": anonymize, "profile": profile,
+                                  "preflight_only": True}
+        if roles is not None:
+            kwargs["roles"] = roles
+        if direction:
+            kwargs["direction"] = direction
+        report = _analyze(parsed.df, target, **kwargs)
+    except Exception as exc:
+        annotated = _annotated(parsed, exc, anonymize)
+        if annotated is exc:
+            raise
+        raise annotated from exc
+    if anonymize:
+        report = _anonymize_result(report)
+    return {**report, **parsed.context()}
+
+
 # --- same upload, same analysis: an in-process result cache ------------------ #
 # A re-upload of identical bytes with identical settings (the "replace" retry, a
 # page reload, the desktop app re-sending its sheet) returned the same seeded
@@ -157,7 +196,8 @@ def preflight_upload(
 # same upload is not refit and gives the same proposals every time.
 #
 # The key covers the tenant (one tenant never gets another's analysis, even for
-# the same bytes) and everything the analysis reads: the uploaded bytes, the file
+# the same bytes), the campaign it is published in (two campaigns never share
+# one `analysis_id`) and everything the analysis reads: the uploaded bytes, the file
 # name (it picks the parser), the sheet, target, roles, anonymize, the profile,
 # the engine version, the analyze function, and every KALOS_* setting (the
 # validation mode, the row caps, ...). Only successful analyses are kept; a
@@ -215,6 +255,13 @@ class _AnalysisCache:
             while len(self._entries) > size:
                 self._entries.popitem(last=False)
 
+    def move(self, src: str, dst: str) -> None:
+        """Re-file the entry under `src` as `dst` (nothing when there is none)."""
+        with self._lock:
+            entry = self._entries.pop(src, None)
+            if entry is not None:
+                self._entries[dst] = entry
+
     def clear(self) -> None:
         with self._lock:
             self._entries.clear()
@@ -223,15 +270,51 @@ class _AnalysisCache:
 ANALYSIS_CACHE = _AnalysisCache()
 
 
+def upload_cache_key(
+    raw: bytes, tenant: str | None, campaign_id: str | None, filename: str, sheet: str | None,
+    target: str | None, roles_json: str, anonymize: bool, profile_name: str,
+    direction: str | None,
+) -> str:
+    """The `ANALYSIS_CACHE` key of an upload analysis."""
+    return ANALYSIS_CACHE.key(
+        raw, tenant, campaign_id, filename, sheet, target, roles_json, bool(anonymize),
+        profile_name, direction or None,
+    )
+
+
+def adopt_cached_upload(
+    raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
+    *, sheet: str | None = None, direction: str | None = None, tenant: str | None = None,
+    campaign_id: str,
+) -> None:
+    """After an upload computed with no campaign (the tenant's first) created
+    `campaign_id`, re-file its cache entry under that campaign. Moved, not
+    copied: a later upload with no campaign is a new campaign and must not get
+    this analysis's id."""
+    try:
+        _, profile = _roles_and_profile(roles_json)
+    except Exception:  # noqa: BLE001 - nothing was cached for unreadable roles
+        return
+    ANALYSIS_CACHE.move(
+        upload_cache_key(raw, tenant, None, filename, sheet, target, roles_json, anonymize,
+                         profile.name, direction),
+        upload_cache_key(raw, tenant, campaign_id, filename, sheet, target, roles_json,
+                         anonymize, profile.name, direction),
+    )
+
+
 def compute_upload_analysis(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
     *, sheet: str | None = None, progress: ProgressFn | None = None,
     analyze: Callable[..., dict] | None = None, direction: str | None = None,
-    tenant: str | None = None,
+    tenant: str | None = None, campaign_id: str | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """parse -> `_analyze` -> the response dict. Returns `(df, result)`; writes
     nothing. `analyze` defaults to `kalos.portal.analysis._analyze` (the sync
-    route passes `kalos.portal.app._analyze` so its tests can stub it)."""
+    route passes `kalos.portal.app._analyze` so its tests can stub it).
+    `campaign_id` is the campaign the result will be published in (None: the
+    tenant has no campaign yet); it is part of the cache key, so two campaigns
+    never share an `analysis_id`."""
     if analyze is None:
         from kalos.portal.analysis import _analyze
 
@@ -252,10 +335,11 @@ def compute_upload_analysis(
             kwargs["roles"] = roles
         profile_name = profile.name
         # Every argument the analysis receives is in the key (progress aside),
-        # and the tenant, so a cached analysis is never served across tenants.
-        cache_key = ANALYSIS_CACHE.key(
-            raw, tenant, filename, sheet, target, roles_json, bool(anonymize), profile_name,
-            direction or None,
+        # the tenant, so a cached analysis is never served across tenants, and the
+        # campaign, so two campaigns never share one `analysis_id`.
+        cache_key = upload_cache_key(
+            raw, tenant, campaign_id, filename, sheet, target, roles_json, anonymize,
+            profile_name, direction,
         )
         cached = ANALYSIS_CACHE.get(cache_key, analyze)
         if cached is not None:
@@ -263,7 +347,10 @@ def compute_upload_analysis(
                 progress("proposing", 0.8)
             result = {**cached, "analysis_cache": {"hit": True}}
         else:
-            result = analyze(parsed.df, target, profile=profile, **kwargs)
+            # The id is minted with the fit and cached with it: a repeat of the
+            # same upload is the same analysis (kalos/portal/lineage.py).
+            result = {**analyze(parsed.df, target, profile=profile, **kwargs),
+                      "analysis_id": new_analysis_id()}
             ANALYSIS_CACHE.put(cache_key, analyze, result)
             result = {**result, "analysis_cache": {"hit": False}}
     except Exception as exc:
@@ -289,30 +376,35 @@ def compute_upload_analysis(
         direction=result.get("direction"),
     )
     run = record.to_dict()
-    return parsed.df, {**result, **parsed.context(), "run": run,
-                       "proposal_provenance": _provenance(run, result)}
+    out = {**result, **parsed.context(), "run": run,
+           "proposal_provenance": _provenance(run, result)}
+    return parsed.df, {**out, "roles_used": roles_used(out)}
 
 
 def attach_reanalyze_run(
     df: pd.DataFrame, result: dict, *, anonymize: bool, pending_runs: int,
+    roles_json: str = "", profile: str = "bioprocess",
 ) -> dict:
     """The `run` block for a campaign re-analysis (`kind="reanalyze"`): the same
     fields an upload gets, with the input hashed over the folded dataset `df`
-    and the number of in-flight runs the batch was told about. Returns a new
-    dict; `result` is not mutated."""
+    and the number of in-flight runs the batch was told about. `roles_json` and
+    `profile` are the campaign's stored roles and the profile they imply.
+    Returns a new dict; `result` is not mutated."""
     from kalos.portal import run_record
     from kalos.portal.analysis import ANALYZE_SEED
 
     record = run_record.build(
-        run_record.fold_bytes(df), None, None, result.get("target"), "", anonymize,
-        "bioprocess", TORCH_THREADS, int(result.get("seed", ANALYZE_SEED)),
+        run_record.fold_bytes(df), None, None, result.get("target"), roles_json, anonymize,
+        profile, TORCH_THREADS, int(result.get("seed", ANALYZE_SEED)),
         len(df), int(result["d"]), kind="reanalyze", pending_runs=pending_runs,
         torch_threads_actual=torch_threads_actual(),
         data_drops=run_record.drops_summary(result),
         direction=result.get("direction"),
     )
     run = record.to_dict()
-    return {**result, "run": run, "proposal_provenance": _provenance(run, result)}
+    out = {**result, "run": run, "proposal_provenance": _provenance(run, result),
+           "analysis_id": new_analysis_id()}
+    return {**out, "roles_used": roles_used(out)}
 
 
 def _provenance(run: dict, result: dict) -> dict:

@@ -24,7 +24,7 @@ below), which the first legacy upload creates. A campaign made with
 | Body errors | `400 {"error": "invalid request body: <field>: <reason>"}`. The same envelope as `/api/campaign/*`, and the submitted value is never echoed. |
 | Body size | JSON bodies have the default cap (`KALOS_MAX_REQUEST_BYTES`, 1 MiB). `POST /api/campaigns/{id}/upload` and `POST /api/campaigns/{id}/jobs` have the upload cap (`KALOS_MAX_UPLOAD_MB` + multipart allowance); a job also has its tenant limit (`KALOS_JOB_MAX_UPLOAD_BYTES`). Over the cap: `413`. |
 | Heavy work | Upload and reanalyze share the engine's analysis limiter: a global cap and a per-tenant cap (`KALOS_JOB_WORKERS`, `KALOS_JOB_PER_TENANT`, docs/JOBS.md). When it is full for this caller they return `503` with `Retry-After`. Background jobs share the same limiter. |
-| Audit | Create, rename, archive, unarchive, upload, start, result and reanalyze each write an `audit_log` row: tenant, subject, auth method (`bearer`, or `anonymous` in open mode), action, campaign id and outcome (`ok` or `http_<status>`). The row never holds a token, a body, a filename or uploaded data. The campaign id is left empty on a 404. Auditing is best-effort and never fails the request, except for a successful `campaign.result`: that row is written in the same transaction as the change, so a result that cannot be audited is not recorded (`500`). Its `detail` is JSON: `run_id`, `version`, `old_value` (null for the first value), `new_value`, `reason` and `actor`. |
+| Audit | Create, rename, archive, unarchive, upload, start, result and reanalyze each write an `audit_log` row: tenant, subject, auth method (`bearer`, or `anonymous` in open mode), action, campaign id and outcome (`ok` or `http_<status>`). The row never holds a token, a body, a filename or uploaded data. The campaign id is left empty on a 404. Auditing is best-effort and never fails the request, except for a successful `campaign.result`: that row is written in the same transaction as the change, so a result that cannot be audited is not recorded (`500`). Its `detail` is JSON: `run_id`, `version`, `old_value` (null for the first value), `new_value`, `reason` and `actor`. A successful upload (`run.upload`, `campaign.upload`) has a `detail` line naming the declared-roles settings it set, changed or cleared, for example `settings: allow_beyond 0.1 -> 0.2; features changed`. Old -> new values are written only for `allow_beyond` (a single number), `direction`, `per_recipe_noise`, `exploration_design` and `applicability_distance`; every other setting is named by its key only, so no column name, term, limit or label reaches the audit log. |
 
 ## Campaign object
 
@@ -350,6 +350,16 @@ proposals did not change.
   as `passed`; `not_judged` gates do not block and are not counted here.
 - `promotion.unmeasured`: the gate keys that blocked only because their metric
   was missing or NaN.
+- `promotion.checks`: one entry per check, in this order:
+  `surrogate_spearman`, `group_mean_margin`, `feasibility_auc`, `ece`, `brier`.
+  Each is `{code, state, checks, why, advice, optional}`. `state` is `passed`,
+  `failed`, `not_measurable` (the check could not run on this sheet) or
+  `not_judged` (too little data; it does not block). `checks`, `why` and
+  `advice` are plain sentences (`advice` is `null` when there is nothing to
+  do). The texts live in one table, `kalos/portal/gate_text.py`; codes match
+  the assistant's glossary. `feasibility_auc`, `ece` and `brier` are
+  `optional: true`: they only matter if some recipes can fail outright, and
+  the advice never asks for failed runs on purpose.
 - Group-mean floor gate: the surrogate must beat the leave-one-row-out recipe
   mean on the same out-of-fold rows by more than a paired bootstrap's
   uncertainty (lower bound of the 95% CI of the Spearman difference above 0).
@@ -397,6 +407,50 @@ wins. A reanalyze keeps a roles-set threshold.
 Proposed values are rounded to 3 places and then clipped into the box, so a
 recipe never sits outside `feature_ranges` (replay F9).
 
+### Campaign rows (additive route)
+
+`GET /api/campaigns/{id}/rows` (read scope; 404 outside the caller's tenant,
+byte-identical to a missing id) returns every row the campaign's model learns
+from, in order: the uploaded sheet, then each measured run folded in by a
+reanalyze. Fields: `target`, `columns`, `n_rows`, `n_upload`, `n_from_rounds`,
+`offset`, `limit` (query `offset`, `limit` 1-10,000, default 2,000), `rows`,
+`kinds`, `kinds_note`. Each row carries its values plus `_origin` (`upload` or
+`round`), `_round` (0 for the upload, 1 for runs started before the first
+reanalyze, ...; null when the campaign was folded before this was recorded),
+`_run_id` (the started run, or null), `_upload_row` (1-based position in the
+uploaded sheet, upload rows only), `_kind` (`measured`, or `no_result` for an
+upload row whose target cell is blank, which the model does not learn from;
+simulated and synthetic rows are not stored in a campaign) and `_index`.
+A sheet column named `_origin`, `_round`, `_run_id`, `_kind`, `_index` or
+`_upload_row` is shown as `<name> (sheet)` (`(sheet 2)`, ... if that is taken),
+so neither it nor the label hides the other; `renamed_columns` lists
+`[{column, shown_as}]` and `renamed_note` says so in plain words (null when
+nothing was renamed). `columns` uses the shown names.
+
+### Preflight (additive route)
+
+`POST /api/preflight` takes the same multipart fields as `POST /api/run`
+(`file`, `target`, `roles`, `sheet`, `anonymize`, `direction`; write scope) and
+answers how Kalos reads the sheet without fitting a model: `preflight: true`,
+`target`, `targets`, `features`, `categorical_features`, `group_col`,
+`fixed_inputs`, `n_rows`, `n_usable`, `n_dropped_incomplete`,
+`n_censored_excluded`, `header_row`, `orientation`, `provenance`, `columns`
+(see "Column kinds"), `validation`, `contract_version`, `engine_version`, and
+for workbooks `sheets` / `sheet_used`. It refuses exactly what an upload
+refuses, with the same 400 codes (including `infeasible_linear_constraints`,
+checked on the search box). Nothing is stored, no model is fit, torch is
+not loaded, and the analysis slot is not taken, so it answers in about a
+second. The fit-dependent findings (`search_box`, `cv_ci_unavailable`) only
+come with the analysis.
+
+Preflight needs the write scope, not read (owner decision); a read-only token
+gets 403 `forbidden` (tests/test_preflight_scope.py). It stores nothing, but
+it takes a whole sheet from the caller and parses it: the same untrusted-file
+work, size caps and parser exposure as an upload, and it reflects the sheet's
+column names and cells back. A read token is for looking at campaigns that
+already exist, so it never sends Kalos a file. Every route that accepts a file
+needs write.
+
 ### Column kinds (additive)
 
 `columns`: one entry per uploaded column, in sheet order.
@@ -436,7 +490,12 @@ recipe never sits outside `feature_ranges` (replay F9).
   listed in `columns`, in its sheet position: `kind` `constant`, `reason`
   `all_blank`, `used_in_fit` false, `n_values` 0. `provenance`, `features`, `categorical_features` and
   `feature_ranges` are unchanged; `columns` is additive.
-- `finding_code` is null or `category_not_modeled`.
+- `finding_code` is null or one of `category_not_modeled`,
+  `possibly_measured_after_run`, `outcome_like_name`, `after_target_in_sheet`,
+  `row_number_column`, `headerless_column` (the code of the finding about this
+  column). A column left out by a rule has `used_in_fit` false, its `reason` and
+  its `finding_code`, so a client can show it unticked and let the lab tick it
+  (declare it in `roles.features`).
 - `reason` is null or one of these codes (closed list; the same codes appear in
   `provenance[].reason`):
 
@@ -452,7 +511,7 @@ recipe never sits outside `feature_ranges` (replay F9).
 | `headerless` | no header and one number per row: a row index |
 | `monotone_row_number` | a counter up or down from any start, at most a few numbers missing: a row index |
 | `after_target_in_sheet` | after the target and named like a measurement |
-| `outcome_like_name` | named like a measurement taken during or after the run (before the target too) |
+| `outcome_like_name` | named with an outcome word (titer, yield, product, purity, final without a concentration unit, ...) |
 | `name_matches_identifier` | its name reads like an id (sample, operator, ...) |
 | `constant` | one value |
 | `constant_on_fitted_rows` | one value on the rows the model uses |
@@ -467,6 +526,95 @@ recipe never sits outside `feature_ranges` (replay F9).
 | `too_few_repeats` | labels repeat too rarely to learn from |
 | `unique_per_row` | text with about one value per row |
 | `date_or_time` | dates or times |
+| `possibly_measured` | kept as an input, but the name (OD, biomass, lactate, ammonium, ...) reads like something measured during the run; check it |
+
+### Verdict
+
+Every analysis carries `verdict`: one answer to "can I trust the model's
+suggestions?". `reliability` and `promotion` are unchanged; `verdict` is
+read from them. The campaign summary (`GET /api/campaign`,
+`GET /api/campaigns/{id}` `summary`, reanalyze `campaign`) returns the stored
+analysis's own `verdict` object, never a recomputed one (`null` for an analysis
+written before this field).
+
+Fields: `state` (`reliable`, `not_yet`, `refused`), `code` (`reliable`,
+`not-yet`, `insufficient`, `no_ordering`), `headline` (one plain sentence),
+`reasons` (`[{code, plain}]`, empty when reliable; codes `too_few_rows`,
+`too_few_groups`, `surrogate_spearman`, `cv_ci_unavailable`), `ordering`
+(`{state: ok | unsure | weak | absent | unchecked, plain}`), `range_width`
+(`{state: ok | too_narrow | too_wide | unchecked, code: bands_*, plain}`,
+from `reliability.calibration.z_std`: above 1.15 too narrow, below 0.85 too
+wide; reported, not part of the state), `n_runs`, `min_runs` (20),
+`n_groups`, `min_groups` (8), `rule`.
+
+"Score" is the held-out rank agreement (`reliability.spearman`), "interval" its
+95% interval (`reliability.ci95`), "groups" the CV groups (`cv_n_groups`).
+Checked top to bottom:
+
+| state | code | rule | plain sentence |
+|---|---|---|---|
+| `refused` | `insufficient` | no score, or fewer than 3 groups (no interval) | Kalos cannot suggest recipes from this sheet: there are too few groups of runs to check whether the model is any good. |
+| `refused` | `no_ordering` | upper end of the interval at or below 0 | Kalos cannot suggest recipes from this sheet: the model does no better than chance at putting your past runs in order. |
+| `reliable` | `reliable` | score at or above 0.20, lower end of the interval above 0, at least 20 runs and 8 groups | Kalos put your past runs in the right order, with enough runs to check the ranking, so its suggestions are worth running. |
+| `not_yet` | `not-yet` | everything else | Kalos cannot yet show that it puts your past runs in the right order, so its suggestions are closer to guesses. When only the run or group count holds it back: "The model put your past runs in the right order, but N runs in G groups are too few to be sure, so treat its suggestions as ideas to test." |
+
+Why 20 runs and 8 groups: at 13 runs a score of 0.5 has an interval of about
+-0.06 to 0.82, so one lucky fold can carry it; 20 is also where the engine
+starts judging the likely range. 8 groups leaves the 5-fold grouped check at
+least one group per fold.
+
+When `state` is `refused` the analysis has `proposals: []`, `refusal:
+{code, plain, what_would_help}` and `proposal_notice: {code: "model_refused",
+reason, requested, returned: 0, message}`. Otherwise `refusal` is `null`. The
+campaign stage then stays on `plan` with the plan step "No recipes proposed"
+and `next_action.action` "Add runs and upload again". Starting an empty batch
+returns `{"started": []}`.
+### Analysis identity
+
+Each analysis has an `analysis_id` (for example `an_3f9c0d1e2b4a5c6d`). It is
+made when the model is fit and stored with the analysis. `/api/run`,
+`/api/latest`, `/api/campaign`, `/api/campaigns/{id}`,
+`/api/campaigns/{id}/analysis`, the reanalyze response and the job view show
+the same id for the same stored analysis. `/api/run` returns the stored
+analysis, so it has the same fields as `/api/latest` (without `has_data`).
+
+The same file with the same target, roles and settings is not fit again while
+the engine runs (`analysis_cache`). It gets the same analysis and the same id,
+on `/api/run` and on `/api/campaigns/{id}/upload`, when it goes to the same
+campaign. The same file sent to another campaign is fit for that campaign and
+gets its own id: two campaigns never share an `analysis_id`. Background jobs
+run in their own process and fit again.
+
+When a campaign gets a new analysis, `supersedes` names the one it replaced:
+`{analysis_id, code, why}`. `code` is `new_upload`, `target_changed`,
+`roles_changed`, `direction_changed`, `refit` or `results_added`. `why` is one
+plain sentence. `supersedes` is null for a campaign's first analysis. A stored
+analysis written before ids existed gets an id derived from its record.
+
+### Affected rows in findings (additive)
+
+A finding about specific rows (`outliers`, `duplicate_rows`,
+`physical_bounds`, `units_consistency`, `missingness`,
+`informative_missingness`, `dropped_rows`, `dropped_cells`, `censored_rows`,
+`censored_values`, `blank_as_absent`) carries:
+
+- `sheet_rows`: EVERY affected row, as the row number the user sees in the
+  sheet: the header is row 1 and the first data row is row 2. When the names
+  were read from the second row, the header is row 2 and data starts on row 3.
+  Blank lines that the CSV reader skipped are counted, so the number matches
+  the file. `null` for a sheet read as transposed (runs are columns there).
+- `sheet_rows_truncated`: true when more than 5,000 rows were affected; only
+  the first 5,000 are listed.
+- `values`: `{sheet row: cell}` for a finding about one column (the cell as
+  read). Not on findings about whole rows (`duplicate_rows`, row-level
+  `missingness`, `dropped_rows`). `null` for an identifier column under
+  `anonymize`.
+- `detail.n_rows_affected` equals the number of affected rows (the length of
+  `sheet_rows` unless truncated).
+
+`rows` is unchanged: at most 20 zero-based row positions in the parsed frame.
+A finding not about rows has none of these keys. `counts` counts findings per
+severity, so `counts.warning` is the number of warning findings.
 
 ### Contract version
 
@@ -483,7 +631,7 @@ only added; a field never changes meaning or disappears within a version.
   proposals do not carry it. A declared categorical is never dropped this way.
 - `cv_logo.reason` can say that the group column labels exactly the recipes;
   leave-one-group-out is then not run (it would repeat the grouped CV).
-- `analysis_cache`: `{"hit": true}` when an upload by the same tenant with the same bytes, target,
+- `analysis_cache`: `{"hit": true}` when an upload by the same tenant to the same campaign with the same bytes, target,
   roles, sheet, anonymize flag and engine settings was answered from the
   engine's in-memory copy of an earlier analysis instead of a new fit
   (`KALOS_ANALYSIS_CACHE`, docs/DESKTOP.md); `{"hit": false}` after a fit.
@@ -512,6 +660,172 @@ only added; a field never changes meaning or disappears within a version.
 - `columns`: the kind and role of every uploaded column (see "Column kinds").
 - `validation.findings[].code` can be `category_not_modeled`.
 - `fixed_inputs`: `{input: value}` for inputs fixed at their median because their spread is within sensor precision. Proposals carry the value in `recipe`. Provenance status `fixed_near_constant` is new.
+
+- **v3** (branch desktop-engine-2): the fields added in v3 are listed below this
+  line, one bullet per field.
+- `batch_strategy`: `{kind: "model" | "exploration_design", reason: null |
+  "few_recipes" | "cannot_rank_yet", plain, n_distinct_recipes, n_inputs, rule}`.
+  An exploration design keeps the best bet as P1 and spreads the other recipes
+  over the untested parts of the box (`proposals[].pick` =
+  `exploration_design`, `mode` `explore`). It is used when the sheet has fewer
+  than 2 x inputs distinct recipes, or the verdict is `not_yet` because the
+  ordering is weak or unsure. `roles.exploration_design`: `"auto"` (default) or
+  `"off"`; anything else is 400 `invalid_exploration_design`. Measured on
+  synthetic surfaces only (examples/exploration_design_benchmark.py, 12 seeds,
+  4 inputs, 4 starting runs, 15% noise, 3 rounds of 4): regret 4.20 vs 4.43 on
+  a Gaussian bump (paired difference -0.23, 95% interval -1.39 to 0.75) and
+  4.02 vs 4.03 on Ackley (-0.01, -0.48 to 0.49): no detectable difference
+  either way.
+- `model_optimum`: the model's best bet, the recipe with the highest predicted
+  value inside the search box: `recipe`, `predicted`, `likely_range` [low, high]
+  (the conformal band; `likely_range_source`), `in_batch` (its index in
+  `proposals`, 0 = P1, or null when it is already running), `already_running`,
+  `near_best_run` (it is the recipe of the best measured run, within the batch
+  tolerance), `predicted_vs_best`.
+- `verdict.reasons[]` code `possibly_measured_driver`: a flagged input is a top
+  driver, so a `reliable` verdict is held at `not_yet`.
+- `best_bet_notice`: null, or a plain reason when no recipe qualifies as the best bet
+  (none meets the outcome constraint floor or the feasibility gate); `model_optimum`
+  is then null. `model_optimum.beyond_tried_range` lists inputs past the tried range.
+- `proposals[].pick`: `best_bet` (P1, the model optimum) or `learn`. Every batch
+  has one best bet unless it is already running. The best bet has `mode`
+  `exploit` even when it is predicted at or slightly below the best run, so a
+  batch is never all exploration when a best bet exists.
+- `proposals[].predicted_vs_best`: `difference` (predicted minus best measured,
+  in the better direction), `likely_half_width`, `relation` (`better`,
+  `about_best` = within the likely range, `worse`) and `plain`. A `worse` run
+  says it is there to learn, not to win, and what it tests.
+- `tried_ranges`: the observed range of each continuous input. `feature_ranges`
+  stays the search box actually used; it equals `tried_ranges` unless
+  `roles.allow_beyond` widened it.
+- `allow_beyond`: `{default, per_input, applied}`. Set it in the column roles:
+  `"allow_beyond": 0.10` (10% of the tried range past each end, every input) or
+  `{"molasses_g_L": 0.25, "*": 0}`. Fractions 0 to 1; anything else is 400
+  `invalid_allow_beyond`. Hard physical limits still apply (pH 0-14, no negative
+  amounts). Roles persist with the campaign, so this is a per-campaign setting.
+- `proposals[].beyond_tried_range`: `[{feature, side, tried_limit, proposed, by,
+  fraction}]` for inputs a proposal sets outside the tried range.
+- `validation.findings[]` code `possibly_measured_after_run` (warning): a column
+  before the target whose name reads like a run measurement (OD, biomass,
+  lactate, ammonium, IVCD, mAb, IgG, `_end`, `day14`, peak, residual, `final` with a
+  unit) was kept as an input; check it.
+- `validation.findings[]` code `headerless_column`: a text column with no header
+  was not used as an input (declare it in roles to use it).
+- `validation.findings[]` code `search_box` (info, always present): where
+  Kalos searches, in plain words, and how to widen it.
+- `verdict`: the one verdict on the model, on every analysis and on the campaign summary (see "Verdict").
+- `refusal`: `{code, plain, what_would_help}` when `verdict.state` is `refused` (then `proposals` is empty), else `null`.
+- `proposal_notice.code` can be `model_refused` (with `reason`, the refusal code).
+- `analysis_id`: the stored analysis's id, the same on every route that reads it
+  (see "Analysis identity"). Also on `/api/campaign` and `/api/campaigns/{id}`
+  `summary` (the analysis the stage comes from) and on the job view (null until
+  the job's analysis is published, or once a newer one replaced it).
+- `supersedes`: `{analysis_id, code, why}` for the analysis this one replaced in
+  the campaign, or null. `/api/run` now also returns the stored fields `dataset`,
+  `updated` and `campaign_generation`.
+- `roles_used`: `{source, roles}`. `source` is `declared` when the upload's
+  `roles` (kept with the campaign as `settings.roles`, docs/CAMPAIGN_LOOP.md)
+  were used, `inferred` when the roles came from the column names; `roles` is
+  the declared object, or the target, features, categoricals and direction the
+  fit used. A reanalyze uses the declared roles and keeps the campaign's label in
+  `dataset` (it was `campaign round <n>`).
+- `campaign_findings`: a list of findings about how this analysis differs from
+  the one it replaced. Each has `code`, `severity`, `message` (plain), and for
+  `inputs_changed` the `added` and `removed` input names. Empty when nothing
+  changed or there was no earlier analysis.
+- `runs_used`: `{n_upload_rows, n_recorded, recorded}`. `recorded` lists every
+  measured run of the campaign that entered the fit, oldest first:
+  `{run_id, round, measured_value, predicted_at_start, inside_likely_range}`.
+  `inside_likely_range` is true or false when the run's likely range was known
+  at start, else null. On an upload `n_recorded` is 0 and `recorded` is empty.
+- `delta`: what changed since the analysis this one replaced, or null for the
+  first one: `{previous_analysis_id, best: {before, after}, verdict: {before,
+  after}, driver_shares: [{input, before, after}], driver_shares_source,
+  n_runs: {before, after}, inputs_added, inputs_removed, summary}`. The shares
+  are `gp_shapes.features[].relevance` (what the model leans on;
+  `driver_shares_source` is `gp_shapes`); a share is null when the input was not
+  in that fit. `verdict` is the analysis's `verdict` code when it has one, else
+  `reliable` / `not_yet_reliable` from `reliability.clears_floor`. `summary` is
+  one plain line, for example "Your 2 results were added. Best is still 113.65."
+- `pending[].likely_range_at_start` on `/api/campaign` and the runs routes:
+  `{low, high}`, the published analysis's likely range around the run's `pred`
+  when the run was started, or null.
+- `promotion.checks`: each promotion check in plain words, with its state and whether it is optional (see "Promotion gate changes").
+- `validation.findings[].sheet_rows`, `sheet_rows_truncated` and `values`: every affected row as a sheet row number, with the cells (see "Affected rows in findings").
+- `noise.floor`: `{sigma, sigma_ci95, var_pooled, var_ci95, df, method}`. The
+  assay noise pooled over repeated recipes, each weighted by its repeats minus
+  one (`df`), with a 95% interval. Values are null (`df` 0) with no repeats.
+  `noise.noise_sd` keeps its meaning (mean of the per-recipe variances).
+- `noise.per_recipe`: `{enabled, used, reason, df0, sd_range}`. Set
+  `"per_recipe_noise": true` in the column roles (anything but true/false is
+  400 `invalid_per_recipe_noise`). It is used only when the noise rises with
+  the recipe mean (`noise.scale.homoscedastic` false) and the fit is on recipe
+  averages: each recipe's own variance, shrunk toward the pooled one with
+  `df0` prior repeats, divided by its repeat count. Off by default; proposals
+  are unchanged when it is off.
+- `stopping`: advice on whether more rounds can still be told apart from assay
+  noise. Every block carries `caveat` `{code: "stopping_advice_only", plain}`:
+  advice, not a stop, tried only on one small simulated case. Never removes proposals and never stops anything. `{advisory: true,
+  state, plain, p_gain_beyond_noise, max_expected_gain, gain_over_noise,
+  noise_sd, threshold, method, n_samples, seed}`. `state` is `keep_going`,
+  `gains_within_noise` (the chance of beating the best measured recipe by more
+  than `noise_sd` is below `threshold`, 0.10) or `unknown` (no repeated recipes,
+  so no noise estimate, or a refused sheet; numbers are null). `noise_sd` is
+  `noise.floor.sigma`; `max_expected_gain` is the largest predicted gain over
+  the best measured value, in the better direction, in target units. In a
+  synthetic simulation (`kalos/bench/stopping_sim.py`: one 2-input bump, noise
+  sd 0.5, 10 seeds x 6 rounds) 2 of 30 `gains_within_noise` readings were
+  false (the true optimum was still more than one noise sd better), both in
+  one seed. One small synthetic case; not a measured rate for real assays.
+- `linear_constraints`: `{constraints, tolerance, all_satisfied}`. Set them in the
+  column roles as `"linear_constraints": [{"terms": {"A": 1, "B": 1, "C": 1},
+  "op": "==", "rhs": 100, "label": "sums to 100"}]` (`op` is `<=`, `>=` or `==`;
+  at most 20; continuous inputs only; `label` at most 80 characters). Each listed constraint adds `text` and its
+  `tolerance` (0.001 x the sum of its absolute coefficients, because recipes are
+  shown to 3 decimals). The batch, the repair of near-duplicates and the best bet
+  are all searched inside them. 400 codes: `invalid_linear_constraint` (malformed,
+  or an input that is categorical or not an input), `linear_constraints_with_categorical`
+  (the design has a categorical input), `infeasible_linear_constraints` (no recipe in
+  the search box meets them all; checked before any fit). An input held fixed
+  (`fixed_inputs`) counts at its fixed value. Roles persist with the campaign.
+  `POST /api/preflight` refuses infeasible constraints with the same 400.
+- `proposals[].constraints_ok` and `model_optimum.constraints_ok`: true when the
+  shown recipe meets every linear constraint within its tolerance; null when none
+  are declared.
+- `joint_feasibility` (every block carries `caveat` `{code:
+  "specs_treated_independently", plain}`: each spec is judged on its own, so the
+  joint chance can be off when results move together): `{specs, n_samples, method, predicts, seed, available,
+  reason}`. Set specs in the column roles: `"specs": [{"column": "Purity", "min":
+  95}]` (outcome columns, the target may be one; `min`, `max` or both; at most 5;
+  a spec on a declared input or a malformed spec is 400 `invalid_specs`). One model
+  per spec column (rows with a value, at least 6). `specs[]` adds
+  `n_rows_with_value`, `available`, `reason`. `method` is `independent_mc`: draws
+  from each spec's model, sampled independently, so the joint chance is an estimate
+  of the product of the per-spec chances (outcome correlation is not modelled).
+  `predicts` says the draws are for a new measurement (model plus assay noise).
+  `available` is false, with a `reason`, when any spec column is missing or too
+  sparse. Advisory: the batch is the same with or without specs.
+- `proposals[].p_all_specs` and `model_optimum.p_all_specs`: the chance that every
+  spec is met at once (0 to 1), null when `joint_feasibility.available` is false.
+- `proposals[].p_specs` and `model_optimum.p_specs`: `{column: chance}` per spec,
+  or null.
+- 409 `roles_not_applied` on `POST /api/campaign/reanalyze` and
+  `POST /api/campaigns/{id}/reanalyze` when the column roles stored with the
+  campaign (`settings.roles`) cannot be read. Nothing is committed. Before, the
+  reanalyze quietly fitted with roles inferred from the column names. Upload the
+  sheet again with valid roles.
+- `validation.findings[].why` and `campaign_findings[].why`: one plain sentence
+  on what the finding means for the lab's work, keyed by `code`
+  (kalos/portal/why_lines.py). Coded 400/409 refusals that go through the upload
+  refusal envelope or the campaign routes also carry `why` next to `code`.
+  `tests/test_why_lines.py` fails when the engine gains a code without a line.
+- 400 `invalid_allow_beyond` also when `roles.allow_beyond` names an input that
+  is not a column of the sheet (other than `"*"`); the message names it. Before,
+  the name was ignored and that input stayed at its tried range.
+- `GET /api/campaigns/{id}/rows`: `_kind` can be `no_result`; `renamed_columns`
+  and `renamed_note` (see "Campaign rows").
+- 400 `invalid_linear_constraint` also for a `roles.linear_constraints[].label`
+  longer than 80 characters.
 
 ## Not in this slice
 

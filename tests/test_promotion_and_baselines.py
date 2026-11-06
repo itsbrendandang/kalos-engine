@@ -296,7 +296,7 @@ def test_promotion_block_appears_with_the_documented_shape():
     promo = out["promotion"]
     assert set(promo) == {
         "passed", "failures", "metrics", "summary", "meaning", "not_judged", "status",
-        "unmeasured",
+        "unmeasured", "checks",
     }
     assert isinstance(promo["passed"], bool)
     assert isinstance(promo["failures"], list)

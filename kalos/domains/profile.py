@@ -68,6 +68,238 @@ def parse_applicability_distance(value: object) -> float | None:
     return v
 
 
+class InvalidExplorationDesign(ValueError):
+    """`roles.exploration_design` other than "auto" or "off" (HTTP 400
+    `invalid_exploration_design`)."""
+
+    code = "invalid_exploration_design"
+
+    def __init__(self) -> None:
+        super().__init__('roles.exploration_design must be "auto" or "off"')
+
+
+def parse_exploration_design(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().lower() in {"auto", "off"}:
+        return value.strip().lower()
+    raise InvalidExplorationDesign()
+
+
+class InvalidAllowBeyond(ValueError):
+    """`roles.allow_beyond` that is not a fraction in [0, 1], or a mapping of
+    input name to such a fraction (HTTP 400 `invalid_allow_beyond`)."""
+
+    code = "invalid_allow_beyond"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "roles.allow_beyond must be a number from 0 to 1 (0.10 = 10% past the tried "
+            'range), or an object of input name to such a number ("*" for every other input)'
+        )
+
+
+def parse_allow_beyond(value: object) -> tuple[tuple[str, float], ...]:
+    """`allow_beyond` as sorted (input, fraction) pairs; "*" is the default for
+    every input not named. A plain number means "*". Empty when not given."""
+    if value is None:
+        return ()
+
+    def frac(v: object) -> float:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise InvalidAllowBeyond()
+        f = float(v)
+        if not np.isfinite(f) or f < 0 or f > 1:
+            raise InvalidAllowBeyond()
+        return f
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return (("*", frac(value)),)
+    if isinstance(value, dict):
+        return tuple(sorted((str(k), frac(v)) for k, v in value.items()))
+    raise InvalidAllowBeyond()
+
+
+class InvalidPerRecipeNoise(ValueError):
+    """`roles.per_recipe_noise` that is not true or false
+    (HTTP 400 `invalid_per_recipe_noise`)."""
+
+    code = "invalid_per_recipe_noise"
+
+    def __init__(self) -> None:
+        super().__init__("roles.per_recipe_noise must be true or false")
+
+
+def parse_per_recipe_noise(value: object) -> bool:
+    """False when not given, else the boolean. Raises `InvalidPerRecipeNoise`
+    for anything that is not a JSON boolean (strings and numbers too)."""
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise InvalidPerRecipeNoise()
+    return value
+# At most this many `roles.linear_constraints` per upload.
+MAX_LINEAR_CONSTRAINTS = 20
+LINEAR_OPS: tuple[str, ...] = ("<=", ">=", "==")
+# A `roles.linear_constraints[].label` is echoed in every analysis and stored
+# with the campaign: at most this many characters.
+MAX_LINEAR_LABEL_CHARS = 80
+
+
+class InvalidLinearConstraint(ValueError):
+    """A malformed `roles.linear_constraints` entry, or one that names an input
+    that is not a continuous input of the design (HTTP 400 `invalid_linear_constraint`)."""
+
+    code = "invalid_linear_constraint"
+
+
+@dataclass(frozen=True)
+class LinearConstraint:
+    """`sum(coefficient * input) op rhs` on continuous inputs, in the inputs' own
+    units (`terms` keeps the caller's order)."""
+
+    terms: tuple[tuple[str, float], ...]
+    op: str
+    rhs: float
+    label: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "terms": {k: v for k, v in self.terms}, "op": self.op, "rhs": self.rhs,
+            "label": self.label,
+        }
+
+    def text(self) -> str:
+        """Plain form, e.g. "Glucose + Glycerol <= 30"."""
+        parts: list[str] = []
+        for i, (name, c) in enumerate(self.terms):
+            mag = abs(c)
+            coef = "" if mag == 1 else f"{mag:g} * "
+            sign = ("- " if c < 0 else "") if i == 0 else ("- " if c < 0 else "+ ")
+            parts.append(f"{sign}{coef}{name}")
+        return f"{' '.join(parts)} {self.op} {self.rhs:g}"
+
+
+def _finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    v = float(value)
+    return v if np.isfinite(v) else None
+
+
+def parse_linear_constraints(value: object) -> tuple[LinearConstraint, ...]:
+    """`roles.linear_constraints`: a list of `{terms: {input: coefficient}, op:
+    "<=" | ">=" | "==", rhs: number, label?: string}`. Empty when not given.
+    Raises `InvalidLinearConstraint` with a plain message for anything else.
+    Whether each input is a continuous input is checked against the sheet later."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise InvalidLinearConstraint("roles.linear_constraints must be a list")
+    if len(value) > MAX_LINEAR_CONSTRAINTS:
+        raise InvalidLinearConstraint(
+            f"roles.linear_constraints has {len(value)} entries; the most allowed is "
+            f"{MAX_LINEAR_CONSTRAINTS}"
+        )
+    out: list[LinearConstraint] = []
+    for k, item in enumerate(value, start=1):
+        where = f"Linear constraint {k}"
+        if not isinstance(item, dict):
+            raise InvalidLinearConstraint(f"{where} must be an object with terms, op and rhs")
+        terms = item.get("terms")
+        if not isinstance(terms, dict) or not terms:
+            raise InvalidLinearConstraint(f"{where} needs at least one input in terms")
+        pairs: list[tuple[str, float]] = []
+        for name, coef in terms.items():
+            c = _finite_number(coef)
+            if not str(name).strip() or c is None:
+                raise InvalidLinearConstraint(
+                    f"{where}: each term needs an input name and a finite number"
+                )
+            pairs.append((str(name), c))
+        if not any(c for _, c in pairs):
+            raise InvalidLinearConstraint(f"{where}: every coefficient is zero")
+        op = item.get("op")
+        if op not in LINEAR_OPS:
+            raise InvalidLinearConstraint(f'{where}: op must be "<=", ">=" or "=="')
+        rhs = _finite_number(item.get("rhs"))
+        if rhs is None:
+            raise InvalidLinearConstraint(f"{where}: rhs must be a finite number")
+        label = item.get("label")
+        if label is not None and not isinstance(label, str):
+            raise InvalidLinearConstraint(f"{where}: label must be text")
+        if label is not None and len(label) > MAX_LINEAR_LABEL_CHARS:
+            raise InvalidLinearConstraint(
+                f"{where}: label has {len(label)} characters; the most allowed is "
+                f"{MAX_LINEAR_LABEL_CHARS}"
+            )
+        out.append(LinearConstraint(tuple(pairs), str(op), rhs, (label or None)))
+    return tuple(out)
+
+
+# At most this many `roles.specs` per upload.
+MAX_SPECS = 5
+
+
+class InvalidSpecs(ValueError):
+    """A malformed `roles.specs` entry, or a spec on a model input
+    (HTTP 400 `invalid_specs`)."""
+
+    code = "invalid_specs"
+
+
+@dataclass(frozen=True)
+class Spec:
+    """A specification on an outcome column: met when `min <= value <= max`
+    (either side may be open)."""
+
+    column: str
+    min: float | None = None
+    max: float | None = None
+
+    def to_dict(self) -> dict:
+        return {"column": self.column, "min": self.min, "max": self.max}
+
+
+def parse_specs(value: object) -> tuple[Spec, ...]:
+    """`roles.specs`: a list of `{column, min?, max?}` on outcome columns, at
+    least one limit each, `min <= max`, one entry per column. Empty when not
+    given. Raises `InvalidSpecs` with a plain message for anything else."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise InvalidSpecs("roles.specs must be a list")
+    if len(value) > MAX_SPECS:
+        raise InvalidSpecs(f"roles.specs has {len(value)} entries; the most allowed is {MAX_SPECS}")
+    out: list[Spec] = []
+    for k, item in enumerate(value, start=1):
+        where = f"Spec {k}"
+        if not isinstance(item, dict):
+            raise InvalidSpecs(f"{where} must be an object with column, min and/or max")
+        column = item.get("column")
+        if not isinstance(column, str) or not column.strip():
+            raise InvalidSpecs(f"{where} needs a column name")
+        limits: list[float | None] = []
+        for key in ("min", "max"):
+            raw = item.get(key)
+            if raw is None:
+                limits.append(None)
+                continue
+            v = _finite_number(raw)
+            if v is None:
+                raise InvalidSpecs(f"{where}: {key} must be a finite number")
+            limits.append(v)
+        lo, hi = limits
+        if lo is None and hi is None:
+            raise InvalidSpecs(f"{where} needs a min, a max, or both")
+        if lo is not None and hi is not None and lo > hi:
+            raise InvalidSpecs(f"{where}: min is above max")
+        if any(sp.column == column for sp in out):
+            raise InvalidSpecs(f"{where}: {column!r} already has a spec; give min and max in one entry")
+        out.append(Spec(column, lo, hi))
+    return tuple(out)
+
+
 def parse_direction(value: object) -> str | None:
     """None for no stated direction, else "maximize"/"minimize". Raises
     `InvalidDirection` for anything else (case and surrounding spaces are
@@ -115,6 +347,16 @@ class ColumnRoles:
     request or the profile decides; default "maximize").
     `applicability_distance` is a lab-set threshold for
     `proposals[].applicability.far_from_data` (None: the product default).
+    `allow_beyond` lets the search go past the tried range of an input, as a
+    fraction of that range at each end (("*", 0.1) = 10% for every input).
+    Empty: the search box is the tried range.
+    `per_recipe_noise` (default False) lets the proposal model use each
+    recipe's own replicate spread, shrunk toward the shared one, when the
+    noise is uneven across recipes (`noise.per_recipe` in the analysis).
+    `linear_constraints` are hard linear limits on continuous inputs (for
+    example a mixture that sums to 100); every proposal meets them.
+    `specs` are limits on outcome columns; each proposal reports the chance
+    that all of them are met at once (advisory, the batch is unchanged).
     """
 
     target: str
@@ -125,6 +367,11 @@ class ColumnRoles:
     sparse: tuple[str, ...] = ()
     direction: str | None = None
     applicability_distance: float | None = None
+    allow_beyond: tuple[tuple[str, float], ...] = ()
+    per_recipe_noise: bool = False
+    exploration_design: str | None = None
+    linear_constraints: tuple[LinearConstraint, ...] = ()
+    specs: tuple[Spec, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict) -> ColumnRoles:
@@ -160,6 +407,11 @@ class ColumnRoles:
             applicability_distance=parse_applicability_distance(
                 data.get("applicability_distance")
             ),
+            allow_beyond=parse_allow_beyond(data.get("allow_beyond")),
+            per_recipe_noise=parse_per_recipe_noise(data.get("per_recipe_noise")),
+            exploration_design=parse_exploration_design(data.get("exploration_design")),
+            linear_constraints=parse_linear_constraints(data.get("linear_constraints")),
+            specs=parse_specs(data.get("specs")),
         )
 
 

@@ -25,12 +25,65 @@ def _num(x: object, nd: int = 4) -> float | None:
     return round(float(x), nd)
 
 
+FLOOR_METHOD = (
+    "pooled within-recipe variance, each replicated recipe weighted by its df "
+    "(n - 1); 95% chi-square interval; assumes normal noise of the same size "
+    "across recipes"
+)
+
+
+def _floor_block(nr: dict) -> dict:
+    """`noise.floor`: the pooled assay noise with a 95% interval. Null values
+    when no recipe is replicated (df 0)."""
+    var = nr.get("noise_var_pooled", float("nan"))
+    var_ci = nr.get("noise_var_ci95") or [None, None]
+    sd_ci = nr.get("noise_sd_ci95") or [None, None]
+    sigma = float(np.sqrt(var)) if isinstance(var, float) and np.isfinite(var) else None
+    df = int(nr.get("noise_df", 0))
+    return {
+        "sigma": _num(sigma),
+        "sigma_ci95": None if df == 0 else [_num(sd_ci[0]), _num(sd_ci[1])],
+        "var_pooled": _num(var, 6),
+        "var_ci95": None if df == 0 else [_num(var_ci[0], 6), _num(var_ci[1], 6)],
+        "df": df,
+        "method": FLOOR_METHOD,
+    }
+
+
+def per_recipe_noise_decision(
+    enabled: bool, het: dict | None, replicate_aware: bool
+) -> tuple[bool, str]:
+    """Whether the proposal fit uses per-recipe noise, and why, in plain words.
+    Used only when the setting is on, the fit is on recipe averages, and the
+    noise was measured to rise with the recipe mean."""
+    if not enabled:
+        return False, (
+            "Off. Set per_recipe_noise to true in the column roles to let each "
+            "recipe's own spread count."
+        )
+    if not replicate_aware:
+        return False, (
+            "Not used: the model was not fit on recipe averages, so there is no "
+            "per-recipe spread to use."
+        )
+    homo = None if het is None else het.get("homoscedastic")
+    if homo is None:
+        return False, "Not used: too few repeated recipes to tell whether the noise is uneven."
+    if homo:
+        return False, "Not used: the noise looks about the same across recipes."
+    return True, (
+        "Used: each recipe's noise comes from its own repeats, pulled toward the "
+        "shared value."
+    )
+
+
 def _noise_block(
     nr: dict,
     best_single: float,
     best_reproducible: float | None,
     replicate_aware: bool,
     het: dict | None = None,
+    per_recipe: dict | None = None,
 ) -> dict:
     """The `noise` report for the analysis result: replicate structure + the
     honest signal-to-noise picture (BENCHMARK.md, "the real lever is assay noise").
@@ -74,6 +127,10 @@ def _noise_block(
             "suggests_transform": bool(het.get("suggests_transform")),
             "reason": het.get("reason"),
         },
+        # Pooled assay noise with its 95% interval (`_floor_block`).
+        "floor": _floor_block(nr),
+        # Whether the proposal fit used per-recipe noise (roles.per_recipe_noise).
+        "per_recipe": per_recipe,
     }
 
 

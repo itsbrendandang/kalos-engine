@@ -4,6 +4,85 @@ Newest first.
 
 ## Unreleased
 
+- Verdict wording: "reliable" now says "with enough runs to check the ranking" instead of "to be sure".
+
+- Search box: a shown value within 0.0005 of the tried edge (3-decimal rounding) is no longer flagged as beyond the tried range.
+
+- Security review S7: at most 5 `roles.specs` per upload (was 20). Each spec is one more model fit.
+
+- Security review S4: the spread design computes nearest distances in blocks with `cdist`. At 2000 rows x 40 inputs, peak memory drops from about 2.8 GB to under 200 MB.
+
+- Security review S3: a best bet predicted below the best run says the model does not expect any recipe in the box to beat it; "to learn, not to win" is no longer used for the best bet.
+
+- Security review S1: `possibly_measured_after_run` is now a warning. If a flagged input is a top driver, the verdict is held at not_yet with reason `possibly_measured_driver`. New measurement words: ivcd, mab, igg, _end, dayN, peak (residual was already there). A `VCD_day14` column that tracks the target no longer gives "reliable".
+
+- Security review S2: the best bet meets the same outcome rules as the batch: the constraint model's prediction at or above its floor, and P(feasible) at least 0.5 when the feasibility gate is on. With no qualifying candidate there is no best bet and `best_bet_notice` says why in plain words.
+
+- Security review B1: the best bet is the highest predicted recipe among the optimizer's answer, every batch row, every training row and a Sobol sample of the box (within the linear constraints), so a local optimum can no longer leave a higher-predicted proposal labelled `learn` (pichia_HSA: 74.9 -> 110.0). `model_optimum.beyond_tried_range` added.
+### Fixed - desktop-engine-2-secb (security review)
+
+- tests/test_route_inventory.py pins `POST /api/preflight` (write) and `GET /api/campaigns/{id}/rows` (read) until the arch-safe-now merge regenerates docs/openapi.json with them.
+
+- `POST /api/preflight` stays write scope (owner decision); docs/CAMPAIGNS_API.md "Preflight" says why, and a test pins the 403 for a read-only token.
+
+- A linear-constraint `label` longer than 80 characters is refused with 400 `invalid_linear_constraint` (it is echoed in every analysis and stored with the campaign).
+
+- The in-memory analysis cache is keyed by campaign too: the same sheet uploaded to two campaigns is fit for each and gets two `analysis_id`s (it used to return the first campaign's analysis and id).
+
+- Campaign rows: an upload row with a blank target is `_kind: no_result`, not `measured`; a sheet column named like a row label (`_origin`, `_kind`, ...) is shown as `<name> (sheet)` and listed in `renamed_columns` instead of being overwritten.
+
+- `roles.allow_beyond` naming a column that is not in the sheet is refused with 400 `invalid_allow_beyond`, naming it, instead of being ignored.
+
+- The audit row of a successful upload names the campaign settings it set, changed or cleared (`settings: allow_beyond 0.1 -> 0.2; features changed`): key names, with old -> new values only for small scalar settings, never column names or file contents.
+
+- Every finding and coded refusal carries a plain `why` line from the engine itself (kalos/portal/why_lines.py), so a client never shows a bare code. A test scans the engine source for codes and fails on any without a line.
+
+- Reanalyze refuses with 409 `roles_not_applied` when the column roles stored with the campaign cannot be read, instead of quietly fitting with inferred roles. Nothing is committed; upload the sheet again with valid roles.
+
+### Added - desktop-engine-2-q8 (constraints and specs)
+
+- `roles.linear_constraints`: hard linear limits on continuous inputs, including equalities for mixtures (A + B + C == 100) and budgets (Glucose + Glycerol <= 30). Every proposal and the best bet meet them; each carries `constraints_ok`, and the analysis reports `linear_constraints`. Bad or impossible constraints are refused with a 400 before any fit.
+
+- `roles.specs`: limits on outcome columns (Purity >= 95). Each proposal and the best bet report `p_all_specs`, the chance all specs are met at once, and `p_specs` per spec; `joint_feasibility` says how (one model per spec, 4096 seeded draws each, sampled independently). Advisory: the batch does not change.
+
+### Added - desktop-engine-2 (first-time-user study)
+
+- `stopping.caveat` (`stopping_advice_only`) and `joint_feasibility.caveat` (`specs_treated_independently`): the two caveats in plain words in every response, not only in the docs.
+
+- `POST /api/preflight` (and the job pre-check) refuses infeasible linear constraints with the same 400 `infeasible_linear_constraints` as `/api/run`: the preflight now stops after the search box is built, still without a fit.
+
+- Name rule (owner decision): a column is left out by its name only on an outcome word (titer, yield, product, purity, recovery, activity, response, endpoint, harvest, viability at end, `final` without a concentration unit) or, after the target, on a measurement word. A concentration unit is not outcome evidence. Before the target, measurement words (OD, biomass, lactate, ammonium, ...) keep the column as an input with an info finding `possibly_measured_after_run` (reason `possibly_measured`). `columns[].finding_code` names the finding for every excluded or flagged column. Candida's `ammonium_g_L` and scFv's `Final Urea (M)` are inputs again; tested on all 8 sample sheets.
+
+- `stopping`: advice on whether more rounds can still beat the best run by more than the assay noise (`keep_going`, `gains_within_noise`, or `unknown` without repeats). Advice only: it never removes proposals. `kalos/bench/stopping_sim.py` measures how often it says "within noise" too early on a synthetic case.
+
+- `noise.floor`: the pooled assay noise with a 95% interval and its degrees of freedom. `roles.per_recipe_noise` (off by default) lets the proposal model use each recipe's own spread, shrunk toward the pooled one, when the noise rises with the recipe mean; `noise.per_recipe` says whether it was used and why.
+- Exploration design (QUEUE 6): with fewer than 2 x inputs distinct recipes, or when the model cannot rank recipes yet, the batch is the best bet plus recipes spread over the untested parts of the box, labelled (`batch_strategy`, `pick: exploration_design`). `roles.exploration_design: "off"` turns it off. No detectable difference against the model's picks on two synthetic surfaces (12 seeds).
+- Public benchmark (QUEUE 10): DataHow's in-silico fed-batch runs (MIT, data not in the repo, `KALOS_DATAHOW_DATA`) as an endpoint table (`kalos/bench/insilico_hybrid.py`, `examples/insilico_hybrid_benchmark.py`, `benchmarks/INSILICO_HYBRID.md`). Noisy variant, 20 seeds: ranking of the 100 test runs from 20 train runs Spearman 0.20 (-0.02 to 0.40); pool replay BO 31.4 vs random 32.8 runs to 90% of the best (difference -1.5, -11.8 to 8.0): not separated.
+
+- `GET /api/campaigns/{id}/rows`: the campaign's rows (upload and folded rounds) with `_origin`, `_round`, `_run_id`, `_kind` (`measured`), paged.
+
+- `POST /api/preflight`: the column reading (`columns`, `provenance`, target and inputs) and the sheet check, with the same refusals as an upload, without fitting or storing anything.
+
+- A refused verdict also clears `model_optimum` (no best bet without proposals). `tests/test_firsttime_flow.py` runs the study path end to end with the real engine.
+
+- Finding 2 leftovers: a row-number column is still recognised when some rows were entered twice, and a text column with no header is not an input unless declared (finding `headerless_column`). On the study's messy sheet the model no longer uses `Row` or the blank-header column; the fit went from 60 s to 8 s.
+
+- `roles.allow_beyond` lets the search go past the tried range of an input (0.10 = 10% past each end; per input or for all; physical limits still apply). Proposals outside the tried range carry `beyond_tried_range`, the analysis reports `tried_ranges` and `allow_beyond`, and a `search_box` finding always says in plain words where Kalos searches and how to widen it (Finding 11).
+
+- Every batch has the model's best bet as P1 (`proposals[].pick`, `model_optimum`): the highest predicted value inside the search box. It replaces the proposal with the lowest prediction, or the proposal already within 5% of it. Each proposal says how its prediction compares with the best run (`predicted_vs_best`); a run predicted below the best says it is there to learn, not to win. Before, all five proposals were predicted below the best run on 4 of 4 study sheets.
+
+- README rewritten in plain words: what Kalos is, one round, the desktop app, the hosted mode, the evidence with the open-replay numbers verbatim (BO beats random clearly on 1 of 15 datasets), what Kalos does not do, every `KALOS_*` setting with its default and range, the branch and PR map. `tests/test_readme_env.py` fails when the settings table and the code disagree. `docs/ARCHITECTURE.md`, `deploy/RUNBOOK.md`, `deploy/compose.yaml` and `deploy/.env.example` no longer say the web app has no login or sends a static token: kalos-web `main` signs people in and mints a token per request; the desktop app uses a per-launch secret; the compose file has not been wired for sign-in yet.
+- Findings about rows list every affected row as the row number in the sheet (`sheet_rows`, header = row 1), with the cells (`values`) for one-column findings. `detail.n_rows_affected` matches. Dropped and censored cells now name their rows too.
+
+- `promotion.checks`: each promotion check says in plain words what it checks, why it matters, what to do and whether it is optional. The feasibility checks no longer read as an instruction to run failures.
+
+- One verdict on the model: `verdict` (`reliable`, `not_yet`, `refused`) on every analysis and campaign summary. "Reliable" needs at least 20 runs and 8 groups; a refused sheet gets no proposals and a `refusal` that says what would help.
+- Each campaign analysis lists the recorded runs that entered the fit (`runs_used`: measured value, prediction at start, inside the likely range) and what changed since the previous analysis (`delta`: best, verdict, driver shares, run count, inputs, and a one-line `summary`). Started runs keep their likely range (`likely_range_at_start`).
+
+- The roles sent with an upload are kept with the campaign (`settings.roles`) and used by every reanalyze. A reanalyze keeps the campaign's name. Each analysis says which roles it used (`roles_used`), and `campaign_findings` has `inputs_changed` when the inputs differ from the analysis it replaced.
+
+- Every analysis has an `analysis_id`, the same on `/api/run`, `/api/latest`, `/api/campaign`, `/api/campaigns/{id}/analysis` and the job view. `/api/run` returns the stored analysis. A refit that replaces a campaign's analysis says so in `supersedes` (`{analysis_id, code, why}`).
+
 - `columns[]` lists entirely blank columns too (kind `constant`, reason `all_blank`, in sheet order).
 
 - `proposals[].vals` holds the same rounded, box-clipped numbers as `proposals[].recipe` (they could differ by the clip before).

@@ -91,6 +91,8 @@ def test_noise_report_keys_and_icc_ballpark():
     report = noise_report(X, y)
     assert set(report.keys()) == {
         "n_rows", "n_recipes", "n_replicated", "noise_var", "signal_var", "icc", "n_exact_duplicates",
+        # Pooled, df-weighted floor with its 95% interval (additive).
+        "noise_var_pooled", "noise_df", "noise_var_ci95", "noise_sd_ci95",
     }
     assert report["n_rows"] == n_recipes * n_reps
     assert report["n_recipes"] == n_recipes

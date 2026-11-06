@@ -41,6 +41,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 from pydantic import Strict as _Strict
 
+from kalos.portal.audit_detail import roles_change_detail, stored_roles
 from kalos.portal.auth import ADMIN, READ, WRITE, Principal, require_scope
 from kalos.portal.campaign import (
     CampaignError,
@@ -312,6 +313,7 @@ async def upload_to_campaign(
     busy), seeding THIS campaign and publishing its analysis. Synchronous."""
     from kalos.portal.app import _run_uploaded  # deferred: app imports this module
 
+    detail: str | None = None
     if not _valid_campaign_id(campaign_id):
         response = campaign_not_found_response()
     else:
@@ -327,11 +329,16 @@ async def upload_to_campaign(
                     status_code=409,
                 )
             else:
+                roles_before = stored_roles(store, tenant=principal.tenant, campaign_id=campaign_id)
                 response = await _run_uploaded(
                     file, target, anonymize, roles, sheet, sheet_query, principal, store,
                     campaign_id=campaign_id, replace=replace, direction=direction,
                 )
-    _audit(store, principal, "campaign.upload", response.status_code, campaign_id)
+                # Which settings this upload set or changed (kalos/portal/audit_detail.py).
+                if response.status_code < 400:
+                    detail = roles_change_detail(roles_before, stored_roles(
+                        store, tenant=principal.tenant, campaign_id=campaign_id))
+    _audit(store, principal, "campaign.upload", response.status_code, campaign_id, detail=detail)
     return response
 
 
@@ -351,6 +358,32 @@ def campaign_analysis(
     if not data:
         return JSONResponse({"has_data": False})
     return JSONResponse({"has_data": True, **data})
+
+
+@router.get("/api/campaigns/{campaign_id}/rows")
+def campaign_rows_route(
+    campaign_id: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(2_000, ge=1, le=10_000),
+    principal: Principal = Depends(require_scope(READ)),
+    store: CampaignStore = Depends(get_campaign_store),
+) -> JSONResponse:
+    """Every row this campaign's model learns from: the uploaded sheet and each
+    measured run folded in by a reanalyze, labelled with `_origin` (`upload` or
+    `round`), `_round`, `_run_id`, `_kind` (`measured`) and `_index`
+    (kalos/portal/campaign_rows.py). 404 outside the caller's tenant."""
+    from kalos.portal.campaign_rows import campaign_rows
+
+    if not _valid_campaign_id(campaign_id):
+        return campaign_not_found_response()
+    try:
+        state = store.get(tenant=principal.tenant, campaign_id=campaign_id)
+    except CampaignNotFound:
+        return campaign_not_found_response()
+    if not state:
+        return JSONResponse({"has_data": False, "rows": [], "n_rows": 0})
+    return JSONResponse({"has_data": True, "campaign_id": campaign_id,
+                         **campaign_rows(state, offset=offset, limit=limit)})
 
 
 @router.post("/api/campaigns/{campaign_id}/runs")

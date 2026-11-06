@@ -39,6 +39,7 @@ from kalos.portal.uploads import (
     rejection_counts,
     scrubbed_failure,
 )
+from kalos.portal.why_lines import coded_body
 
 log = logging.getLogger("kalos.portal")
 
@@ -68,10 +69,18 @@ def audit(
 
 
 def _archived(exc: CampaignArchived) -> JSONResponse:
-    return JSONResponse({"error": str(exc), "code": "campaign_archived"}, status_code=409)
+    return JSONResponse(coded_body(str(exc), "campaign_archived"), status_code=409)
 
 
 _NOT_FOUND_BODY = {"error": "campaign not found", "code": "not_found"}
+
+# 409 when the column roles stored with the campaign cannot be read on a
+# reanalyze. Kalos does not guess other roles in their place.
+ROLES_NOT_APPLIED_BODY = coded_body(
+    "The column choices saved with this campaign could not be read, so Kalos did "
+    "not analyze it again. Upload the sheet again with valid column choices.",
+    "roles_not_applied",
+)
 
 
 def campaign_not_found_response() -> JSONResponse:
@@ -95,7 +104,13 @@ def campaign_view(
         tenant=tenant, campaign_id=campaign_id,
         analysis_generation=analysis.get("campaign_generation"),
     )
-    return {**summary, **stage_fields(summary, analysis)}
+    # `verdict` is the stored analysis's own object (never recomputed here), so
+    # every route says the same thing; None for an analysis written before it.
+    out = {**summary, **stage_fields(summary, analysis), "verdict": analysis.get("verdict")}
+    if summary.get("has_campaign"):
+        # The id of the analysis `stage` was derived from (the one /api/latest serves).
+        out["analysis_id"] = analysis.get("analysis_id")
+    return out
 
 
 def campaign_error_response(exc: CampaignError) -> JSONResponse:
@@ -105,10 +120,10 @@ def campaign_error_response(exc: CampaignError) -> JSONResponse:
     if isinstance(exc, CampaignNotFound):
         return campaign_not_found_response()
     if isinstance(exc, CampaignReasonRequired):
-        return JSONResponse({"error": str(exc), "code": "reason_required"}, status_code=400)
+        return JSONResponse(coded_body(str(exc), "reason_required"), status_code=400)
     if isinstance(exc, (CampaignArchived, CampaignConflict)):
-        return JSONResponse({"error": str(exc), "code": "conflict"}, status_code=409)
-    return JSONResponse({"error": str(exc), "code": "invalid_request"}, status_code=400)
+        return JSONResponse(coded_body(str(exc), "conflict"), status_code=409)
+    return JSONResponse(coded_body(str(exc), "invalid_request"), status_code=400)
 
 
 # --- request-body bounds (P0 hardening) ------------------------------------- #
@@ -198,7 +213,7 @@ def start_campaign(
         # Authored by CampaignStore, not a raw library error — safe to echo.
         log.warning("campaign start rejected: %s", exc)
         audit(store, principal, "campaign.start", 400)
-        return JSONResponse({"error": str(exc), "code": "invalid_request"}, status_code=400)
+        return JSONResponse(coded_body(str(exc), "invalid_request"), status_code=400)
     audit(store, principal, "campaign.start", 200, detail=f"runs={len(started)}")
     return JSONResponse({"started": started})
 
@@ -227,11 +242,11 @@ def log_campaign_result(
         return _archived(exc)
     except CampaignReasonRequired as exc:
         audit(store, principal, "campaign.result", 400)
-        return JSONResponse({"error": str(exc), "code": "reason_required"}, status_code=400)
+        return JSONResponse(coded_body(str(exc), "reason_required"), status_code=400)
     except CampaignError as exc:
         log.warning("campaign result rejected: %s", exc)
         audit(store, principal, "campaign.result", 400)
-        return JSONResponse({"error": str(exc), "code": "invalid_request"}, status_code=400)
+        return JSONResponse(coded_body(str(exc), "invalid_request"), status_code=400)
     return JSONResponse(run)
 
 
@@ -268,7 +283,7 @@ async def reanalyze_campaign(
 async def _reanalyze(
     store: CampaignStore, principal: Principal, campaign_id: str | None = None
 ) -> JSONResponse:
-    from kalos.domains import BIOPROCESS_PROFILE
+    from kalos.domains import BIOPROCESS_PROFILE, GENERIC_PROFILE, ColumnRoles
     from kalos.portal.app import _analyze
     from kalos.portal.pipeline import attach_reanalyze_run
 
@@ -286,7 +301,7 @@ async def _reanalyze(
         return _archived(exc)
     except CampaignError as exc:
         log.warning("reanalyze rejected: %s", exc)
-        return JSONResponse({"error": str(exc), "code": "invalid_request"}, status_code=400)
+        return JSONResponse(coded_body(str(exc), "invalid_request"), status_code=400)
 
     # Runs still in the incubator. They have no outcome to fold, so they never
     # reach `df`; passed separately they keep the next batch from re-proposing an
@@ -303,19 +318,42 @@ async def _reanalyze(
     # then to "maximize".
     state = store.get(tenant=tenant, campaign_id=campaign_id) or {}
     direction = state.get("direction") or previous.get("direction") or "maximize"
+    # The roles declared at upload are kept with the campaign (`settings.roles`,
+    # CampaignStore.seed) and every reanalyze fits with them. Without declared
+    # roles the bioprocess profile infers them from the column names, as before.
+    settings = state.get("settings")
+    stored_roles = settings.get("roles") if isinstance(settings, dict) else None
+    declared = stored_roles if isinstance(stored_roles, dict) else None
+    roles = None
+    # Never fall back silently to inferred roles: a fit with other inputs than
+    # the lab declared would look like the campaign's analysis but is not.
+    # Refuse (409), nothing committed; uploading the sheet again with valid
+    # roles replaces them.
+    unreadable = stored_roles is not None and not isinstance(stored_roles, dict)
+    if declared:
+        try:
+            roles = ColumnRoles.from_dict(declared)
+        except ValueError:
+            unreadable = True
+    if unreadable:
+        log.warning("reanalyze rejected: code=roles_not_applied")
+        return JSONResponse(ROLES_NOT_APPLIED_BODY, status_code=409)
 
     if df.empty:
         log.warning("reanalyze rejected: campaign has no base rows to analyze")
-        return JSONResponse({"error": "the campaign has no data to analyze", "code": "no_data"}, status_code=400)
+        return JSONResponse(coded_body("the campaign has no data to analyze", "no_data"), status_code=400)
 
     try:
         # Same single analysis slot /api/run holds (kalos/portal/busy.py): a
         # reanalyze racing an upload - or another reanalyze - gets an honest
         # 503 instead of contending for the CPU with an unfinished fit.
         analyze_kwargs: dict[str, Any] = {
-            "profile": BIOPROCESS_PROFILE, "pending": awaiting, "anonymize": anonymize,
+            "profile": GENERIC_PROFILE if roles is not None else BIOPROCESS_PROFILE,
+            "pending": awaiting, "anonymize": anonymize,
         }
-        if direction != "maximize":
+        if roles is not None:
+            analyze_kwargs["roles"] = roles
+        if direction != "maximize" and (roles is None or roles.direction is None):
             analyze_kwargs["direction"] = direction
         # A lab threshold set by the upload's roles is kept (env and default
         # thresholds are re-read, not copied).
@@ -346,19 +384,23 @@ async def _reanalyze(
         # Nothing was committed (plan_fold does not mutate), so the campaign is
         # untouched and a retry is meaningful.
         log.error("failed to re-analyze the campaign: code=analysis_failed %s", scrubbed_failure(exc))
-        return JSONResponse({"error": "could not analyze the campaign data", "code": "analysis_failed"}, status_code=400)
+        return JSONResponse(coded_body("could not analyze the campaign data", "analysis_failed"), status_code=400)
 
     try:
         # The provenance block (kind=reanalyze): the same fields an upload gets, so
         # the record of a campaign's current analysis says what produced it.
-        result = attach_reanalyze_run(df, result, anonymize=anonymize, pending_runs=len(awaiting))
+        result = attach_reanalyze_run(
+            df, result, anonymize=anonymize, pending_runs=len(awaiting),
+            roles_json=json.dumps(declared) if declared else "",
+            profile="generic" if roles is not None else "bioprocess",
+        )
         # Atomic (replay F1): the analysis must be JSON-encodable BEFORE the fold
         # is committed. A NaN found only when the response is encoded used to
         # surface as a 500 for a fold the server had already kept.
         json.dumps(result, allow_nan=False)
     except Exception as exc:  # noqa: BLE001 - nothing committed; same generic 400 as above
         log.error("failed to re-analyze the campaign: code=analysis_failed %s", scrubbed_failure(exc))
-        return JSONResponse({"error": "could not analyze the campaign data", "code": "analysis_failed"}, status_code=400)
+        return JSONResponse(coded_body("could not analyze the campaign data", "analysis_failed"), status_code=400)
 
     try:
         # The fold and the analysis that describes it, in one transaction.
@@ -372,7 +414,7 @@ async def _reanalyze(
         # describes a base dataset that no longer exists. Nothing was written,
         # neither the fold nor the analysis. Ask the caller to retry.
         log.warning("reanalyze not committed: %s", exc)
-        return JSONResponse({"error": str(exc), "code": "conflict"}, status_code=409)
+        return JSONResponse(coded_body(str(exc), "conflict"), status_code=409)
 
     # Return the SAME shape GET /api/latest returns (the stored analysis carries
     # `dataset` and `updated`, which the frontend's PopulatedResult type expects).

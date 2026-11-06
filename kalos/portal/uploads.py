@@ -20,6 +20,7 @@ import pandas as pd
 
 from kalos.normalize.orientation import detect_orientation
 from kalos.portal.cells import BLANK, CENSORED, NON_NUMERIC, NUMERIC, classify_cells
+from kalos.portal.why_lines import why_for
 
 log = logging.getLogger("kalos.portal")
 
@@ -201,8 +202,12 @@ class UploadRejected(ValueError):
         body: dict = {"error": self.message}
         if self.code:
             body["code"] = self.code
+            # The plain why-line for the code (kalos/portal/why_lines.py), additive.
+            why = why_for(self.code)
+            if why:
+                body["why"] = why
         for key, value in safe_context(self.context).items():
-            if key not in ("error", "code"):
+            if key not in ("error", "code", "why"):
                 body[key] = value
         return body
 
@@ -1063,7 +1068,28 @@ def _parse_text(raw: bytes) -> ParsedUpload:
         log.warning("rejected an unparseable text upload: %s", type(exc).__name__)
         raise UploadRejected(_ERR_NOT_A_TABLE, code="not_a_table") from exc
     df, named = _name_unlabeled(_typed_cells(df))
-    return ParsedUpload(_record_header(_apply_orientation_prepass(df), header_row, named), "text")
+    df = _record_header(_apply_orientation_prepass(df), header_row, named)
+    if df.attrs.get("kalos_shape_as_written") is None:
+        row_map = _text_row_map(text, header_row, len(df))
+        if row_map is not None:
+            df.attrs["kalos_row_map"] = row_map
+    return ParsedUpload(df, "text")
+
+
+def _text_row_map(text: str, header_row: int, n_rows: int) -> list[int] | None:
+    """The 1-based line of each data row, when blank lines shifted them.
+
+    The text parser skips empty lines, so data row i is not always line
+    header + 2 + i. Returns None when no line was skipped (the plain offset is
+    right) or when the lines do not line up with the rows (a quoted field with
+    a line break), so a caller falls back to the offset.
+    """
+    lines = text.splitlines()
+    if all(line != "" for line in lines[: header_row + 1 + n_rows]):
+        return None
+    nonblank = [i + 1 for i, line in enumerate(lines) if line != ""]
+    data = nonblank[header_row + 1:]
+    return data if len(data) == n_rows else None
 
 
 def parse_upload(

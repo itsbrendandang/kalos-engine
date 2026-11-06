@@ -322,7 +322,23 @@ def job_view(row: dict[str, Any]) -> dict[str, Any]:
         "error": error,
         # The campaign generation the analysis was published under (succeeded only).
         "campaign_generation": row["result_ref"] if state == "succeeded" else None,
+        # The `analysis_id` of that analysis while it is still the campaign's
+        # published one (kalos/portal/lineage.py), else null.
+        "analysis_id": row.get("analysis_id"),
     }
+
+
+def _with_analysis_id(conn: sqlite3.Connection, row: dict[str, Any]) -> dict[str, Any]:
+    """`row` plus `analysis_id`: the id of the analysis a succeeded job published,
+    read from the campaign's stored analysis when its generation still matches."""
+    if row.get("state") != "succeeded" or not row.get("result_ref"):
+        return row
+    found = conn.execute(
+        "SELECT json_extract(state, '$.analysis_id') FROM analyses "
+        "WHERE tenant = ? AND campaign_id = ? AND campaign_generation = ?",
+        (row["tenant"], row["campaign_id"], row["result_ref"]),
+    ).fetchone()
+    return {**row, "analysis_id": found[0] if found else None}
 
 
 # --- submission ----------------------------------------------------------------- #
@@ -508,6 +524,8 @@ def get_job(store: CampaignStore, *, tenant: str, job_id: str) -> dict[str, Any]
         return None
     with store._txn(write=False) as conn:
         row = _one(conn, tenant, job_id)
+        if row is not None:
+            row = _with_analysis_id(conn, row)
     return job_view(row) if row is not None else None
 
 
@@ -526,6 +544,7 @@ def list_jobs(
             "ORDER BY created_at DESC, id LIMIT ?",
             (tenant, campaign_id, max(1, min(int(limit), 200))),
         )
+        rows = [_with_analysis_id(conn, r) for r in rows]
     return [job_view(r) for r in rows]
 
 

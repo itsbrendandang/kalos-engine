@@ -147,8 +147,9 @@ services:
         # proxied through `web` to the engine, so the engine being healthy
         # before `web` accepts traffic is the correct ordering.
         condition: service_healthy
-    # The web front door has NO user authentication of its own: its server-side
-    # proxy attaches the privileged engine token to whatever reaches it. So it is
+    # This compose file has not been updated for kalos-web's sign-in (see
+    # RUNBOOK.md "Who can reach the web app"): as wired here, the web server
+    # attaches the service token to whatever reaches it. So it is
     # published on the LOOPBACK interface by default (reach it over an SSH tunnel,
     # VPN, or a host reverse proxy that enforces authentication). Set
     # KALOS_WEB_BIND=0.0.0.0 ONLY behind an authenticating reverse proxy or a

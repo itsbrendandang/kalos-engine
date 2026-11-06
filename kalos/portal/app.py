@@ -40,6 +40,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from kalos.portal import desktop as _desktop
 from kalos.portal.analysis import _analyze, _annotate
+from kalos.portal.audit_detail import roles_change_detail, stored_roles
 from kalos.portal.auth import (
     ADMIN,
     READ,
@@ -81,7 +82,11 @@ from kalos.portal.limits import (
     upload_read_timeout_s,
 )
 from kalos.portal.migrate import legacy_latest_filename
-from kalos.portal.pipeline import compute_upload_analysis, publish_upload_analysis
+from kalos.portal.pipeline import (
+    adopt_cached_upload,
+    compute_upload_analysis,
+    publish_upload_analysis,
+)
 from kalos.portal.scale_routes import router as _scale_router
 from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.uploads import (
@@ -101,13 +106,14 @@ from kalos.portal.uploads import (
 from kalos.portal.uploads import (
     rejection_counts as _rejection_counts,
 )
+from kalos.portal.why_lines import coded_body
 from kalos.providers import provider_status
 
 log = logging.getLogger("kalos.portal")
 
 # Routes that accept a multipart file upload, and so get the upload-sized body
 # cap rather than the small JSON one (kalos/portal/limits.py).
-UPLOAD_PATHS = frozenset({"/api/run", "/api/scale/readout"})
+UPLOAD_PATHS = frozenset({"/api/run", "/api/preflight", "/api/scale/readout"})
 
 # --- CPU thread budget ------------------------------------------------------- #
 # The upload handler offloads its CPU-bound body (pandas parse + ~7 GP fits +
@@ -857,9 +863,13 @@ def _run_uploaded_sync(
     # functions the background-job worker uses (kalos/portal/pipeline.py).
     # `_analyze` is resolved from THIS module at call time so tests can stub it.
     validate_tenant_id(tenant)
+    target_store = store if store is not None else get_campaign_store()
+    # The campaign this upload publishes in, for the analysis cache key (two
+    # campaigns never share an analysis_id). None: the tenant has none yet.
+    publish_to = campaign_id or target_store.default_campaign_id(tenant=tenant)
     df, result = compute_upload_analysis(
         raw, target, anonymize, filename, roles_json, sheet=sheet, analyze=_analyze,
-        direction=direction or None, tenant=tenant,
+        direction=direction or None, tenant=tenant, campaign_id=publish_to,
     )
     # A fresh upload starts a fresh campaign state (docs/CAMPAIGN_LOOP.md,
     # "Seeding") in THIS tenant's default campaign (or the explicit
@@ -875,10 +885,57 @@ def _run_uploaded_sync(
         {} if expected_generation is _NO_GUARD else {"expected_generation": expected_generation}
     )
     publish_upload_analysis(
-        store if store is not None else get_campaign_store(), result, filename,
+        target_store, result, filename,
         tenant=tenant, campaign_id=campaign_id, df=df, **publish_kwargs,
     )
+    if publish_to is None:
+        created = target_store.default_campaign_id(tenant=tenant)
+        if created is not None:
+            adopt_cached_upload(
+                raw, target, anonymize, filename, roles_json, sheet=sheet,
+                direction=direction or None, tenant=tenant, campaign_id=created,
+            )
+    # The response is the stored analysis (same `analysis_id`, `supersedes`,
+    # `dataset`, `updated` as /api/latest), plus the upload-only fields that are
+    # stored too. If the publish did not land this analysis, the computed one.
+    try:
+        stored = target_store.load_analysis(tenant=tenant, campaign_id=campaign_id)
+    except CampaignError:
+        stored = None
+    if stored and stored.get("analysis_id") == result.get("analysis_id"):
+        return stored
     return result
+
+
+@app.post("/api/preflight")
+async def preflight(
+    file: UploadFile = File(...),
+    target: str = Form(default=""),
+    anonymize: bool = Form(default=False),
+    roles: str = Form(default=""),
+    sheet: str = Form(default=""),
+    direction: str = Form(default=""),
+    _principal: Principal = Depends(require_scope(WRITE)),
+) -> JSONResponse:
+    """How Kalos reads a sheet, before any fit: the columns (`columns`,
+    `provenance`), the target and inputs it would use, and the sheet check
+    (`validation`). Same multipart fields and the same refusals (400 with a
+    code) as `POST /api/run`; nothing is stored, no model is fit, and the
+    analysis slot is not taken (docs/CAMPAIGNS_API.md, "Preflight")."""
+    from kalos.portal.pipeline import preflight_report
+
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    filename = file.filename or "uploaded dataset"
+    try:
+        body = await run_in_threadpool(
+            functools.partial(
+                preflight_report, raw, target or None, anonymize, filename, roles,
+                sheet=sheet or None, direction=direction or None,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - the upload error envelopes
+        return upload_error_response(exc)
+    return JSONResponse(body)
 
 
 @app.post("/api/run")
@@ -906,11 +963,18 @@ async def run_uploaded(
     The outcome is written to the audit log (tenant, subject, status; never the
     file, its name, or its contents).
     """
+    roles_before = stored_roles(store, tenant=_principal.tenant, campaign_id=None)
     response = await _run_uploaded(
         file, target, anonymize, roles, sheet, sheet_query, _principal, store, replace=replace,
         direction=direction,
     )
-    _audit(store, _principal, "run.upload", response.status_code)
+    # The audit row names the settings this upload set or changed (keys, and
+    # old -> new for small scalars only; kalos/portal/audit_detail.py).
+    detail = None
+    if response.status_code < 400:
+        detail = roles_change_detail(
+            roles_before, stored_roles(store, tenant=_principal.tenant, campaign_id=None))
+    _audit(store, _principal, "run.upload", response.status_code, detail=detail)
     return response
 
 
@@ -933,7 +997,7 @@ async def _run_uploaded(
         from kalos.portal import jobs  # deferred: jobs_api imports this module
 
         refusal = jobs.CampaignHasRuns(awaiting, measured)
-        return JSONResponse({"error": str(refusal), "code": refusal.code}, status_code=409)
+        return JSONResponse(coded_body(str(refusal), refusal.code), status_code=409)
     if not replace:
         expected_generation = generation
     # One byte past the cap is enough for `_parse_upload` to reject it; never

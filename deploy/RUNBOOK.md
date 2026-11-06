@@ -260,13 +260,16 @@ so it stays a pure liveness check. `docker compose ps` shows `healthy` /
       deliberate v0 scope cut, not an oversight - wiring TLS in is the
       first thing to add before this stack sees a network it does not
       fully trust.
-- [ ] **Who can reach the web app (user -> web is NOT authenticated).** The "web and
-      engine" item below only covers the service-to-service hop. kalos-web itself has no
-      login, and its proxy adds the engine bearer token to every request it forwards, so
-      anyone who can reach the web port can read and write campaign data. The compose
-      file therefore publishes the web port on 127.0.0.1 by default (`KALOS_WEB_BIND`).
-      For shared use put an authenticating reverse proxy (SSO / basic auth / VPN) in front
-      and only then set `KALOS_WEB_BIND=0.0.0.0`. Verify with `docker compose ps`: the
+- [ ] **Who can reach the web app.** kalos-web `main` has sign-in (Google account plus an
+      authenticator code, invite only) and mints a short-lived signed token per request
+      (its `docs/ENGINE_AUTH.md`). This compose file predates that: it still hands kalos-web
+      one service token (`KALOS_ENGINE_TOKEN`), which kalos-web now uses only in the desktop
+      app's local mode, and it sets none of the sign-in variables (`BETTER_AUTH_*`,
+      `KALOS_TENANT_MAP_FILE`, `KALOS_ENGINE_JWT_PRIVATE_KEY_FILE`) or the engine's
+      `KALOS_JWT_PUBLIC_KEYS_FILE`. Until it is updated, treat the web port as unauthenticated:
+      it is published on 127.0.0.1 by default (`KALOS_WEB_BIND`). For shared use put an
+      authenticating reverse proxy (SSO / basic auth / VPN) in front and only then set
+      `KALOS_WEB_BIND=0.0.0.0`. Verify with `docker compose ps`: the
       PORTS column must read `127.0.0.1:3000->3000/tcp` unless you deliberately changed it.
       Origin/CORS settings are not authentication.
 - [x] **Auth between web and engine (service-to-service only) - closed in wave 2**: kalos-web now ships

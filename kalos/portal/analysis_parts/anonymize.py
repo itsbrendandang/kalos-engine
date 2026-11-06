@@ -88,6 +88,37 @@ def _anonymize_result(
                     {**e, "feature": alias(str(e["feature"]))} if isinstance(e, dict) else e
                     for e in app["at_box_edge"]
                 ]}
+    opt = out.get("model_optimum")
+    if isinstance(opt, dict) and isinstance(opt.get("recipe"), dict):
+        out["model_optimum"] = {**opt, "recipe": alias_recipe(opt["recipe"])}
+    lin = out.get("linear_constraints")
+    if isinstance(lin, dict) and isinstance(lin.get("constraints"), list):
+        items = []
+        for item in lin["constraints"]:
+            if isinstance(item, dict) and isinstance(item.get("terms"), dict):
+                text = str(item.get("text") or "")
+                for k in item["terms"]:
+                    if alias(str(k)) != str(k):
+                        text = text.replace(str(k), alias(str(k)))
+                item = {**item, "terms": {alias(str(k)): v for k, v in item["terms"].items()},
+                        "text": text}
+            items.append(item)
+        out["linear_constraints"] = {**lin, "constraints": items}
+    jf = out.get("joint_feasibility")
+    if isinstance(jf, dict) and isinstance(jf.get("specs"), list):
+        out["joint_feasibility"] = {**jf, "specs": [
+            {**sp, "column": alias(str(sp["column"]))} if isinstance(sp, dict) and "column" in sp else sp
+            for sp in jf["specs"]
+        ]}
+    if isinstance(out.get("proposals"), list):
+        out["proposals"] = [
+            {**r, "p_specs": {alias(str(k)): v for k, v in r["p_specs"].items()}}
+            if isinstance(r, dict) and isinstance(r.get("p_specs"), dict) else r
+            for r in out["proposals"]
+        ]
+    opt = out.get("model_optimum")
+    if isinstance(opt, dict) and isinstance(opt.get("p_specs"), dict):
+        out["model_optimum"] = {**opt, "p_specs": {alias(str(k)): v for k, v in opt["p_specs"].items()}}
     corr = out.get("correlation")
     if isinstance(corr, dict) and isinstance(corr.get("labels"), list):
         out["correlation"] = {**corr, "labels": [alias(str(c)) for c in corr["labels"]]}
@@ -222,6 +253,8 @@ def _alias_named_row(row: dict, alias: Callable[[str], str]) -> dict:
     if aliased == name:
         return dict(row)
     out = {**row, "column": aliased}
+    if out.get("values") is not None:
+        out["values"] = None  # the cells of an identifier column are not shown
     message = out.get("message")
     if isinstance(message, str):
         out["message"] = message.replace(name, aliased)

@@ -24,11 +24,14 @@ from kalos.core.drivers import (
 )
 from kalos.core.gp_shape import gp_shape_report
 from kalos.core.replicates import (
+    PER_RECIPE_DF0,
     aggregate_replicates,
     heteroscedasticity_report,
     noise_report,
+    shrunken_recipe_variances,
 )
 from kalos.core.splits import row_hash_groups
+from kalos.core.stopping import stopping_advice, unknown_advice
 from kalos.domains import (
     BIOPROCESS_PROFILE,
     ColumnRoles,
@@ -49,6 +52,13 @@ from kalos.portal.analysis_parts.applicability import (
     applicability_block,
     proposal_applicability,
 )
+from kalos.portal.analysis_parts.best_bet import (
+    best_bet_candidates,
+    choose_best_bet,
+    label_proposals,
+    place_best_bet,
+    predicted_vs_best,
+)
 from kalos.portal.analysis_parts.column_kinds import column_kinds, with_blank_columns
 from kalos.portal.analysis_parts.columns import (
     AUTO_CATEGORICAL_MAX_LEVELS,
@@ -60,10 +70,23 @@ from kalos.portal.analysis_parts.diagnostics import (
     _data_drops_block,
     _data_findings,
     _with_data_findings,
+    data_finding_rows,
+    sheet_row_mapper,
+)
+from kalos.portal.analysis_parts.exploration import (
+    EXPLORE_REASON,
+    batch_strategy,
+    exploration_reason,
 )
 from kalos.portal.analysis_parts.identifiers import (
     identifier_pattern,
     is_identifier_name,
+)
+from kalos.portal.analysis_parts.linear import (
+    check_linear_inputs,
+    encode_linear_constraints,
+    linear_constraints_block,
+    recipe_constraints_ok,
 )
 from kalos.portal.analysis_parts.near_constant import (
     near_constant_findings,
@@ -73,6 +96,7 @@ from kalos.portal.analysis_parts.near_constant import (
 from kalos.portal.analysis_parts.noise_blocks import (
     _alternative_scale_block,
     _noise_block,
+    per_recipe_noise_decision,
 )
 from kalos.portal.analysis_parts.policy import (
     _ERR_VALIDATION_FAILED,
@@ -99,6 +123,7 @@ from kalos.portal.analysis_parts.proposals import (
 from kalos.portal.analysis_parts.ranges import (
     _absent_is_zero_columns,
     _physical_range,
+    widen_box,
 )
 from kalos.portal.analysis_parts.refusals import (
     _ERR_NO_PROCESS_INPUTS,
@@ -108,6 +133,12 @@ from kalos.portal.analysis_parts.refusals import (
 )
 from kalos.portal.analysis_parts.roles import column_role_safety
 from kalos.portal.analysis_parts.sanitize import sanitize_non_finite
+from kalos.portal.analysis_parts.search_box import (
+    _allow_beyond_map,
+    beyond_tried,
+    search_box_finding,
+)
+from kalos.portal.analysis_parts.specs import evaluate_specs, guard_spec_columns
 from kalos.portal.cells import (
     BLANK,
     CENSORED,
@@ -120,6 +151,7 @@ from kalos.portal.cells import (
     classify_cells,
     is_null_label,
 )
+from kalos.portal.gate_text import checks_block
 from kalos.portal.uploads import (
     _ERR_TOO_MANY_FIT_ROWS,
     MAX_FIT_ROWS,
@@ -128,6 +160,13 @@ from kalos.portal.uploads import (
     clip_name,
 )
 from kalos.portal.validate import column_provenance, provenance_dicts
+from kalos.portal.verdict import (
+    hold_for_flagged_drivers,
+    model_verdict,
+    refusal_for,
+    refusal_notice,
+)
+from kalos.portal.why_lines import with_why
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
 from kalos.validation.report import Finding
 
@@ -220,6 +259,14 @@ def _seeded_analysis(seed: int = ANALYZE_SEED) -> Iterator[None]:
             np.random.set_state(np_state)
 
 
+def _meets_linear_ge(C: np.ndarray, constraints: list) -> np.ndarray:
+    """Rows of C that meet every `(indices, coefficients, rhs)` as `>=`."""
+    ok = np.ones(len(C), dtype=bool)
+    for idx, coef, rhs in constraints:
+        ok &= (np.asarray(C)[:, list(idx)] @ np.asarray(coef, float)) >= float(rhs) - 1e-9
+    return ok
+
+
 def _recipe_label_columns(roles: ColumnRoles | None, gcol: Any, cat_feats: list) -> list:
     """The inferred categoricals that are recipe labels (see the note at the call
     in `_analyze_body`): the inferred group column, when it was also picked as a
@@ -242,6 +289,8 @@ def _analyze(
     preflight_only: bool = False,
     direction: str | None = None,
     applicability_distance: float | None = None,
+    allow_beyond: float | Mapping[str, float] | None = None,
+    per_recipe_noise: bool | None = None,
 ) -> dict:
     """See `_analyze_body`. Every fitting analysis runs inside `_seeded_analysis`,
     so its proposals depend only on its inputs, not on other analyses in flight."""
@@ -250,6 +299,7 @@ def _analyze(
         anonymize=anonymize, roles=roles, profile=profile, pending=pending,
         constraint=constraint, progress=progress, preflight_only=preflight_only,
         direction=direction, applicability_distance=applicability_distance,
+        allow_beyond=allow_beyond, per_recipe_noise=per_recipe_noise,
     )
     if preflight_only:
         return _analyze_body(df, target, **kwargs)
@@ -270,6 +320,8 @@ def _analyze_body(
     preflight_only: bool = False,
     direction: str | None = None,
     applicability_distance: float | None = None,
+    allow_beyond: float | Mapping[str, float] | None = None,
+    per_recipe_noise: bool | None = None,
 ) -> dict:
     """Run the engine on an arbitrary run sheet: pick the target (the value to
     maximize), use the process INPUTS as features (other measured outputs are
@@ -377,7 +429,13 @@ def _analyze_body(
             GatesConfig,
             check_gates,
         )
-        from kalos.core.optimize import mixed_strategy, propose_batch
+        from kalos.core.optimize import (
+            NEAR_DUPLICATE_TOL,
+            mixed_strategy,
+            posterior_mean_optimum,
+            proposal_separation,
+            propose_batch,
+        )
         from kalos.core.surrogate import FitError, Surrogate, proposal_restarts
         from kalos.portal.viz_utils import (
             _correlation_spearman,
@@ -390,6 +448,10 @@ def _analyze_body(
     # any frame operation below could drop the attrs.
     header_info: dict = dict(df.attrs.get("kalos_header") or {})
     shape_as_written = df.attrs.get("kalos_shape_as_written")
+    # Frame row -> the row number in the sheet as the user sees it (findings' `sheet_rows`).
+    sheet_row = sheet_row_mapper(
+        header_info, df.attrs.get("kalos_row_map"), transposed=shape_as_written is not None
+    )
     original_columns = {str(c) for c in df.columns}
     n_header_columns = int(df.shape[1])
     # Which uploaded columns are entirely blank, in sheet order: they are dropped
@@ -501,6 +563,8 @@ def _analyze_body(
         _constraint_col_name = str(constraint["column"])
         cont_feats = [c for c in cont_feats if str(c) != _constraint_col_name]
         cat_feats = [c for c in cat_feats if str(c) != _constraint_col_name]
+    # roles.specs: same rule for spec columns (analysis_parts/specs.py).
+    cont_feats, cat_feats = guard_spec_columns(roles, cont_feats, cat_feats)
     if roles is None:
         outcomes = [c for c in num if profile.outcome_hint.search(str(c))]
         candidate_targets = outcomes or [target]
@@ -666,9 +730,63 @@ def _analyze_body(
         if str(c) in absent_zero and int((feat_kind[c][fit_pos] == BLANK).sum())
     }
 
-    if preflight_only:
-        # Every refusal that does not need a fitted model has run.
-        return {}
+    def _column_reading() -> tuple[list[dict], list[dict], list[Finding]]:
+        """Provenance, `columns` and the column findings: everything known
+        about the columns before any model is fit (also served by preflight)."""
+        # per-column provenance: what was kept as a feature, used as the target, or
+        # dropped (id / other output / constant / sparse), so the client is never left
+        # guessing about a silently dropped column. Mirrors the selection logic above.
+        kept_features = [str(c) for c in cont_feats] + [str(c) for c in kept_cats]
+        provenance = provenance_dicts(
+            column_provenance(
+                df,
+                target=str(target),
+                features=kept_features,
+                numeric_cols=[str(c) for c in num],
+                is_identifier=lambda name: is_identifier_name(name, profile.id_hint),
+                outcome_hint=profile.outcome_hint,
+                constant_on_fitted_rows=[str(c) for c in constant_on_fitted]
+                + [str(c) for c in constant_cats],
+                recipe_labels={str(c) for c in recipe_labels},
+                declared={str(c) for c in declared},
+                declared_ids={str(c) for c in roles.ids} if roles is not None else set(),
+                declared_features={str(c) for c in roles.features} if roles is not None else set(),
+                status_overrides={
+                    **role_safety.overrides,
+                    **{c: ("fixed_near_constant", "near_constant") for c in fixed_inputs},
+                },
+                reasons=role_safety.reasons,
+            )
+        )
+
+        # What kind of data each column holds and what the engine did with it, so a
+        # client never draws a text input on a numeric axis (analysis_parts/column_kinds.py).
+        columns_block, kind_findings = column_kinds(
+            df, provenance, kept_cont=[str(c) for c in cont_feats],
+            kept_cats=[str(c) for c in kept_cats], max_auto_levels=AUTO_CATEGORICAL_MAX_LEVELS,
+            declared_cats=[str(c) for c in roles.categoricals] if roles is not None else [],
+            is_identifier=lambda name: is_identifier_name(name, profile.id_hint),
+        )
+        columns_block = with_blank_columns(columns_block, sheet_names, sheet_blank)
+        return provenance, columns_block, kind_findings
+
+    def _sheet_findings(kind_findings: list[Finding]) -> list[Finding]:
+        """The data findings that need no model (the sheet check's own list)."""
+        return _data_findings(
+            by_column, n_rows_dropped, n_censored_rows, zero_filled,
+            auto_cats=[str(c) for c in auto_cats if c in kept_cats],
+            header=header_info,
+            row_sets=data_finding_rows(
+                df, active=active, incomplete=inc, censored=cens, target=target,
+                tgt_kinds=tgt_kinds, cont_feats=cont_feats, feat_kind=feat_kind,
+                absent_zero=absent_zero, kept_cats=kept_cats, cat_ok=cat_ok,
+                fit_pos=fit_pos,
+            ),
+        ) + role_safety.findings + near_constant_findings(fixed_inputs) + kind_findings
+
+    # roles.linear_constraints: inputs checked here so preflight refuses them too.
+    linear_cons = tuple(roles.linear_constraints) if roles is not None else ()
+    check_linear_inputs(linear_cons, cont_feats, kept_cats, fixed_inputs)
 
     keep_index = df.index[fit_pos]
     y = y_all[fit_pos]
@@ -691,6 +809,22 @@ def _analyze_body(
     cont_arr = Xc_zf.to_numpy(float) if cont_feats else np.empty((len(y), 0))
     box_exclusions: list[dict] = []
     coded_columns = {f.column for f in validation.findings if f.code == "coded_column"}
+    # How far past the tried range each input may be searched (roles.allow_beyond,
+    # or the `allow_beyond` argument; default 0 = the tried range). Finding 11.
+    beyond = _allow_beyond_map(roles, allow_beyond)
+    # A name that is not a column of the sheet would be ignored silently (a typo
+    # leaves that input at the tried range): refuse it, naming it.
+    unknown_beyond = sorted(k for k in beyond if k != "*" and k not in {str(c) for c in df.columns})
+    if unknown_beyond:
+        shown = ", ".join(repr(clip_name(k)) for k in unknown_beyond[:5])
+        more = f" and {len(unknown_beyond) - 5} more" if len(unknown_beyond) > 5 else ""
+        raise UploadRejected(
+            f"allow_beyond names {shown}{more}, which {'is' if len(unknown_beyond) == 1 else 'are'} "
+            'not a column of this sheet. Use the input\'s column name exactly, or "*" for every input.',
+            code="invalid_allow_beyond",
+        )
+    tried_ranges: dict[str, list[float]] = {}
+    beyond_applied: dict[str, float] = {}
     for c in cont_feats:
         # The box is built from OBSERVED cells only: blanks (absent-zero columns
         # only) are counted, not read as values.
@@ -704,6 +838,13 @@ def _analyze_body(
             box_exclusions.append(
                 {"column": str(c), "n_excluded": n_excluded, "lower": lower, "upper": upper}
             )
+        tried_ranges[str(c)] = [lower, upper]
+        frac = beyond.get(str(c), beyond.get("*", 0.0))
+        if frac > 0:
+            lower, upper = widen_box(
+                str(c), lower, upper, frac, coded=str(c) in coded_columns
+            )
+            beyond_applied[str(c)] = frac
         dims.append(Dimension(str(c), "continuous", lower=lower, upper=upper))
     for c in kept_cats:
         dims.append(Dimension(str(c), "categorical", levels=cat_dims_map[c]))
@@ -721,6 +862,37 @@ def _analyze_body(
     bounds = design.bounds()
     cat_dims = design.cat_dims or None
     cat_cardinalities = design.cat_cardinalities or None
+    # Linear constraints in the design's coordinates; refused before any fit
+    # when no recipe in the box can meet them (analysis_parts/linear.py).
+    lin_ge, lin_eq = encode_linear_constraints(linear_cons, design.names, fixed_inputs, bounds)
+
+    if preflight_only:
+        # Every refusal that does not need a fitted model has run (including
+        # infeasible linear constraints, checked on the search box above). The column
+        # reading and the sheet check are returned too (POST /api/preflight).
+        provenance, columns_block, kind_findings = _column_reading()
+        return {
+            "preflight": True,
+            "target": str(target),
+            "targets": [str(c) for c in candidate_targets],
+            "features": [str(c) for c in cont_feats] + [str(c) for c in kept_cats],
+            "categorical_features": [str(c) for c in kept_cats],
+            "group_col": gcol,
+            "fixed_inputs": {c: v["value"] for c, v in fixed_inputs.items()},
+            "n_rows": int(n_data_rows),
+            "n_usable": int(len(fit_pos)),
+            "n_dropped_incomplete": n_rows_dropped,
+            "n_censored_excluded": n_censored_rows,
+            "header_row": header_info.get("header_row"),
+            "orientation": df.attrs.get("kalos_orientation"),
+            "provenance": provenance,
+            "columns": columns_block,
+            "validation": with_why(report_dict(
+                _with_data_findings(validation, _sheet_findings(kind_findings)))),
+            "contract_version": ANALYSIS_CONTRACT_VERSION,
+            "engine_version": ENGINE_VERSION,
+        }
+
 
     # PART 2: constrained single-objective proposals. Fit a SECOND `Surrogate`
     # over the constraint column, on the SAME design/bounds/cat_dims the target
@@ -1072,6 +1244,13 @@ def _analyze_body(
         # non-producers to score feasibility). Same verdict as `passed`.
         "status": promotion_result.status,
         "unmeasured": list(promotion_result.unmeasured),
+        # Additive: one entry per check in plain words (what it checks, why it
+        # matters, what to do, whether it is optional); kalos/portal/gate_text.py.
+        "checks": checks_block(
+            failures=promotion_result.failures, unmeasured=list(promotion_result.unmeasured),
+            not_judged=promotion_result.not_judged, stats=gate_stats,
+            min_groups=GROUP_MEAN_BASELINE_MIN_GROUPS, min_ece_n=GatesConfig().min_ece_n,
+        ),
         # FAIL-CLOSED IS CORRECT, BUT ILLEGIBLE WITHOUT THIS. On an all-producer
         # sheet (no non-producers to build a feasibility classifier from) or
         # any sheet too small to measure one of the four gates,
@@ -1089,6 +1268,15 @@ def _analyze_body(
             "score feasibility against). It is not a rejection of the analysis."
         ),
     }
+
+    # ONE VERDICT (kalos/portal/verdict.py): reliable / not_yet / refused, from
+    # the numbers above. Stored on the analysis; every route returns this object.
+    # `refused` means no proposals (applied where `result` is assembled below).
+    verdict = model_verdict(
+        n_runs=len(y), n_groups=int(rep["n_groups"]), spearman=None if rho != rho else float(rho),
+        ci95=ci95, floor=RELIABILITY_SPEARMAN_FLOOR, calibration=calibration,
+    )
+    refusal = refusal_for(verdict)
 
     # LEAVE-ONE-GROUP-OUT. Grouped K-fold above tests generalization to a FEW
     # unseen groups among many familiar ones; LOGO is the harder question -
@@ -1323,6 +1511,13 @@ def _analyze_body(
     # replicate-aware swap below happens, and they are what the shape report has
     # to be handed - see the `gp_shape_report` call for why that matters.
     X_fit, y_fit = X, y
+    # Per-recipe noise (roles.per_recipe_noise, or the argument): off by default.
+    per_recipe_on = (
+        bool(per_recipe_noise) if per_recipe_noise is not None
+        else bool(roles is not None and roles.per_recipe_noise)
+    )
+    per_recipe_used, per_recipe_reason = per_recipe_noise_decision(per_recipe_on, het, False)
+    per_recipe_sd: list[float] | None = None
     if nr["n_replicated"] >= 1:
         Xf, yf, _yvar_g, n_reps_g = aggregate_replicates(X, y, groups=recipe_key)
         best_reproducible = float(yf.min()) if minimize else float(yf.max())
@@ -1333,6 +1528,13 @@ def _analyze_body(
         if nr["n_recipes"] >= 6 and np.isfinite(sigma2) and sigma2 > 0:
             replicate_aware = True
             per_point_var = float(sigma2) / np.maximum(n_reps_g, 1).astype(float)
+            per_recipe_used, per_recipe_reason = per_recipe_noise_decision(per_recipe_on, het, True)
+            if per_recipe_used:
+                # Each recipe's variance shrunk toward the pooled one, then divided
+                # by its replicate count (the variance of the recipe mean).
+                var_g = shrunken_recipe_variances(_yvar_g, n_reps_g, float(nr["noise_var_pooled"]))
+                per_point_var = var_g / np.maximum(n_reps_g, 1).astype(float)
+                per_recipe_sd = [float(np.sqrt(var_g.min())), float(np.sqrt(var_g.max()))]
             s = Surrogate().fit(
                 Xf, sign * yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
                 check_conditioning=True,
@@ -1362,25 +1564,106 @@ def _analyze_body(
     # `propose_batch` never returns two near-duplicate recipes (see its
     # docstring); on a design space with fewer than q distinct candidates the
     # batch comes back SHORT, and `proposal_notice` below says so.
-    proposal = propose_batch(
-        s,
-        bounds,
-        q=PROPOSAL_BATCH_Q,
-        cat_dims=cat_dims,
-        cat_cardinalities=cat_cardinalities,
-        pending=X_pending,
-        # Explicit, not the global RNG: the seed the run record reports is the seed
-        # the acquisition actually used (review C3).
-        seed=ANALYZE_SEED,
-        # PART 1: only ever passed when GATE POLICY (above) cleared all three
-        # conditions - `None` here is what keeps an ungated run's batch
-        # byte-identical to the pre-gating acquisition.
-        feasibility_classifier=feas_clf if gated else None,
-        # PART 2: only ever passed when the constraint model actually fit.
-        constraint_surrogate=constraint_surrogate if constraint_applied else None,
-        constraint_floor=constraint_floor_val if constraint_applied else None,
+    # EXPLORATION DESIGN (analysis_parts/exploration.py): when the model cannot
+    # rank recipes yet, or there are too few distinct recipes for the number of
+    # inputs, the batch is the best bet plus recipes spread over the untested
+    # parts of the box, and `batch_strategy` says so.
+    _n_distinct = len(set(recipe_key))
+    explore_reason = exploration_reason(
+        verdict, n_distinct=_n_distinct, n_inputs=X.shape[1],
+        setting=roles.exploration_design if roles is not None else None,
     )
+    if explore_reason is not None and lin_eq:
+        # A spread design cannot meet an equality (a mixture summing to 100)
+        # by sampling; the model's constrained picks are used instead.
+        explore_reason = None
+    strategy = batch_strategy(explore_reason, n_distinct=_n_distinct, n_inputs=X.shape[1])
+    if explore_reason is not None:
+        from kalos.core.optimize import ProposalBatch
+        from kalos.core.space_filling import maximin_batch
+
+        _spread = maximin_batch(
+            X, bounds, PROPOSAL_BATCH_Q - 1, cat_dims=cat_dims,
+            cat_cardinalities=cat_cardinalities, pending=X_pending, seed=ANALYZE_SEED,
+            feasible=(lambda C: _meets_linear_ge(C, lin_ge)) if lin_ge else None,
+        )
+        proposal = ProposalBatch(
+            X=_spread, requested=PROPOSAL_BATCH_Q, near_duplicates_replaced=0,
+            min_separation=NEAR_DUPLICATE_TOL, notice=None,
+        )
+    else:
+        # `propose_batch` never returns two near-duplicate recipes (see its
+        # docstring); on a design space with fewer than q distinct candidates the
+        # batch comes back SHORT, and `proposal_notice` below says so.
+        proposal = propose_batch(
+            s,
+            bounds,
+            q=PROPOSAL_BATCH_Q,
+            cat_dims=cat_dims,
+            cat_cardinalities=cat_cardinalities,
+            pending=X_pending,
+            # Explicit, not the global RNG: the seed the run record reports is the seed
+            # the acquisition actually used (review C3).
+            seed=ANALYZE_SEED,
+            # PART 1: only ever passed when GATE POLICY (above) cleared all three
+            # conditions - `None` here is what keeps an ungated run's batch
+            # byte-identical to the pre-gating acquisition.
+            feasibility_classifier=feas_clf if gated else None,
+            # PART 2: only ever passed when the constraint model actually fit.
+            constraint_surrogate=constraint_surrogate if constraint_applied else None,
+            constraint_floor=constraint_floor_val if constraint_applied else None,
+            linear_constraints=lin_ge or None,
+            equality_constraints=lin_eq or None,
+        )
     batch = proposal.X
+    # BEST BET (first-time-user study, Finding 1; analysis_parts/best_bet.py): the
+    # recipe with the highest predicted value inside the box is always in the
+    # batch, first, unless it is already running. Computed after the batch so the
+    # batch acquisition and its seeds are unchanged.
+    optimum_x = posterior_mean_optimum(
+        s, bounds, cat_dims=cat_dims, cat_cardinalities=cat_cardinalities, seed=ANALYZE_SEED,
+        linear_constraints=lin_ge or None, equality_constraints=lin_eq or None,
+    )
+    # The optimizer can stop at a local optimum (security review B1): the best
+    # bet is the highest predicted of the optimum, every batch row, every
+    # training row and a Sobol sample of the box, among those that meet the
+    # same rules as the batch (linear constraints, the outcome constraint and
+    # the feasibility gate; S2).
+    _cands = best_bet_candidates(
+        optimum_x, batch, X, bounds, cat_dims=cat_dims, cat_cardinalities=cat_cardinalities,
+        ge=lin_ge or None, eq=lin_eq or None, seed=ANALYZE_SEED,
+    )
+    _cand_mean, _ = s.posterior(_cands)
+    _c_mean = None
+    if constraint_applied and constraint_surrogate is not None:
+        _c_mean, _ = constraint_surrogate.posterior(_cands)
+    _pick, best_bet_notice = choose_best_bet(
+        _cands, np.asarray(_cand_mean, float),
+        constraint_mean=_c_mean, constraint_floor=constraint_floor_val if constraint_applied else None,
+        p_feasible=feas_clf.predict_proba(_cands) if gated else None,
+    )
+    if len(batch):
+        _batch_model_mean, _ = s.posterior(batch)
+    else:
+        _batch_model_mean = np.empty(0)
+    if _pick is not None:
+        optimum_x = _cands[_pick]
+        batch, best_bet_idx, optimum_running = place_best_bet(
+            batch, optimum_x, _batch_model_mean, bounds, cat_dims, X_pending, PROPOSAL_BATCH_Q,
+        )
+    else:
+        best_bet_idx, optimum_running = None, False
+    opt_mean, opt_std = s.posterior(optimum_x.reshape(1, -1))
+    _best_row = X[int(np.argmin(y) if minimize else np.argmax(y))]
+    near_best_run = proposal_separation(
+        optimum_x, _best_row, bounds[0], bounds[1], list(cat_dims or []),
+    ) < NEAR_DUPLICATE_TOL
+    # roles.specs: P(all specs met) for the final batch and the best bet.
+    # Advisory and computed after both, so it never changes them.
+    spec_eval = evaluate_specs(
+        roles, df, keep_index, X, bounds, cat_dims, np.vstack([batch, optimum_x.reshape(1, -1)]),
+        seed=ANALYZE_SEED, min_rows=CONSTRAINT_MIN_ROWS,
+    )
     show = [d["name"] for d in drv[:4]]
     show_idx = [d["_idx"] for d in drv[:4]]  # carry the feature index, not a name lookup
     for d in drv:
@@ -1442,6 +1725,19 @@ def _analyze_body(
         maximize=not minimize,
     ).to_dict()
 
+    # Security review S1: an input flagged `possibly_measured_after_run` that the
+    # model leans on most (largest share or top two) holds the verdict at
+    # not_yet: a result used as a setting makes the model look better than it is.
+    _flagged = [str(c) for c, r in role_safety.reasons.items() if r == "possibly_measured"]
+    if _flagged:
+        _shares = sorted(
+            ((str(f.get("name")), float(f.get("relevance") or 0.0))
+             for f in (gp_shapes.get("features") or []) if isinstance(f, dict)),
+            key=lambda kv: -kv[1],
+        )
+        _top = [n for n, _ in _shares[:2]] or [str(d["name"]) for d in drv[:2]]
+        verdict = hold_for_flagged_drivers(verdict, _flagged, _top)
+
     # VISUALIZATION PAYLOADS: embedding (PCA), correlation (Spearman), and
     # response surface from the fitted GP. Computed while the surrogate is alive
     # (before `del s`) and discarded immediately after — no serialization, no
@@ -1488,6 +1784,19 @@ def _analyze_body(
         else:
             response_surface = _surf
 
+    # Advisory stopping signal (kalos/core/stopping.py). Read off the same
+    # surrogate after the batch is final and before it is
+    # released; it changes nothing else in the response.
+    _floor_var = nr.get("noise_var_pooled", float("nan"))
+    _y_fit_signed = sign * np.asarray(y_fit, float)
+    _best_fit_i = int(np.argmax(_y_fit_signed))
+    stopping = stopping_advice(
+        s, X_fit[_best_fit_i], float(_y_fit_signed[_best_fit_i]),
+        np.vstack([optimum_x.reshape(1, -1), np.asarray(batch, float).reshape(-1, X.shape[1])]),
+        float(np.sqrt(_floor_var)) if np.isfinite(_floor_var) and _floor_var > 0 else None,
+        seed=ANALYZE_SEED,
+    )
+
     # Release the fitted GP(s) (hold torch/gpytorch tensors + parameter/prior
     # back-references that can form reference cycles refcounting alone won't
     # break) as soon as their last use is done, rather than waiting on
@@ -1525,41 +1834,8 @@ def _analyze_body(
         grouped_cv_report=grouped_cv_report, interval_calibration=interval_calibration,
     )
 
-    # per-column provenance: what was kept as a feature, used as the target, or
-    # dropped (id / other output / constant / sparse), so the client is never left
-    # guessing about a silently dropped column. Mirrors the selection logic above.
+    provenance, columns_block, kind_findings = _column_reading()
     kept_features = [str(c) for c in cont_feats] + [str(c) for c in kept_cats]
-    provenance = provenance_dicts(
-        column_provenance(
-            df,
-            target=str(target),
-            features=kept_features,
-            numeric_cols=[str(c) for c in num],
-            is_identifier=lambda name: is_identifier_name(name, profile.id_hint),
-            outcome_hint=profile.outcome_hint,
-            constant_on_fitted_rows=[str(c) for c in constant_on_fitted]
-            + [str(c) for c in constant_cats],
-            recipe_labels={str(c) for c in recipe_labels},
-            declared={str(c) for c in declared},
-            declared_ids={str(c) for c in roles.ids} if roles is not None else set(),
-            declared_features={str(c) for c in roles.features} if roles is not None else set(),
-            status_overrides={
-                **role_safety.overrides,
-                **{c: ("fixed_near_constant", "near_constant") for c in fixed_inputs},
-            },
-            reasons=role_safety.reasons,
-        )
-    )
-
-    # What kind of data each column holds and what the engine did with it, so a
-    # client never draws a text input on a numeric axis (analysis_parts/column_kinds.py).
-    columns_block, kind_findings = column_kinds(
-        df, provenance, kept_cont=[str(c) for c in cont_feats],
-        kept_cats=[str(c) for c in kept_cats], max_auto_levels=AUTO_CATEGORICAL_MAX_LEVELS,
-        declared_cats=[str(c) for c in roles.categoricals] if roles is not None else [],
-        is_identifier=lambda name: is_identifier_name(name, profile.id_hint),
-    )
-    columns_block = with_blank_columns(columns_block, sheet_names, sheet_blank)
 
     # Which acquisition optimizer actually served these proposals, so the audit
     # trail is explicit (mirrors seed / timestamp / engine_version): a large
@@ -1589,6 +1865,58 @@ def _analyze_body(
         proposals, proposal_applicability(batch, distances, design, applicability)
     ):
         row["applicability"] = flags
+    for row in proposals:
+        row["beyond_tried_range"] = beyond_tried(row.get("recipe") or {}, tried_ranges)
+    likely_half_width = conformal_q
+    label_proposals(
+        proposals, best_bet_idx, best=best_single, half_width=likely_half_width,
+        maximize=not minimize, target=str(target),
+    )
+    if explore_reason is not None:
+        for row in proposals:
+            if row.get("pick") == "learn":
+                row["pick"] = "exploration_design"
+                row["mode"] = "explore"
+                row["reason"] = EXPLORE_REASON
+    opt_pred = float(sign * np.asarray(opt_mean, float)[0])
+    opt_hw = (
+        float(likely_half_width) if likely_half_width is not None
+        else 1.96 * float(np.asarray(opt_std, float)[0])
+    )
+    opt_recipe = dict(zip(design.names, design.decode_row(optimum_x)))
+    for _c, _v in fixed_inputs.items():
+        opt_recipe.setdefault(_c, _v["value"])
+    model_optimum: dict[str, Any] = {
+        "recipe": opt_recipe,
+        "predicted": round(opt_pred, 4),
+        "likely_range": [round(opt_pred - opt_hw, 4), round(opt_pred + opt_hw, 4)],
+        "likely_range_source": "conformal" if likely_half_width is not None else "model_sd",
+        # Index in `proposals` (0 = P1), or None when it is already running.
+        "in_batch": best_bet_idx,
+        "already_running": bool(optimum_running),
+        "predicted_vs_best": predicted_vs_best(
+            opt_pred, best_single, likely_half_width, maximize=not minimize,
+            target=str(target), is_best_bet=True, mode="exploit",
+        ),
+        # True when the best bet is (within the batch tolerance) the recipe of the
+        # best measured run: the model's best guess is to repeat it.
+        "near_best_run": bool(near_best_run),
+    }
+    # Linear constraints, checked on the shown (3-decimal) recipes.
+    for row in proposals:
+        row["constraints_ok"] = recipe_constraints_ok(
+            linear_cons, {**{c: v["value"] for c, v in fixed_inputs.items()}, **(row.get("recipe") or {})}
+        )
+    model_optimum["constraints_ok"] = recipe_constraints_ok(linear_cons, opt_recipe)
+    linear_block = linear_constraints_block(linear_cons, [*proposals, model_optimum])
+    for row, spec_row in zip([*proposals, model_optimum], spec_eval["rows"]):
+        row.update(spec_row)
+    if near_best_run:
+        model_optimum["predicted_vs_best"]["plain"] += (
+            " It is close to the recipe of your best run, so running it again checks "
+            "whether that result repeats."
+        )
+    model_optimum["beyond_tried_range"] = beyond_tried(opt_recipe, tried_ranges)
 
     result = {
         "n": len(y), "d": len(kept_features), "target": str(target), "group_col": gcol,
@@ -1665,6 +1993,10 @@ def _analyze_body(
         # above where `promotion` is assembled for why this must never change
         # what the API accepts).
         "promotion": promotion,
+        # The one verdict (kalos/portal/verdict.py, docs/CAMPAIGNS_API.md "Verdict")
+        # and, when it is `refused`, why there are no proposals.
+        "verdict": verdict,
+        "refusal": refusal,
         # PART 1: whether/why the proposal acquisition was gated by P(feasible)
         # (see the GATE POLICY block above `promotion` is assembled near, for
         # the full three-condition reasoning). `threshold` is the label
@@ -1696,7 +2028,16 @@ def _analyze_body(
         # promotion gate reads (kalos/core/evaluation.py `group_mean_margin`).
         "cv_group_mean_baseline": {**cv_group_mean_baseline, "margin": gm_margin},
         "best": round(best_single, 4),
-        "noise": _noise_block(nr, best_single, best_reproducible, replicate_aware, het),
+        "noise": _noise_block(
+            nr, best_single, best_reproducible, replicate_aware, het,
+            per_recipe={
+                "enabled": per_recipe_on, "used": per_recipe_used, "reason": per_recipe_reason,
+                "df0": PER_RECIPE_DF0,
+                # Smallest and largest per-recipe noise sd the fit used (null when unused).
+                "sd_range": None if per_recipe_sd is None
+                else [round(per_recipe_sd[0], 4), round(per_recipe_sd[1], 4)],
+            },
+        ),
         # Explicit, labeled second evaluation pass on the log scale, run only
         # when `noise.scale.suggests_transform` is True (see
         # `_alternative_scale_block`'s docstring). Evaluation-only: proposals
@@ -1724,6 +2065,34 @@ def _analyze_body(
         # of the joint optimization were replaced by sequential selection.
         "batch_diversity": proposal.diversity_report(),
         "proposals": with_fixed_inputs(proposals, fixed_inputs),
+        # The model's best bet (analysis_parts/best_bet.py): the recipe with the
+        # highest predicted value inside the search box, its likely range, and
+        # where it is in `proposals`.
+        "model_optimum": model_optimum if best_bet_notice is None else None,
+        # Why there is no best bet this round (no candidate met the outcome
+        # constraint or the feasibility gate), else null.
+        "best_bet_notice": best_bet_notice,
+        # Whose picks the batch is: the model's, or an exploration design when
+        # the model cannot rank recipes yet (analysis_parts/exploration.py).
+        "batch_strategy": strategy,
+        # Advice on whether more rounds can be told apart from assay noise
+        # (kalos/core/stopping.py). Never removes proposals; never auto-stops.
+        "stopping": stopping,
+        # roles.linear_constraints as applied, and whether every shown recipe meets them.
+        "linear_constraints": linear_block,
+        # roles.specs: how P(all specs met) on proposals and the best bet was computed.
+        "joint_feasibility": spec_eval["block"],
+        # Observed (tried) range of each continuous input, and how far past it
+        # the search was allowed (roles.allow_beyond). `feature_ranges` is the
+        # search box actually used.
+        "tried_ranges": {
+            k: [round(float(v[0]), 6), round(float(v[1]), 6)] for k, v in tried_ranges.items()
+        },
+        "allow_beyond": {
+            "default": beyond.get("*", 0.0),
+            "per_input": {k: v for k, v in beyond.items() if k != "*"},
+            "applied": beyond_applied,
+        },
         # Inputs fixed at their median because their spread is within sensor
         # precision (analysis_parts/near_constant.py). Not searched.
         "fixed_inputs": {c: v["value"] for c, v in fixed_inputs.items()},
@@ -1742,15 +2111,11 @@ def _analyze_body(
         # normalized before analysis, so the client can see the frame they sent is
         # not byte-for-byte the frame that was modeled. None for a standard sheet.
         "orientation": df.attrs.get("kalos_orientation"),
-        "validation": report_dict(
+        "validation": with_why(report_dict(
             _with_data_findings(
                 validation,
-                _data_findings(
-                    by_column, n_rows_dropped, n_censored_rows, zero_filled,
-                    auto_cats=[str(c) for c in auto_cats if c in kept_cats],
-                    header=header_info,
-                ) + role_safety.findings + near_constant_findings(fixed_inputs)
-                + kind_findings + (
+                _sheet_findings(kind_findings)
+                + [search_box_finding(tried_ranges, beyond_applied, design)] + (
                     [Finding(
                         check="cv_ci_unavailable", severity="info", message=ci95_reason,
                         detail={"cv_n_groups": int(rep["n_groups"])},
@@ -1758,8 +2123,9 @@ def _analyze_body(
                     if ci95_reason is not None
                     else []
                 ),
-            )
-        ),
+            ),
+            sheet_row=sheet_row,
+        )),
         # Features whose search range was narrowed because some observed cells
         # were physically impossible. Reported, never silent: the client needs to
         # know the box they are being optimized over is not their full data range.
@@ -1778,6 +2144,17 @@ def _analyze_body(
         # Response-shape version (docs/CAMPAIGNS_API.md, "Contract version").
         "contract_version": ANALYSIS_CONTRACT_VERSION,
     }
+    if refusal is not None:  # verdict `refused`: no recipes, and the notice says why
+        result["proposals"] = []
+        result["proposal_notice"] = refusal_notice(refusal, PROPOSAL_BATCH_Q)
+        # No best bet either: a refused model has no recipe to recommend.
+        result["model_optimum"] = None
+        if stopping["state"] != "unknown":  # keep the plain "no repeats" reason
+            result["stopping"] = unknown_advice(
+                "Kalos cannot say whether more rounds will help: the model is not "
+                "reliable enough on this sheet yet.",
+                noise_sd=stopping["noise_sd"],
+            )
     if anonymize:
         result = _anonymize_result(
             result,
