@@ -472,7 +472,8 @@ def test_a_reanalyze_never_touches_b(main, world):
     before_a = main.request("GET", "/api/latest", auth=ACME).json()
     r = main.request("POST", "/api/campaign/reanalyze", auth=DAN, json={"tenant": "globex"})
     assert r.status_code == 200, r.text
-    assert r.json()["analysis"]["dataset"].startswith("campaign round")
+    # The campaign keeps its name across a reanalyze (first-time study, Finding 7).
+    assert r.json()["analysis"]["dataset"] == "dan-runs.csv"
     assert main.request("GET", "/api/latest", auth=GLOBEX).json() == before_b
     assert main.request("GET", "/api/campaign", auth=GLOBEX).json() == before_b_camp
     assert main.request("GET", "/api/latest", auth=ACME).json() == before_a
