@@ -1,0 +1,1861 @@
+{
+  "components": {
+    "schemas": {
+      "Body_run_uploaded_api_run_post": {
+        "properties": {
+          "anonymize": {
+            "default": false,
+            "title": "Anonymize",
+            "type": "boolean"
+          },
+          "direction": {
+            "default": "",
+            "title": "Direction",
+            "type": "string"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "replace": {
+            "default": false,
+            "title": "Replace",
+            "type": "boolean"
+          },
+          "roles": {
+            "default": "",
+            "title": "Roles",
+            "type": "string"
+          },
+          "sheet": {
+            "default": "",
+            "title": "Sheet",
+            "type": "string"
+          },
+          "target": {
+            "default": "",
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_run_uploaded_api_run_post",
+        "type": "object"
+      },
+      "Body_scale_readout_api_scale_readout_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "target"
+        ],
+        "title": "Body_scale_readout_api_scale_readout_post",
+        "type": "object"
+      },
+      "Body_submit_job_api_campaigns__campaign_id__jobs_post": {
+        "properties": {
+          "anonymize": {
+            "default": false,
+            "title": "Anonymize",
+            "type": "boolean"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "replace": {
+            "default": false,
+            "title": "Replace",
+            "type": "boolean"
+          },
+          "roles": {
+            "default": "",
+            "title": "Roles",
+            "type": "string"
+          },
+          "sheet": {
+            "default": "",
+            "title": "Sheet",
+            "type": "string"
+          },
+          "target": {
+            "default": "",
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_submit_job_api_campaigns__campaign_id__jobs_post",
+        "type": "object"
+      },
+      "Body_upload_to_campaign_api_campaigns__campaign_id__upload_post": {
+        "properties": {
+          "anonymize": {
+            "default": false,
+            "title": "Anonymize",
+            "type": "boolean"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "replace": {
+            "default": false,
+            "title": "Replace",
+            "type": "boolean"
+          },
+          "roles": {
+            "default": "",
+            "title": "Roles",
+            "type": "string"
+          },
+          "sheet": {
+            "default": "",
+            "title": "Sheet",
+            "type": "string"
+          },
+          "target": {
+            "default": "",
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_to_campaign_api_campaigns__campaign_id__upload_post",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "_CreateBody": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "_CreateBody",
+        "type": "object"
+      },
+      "_PatchBody": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "_PatchBody",
+        "type": "object"
+      },
+      "_Proposal": {
+        "description": "One proposed experiment, as `_annotate` emits it. Unknown extra fields\n(`vals`, `p_feasible`, `pred_<constraint>`) are ignored, not stored.",
+        "properties": {
+          "mode": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "pred": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pred"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "recipe": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxProperties": 512,
+            "minProperties": 1,
+            "propertyNames": {
+              "maxLength": 512,
+              "minLength": 1
+            },
+            "title": "Recipe",
+            "type": "object"
+          },
+          "std": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Std"
+          }
+        },
+        "required": [
+          "recipe"
+        ],
+        "title": "_Proposal",
+        "type": "object"
+      },
+      "_ResultBody": {
+        "description": "Body for `POST /api/campaign/result`. `value` is a JSON number (bools\nand numeric strings are refused); a non-finite value is refused by the\nstore with its own message. `reason` is required when the run already has\na recorded value (a correction), and optional for the first value.",
+        "properties": {
+          "id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "value"
+        ],
+        "title": "_ResultBody",
+        "type": "object"
+      },
+      "_RunResultBody": {
+        "additionalProperties": false,
+        "description": "Body for `POST /api/campaigns/{id}/runs/{run_id}/result`: the measured\noutcome. A JSON number only (bools and numeric strings are refused).",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "_RunResultBody",
+        "type": "object"
+      },
+      "_StartBody": {
+        "description": "Body for `POST /api/campaign/start` \u2014 the proposed batch the caller\nwants to start running, one entry per `{recipe, pred, std, mode, reason}`\n(the shape `_annotate`'s proposals already carry), at most\n`MAX_RECIPES_PER_START` per call.",
+        "properties": {
+          "recipes": {
+            "items": {
+              "$ref": "#/components/schemas/_Proposal"
+            },
+            "maxItems": 64,
+            "title": "Recipes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "recipes"
+        ],
+        "title": "_StartBody",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Kalos Engine API",
+    "version": "0.1.0",
+    "x-kalos-contract": 3
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/campaign": {
+      "get": {
+        "description": "The caller's tenant's campaign summary for the `/decide` view, or\n`{\"has_campaign\": false}` before any upload has ever seeded one.\n\nDescribes the tenant's DEFAULT campaign (`campaign_view`): `stage` and\n`next_action` come from that campaign's own analysis, and\n`analysis_in_sync` says whether it provably matches the run sheet.",
+        "operationId": "get_campaign_api_campaign_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Campaign Api Campaign Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Campaign"
+      }
+    },
+    "/api/campaign/reanalyze": {
+      "post": {
+        "description": "Fold every measured pending run into the base dataset, re-run the\nengine (`_analyze`) on the grown dataset, and publish it as the new\n`/api/latest` \u2014 the loop closing (docs/CAMPAIGN_LOOP.md, \"Re-analyze =\nthe loop closing\").\n\nTransactional: `plan_fold` -> `_analyze` -> `commit_fold`. The fold is\ncommitted only after `_analyze` succeeds, and only if the campaign's\n`generation` is unchanged (a compare-and-swap in SQL). The new analysis is\nwritten in that SAME transaction (schema v2: analyses live in portal.db),\nso the fold and the analysis describing it land together or not at all. A\nfailed analysis or a concurrent upload that reseeds mid-analysis leaves\nboth untouched and returns a retry (409). This closes the sub-millisecond\nwindow the separate `/api/latest` file cache used to leave open.\n\n`_analyze` is imported from `kalos.portal.app` INSIDE this function, not at\nmodule load: `app.py` imports and mounts this router, so a module-level\nimport here would be circular. `_analyze` is CPU-bound (a GP fit +\nacquisition optimization), so it runs via `run_in_threadpool`, matching how\n`/api/run` offloads it in `app.py`.",
+        "operationId": "reanalyze_campaign_api_campaign_reanalyze_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reanalyze Campaign"
+      }
+    },
+    "/api/campaign/result": {
+      "post": {
+        "description": "Record the measured outcome of a pending run. Requires `write`. 400 on an\nunknown id, a non-finite value, or a correction without a `reason` (code\n`reason_required`). Append-only: each call adds a version (CampaignStore.set_result).\nAn unmeasured or bad-value run must never silently become foldable into the base dataset.",
+        "operationId": "log_campaign_result_api_campaign_result_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_ResultBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Log Campaign Result"
+      }
+    },
+    "/api/campaign/start": {
+      "post": {
+        "description": "Append each proposed recipe as a pending, awaiting run. Requires `write`.",
+        "operationId": "start_campaign_api_campaign_start_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_StartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Campaign"
+      }
+    },
+    "/api/campaigns": {
+      "get": {
+        "description": "The caller's tenant's campaigns, newest first.",
+        "operationId": "list_campaigns_api_campaigns_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Archived",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Campaigns Api Campaigns Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Campaigns"
+      },
+      "post": {
+        "description": "Create an empty campaign in the caller's tenant. 201 with its info.",
+        "operationId": "create_campaign_api_campaigns_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_CreateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Campaign"
+      }
+    },
+    "/api/campaigns/{campaign_id}": {
+      "get": {
+        "description": "One campaign: its info plus the loop summary (the `GET /api/campaign`\nshape, scoped to this campaign, with `stage` and `next_action` from this\ncampaign's own analysis: `campaign_view`).",
+        "operationId": "get_campaign_api_campaigns__campaign_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Campaign"
+      },
+      "patch": {
+        "description": "Rename (`write`) and/or archive/unarchive (`admin`) a campaign.",
+        "operationId": "update_campaign_api_campaigns__campaign_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_PatchBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Campaign"
+      }
+    },
+    "/api/campaigns/{campaign_id}/analysis": {
+      "get": {
+        "description": "This campaign's published analysis (the `/api/latest` shape).",
+        "operationId": "campaign_analysis_api_campaigns__campaign_id__analysis_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Campaign Analysis"
+      }
+    },
+    "/api/campaigns/{campaign_id}/jobs": {
+      "get": {
+        "description": "This campaign's jobs, newest first.",
+        "operationId": "list_campaign_jobs_api_campaigns__campaign_id__jobs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Campaign Jobs"
+      },
+      "post": {
+        "description": "Queue an analysis of this run sheet into this campaign. 202 + the job.",
+        "operationId": "submit_job_api_campaigns__campaign_id__jobs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sheet",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sheet"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_submit_job_api_campaigns__campaign_id__jobs_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Job"
+      }
+    },
+    "/api/campaigns/{campaign_id}/reanalyze": {
+      "post": {
+        "description": "Fold measured runs, re-run the engine, publish: `/api/campaign/reanalyze`\nfor this campaign (same transaction, slot, and error contract).",
+        "operationId": "reanalyze_api_campaigns__campaign_id__reanalyze_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reanalyze"
+      }
+    },
+    "/api/campaigns/{campaign_id}/runs": {
+      "post": {
+        "description": "Start a proposed batch: same body and bounds as `/api/campaign/start`.",
+        "operationId": "start_runs_api_campaigns__campaign_id__runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_StartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Runs"
+      }
+    },
+    "/api/campaigns/{campaign_id}/runs/{run_id}/result": {
+      "post": {
+        "description": "Set the measured outcome on a pending run of this campaign.",
+        "operationId": "log_run_result_api_campaigns__campaign_id__runs__run_id__result_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_RunResultBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Log Run Result"
+      }
+    },
+    "/api/campaigns/{campaign_id}/upload": {
+      "post": {
+        "description": "Upload a run sheet into this campaign: the `/api/run` pipeline and\ncontract (caps, `sheet`, error codes, 503 when the analysis slot is\nbusy), seeding THIS campaign and publishing its analysis. Synchronous.",
+        "operationId": "upload_to_campaign_api_campaigns__campaign_id__upload_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sheet",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sheet"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_to_campaign_api_campaigns__campaign_id__upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload To Campaign"
+      }
+    },
+    "/api/health": {
+      "get": {
+        "description": "What the desktop shell (and an operator) needs to know: versions, where\nthe state lives, the schema, and whether an analysis is running.\n\nNeeds the read scope, unlike `/healthz`. `state_dir`, `pid` and\n`analysis_in_flight` (process-wide, every tenant) are host facts: they are\nreturned in desktop mode (one user, one token) and to an admin token, and\nleft out for any other caller in server mode. Never\nimports torch: versions come from package metadata, `torch_loaded` says\nwhether the GP stack is in memory yet. 503 with a fixed plain reason when the\nstore cannot be read (the exception is logged, not returned).",
+        "operationId": "health_api_health_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/api/jobs/{job_id}": {
+      "get": {
+        "description": "One job's status (see the module docstring for the shape).",
+        "operationId": "get_job_api_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Job"
+      }
+    },
+    "/api/jobs/{job_id}/cancel": {
+      "post": {
+        "description": "Cancel a queued or running job (a finished job is returned unchanged).",
+        "operationId": "cancel_job_api_jobs__job_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Job"
+      }
+    },
+    "/api/latest": {
+      "get": {
+        "description": "The most recent real (uploaded) analysis for the caller's tenant, for the\nOverview. `has_data` is False until the first successful /api/run so the home\ncan show an upload prompt instead of pretending there is data.",
+        "operationId": "latest_api_latest_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Latest Api Latest Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Latest"
+      }
+    },
+    "/api/multi": {
+      "get": {
+        "operationId": "run_multi_api_multi_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "rounds",
+            "required": false,
+            "schema": {
+              "default": 5,
+              "maximum": 12,
+              "minimum": 1,
+              "title": "Rounds",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": 2,
+              "maximum": 4,
+              "minimum": 1,
+              "title": "Q",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Multi"
+      }
+    },
+    "/api/providers": {
+      "get": {
+        "description": "Credential status for every external-provider slot (kalos.providers) -\nwhich ones are live, which are keyless fallbacks, and what each unlocks.\nNever leaks a credential value, only env var names.",
+        "operationId": "providers_api_providers_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Providers Api Providers Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Providers"
+      }
+    },
+    "/api/run": {
+      "post": {
+        "description": "Upload a run sheet and analyze it. A campaign that has awaiting or measured runs\nis refused (409 `campaign_has_runs`) unless `replace=true` confirms the replacement.\n\n`sheet` (multipart form field, or `?sheet=` query parameter; the form field\nwins) picks a workbook sheet by name. Omitted, the first sheet in workbook\norder that holds a usable table is analyzed (`kalos.portal.uploads.\n_parse_excel`). Ignored for CSV/TSV uploads. Excel responses, success or\nerror, carry `sheets` and `sheet_used`.\n\nThe outcome is written to the audit log (tenant, subject, status; never the\nfile, its name, or its contents).",
+        "operationId": "run_uploaded_api_run_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sheet",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sheet"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_run_uploaded_api_run_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Uploaded"
+      }
+    },
+    "/api/scale/readout": {
+      "post": {
+        "description": "Upload a multi-scale run sheet plus a target JSON, get back the\nScale-Up Readout as a single HTML page.\n\nStateless (D6): nothing is stored server-side, not even on success.",
+        "operationId": "scale_readout_api_scale_readout_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_scale_readout_api_scale_readout_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scale Readout"
+      }
+    },
+    "/api/single": {
+      "get": {
+        "operationId": "run_single_api_single_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "rounds",
+            "required": false,
+            "schema": {
+              "default": 6,
+              "maximum": 12,
+              "minimum": 1,
+              "title": "Rounds",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": 2,
+              "maximum": 4,
+              "minimum": 1,
+              "title": "Q",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Single"
+      }
+    },
+    "/healthz": {
+      "get": {
+        "description": "Liveness probe for a deploy healthcheck (deploy/engine/Containerfile).\n\nUnauthenticated BY DESIGN, and safe to leave that way: no\n`Depends(require_scope(...))`.\nThe response is fixed to exactly `{\"status\": \"ok\"}` - no tenant data, no\nconfig echo, no store contents, nothing beyond \"this process is up and\nanswering HTTP requests\". `engine_version` is deliberately NOT included:\nverified by reading every route in this module that `kalos.__version__`\nis not exposed anywhere unauthenticated today (no public route returns\nit), so this stays the minimal liveness fact rather\nthan becoming the first place the version leaves the process without a\ntoken.\n\nMust never touch the database - that is what `/readyz` is for. A\nliveness probe that can block on a locked/slow SQLite file would make an\norchestrator restart a perfectly healthy process because the DB, not the\nprocess, was briefly unavailable.\n\n`async def` on purpose: a sync handler runs on the bounded worker\nthreadpool, so a liveness probe could queue behind threads busy with\nupload/reanalyze work and time out on a healthy process. On the event loop\nit answers as long as the loop is alive, which is what \"live\" means.",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Healthz Healthz Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Healthz"
+      }
+    },
+    "/readyz": {
+      "get": {
+        "description": "Readiness probe: unlike `/healthz`, this DOES touch the database - on\npurpose, to answer \"can this instance actually serve requests that need\nthe store\", not just \"is the process up\".\n\nRead-only and tenant-agnostic: `store.ping()` reads the schema version\n(`schema_migrations`), never a write and never any tenant's data, so a\nreadiness check can neither corrupt nor contend for the store it checks.\nDegrades to a 503 on any failure (missing/corrupt/locked database file)\ninstead of raising, so an orchestrator always gets a normal HTTP response.\n\nThe 503 body carries a FIXED generic reason. This endpoint is\nunauthenticated, and exception text (sqlite messages, filesystem paths)\nis server detail an anonymous caller must not see; the full exception is\nlogged server-side instead.\n\nThe store is obtained INSIDE the try (not as a `Depends`), so a failure\nto even construct it (unwritable state dir, corrupt file at open) is the\nsame generic 503 rather than an unhandled 500. Resolved through\n`app.dependency_overrides` so tests can still point it at a temp store.",
+        "operationId": "readyz_readyz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Readyz"
+      }
+    }
+  }
+}

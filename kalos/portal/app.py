@@ -1205,6 +1205,7 @@ async def _unhandled_error(request: Request, exc: Exception) -> JSONResponse:
 # `kalos.portal.scale_routes`; mounted here, same pattern as the router
 # above.
 app.include_router(_scale_router)
+import kalos.portal.contract_install  # noqa: E402,F401,I001 - adds X-Kalos-Contract to every response
 
 __all__ = [
     "MAX_COLUMNS",
