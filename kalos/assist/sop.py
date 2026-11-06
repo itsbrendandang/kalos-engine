@@ -51,6 +51,8 @@ HEADER_PREFIX = "> Draft prepared with Kalos from campaign records on "
 HEADER_SUFFIX = ". Not reviewed. Not an approved procedure."
 MAX_FILL_CHARS = 500
 MAX_RECIPES = 64
+MAX_DRAFTS_PER_TENANT = 500
+MAX_VERSIONS_PER_DRAFT = 200
 
 SECTIONS: tuple[str, ...] = (
     "purpose", "scope", "materials", "equipment", "parameters", "procedure",
@@ -109,6 +111,12 @@ class UnknownPlaceholder(SopError):
 
 class InvalidValue(SopError):
     code = "invalid_value"
+
+
+class LimitReached(SopError):
+    """Too many drafts for the tenant, or too many versions of one draft."""
+
+    code = "limit_reached"
 
 
 class VersionConflict(SopError):
@@ -591,6 +599,9 @@ def draft(
     """Version 1 of a new draft from the campaign record. No model."""
     if template not in TEMPLATES:
         raise SopError("unknown template")
+    root = _sop_dir(store, tenant)
+    if root.is_dir() and sum(1 for p in root.iterdir() if DRAFT_ID_RE.fullmatch(p.name)) >= MAX_DRAFTS_PER_TENANT:
+        raise LimitReached(f"this workspace already holds {MAX_DRAFTS_PER_TENANT} drafts")
     state = store.get(tenant=tenant, campaign_id=campaign_id)
     analysis = store.load_analysis(tenant=tenant, campaign_id=campaign_id)
     records = resolve_source(source, state, analysis)
@@ -627,6 +638,8 @@ def draft(
 
 
 def _next(store: CampaignStore, tenant: str, previous: Draft, **changes: Any) -> Draft:
+    if previous.version >= MAX_VERSIONS_PER_DRAFT:
+        raise LimitReached(f"a draft keeps at most {MAX_VERSIONS_PER_DRAFT} versions; start a new draft")
     data = previous.to_dict()
     data.update(changes)
     data["version"] = previous.version + 1

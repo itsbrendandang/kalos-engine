@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
+from kalos.assist import ratelimit
 from kalos.assist.chat import MAX_QUESTION_CHARS, ask
 from kalos.assist.guide import next_step
 from kalos.assist.http import (
@@ -77,6 +78,12 @@ def assist_ask(
     step when nothing relevant is found or the reply fails the checks."""
     if assist_disabled() or model is None:
         return assist_disabled_response()
+    wait = ratelimit.check(principal.tenant, principal.subject)
+    if wait:
+        return JSONResponse(
+            {"error": "too many questions in a short time; try again shortly", "code": "rate_limited"},
+            status_code=429, headers={"Retry-After": str(wait)},
+        )
     if body.campaign_id is not None and not _valid_campaign_id(body.campaign_id):
         return campaign_not_found_response()
     try:

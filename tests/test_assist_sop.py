@@ -591,3 +591,23 @@ def test_revise_refuses_new_review_words(tmp_path):
                     "Higher pH increases the result.", "Temperature drives the result.",
                     "Low pH leads to failure.", "It failed due to heat.", "Use it because it works."):
         assert sop.check_revision(d, md.replace(base, planted)), planted
+
+
+def test_draft_and_version_caps_are_409(env, monkeypatch):
+    """sec-assist (i): 500 drafts per tenant and 200 versions per draft (lowered here)."""
+    tc, store = env
+    cid, _runs = _seed(store)
+    monkeypatch.setattr(sop, "MAX_DRAFTS_PER_TENANT", 2)
+    monkeypatch.setattr(sop, "MAX_VERSIONS_PER_DRAFT", 2)
+    d = _draft(tc, cid, {"round": 0})
+    _draft(tc, cid, {"round": 0})
+    r = tc.post("/api/assist/sop/draft", json={"campaign_id": cid, "source": {"round": 0}, "template": "custom"},
+                headers=H("a-write"))
+    assert r.status_code == 409 and r.json()["code"] == "limit_reached"
+    ok = tc.post(f"/api/assist/sop/{d['draft_id']}/fill", json={"values": {"prepared_by": "Ana"}}, headers=H("a-write"))
+    assert ok.status_code == 200 and ok.json()["version"] == 2
+    r = tc.post(f"/api/assist/sop/{d['draft_id']}/fill", json={"values": {"checked_by": "Ben"}}, headers=H("a-write"))
+    assert r.status_code == 409 and r.json()["code"] == "limit_reached"
+    assert tc.get(f"/api/assist/sop/{d['draft_id']}", headers=H("a-read")).json()["version"] == 2
+    # other tenant unaffected by acme's count
+    assert sop.MAX_DRAFTS_PER_TENANT == 2

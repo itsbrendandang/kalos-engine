@@ -132,7 +132,8 @@ def draft_sop(
         except CampaignNotFound:
             response = campaign_not_found_response()
         except sop.SopError as exc:
-            response = JSONResponse({"error": str(exc), "code": exc.code}, status_code=400)
+            status = 409 if isinstance(exc, sop.LimitReached) else 400
+            response = JSONResponse({"error": str(exc), "code": exc.code}, status_code=status)
     _audit(store, principal, "sop.draft", response.status_code,
            campaign_id if response.status_code != 404 else None)
     return response
@@ -167,7 +168,7 @@ def revise_sop(
         except ModelUnavailable:
             response = provider_unavailable_response()
         except sop.SopError as exc:
-            status = 409 if isinstance(exc, sop.VersionConflict) else 400
+            status = 409 if isinstance(exc, (sop.VersionConflict, sop.LimitReached)) else 400
             response = JSONResponse({"error": str(exc), "code": exc.code}, status_code=status)
     _audit(store, principal, "sop.revise", response.status_code, current.campaign_id)
     return response
@@ -195,7 +196,7 @@ def fill_sop(
             status_code=400,
         )
     except sop.SopError as exc:
-        status = 409 if isinstance(exc, sop.VersionConflict) else 400
+        status = 409 if isinstance(exc, (sop.VersionConflict, sop.LimitReached)) else 400
         response = JSONResponse({"error": str(exc), "code": exc.code}, status_code=status)
     _audit(store, principal, "sop.fill", response.status_code, current.campaign_id)
     return response

@@ -395,3 +395,38 @@ def test_numbers_exponents_and_list_positions():
     big = Chunk("c2", "analysis", "noise", None, "spread", "Measured spread 2000000000")
     ok = check_answer("Measured spread was 2e9 [S1].", [Labelled("S1", Hit(big, 1.0))], guide).answer
     assert ok == "Measured spread was 2e9."
+
+
+def test_ask_is_rate_limited_per_principal(env, monkeypatch):
+    """sec-assist (i): a burst of questions from one user gets 429 + Retry-After;
+    another user is not affected."""
+    from kalos.assist import ratelimit
+
+    tc, store, _fake = env
+    ratelimit.reset()
+    monkeypatch.setenv("KALOS_ASSIST_ASK_PER_MINUTE", "3")
+    cid = _seed(store, "acme", A_SECRET)
+    body = {"question": "zebra saxophone quantum", "campaign_id": cid}
+    codes = [tc.post("/api/assist/ask", json=body, headers=H("a-read")).status_code for _ in range(4)]
+    assert codes == [200, 200, 200, 429]
+    r = tc.post("/api/assist/ask", json=body, headers=H("a-read"))
+    assert r.json()["code"] == "rate_limited" and int(r.headers["Retry-After"]) >= 1
+    assert tc.post("/api/assist/ask", json=body, headers=H("a-write")).status_code == 200
+    ratelimit.reset()
+
+
+def test_rate_window_slides():
+    from kalos.assist import ratelimit
+
+    ratelimit.reset()
+    import os
+
+    os.environ["KALOS_ASSIST_ASK_PER_MINUTE"] = "2"
+    try:
+        assert ratelimit.check("t", "s", now=0.0) == 0
+        assert ratelimit.check("t", "s", now=1.0) == 0
+        assert ratelimit.check("t", "s", now=2.0) == 58
+        assert ratelimit.check("t", "s", now=61.0) == 0
+    finally:
+        del os.environ["KALOS_ASSIST_ASK_PER_MINUTE"]
+        ratelimit.reset()
