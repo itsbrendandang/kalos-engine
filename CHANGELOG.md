@@ -4,6 +4,8 @@ Newest first.
 
 ## Unreleased
 
+- README rewritten in plain words: what Kalos is, one round, the desktop app, the hosted mode, the evidence with the open-replay numbers verbatim (BO beats random clearly on 1 of 15 datasets), what Kalos does not do, every `KALOS_*` setting with its default and range, the branch and PR map. `tests/test_readme_env.py` fails when the settings table and the code disagree. `docs/ARCHITECTURE.md`, `deploy/RUNBOOK.md`, `deploy/compose.yaml` and `deploy/.env.example` no longer say the web app has no login or sends a static token: kalos-web `main` signs people in and mints a token per request; the desktop app uses a per-launch secret; the compose file has not been wired for sign-in yet.
+
 - `columns[]` lists entirely blank columns too (kind `constant`, reason `all_blank`, in sheet order).
 
 - `proposals[].vals` holds the same rounded, box-clipped numbers as `proposals[].recipe` (they could differ by the clip before).

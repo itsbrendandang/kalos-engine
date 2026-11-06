@@ -1,372 +1,270 @@
 # Kalos engine
 
-> **Status: under development. Not a public SaaS.**
-> Kalos is a scientific optimization platform. It is being built toward a public SaaS.
-> There is no hosted service today. User login and organization management are under development. They are **not** on `main`.
-> The optimizer is **not scientifically validated**. See [Scientific methodology](#scientific-methodology-and-benchmark-limitations).
-> Nothing here claims enterprise readiness, regulatory compliance, or security certification.
+Kalos reads a sheet of past runs from your lab and proposes the next recipes to try. It says how far to trust each suggestion, and it refuses when your runs cannot support an answer.
 
-## Overview
+This repository is the engine: the program that checks the sheet, builds the model and proposes recipes. The pages people use are in [kalos-web](https://github.com/itsbrendandang/kalos-web). The Mac app wraps both.
 
-Kalos proposes the next batch of experiments for a bioprocess campaign. A campaign runs in rounds. Each round has three steps: propose, measure, and re-propose.
+> This README describes branch `desktop-engine`, which is not yet merged. It is stacked on `gxp-integrity` ([PR #120](https://github.com/itsbrendandang/kalos-engine/pull/120)). What `main` has, and what is still on a branch, is in [Branches and pull requests](#branches-and-pull-requests).
 
-You give Kalos a run sheet of past runs. The run sheet is a CSV, TSV, or Excel file. You also name a target column, such as titer or yield.
+## Who it is for
 
-Kalos checks the data. Then it runs Bayesian optimization (BO). BO fits a model to past results. It uses that model to choose the next experiments.
+- A process-development scientist with a spreadsheet of runs (media, feeds, pH, temperature, a titer or yield column) who wants a suggested next round and an honest read on whether the data supports it.
+- A small team that works in rounds: propose, run, measure, propose again. A few dozen to about two thousand runs.
+- One person on one Mac, with the desktop app. Nothing leaves the machine.
+- A team that needs sign-in and separate workspaces, with the hosted mode.
 
-That model is a surrogate model. It is a fast statistical approximation of the process. Kalos fits it as a Gaussian process (GP), using BoTorch. BoTorch is a PyTorch library for BO.
+Kalos is under development and is not sold or hosted for anyone today.
 
-A GP also reports uncertainty. Uncertainty is the model's estimate of how far a prediction may be wrong.
+## One round
 
-An acquisition function scores each candidate experiment. Kalos uses these scores to choose the batch.
-
-Kalos returns a proposed batch of recipes. It also returns the diagnostics that you need to judge how far to trust the batch.
-
-You run the experiments. You log the measured results. Then you ask for the next batch.
-
-The scale-up readout is a separate feature. It predicts performance at a larger scale. It refuses to predict when its backtest does not support the prediction. A backtest checks past predictions against known results.
-
-This repository is the engine. The engine is a FastAPI service. It has no built-in user interface (UI).
-
-The workbench UI is in the separate [kalos-web](https://github.com/itsbrendandang/kalos-web) repository.
-
-## Target users and use cases
-
-Intended users. The product is not yet available to external users.
-
-- **Bioprocess scientists and process-development teams.** They have a spreadsheet of runs (media, feeds, pH, temperature). They want a suggested next round. They also want a candid assessment of what the data can support.
-- **Small teams that run iterative campaigns** (propose, measure, re-propose). They have a few dozen to a couple of thousand runs. The exact GP is capped at 2,000 fit rows (`KALOS_MAX_FIT_ROWS`).
-- **Platform or machine learning (ML) engineers.** They want a tenant-aware optimization API that they can self-host. A tenant is one data owner.
-
-Use cases:
-
-- Next-batch proposals for media or process optimization.
-- Tracking an in-flight campaign. In-flight runs have started but are not yet measured.
-- A scale-up readout from a multi-scale run sheet.
-
-These are not use cases yet:
-
-- Regulated work under good practice rules (GxP).
-- Work that depends on the optimizer being validated against real wet-lab outcomes.
-
-## Capabilities
-
-Status labels:
-
-- **IMPLEMENTED**: on `main`, with tests.
-- **EXPERIMENTAL**: on `main` or in an open pull request (PR). It is not validated, or it is opt-in.
-- **PLANNED**: not built.
-
-An open PR is listed as in progress. It is not listed as implemented.
-
-Latin hypercube sampling (LHS) spreads random points evenly across the design space.
-
-| Capability | Status | Evidence |
+| Stage | What you do | What Kalos does |
 | --- | --- | --- |
-| Upload a CSV, TSV, or Excel file. Validate, analyze, and propose the next batch (`POST /api/run`) | IMPLEMENTED | `kalos/portal/app.py`, `docs/UPLOADS.md`, `tests/test_validation_gate.py` |
-| GP surrogate model (BoTorch) for mixed continuous and categorical design spaces | IMPLEMENTED | `kalos/core/`, `tests/test_data_and_core.py` |
-| Grouped cross-validation (CV). Split-conformal bands (intervals calibrated on held-out data). Fail-closed promotion gates (a failing check blocks promotion) | IMPLEMENTED | `kalos/core/splits.py`, `conformal.py`, `gates.py`; `tests/test_calibration.py`, `tests/test_promotion_and_baselines.py` |
-| Data validation gate. It checks units, bounds, duplicates, and missing values | IMPLEMENTED | `kalos/validation/`, `tests/test_validation_gate.py` |
-| Campaign loop (propose, measure, re-propose) with in-flight points | IMPLEMENTED | `kalos/portal/campaign_routes.py`, `docs/CAMPAIGN_LOOP.md`, `tests/test_pending_proposals.py` |
-| Scale-up readout. It refuses when its backtest fails | IMPLEMENTED (synthetic evidence only) | `kalos/portal/scale_routes.py`, `docs/SCALE_READOUT.md`, `docs/SCALE_EVIDENCE.md` |
-| Bearer-token authentication (a secret string that grants access) with `read`/`write`/`admin` scopes. Tokens are hashed | IMPLEMENTED | `kalos/portal/auth.py` |
-| Campaign and latest-analysis store, keyed by tenant (SQLite) | IMPLEMENTED | `kalos/portal/campaign.py`, `docs/HARDENING.md` Phase 1b |
-| Upload limits. Loopback-only default (loopback means this machine only). Remote requests are refused when the API is open | IMPLEMENTED | `kalos/portal/uploads.py`, `__main__.py`, `app.py` middleware |
-| Container deploy pack | IMPLEMENTED (limited verification, see runbook; no CI runs today, use `scripts/check.sh`) | `deploy/` |
-| Optimizer beats LHS/random on synthetic surfaces | IMPLEMENTED as a benchmark; not validation | `BENCHMARK.md`, `python -m kalos.bench` |
-| Head-to-head against random, LHS, Optuna TPE, Ax, and vanilla GP-EI on synthetic tasks | IMPLEMENTED as a benchmark; not validation | [Benchmark vs other optimizers](#benchmark-vs-other-optimizers), `docs/BENCHMARK.md`, `benchmarks/results/` |
-| Mechanistic (Monod) prior mean | EXPERIMENTAL, opt-in, simulation benchmark only | `kalos/core/mechanistic.py`, `examples/mechanistic_benchmark.py` |
-| Pool-replay benchmark (the optimizer picks from a fixed pool of measured rows) on published media datasets | EXPERIMENTAL; datasets are private and not in the repo | `kalos/bench/amii.py`, `examples/amii_benchmark.py` |
-| Hard linear constraints on proposals | IMPLEMENTED in the core API only (`propose_batch`); the HTTP API and portal do not expose them yet | `kalos/core/optimize.py`, `tests/test_linear_constraints.py` |
-| `feature_ranges` in analysis output. GP-default guardrail | IMPLEMENTED | `kalos/portal/analysis.py`, `tests/test_feature_ranges.py` |
-| Repository hygiene (CODEOWNERS, SECURITY.md, PR template). Loopback-by-default compose bind | IMPLEMENTED | `SECURITY.md`, `.github/CODEOWNERS`, `deploy/compose.yaml` |
-| Engine-side verification of short-lived internal JSON Web Tokens (JWTs) from the web app (EdDSA) | IMPLEMENTED (kalos-web does not issue them yet) | `kalos/portal/jwt_auth.py`, `docs/ENGINE_TOKEN.md`, `tests/test_jwt_auth.py`; PRs [#88](https://github.com/itsbrendandang/kalos-engine/pull/88), [#96](https://github.com/itsbrendandang/kalos-engine/pull/96) |
-| Organizations as tenants, with membership | PLANNED | the engine only reads a `tenant` string (from an operator-provisioned token or an engine JWT claim). No organization model or membership exists in the engine |
-| Multiple campaigns per tenant | IMPLEMENTED | `kalos/portal/campaigns_api.py`, `docs/CAMPAIGNS_API.md`, `tests/test_cross_tenant_isolation.py`; PRs [#89](https://github.com/itsbrendandang/kalos-engine/pull/89), [#90](https://github.com/itsbrendandang/kalos-engine/pull/90) |
-| Background analysis jobs with a local worker process (`/api/campaigns/{id}/jobs`) | IMPLEMENTED | `kalos/portal/jobs.py`, `job_runner.py`, `job_worker.py`, `docs/JOBS.md`, `tests/test_jobs.py`, `tests/test_jobs_api.py`; PR [#91](https://github.com/itsbrendandang/kalos-engine/pull/91). The synchronous routes still return 503 busy when the analysis slot is taken |
-| Sparse/variational surrogate model beyond 2,000 rows | PLANNED | `docs/HARDENING.md` Phase 2 |
-| Metrics, structured logging, alert hooks | PLANNED | `docs/HARDENING.md` Phase 3 |
-| Scientific validation on independent real wet-lab data | PLANNED | not done; see below |
+| **Setup** | Upload a run sheet (CSV, TSV or Excel). Pick the target column, and whether higher or lower is better. Confirm which columns are inputs. | Checks the sheet (units, limits, repeats, missing values, columns that look like row numbers or outcomes) and says what it found, with a reason for each column it left out. Builds the model from your runs and tests it on runs it had not seen. |
+| **Plan** | Read the proposed recipes and decide whether to run them. Press **Start these runs**. | Proposes a batch of recipes. Each one is marked **Best bet** (the model expects a high value) or **New ground** (the model is unsure, and wants to learn). Each carries a predicted value, a likely range, and a flag when it is far from anything you have tried. |
+| **Run** | Run them in the lab. | Keeps the runs in the lab apart from measured ones, and does not propose them again. |
+| **Record** | Enter the measured results. | Appends them to the campaign. A recorded result is never changed or deleted. |
+| **Learn** | Read what the round taught the model, then plan the next round. | Reports **Reliable**, **Not yet reliable** or **Not enough runs to tell**, with a line on why it matters, and updates the model with the new results. |
 
-## Architecture
+Every answer says where it came from: the engine version, the sheet it read (by fingerprint), the settings and the seed. Starting a run records who started it and from which analysis.
 
-Solid arrows and boxes exist on `main`. Dashed arrows and boxes are planned. They are not implemented.
+One click down from every verdict is the exact number it came from. The method is in [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md) and [`docs/UPLOADS.md`](docs/UPLOADS.md).
 
-```mermaid
-flowchart LR
-  B[Browser] --> W["kalos-web: Next.js UI + server-side proxy"]
-  W -->|"static bearer token (today)"| E["kalos-engine: FastAPI"]
-  E --> S[("SQLite: per-tenant campaigns")]
-  E --> M["GP surrogate (BoTorch)"]
-  E --> V["EdDSA JWT verification (built; kalos-web does not issue yet)"]
-  E --> J["local job workers"]
-  B -.->|"planned: login"| A["Better Auth session in web"]
-  A -.-> W
-  W -.->|"planned: EdDSA JWT, iss kalos-web, aud kalos-engine, 120s max"| E
-  E -.-> O["planned: organisations as tenants, membership"]
-  classDef planned stroke-dasharray: 5 5,color:#666;
-  class A,O planned;
-```
+## The desktop app
 
-Today, the browser talks to the Next.js app. The app's server-side proxy forwards requests to this engine. It uses one configured bearer token.
-The web app has **no user login**. So anyone who can reach the proxy acts as that token's tenant.
+The Mac app ([kalos-web `desktop/`](https://github.com/itsbrendandang/kalos-web/tree/redesign-notion/desktop), on branch `redesign-notion`, not yet merged) starts this engine as a local process for one person.
 
-The engine side has these parts, which are built:
-
-- Verification of short-lived EdDSA-signed internal JWTs. The engine checks them on its own. Issuer `kalos-web`, audience `kalos-engine`, lifetime of at most 120 seconds.
-- Multiple campaigns per tenant.
-- Background analysis jobs, run by local worker processes.
-
-These parts are still planned:
-
-- The Better Auth session and JWT issuance in the web app.
-- Organizations as tenants, with membership.
-
-Current and planned request flows: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Campaign loop details: [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md).
-
-## Local development
-
-Python 3.11 or later is needed. All tools are free and open source.
+**Run it from a checkout** (Python 3.11 or later; everything is free and open source):
 
 ```bash
-python -m pip install -e .               # core, torch-free
-python -m pip install -e ".[ml,portal]"  # + BoTorch and the FastAPI service
-python -m kalos.portal                   # http://127.0.0.1:8050 (KALOS_HOST / KALOS_PORT to change)
+python -m pip install -e ".[ml,portal]"
+KALOS_AUTH_TOKENS='[{"token_sha256":"<sha256 of a secret>","subject":"me","tenant":"local","scopes":["read","write"]}]' \
+  python -m kalos.portal --desktop
 ```
 
-The core install does not use torch (PyTorch). It installs `numpy`, `pandas`, `scikit-learn`, and `scipy`. This is enough for `kalos.kit`.
-
-In a second shell, upload the synthetic example. The example is generated by `examples/synthetic_bioprocess/make_synthetic.py`. It is not measured data.
+**Build the packaged engine** (Apple silicon, needs `uv`):
 
 ```bash
-curl -F file=@examples/synthetic_bioprocess/synthetic_bioprocess.csv http://127.0.0.1:8050/api/run
-curl http://127.0.0.1:8050/api/latest
+scripts/build_desktop_engine.sh out/   # writes out/kalos-engine and out/python/, then starts it once and checks it
 ```
 
-Both commands were run on a fresh install of this branch's code. `/healthz` returned ok. The upload returned a 10-feature analysis for 160 rows.
-State is written to `~/.kalos`. Set `KALOS_STATE_DIR` to change the location.
-For the desktop app the engine runs as `python -m kalos.portal --desktop` (token required, loopback only); `scripts/build_desktop_engine.sh` builds a self-contained arm64 macOS engine. See [`docs/DESKTOP.md`](docs/DESKTOP.md).
-With no tokens configured, the API is open on loopback only. See Security model.
+About 955 MB on disk, 272 MB as a zip, built in about 20 s with a warm cache. The app runs `out/kalos-engine --desktop`.
 
-Run these checks. They are the same as CI:
+**Where data lives.** One folder, set by `KALOS_STATE_DIR`. The Mac app uses `~/Library/Application Support/Kalos`; the engine's own default is `~/.kalos`. It holds `portal.db` (campaigns, runs, results, the activity record), the last analysis, and any archived activity rows. To back up, quit and copy the folder.
 
-```bash
-python -m pip install -e ".[ml,portal,bench,dev]"
-ruff check kalos/ tests/ examples/
-mypy
-python -m pytest -q    # 804 tests collected at the time of writing
-```
+**Nothing leaves the Mac.** The engine listens on `127.0.0.1` only, on a port the app picks at each launch, and answers only calls that carry the secret the app made for that launch. Checking a sheet, building the model and proposing recipes call no outside service. The only parts of the engine that can talk to a language model are the optional column-name helper (`kalos.normalize.llm`, not used by the upload route) and the assistant (branch `assistant`, not yet merged). Both follow `KALOS_LLM_PROVIDER`: when the app leaves it unset, desktop mode picks `ollama` if a model is already running on this Mac at `127.0.0.1:11434`, else `none`. The current Mac app pins `none`. A hosted provider is never the default. Data goes to a cloud provider only if you set `KALOS_LLM_PROVIDER=anthropic` and give it a key yourself.
+
+Desktop mode also: refuses to start without a secret or on any address other than loopback; runs one analysis at a time; caps the threads a fit may use at half the cores (1 to 4) so the laptop stays usable; turns off the interactive API docs; and, when it is stopped, gives a running analysis 12 s to finish and otherwise drops it so nothing half-written reaches the database. The first fit on a 30-row sheet takes about 5 s, and on a 213-row sheet about 7 s (Apple M3 Pro). Details, exit codes and the `GET /api/health` shape: [`docs/DESKTOP.md`](docs/DESKTOP.md).
+
+## The hosted mode, in short
+
+For a team, the engine runs behind kalos-web on a server you control. People sign in to kalos-web (Google account plus a code from an authenticator app, invite only). kalos-web maps their organization to a workspace (a *tenant*) and signs a token for each request that lives at most 120 s. The engine checks the signature with the public key in `KALOS_JWT_PUBLIC_KEYS_FILE` and reads the tenant from the token, never from the request body. Every campaign, result and activity row is keyed by tenant. Long-lived service tokens (`KALOS_AUTH_TOKENS`) remain for scripts and for the compose stack.
+
+The deploy pack in [`deploy/`](deploy/) (containers, compose, a backup sidecar, a runbook) was exercised once end to end. Its compose file still passes a service token to kalos-web and has not been updated for sign-in; [`deploy/RUNBOOK.md`](deploy/RUNBOOK.md) says what is and is not verified. Put TLS and a reverse proxy in front. The engine refuses to listen on a non-loopback address without tokens and a secret salt, and refuses `KALOS_ENV=production` without tokens.
+
+The contract between the two programs: [`docs/ENGINE_TOKEN.md`](docs/ENGINE_TOKEN.md). The hardening track and what it leaves out: [`docs/HARDENING.md`](docs/HARDENING.md).
+
+## Evidence
+
+**Kalos has not been tested on independent lab data.** No claim is made that it saves experiments in a wet lab. What has been measured:
+
+### Replay on 15 open datasets (branch `bench-open-replay`, [PR #123](https://github.com/itsbrendandang/kalos-engine/pull/123), not yet merged)
+
+Each dataset is a table of measured recipes from a published study. The replay hides the results, lets each strategy pick recipes from the table, reveals the measured value, and counts how many picks it took to reach 90% of the best value in the table. 20 seeds, 4 picks per round, at most 40 picks. **This is a replay of old data, not a test in a lab.** The tables come from earlier optimization campaigns, so picking at random is a strong strategy on them.
+
+Three strategies: **BO** is Kalos's search; **random** picks at random; **LHS** spreads picks evenly. Fewer picks is better. Values are the mean over seeds; a seed that never reached 90% counts at the cap. "Holm (15)" is the sign-test p after correcting for testing 15 datasets; below 0.05 counts as clear.
+
+| dataset | rows | BO | random | LHS | BO − random [95% CI] | Holm (15) |
+|---|---:|---:|---:|---:|---|---:|
+| DBO_rat_myocyte | 209 | 42.1 (5/20) | 47.4 (4/20) | 48.7 (1/20) | -5.2 [-11.1, -0.2] | 1.000 |
+| MOBO_rat_myocyte | 182 | 14.8 (18/20) | 18.4 (20/20) | 15.1 (20/20) | -3.5 [-9.9, +3.6] | 1.000 |
+| HeLa_regular | 307 | 42.6 (7/20) | 37.9 (12/20) | 46.5 (2/20) | +4.8 [-2.8, +12.0] | 1.000 |
+| HeLa_timesaving | 325 | 35.9 (15/20) | 48.7 (4/20) | 20.4 (20/20) | -12.8 [-19.5, -6.8] | 0.014 |
+| Tcell_expansion | 535 | 10.4 (20/20) | 11.2 (20/20) | 11.9 (20/20) | -0.8 [-3.7, +1.8] | 1.000 |
+| TF1_expansion | 1562 | 8.8 (20/20) | 11.0 (20/20) | 15.2 (20/20) | -2.1 [-4.9, +0.0] | 1.000 |
+| pichia_HSA | 213 | 20.6 (20/20) | 27.1 (15/20) | 28.1 (15/20) | -6.5 [-13.8, +0.8] | 1.000 |
+| pichia_HerceptinA | 214 | 16.1 (20/20) | 17.4 (19/20) | 15.3 (20/20) | -1.3 [-7.2, +3.9] | 1.000 |
+| pichia_RBDJ | 235 | 16.5 (20/20) | 40.0 (8/20) | 24.1 (18/20) | -23.5 [-29.4, -17.4] | 0.000 |
+| trichoderma_ambr | 20 | 5.5 (20/20) | 6.3 (20/20) | 8.1 (20/20) | -0.9 [-2.1, +0.1] | 1.000 |
+| trichoderma_ambr_condition | 20 | 5.8 (20/20) | 6.3 (20/20) | 7.6 (20/20) | -0.6 [-1.7, +0.5] | 1.000 |
+| candida_rsm_nr1 | 13 | 3.5 (20/20) | 3.5 (20/20) | 4.0 (20/20) | +0.1 [-0.1, +0.2] | 1.000 |
+| scfv_refolding_18270843 | 47 | 20.2 (20/20) | 26.6 (20/20) | 21.5 (20/20) | -6.3 [-11.1, -1.6] | 1.000 |
+| rudt_ib_refolding_16315733 | 24 | 11.7 (20/20) | 10.5 (20/20) | 11.2 (20/20) | +1.2 [-0.7, +3.0] | 1.000 |
+| cho_bioreactor_20829178 | 24 | 8.4 (20/20) | 7.8 (20/20) | 6.8 (20/20) | +0.7 [-1.1, +2.5] | 1.000 |
+
+The honest reading, in the replay's own words:
+
+- **Pichia RBDJ**: BO beats random by about 23 evaluations, and the advantage holds on 17 of 17 non-tied seeds (Holm p < 0.001). This is the one dataset of 15 where BO beats random clearly.
+- **HeLa time-saving**: BO beats random (Holm p = 0.014), but LHS is clearly best here (20.4 vs 35.9). The honest reading is "the GP is not the best strategy on this pool".
+- **HeLa regular, TF-1, Pichia HSA**: BO is ahead of LHS in some cases, but none of these beats random on the sign test after correction.
+- **Everything else**: no detectable difference between BO and random. BO is behind LHS on HeLa regular and on the CHO set. Small pools (13 to 24 recipes) cannot show anything.
+- Nothing here supports "BO beats random" as a general claim.
+
+Protocol, raw files and attribution for every dataset: `benchmarks/OPEN_REPLAY.md` on that branch. Use the attribution lines verbatim when the numbers are quoted.
+
+### Made-up surfaces with a known best point ([`BENCHMARK.md`](BENCHMARK.md), [`docs/BENCHMARK.md`](docs/BENCHMARK.md), on `main`)
+
+On two made-up 4-input surfaces, 10 seeds, 18 experiments: with clean measurements Kalos's search ends far closer to the best point than an evenly spread design (regret 0.013 vs 2.247 on the smooth surface; 1.560 vs 3.625 on the rugged one). With 15% measurement noise the gap shrinks to 1.873 vs 2.247 and 3.014 vs 3.625. Against other optimizers (Optuna TPE, Ax, a plain BoTorch model) on the same surfaces plus one made-up mixed surface, 30 seeds, Kalos is clearly ahead of random and of the evenly spread design in every cell; it is not separated from Ax or the plain model on any of the four synthetic cells, nor from Optuna on the noisy ones; on the mixed surface it is ahead of Ax and only borderline ahead of the other two. These are made-up problems, so they say nothing about a real process. The numbers depend on the torch build, which is pinned.
+
+### Scale-up readout ([`docs/SCALE_EVIDENCE.md`](docs/SCALE_EVIDENCE.md), on `main`)
+
+On one made-up dataset of 55 batches from 0.01 L to 2000 L, predicting the five 2000 L batches from the smaller scales gave a lower mean error than two naive guesses (0.53 vs 1.51 and 1.38), with no interval and no test on that gap; the ranking of those five was consistent with chance (p = 0.233 at n = 5). Scale claims are on hold until real batch data exists. The readout's safeguard is that it refuses to predict when its own back-test on your scale ladder does not beat the naive guesses.
+
+### What is measured on every sheet
+
+Rather than a global claim, every analysis carries its own evidence: the model's rank agreement on runs it had not seen, with an interval; how many measured results landed inside their likely range; the checks it passed or failed; and the noise between repeated recipes. An 80-row subset of the shipped example gave different proposals on two identical runs in one process, so proposals are reproducible only in the sense that the inputs, settings and library versions are recorded (`docs/CAMPAIGNS_API.md`, "Determinism").
+
+## What Kalos does not do
+
+- **It does not approve anything.** Starting runs, accepting a result and signing off a procedure are a person's decisions. Kalos records that the decision was made and by which account; it never makes it.
+- **It makes no biosafety decisions** and knows nothing about the organism, the containment level or the hazards of a recipe. A proposed recipe is a point in the ranges you uploaded, nothing more.
+- **It makes no claims about fitness for regulated work.** No independent review, no certification, no audit by a third party. `docs/HARDENING.md` lists what is out of scope.
+- **It does not mix measured and simulated data.** Simulated runs (branch `twin-virtual-runs`, [PR #122](https://github.com/itsbrendandang/kalos-engine/pull/122), not yet merged) are stored in their own table with an origin label and a guard that keeps them out of the model fit. On `main` and this branch there are no simulated runs at all. Example sheets in this repository are generated and labelled as such.
+- **It does not sell or host anything today.** No public service exists.
+- **It does not ship training data.** Every dataset in the evidence section is private or fetched by the person running the benchmark, under that dataset's own terms.
+
+## Configuration
+
+Every setting is an environment variable. Unset and empty both mean the default. A value outside its range stops the engine at start with one line that names the variable (settings read through `kalos/envconfig.py` and the `KALOS_JOB*` family), or falls back to the default where the comment says so. Sources: `kalos/portal/config.py`, `kalos/envconfig.py`, `kalos/portal/__main__.py`, `desktop.py`, `auth.py`, `jwt_auth.py`, `limits.py`, `uploads.py`, `busy.py`, `jobs.py`, `pipeline.py`, `kalos/normalize/config.py`, `kalos/data/anonymizer.py`, `kalos/bench/`.
+
+`tests/test_readme_env.py` fails when this table and the code disagree: a `KALOS_*` name the code reads must be in the table, and a name in the table must be read by the code, unless the row says `not yet merged` or `tests only`.
+
+### Engine settings
+
+| Variable | Default | Accepted values | What it does |
+| --- | --- | --- | --- |
+| `KALOS_HOST` | `127.0.0.1` | an address | Where the engine listens. A non-loopback address is refused unless tokens and `KALOS_ANON_SALT` are set (or `KALOS_ALLOW_OPEN_ACCESS`). Desktop mode allows loopback only. |
+| `KALOS_PORT` | `8050` | a whole number | The port. |
+| `KALOS_STATE_DIR` | `~/.kalos` | a folder | Where `portal.db`, the last analysis and archives live. Created if missing. |
+| `KALOS_ENV` | `development` | `development`, `production` | `production` refuses to start without tokens or a public key, whatever `KALOS_ALLOW_OPEN_ACCESS` says. |
+| `KALOS_DESKTOP` | unset | `1`, `true`, `yes`, `on` | Desktop mode (same as `--desktop`): loopback only, a token required, one analysis at a time, fewer threads, no API docs. |
+| `KALOS_AUTH_TOKENS` | unset | a JSON list of `{token_sha256, subject, tenant, scopes}` | Service tokens, stored as hashes. With none set and no public key, the engine is open on loopback only and every caller is the anonymous `default` tenant. |
+| `KALOS_AUTH_TOKENS_FILE` | unset | a path | The same list in a file; wins over the inline value. Read on every request, so tokens rotate without a restart. |
+| `KALOS_AUTH_DENY_SUBJECTS` | unset | comma-separated `sub:<subject>` or `sid:<session>` | Refuse these callers with 401. |
+| `KALOS_JWT_PUBLIC_KEYS_FILE` | unset | a path to a JWKS file with Ed25519 keys | Accept the short-lived tokens kalos-web signs (hosted mode). |
+| `KALOS_JWT_ISSUER` | `kalos-web` | text | The `iss` claim a token must carry. |
+| `KALOS_JWT_AUDIENCE` | `kalos-engine` | text | The `aud` claim a token must carry. |
+| `KALOS_JWT_LEEWAY_S` | `30` | `0` to `120` | Clock slack when checking token times, in seconds. |
+| `KALOS_JWT_MAX_TTL_S` | `120` | `1` to `300` | The longest token life the engine accepts, in seconds. |
+| `KALOS_ALLOW_OPEN_ACCESS` | unset | `1`, `true`, `yes` | Serve with no tokens on a non-loopback address, on purpose. Ignored in production; refused in desktop mode. |
+| `KALOS_CORS_ORIGINS` | unset | comma-separated origins, e.g. `https://app.example.com` | Browser origins allowed to call the engine. Unset means `http://localhost` and `http://127.0.0.1` on any port. |
+| `KALOS_TRUSTED_PROXIES` | unset | comma-separated proxy addresses | Trust `X-Forwarded-For` from these addresses only. Unset means forwarded headers are ignored. |
+| `KALOS_ANON_SALT` | unset | a secret string | Salt for pseudonyms made by the opt-in anonymizer. Unset uses a published dev salt with a warning, and blocks a non-loopback bind. |
+| `KALOS_VALIDATION_MODE` | `warn` | `warn`, `strict` | `strict` refuses a sheet on findings that `warn` only reports. |
+| `KALOS_AUDIT_RETENTION_DAYS` | unset | `1` to `36500` | Copy activity rows older than this many days to `<state dir>/audit-archive/`, at start and daily. Rows are never deleted. Unset archives nothing. Ignored in desktop mode. |
+| `KALOS_MAX_UPLOAD_MB` | `25` | a number above 0 | Largest run sheet accepted. Fixed caps on top: 100,000 CSV rows, 512 columns, 2,000,000 Excel cells. |
+| `KALOS_MAX_REQUEST_BYTES` | `1048576` (1 MiB) | a whole number above 0 | Largest body on every route except upload. |
+| `KALOS_UPLOAD_READ_TIMEOUT_S` | `60` | a number of at least 1 | How long the engine waits to receive an upload's bytes. |
+| `KALOS_MAX_FIT_ROWS` | `2000` | a whole number | Most rows the model is built from. A larger sheet is refused with the code `too_many_fit_rows`, never trimmed silently. |
+| `KALOS_TORCH_THREADS` | the smaller of 4 and the core count; desktop: half the cores, 1 to 4 | a whole number; `0` means do not pin | Threads one fit may use. |
+| `KALOS_ANALYSIS_CACHE` | `4` | a whole number; `0` turns it off; a bad value means `4` | How many recent uploads keep their analysis in memory, so the same sheet is not refit. |
+| `KALOS_APPLICABILITY_DISTANCE` | unset | a number above 0 | Distance from your runs beyond which a proposal is flagged `far_from_data`. Unset uses the product default (three times the typical gap between your runs, at least a quarter of the range). A value sent with the upload wins. |
+| `KALOS_DEMO_TIMEOUT_S` | `120` | a number of seconds | Wall clock for the two demo routes (`/api/single`, `/api/multi`). |
+| `KALOS_JOBS_ENABLED` | on | `1`/`0`, `true`/`false`, `yes`/`no`, `on`/`off` | Background analysis jobs. Off makes the job routes answer 503. |
+| `KALOS_JOB_WORKERS` | `2`; desktop `1` | a whole number of at least 1 | Analyses that may run at once, foreground and background together. |
+| `KALOS_JOB_PER_TENANT` | `1` | a whole number of at least 1 | Analyses one tenant may run at once. |
+| `KALOS_JOB_QUEUE_DEPTH` | `8` | a whole number of at least 1 | Queued or running jobs one tenant may hold before 429. |
+| `KALOS_JOB_GLOBAL_QUEUE_DEPTH` | `64` | a whole number of at least 1 | Queued or running jobs across all tenants before 429. |
+| `KALOS_JOB_TIMEOUT_S` | `1800` | a number of at least 1 | Longest a background job may run before it is stopped. |
+| `KALOS_JOB_MAX_UPLOAD_BYTES` | the upload cap (`26214400` at the default 25 MB) | `1` up to the upload cap | Largest sheet a background job accepts. |
+| `KALOS_JOB_DEADLINE_S`, `KALOS_JOB_ENGINE_PID`, `KALOS_JOB_WORKER_SESSION` | set by the engine | - | Passed by the engine to each worker process it starts. Do not set them. |
+| `KALOS_LLM_PROVIDER` | `anthropic`; desktop: `ollama` when a local Ollama answers, else `none` | `anthropic`, `ollama`, `none` | Which language model the optional column-name helper and the assistant may call. `none` never calls any. `anthropic` also needs `ANTHROPIC_API_KEY`, else it stays offline. |
+| `KALOS_OLLAMA_URL` | `http://localhost:11434` | a URL | Where a local Ollama answers. The desktop probe accepts loopback addresses only. |
+| `KALOS_OLLAMA_MODEL` | `llama3.1` | a model name Ollama has pulled | The local model. |
+| `KALOS_NORMALIZE_MODEL` | `claude-sonnet-5` | a model id | The hosted model for the column-name helper. Unused by `ollama` and `none`. |
+| `KALOS_NORMALIZE_MAX_SAMPLE` | `5` | `1` to `20`; a bad value means `5` | Sample values per column shown to the column-name helper (identifiers are screened out first). |
+| `KALOS_BUILD_SHA` | unset, recorded as `unknown` | text | Build identifier written into every run record. |
+| `KALOS_GIT_SHA` | unset; then `git rev-parse HEAD`, else `unknown` | text | Commit written into a scale-up readout. |
+| `KALOS_DATASET_DIR` | unset | a folder | Where the private `dataset_0.csv` lives for `examples/real_data_validation.py`. Tests skip without it. |
+| `KALOS_MEDIA_DATA`, `KALOS_AMII_DATA`, `KALOS_INDPENSIM_PATH` | unset | a folder or file | Private benchmark data for `kalos/bench/`. Never in this repository. |
+| `KALOS_INTEGRATIONS` | unset | comma-separated names, e.g. `benchling` | Turns on a connector. On branch `benchling-connector`, not yet merged. |
+| `KALOS_SKILLS` | unset | `1` | Serves the read-only `/api/skills` routes. On branch `skills-framework` ([PR #124](https://github.com/itsbrendandang/kalos-engine/pull/124)), not yet merged. |
+| `KALOS_SKILLS_DIR` | unset | a folder | Team skill folders, one per tenant. On branch `skills-framework` (PR #124), not yet merged. |
+| `KALOS_ALLOW_TORCH_DRIFT` | unset | `1` | Lets `tests/test_torch_pin.py` pass on a torch build other than the pinned one. Tests only. |
+| `KALOS_DATA` | unset | a folder | A checkout of the private `kalos-data` repository for the scale-up tests. Tests only. |
+| `KALOS_BUNDLE_EXTRAS` | `ml portal assist` | extras from `pyproject.toml` | Which extras `scripts/build_desktop_engine.sh` bundles. |
+| `KALOS_BUNDLE_PYTHON` | `3.12` | a Python version | Which CPython the build script downloads. |
+
+`ANTHROPIC_API_KEY` is the one setting without the `KALOS_` prefix: the key for the hosted provider. The engine only checks whether it is present; it never logs or stores it.
+
+### Compose stack (`deploy/`)
+
+`KALOS_ENGINE_PORT` (8050), `KALOS_WEB_PORT` (3000), `KALOS_WEB_BIND` (`127.0.0.1`), `KALOS_IMAGE_TAG` (`local`), `KALOS_ENGINE_URL`, `KALOS_ENGINE_TOKEN` and `KALOS_ENGINE_TIMEOUT_MS` are read by `deploy/compose.yaml` and by kalos-web, not by this engine. They are documented in [`deploy/.env.example`](deploy/.env.example) and in the kalos-web README.
 
 ## API
 
-Routes are defined in `kalos/portal/app.py`, `campaign_routes.py`, and `scale_routes.py`.
-Scopes come from `kalos/portal/auth.py`.
-Every tenant-scoped route reads the tenant from the authenticated token (`Principal.tenant`). It never reads the tenant from the request.
-In open mode (no tokens configured, loopback only), every caller is an anonymous `default`-tenant principal with `read`+`write`.
+Routes are in `kalos/portal/app.py`, `campaign_routes.py`, `campaigns_api.py`, `jobs_api.py` and `scale_routes.py`. Every tenant-scoped route reads the tenant from the token, never from the request. In development (`KALOS_ENV` unset, not desktop) FastAPI serves the generated reference at `/docs`.
 
-| Method | Path | Scope | Tenant scoping | What it does |
-| --- | --- | --- | --- | --- |
-| POST | `/api/run` | write | publishes result under the caller's tenant | Upload a CSV, TSV, or Excel file. Returns the analysis and proposed batch ([upload guards](docs/UPLOADS.md)) |
-| GET | `/api/latest` | read | per tenant | Most recent analysis |
-| GET | `/api/campaign` | read | per tenant (SQLite row) | Current campaign state |
-| POST | `/api/campaign/start` | write | per tenant | Start a batch of proposed runs |
-| POST | `/api/campaign/result` | write | per tenant | Log a measured outcome |
-| POST | `/api/campaign/reanalyze` | write | per tenant | Add results to the dataset and re-propose |
-| POST | `/api/scale/readout` | write | none stored; request-scoped | Scale-up readout: prediction with interval, or refusal |
-| GET | `/api/single` | read | none (built-in demo surface) | Single-objective demo loop |
-| GET | `/api/multi` | read | none (built-in demo surface) | Multi-objective demo loop |
-| GET | `/api/providers` | read | none | Credential status of optional provider slots (not the credentials) |
-| GET | `/healthz` | none | none | Liveness |
-| GET | `/readyz` | none | none | Readiness (store check) |
+| Method | Path | Scope | What it does |
+| --- | --- | --- | --- |
+| POST | `/api/run` | write | Upload a sheet. Returns the analysis and the proposed recipes ([`docs/UPLOADS.md`](docs/UPLOADS.md)). |
+| GET | `/api/latest` | read | The last analysis for this tenant. Never fits. |
+| GET, POST | `/api/campaigns`, `/api/campaigns/{id}` (PATCH), `/{id}/upload`, `/{id}/analysis`, `/{id}/runs`, `/{id}/runs/{run_id}/result`, `/{id}/reanalyze` | read / write | Several campaigns per tenant ([`docs/CAMPAIGNS_API.md`](docs/CAMPAIGNS_API.md)). |
+| GET, POST | `/api/campaign`, `/api/campaign/start`, `/result`, `/reanalyze` | read / write | The single default campaign per tenant ([`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md)). |
+| GET, POST | `/api/campaigns/{id}/jobs`, `/api/jobs/{id}`, `/api/jobs/{id}/cancel` | read / write | Background analysis jobs ([`docs/JOBS.md`](docs/JOBS.md)). |
+| POST | `/api/scale/readout` | write | Scale-up readout, or a refusal ([`docs/SCALE_READOUT.md`](docs/SCALE_READOUT.md)). |
+| GET | `/api/single`, `/api/multi` | read | Demo searches on made-up surfaces. Not tenant data. |
+| GET | `/api/providers` | read | Which optional provider slots have a credential (never the credential). |
+| GET | `/api/health` | read | Versions, torch state, schema version, analyses in flight. |
+| GET | `/healthz`, `/readyz` | none | Liveness and readiness. |
 
-Contracts: [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md), [`docs/SCALE_READOUT.md`](docs/SCALE_READOUT.md), [`docs/UPLOADS.md`](docs/UPLOADS.md).
-FastAPI also serves its generated OpenAPI docs at `/docs` when the service runs.
-On `main`, `/readyz` returns a fixed, generic reason. It never returns exception text (`kalos/portal/app.py`).
+Every change to a campaign, run, result or job writes one row to `audit_log` in `portal.db`: tenant, subject, how they were authenticated, the action and the outcome; never a token, a file or a result value. Since schema v4 the table is append-only at the database level (triggers refuse update and delete), and since v5 recorded results are too. Rows have no hash chain or signature, and someone with write access to the file can still replace it. Only a `campaign.result` row is written in the same transaction as its change; the others are best-effort. (`gxp-integrity`, [PR #120](https://github.com/itsbrendandang/kalos-engine/pull/120), not yet merged. On `main` the table exists, is not append-only, and rows older than 365 days are deleted.)
 
-## Security model
-
-These controls exist today (`kalos/portal/auth.py`, `config.py`, `uploads.py`, `app.py`):
-
-- Bearer tokens are stored as SHA-256 hashes. They are compared in constant time. They are read on each request, so they can be rotated without a restart. Scopes: `read`, `write`, `admin`.
-- Once any token is configured, auth is enforced on every scoped route. There is no half-authenticated state.
-- Campaign and latest-analysis state are keyed by tenant. The latest-analysis cache filename is sanitized against path traversal.
-- Upload caps: `KALOS_MAX_UPLOAD_MB` (default 25), 100,000 CSV rows, 512 columns, 2,000,000 xlsx cells, 2,000 GP fit rows.
-- Loopback guard: `python -m kalos.portal` binds 127.0.0.1. It refuses to serve unauthenticated on another interface. A middleware also refuses non-loopback peers while auth is not enforced. The exception is when `KALOS_ALLOW_OPEN_ACCESS` is set.
-- CORS uses an explicit allowlist when `KALOS_CORS_ORIGINS` is set. Otherwise, the default allows localhost only.
-- The anonymizer for uploads is opt-in (`anonymize=true`).
-
-These controls are missing or limited:
-
-- **The web app has no user login, and its proxy is unauthenticated.** Do not expose kalos-web or this engine to the public internet.
-- Tenants are strings in operator-provisioned tokens. There is no user directory, organization membership, or self-service token issuance.
-- The engine verifies EdDSA engine tokens (`kalos/portal/jwt_auth.py`). kalos-web does not issue them yet. The web app still sends one static bearer token.
-- Audit log: state-changing campaign and job routes write an `audit_log` row in `portal.db` (tenant, subject, auth method, action, outcome; never a token or uploaded data). Since schema v4 the table is append-only at the database level: triggers reject UPDATE and DELETE. Retention deletes nothing; `KALOS_AUDIT_RETENTION_DAYS` (unset by default) only turns on an opt-in archive that copies old rows to `<state dir>/audit-archive/`. Rows have no hash chain or signature, and a person with write access to the database file can still replace it. Only a `campaign.result` audit write is in the same transaction as its change; other audit writes are best-effort. Recorded results are append-only (schema v5). See `docs/HARDENING.md` ("Audit retention") and `docs/MIGRATIONS.md`.
-- There is no per-client request rate limit in the engine. The only throttles are the background-job queue caps (429 `rate_limited` with `Retry-After`) and the one-at-a-time sync analysis guard (503 busy). There is no encryption at rest. TLS is out of scope. Use a reverse proxy.
-- `/api/single`, `/api/multi`, and `/healthz` are not tenant-scoped. They hold no tenant data.
-- The deploy pack has been exercised once end to end. Its runbook still lists unverified items (backup drill).
-- No independent security review or penetration test has been done. No compliance claims are made. HARDENING.md puts 21 CFR Part 11, GAMP 5, SOC 2, and ISO 27001 out of scope for this repo.
-
-Report vulnerabilities privately. See `SECURITY.md`.
-
-## Scientific methodology and benchmark limitations
-
-**The optimizer is not scientifically validated.** No claim is made that it improves real wet-lab outcomes.
-
-- **Method.** GP surrogate model with an expected-improvement-family acquisition function (BoTorch). Expected improvement is one type of acquisition function. The method also uses grouped CV, split-conformal intervals, and fail-closed promotion gates.
-- **Synthetic benchmarks (on `main`).** The `BENCHMARK.md` result below uses synthetic surfaces with known optima. The optimizer is free to exploit them. A noise-free 2-D simulation does not validate anything about real processes.
-- **Hybrid dataset (not shipped).** A Kaggle "Fermentation optimization" dataset is used by `examples/real_data_validation.py` as a smoke test only. The dataset is `dataset_0.csv`: 696 of 715 rows flagged synthetic, 19 real, Real flag unverified. The data is kept private. It is not in this repository. Set `KALOS_DATASET_DIR` to a folder that contains it (see `examples/datasets/README.md`). Tests skip when it is absent. A pool-replay result on it was weak (Spearman rank correlation 0.048). So it is not evidence.
-- **Amii published-media benchmark (PR [#77](https://github.com/itsbrendandang/kalos-engine/pull/77), merged; datasets are not in the repo).** This is pool replay on published media datasets. After review, the author retracted the earlier "2 faster / 2 slower" summary. A paired sign test with Holm correction (a method that adjusts for multiple tests) found no detectable difference from random. This was a smoke run with 8 seeds. The caveats are these:
-  - The BO arm is pool EI (expected improvement), not qLogNEI.
-  - The pools come from earlier optimization campaigns. Random is strong on them.
-  - One dataset mixes information sources.
-  - The objectives are growth and absorbance, not titer.
-  - The dataset license is unresolved.
-  - A committed 20-seed results file is still missing.
-- **Mechanistic prior benchmark (on `main`, `examples/mechanistic_benchmark.py`).** This uses a Monod ordinary differential equation (ODE) prior mean in simulation, with 10 seeds. The target is 95% of the best *reachable* response. The held-out split is excluded from the target. The oracle and mild priors reached the target sooner than the plain GP in 9 of 10 seeds (9-0, one tie). The sign test p is 0.004, or about 0.016 after correcting over the four levels. Severe and adversarial priors show no reliable benefit. The caveats are these. The simulation is noise-free and 2-D. Its truth shares the ODE's structure. There is no calibration check. The prior is opt-in. It is off by default.
-- **Scale-up readout.** The evidence comes from a synthetic simulator (`docs/SCALE_EVIDENCE.md`). The refusal rule is the safeguard. It is not a validation of predictions.
-
-This table is from [`BENCHMARK.md`](BENCHMARK.md). It shows simple regret after 18 experiments, over 10 seeds. Simple regret is the gap between the optimum and the best value found. Lower is better. The table was reproduced with `python -m kalos.bench` on the locked stack (torch 2.13.0, BoTorch 0.18.1):
-
-| Surface (synthetic) | Noise | BO regret | LHS regret | Random regret |
-| --- | --- | --- | --- | --- |
-| Gaussian bump (4d, smooth) | 0% | 0.013 | 2.247 | 3.171 |
-| Gaussian bump (4d, smooth) | 15% | 1.873 | 2.247 | 2.592 |
-| Ackley (4d, rugged) | 0% | 1.560 | 3.625 | 3.696 |
-| Ackley (4d, rugged) | 15% | 3.014 | 3.625 | 3.850 |
-
-BO's margin over LHS gets smaller as noise rises. Gaussian: 2.23 to 0.37. Ackley: 2.07 to 0.61. The margin stays positive in these four cells, for 10 seeds.
-The BO rows depend on the torch build. Torch 2.14.1 gives different BO regrets on the same seeds (Gaussian 15%: 2.030; Ackley 15%: 2.974). LHS and random do not change.
-These numbers are not a comparison against other optimizers. See [Benchmark vs other optimizers](#benchmark-vs-other-optimizers).
-
-### Built-in safeguards
-
-- Cross-validation is grouped. A recipe never straddles train and validation (`kalos/core/splits.py`). A leakage tripwire (a check that fails on data leakage) is tested in `tests/test_data_and_core.py`.
-- Promotion gates fail closed. A failing gate blocks promotion: `kalos/core/gates.py`, `tests/test_promotion_and_baselines.py`.
-- Predictions carry distribution-free split-conformal bands: `kalos/core/conformal.py`, `tests/test_calibration.py`.
-- The data validation gate checks units, physical bounds, duplicates, missing values, and more. It runs before any column is used. Proposals stay physically possible: [`docs/UPLOADS.md`](docs/UPLOADS.md), `tests/test_validation_gate.py`.
-- Runs that are started but not yet measured are passed to the acquisition as in-flight points. So a mid-round re-proposal does not repeat them: `tests/test_pending_proposals.py`, `python -m kalos.bench --pending`, [`BENCHMARK.md`](BENCHMARK.md).
-- The scale-up readout refuses to predict. This happens when its backtest on your own scale ladder does not beat two naive baselines: [`docs/SCALE_READOUT.md`](docs/SCALE_READOUT.md), `tests/test_scale_readout.py`.
-- Every analysis response carries `seed`, `engine_version` and `proposal_provenance`. The analyze path is seeded, and small uploads give the same proposals when repeated (`tests/test_hardening.py`, `tests/test_golden_determinism.py`). This is not guaranteed: an 80-row, 6-feature sheet gave different proposals on identical runs in one process (recorded xfail; `docs/CAMPAIGNS_API.md`, "Determinism").
-
-## Benchmark vs other optimizers
-
-This section compares Kalos's proposal path with these methods. They are random search, Latin hypercube (LHS), Optuna TPE, Ax (default generation strategy), and a plain BoTorch GP-EI. The tasks are synthetic, with known optima. Optuna TPE is Optuna's Tree-structured Parzen Estimator.
-The protocol was committed in [`docs/BENCHMARK.md`](docs/BENCHMARK.md) before the run. It covers tasks, seeds, budgets, batch and pending settings, endpoints, and statistics. Raw results are in [`benchmarks/results/`](benchmarks/results/).
-
-**Setup.** Each cell uses 30 seeds (1000-1029). Bootstrap intervals (a resampling method) are computed over seeds.
-Four synthetic cells use a 4-D Gaussian bump and a 4-D Ackley. Each is run at 0% and 15% noise. The runs are sequential (batch 1), with 5 initial points and 18 experiments.
-One mixed "bioprocess-like" surface is also used. It has 3 numeric and 2 categorical factors (input variables), with 15% noise. It is a made-up surface, not process data. It uses batches of 4, with 8 initial points and 20 experiments. In each batch, 2 points are still in flight while the next batch is proposed.
-Locked stack: torch 2.13.0, BoTorch 0.18.1, Optuna 5.0.0, Ax 1.3.1. The core pins are in `uv.lock`. Hardware: Apple M3 Pro, 11 cores. Wall time was about 16 minutes.
-
-**Result.** The metric is normalized regret of the best queried (true) value after the budget. 0 is the optimum. 1 is the median random point. Lower is better. Values are means over 30 seeds. The 95% bootstrap interval is in brackets.
-Each baseline cell ends with a paired comparison against Kalos. It says "Kalos better" when the 95% interval of the paired difference excludes zero. Otherwise, it says "tie / unresolved".
-
-| Method | Gaussian 0% | Gaussian 15% | Ackley 0% | Ackley 15% | Bioprocess-like 15% (batch 4) |
-|---|---|---|---|---|---|
-| **Kalos** | **0.002** [0.001, 0.002] | **0.186** [0.120, 0.257] | **0.246** [0.184, 0.309] | **0.521** [0.471, 0.571] | **0.217** [0.171, 0.264] |
-| Random | 0.333 [0.271, 0.392]: Kalos better | 0.333 [0.273, 0.393]: Kalos better | 0.605 [0.565, 0.644]: Kalos better | 0.605 [0.565, 0.643]: Kalos better | 0.440 [0.380, 0.498]: Kalos better |
-| LHS | 0.355 [0.304, 0.406]: Kalos better | 0.355 [0.301, 0.407]: Kalos better | 0.618 [0.583, 0.653]: Kalos better | 0.618 [0.584, 0.653]: Kalos better | 0.459 [0.404, 0.516]: Kalos better |
-| Optuna TPE | 0.133 [0.107, 0.161]: Kalos better | 0.161 [0.126, 0.202]: tie / unresolved | 0.450 [0.413, 0.485]: Kalos better | 0.541 [0.495, 0.581]: tie / unresolved | 0.326 [0.253, 0.401]: Kalos better (borderline) |
-| Ax (default) | 0.002 [0.001, 0.002]: tie / unresolved | 0.191 [0.136, 0.253]: tie / unresolved | 0.284 [0.225, 0.346]: tie / unresolved | 0.522 [0.462, 0.582]: tie / unresolved | 0.325 [0.271, 0.379]: Kalos better |
-| Vanilla GP-EI (BoTorch) | 0.002 [0.001, 0.003]: tie / unresolved | 0.206 [0.143, 0.273]: tie / unresolved | 0.296 [0.238, 0.357]: tie / unresolved | 0.526 [0.467, 0.583]: tie / unresolved | 0.276 [0.222, 0.332]: Kalos better (borderline) |
-
-What the table shows, and what it does not:
-
-- **Random and LHS are the weakest rows in every cell.** Kalos's paired interval against each of them excludes zero in all five cells. Every other model-based method also has a lower mean than both, in every cell.
-- **Clean synthetic (Gaussian 0%):** Kalos, Ax, and vanilla GP-EI are not separated. All three reach 90% of the optimum in every seed, at about 13 experiments on average. Random, LHS, and Optuna TPE reach it in 7-40% of seeds.
-- **Noisy synthetic (15%):** Kalos is not separated from Optuna, Ax, or GP-EI. Its point estimate is the lowest on Ackley 0% and on Ackley 15%. On Ackley 15%, all methods are within the same interval. On Gaussian 15%, Optuna TPE has a lower point estimate (0.161 against 0.186). Ax's point estimate is essentially level (0.191). Kalos also reaches 90% of the optimum in 53% of seeds on Gaussian 15%. The baselines reach it in 30-40% of seeds.
-- **Using only measurements.** This view uses the regret of the best *noisy* observation. It needs no oracle (the known true value). It is in the table file, not the headline. Kalos is not ahead on Gaussian 15% (0.315, against Optuna 0.293 and Ax 0.292). It is also not ahead on Ackley 15% (0.613, against Optuna 0.601).
-- **Mixed bioprocess-like:** Kalos has the lowest mean regret (0.217). Against Ax, the gap is clear (Holm-adjusted exploratory p about 0.02). Against Optuna and vanilla GP-EI, the bootstrap interval only just excludes zero. The Holm-adjusted p is about 0.10. Treat those two as suggestive. Vanilla GP-EI treats categories as ordinal by design. So part of its gap reflects that choice.
-- **Cost:** On the mixed task, Kalos took a median of about 19 s per proposal (Ax about 8 s, GP-EI about 3 s). A 5-batch run took about 118 s. On the synthetic tasks, Kalos took about 0.3-0.5 s per proposal, in line with GP-EI.
-
-**Caveats.**
-
-- All objectives are synthetic. The bioprocess-like surface was written for this benchmark. Its difficulty is not calibrated to any real process. **Nothing here is a real-data claim.** It does not show that Kalos saves experiments in a wet lab.
-- Regret uses the best *queried true* value. That is an oracle selection. The noisy-observation view above is the honest view for practitioners.
-- Every method runs at its library defaults. None is tuned, Kalos included. A tuned Optuna, Ax, or BoTorch could do better. This is not an exhaustive search of optimizer configurations.
-- The study has only one budget, one dimension (4-D synthetic), one batch size per task, and one noise level for the mixed task. Results do not generalize beyond these settings.
-- **The BO numbers depend on the torch build.** The LHS and random rows do not. The benchmark runs on the torch version in `uv.lock`.
-- The first full run failed the reproducibility gate for Ax, because its random seeds were not set. The arm was then seeded, and the whole suite was rerun. The first run is kept, unchanged, under [`benchmarks/results/superseded/run1_ax_unseeded/`](benchmarks/results/superseded/run1_ax_unseeded/). Only the Ax rows changed. Every other arm reproduced exactly.
-- Not included: scikit-optimize, HEBO, and other optimizers. They were not evaluated.
-
-**Reproduce.** The run takes about 16 minutes on an 11-core laptop. The synthetic sweep above is `python -m kalos.bench`.
+## Development
 
 ```bash
-python -m pip install -e ".[ml,bench]"
-python -m kalos.bench --vs-baselines           # confirmatory run: writes benchmarks/results/
-python -m kalos.bench --vs-baselines --quick   # smoke test, 2 seeds, writes nothing
+python -m pip install -e ".[ml,portal,bench,dev]"
+scripts/check.sh            # ruff + mypy, the same as the pre-push hook
+scripts/check.sh --full     # + the whole test suite (about 50 minutes; 2196 passed, 10 skipped, 3 xfailed at the last full run)
+python -m pytest -q tests/test_desktop_mode.py tests/test_readme_env.py   # a quick slice
 ```
 
-## Current limitations
+There is no CI service; `scripts/pre-push` runs `check.sh` locally. `python -m pytest -q` collects about 1,600 test functions in `tests/`. Tests that need private data skip when its folder is not set. `tests/test_torch_pin.py` fails if the installed torch, BoTorch or GPyTorch differs from the pin in `pyproject.toml` and `uv.lock`.
 
-- No validated real-data win. No independent wet-lab confirmation.
-- No user or organization management. The legacy `/api/campaign*` routes act on one default campaign per tenant. The multi-campaign API is under `/api/campaigns`.
-- Exact GP only, capped at 2,000 fit rows. Synchronous analysis runs on the request path. A concurrent sync upload gets 503 busy. Background jobs are the alternative (`docs/JOBS.md`).
-- Scale-up readout evidence is synthetic.
-- State is kept in local files and SQLite. There is no high availability (HA). There are no managed backups beyond the compose sidecar. Its drill was not exercised.
+**Worktrees.** Each branch below lives in its own worktree next to the main checkout (`git worktree list`), so several agents can build and test without stepping on one another: `kalos-engine` (`main`), `-wt-desktop` (this branch), `-wt-gxp`, `-wt-pg`, `-wt-twin`, `-wt-bench`, `-wt-bench-ports`, `-wt-skills`, `-wt-assist`, `-wt-assist-sop`, `-wt-benchling`. Commit with explicit paths from inside the worktree. Never run two engines on the same `KALOS_STATE_DIR`; the engine lock refuses the second.
 
-## Roadmap
+**Rules.** One focused pull request per change, conventional commits (`feat:`, `fix:`, `docs:`, `chore:`), `CHANGELOG.md` updated in the same change. Synthetic data only; never commit client data, secrets or tokens. Never describe a result as proven unless it was measured on independent data and reported with its caveats. A PR description says what is implemented, what is incomplete, the tests run, the security impact and the dependencies. Vulnerabilities: see [`SECURITY.md`](SECURITY.md).
 
-- **MVP (toward a public beta, not started unless noted):**
-  - IMPLEMENTED: upload, analysis, campaign loop, scale readout, token auth, tenant-keyed store, multi-campaign API, background jobs, engine-side JWT verification.
-  - IN PROGRESS: none open.
-  - PLANNED: web login (Better Auth), web-side JWT issuance, organizations as tenants, a rate limit.
-- **Later (PLANNED):** sparse or variational surrogate model, metrics and alerting, server-side PDF readouts (`TODOS.md`), independent validation on real data, an external security review.
-- **EXPERIMENTAL:** mechanistic priors, and alternative surrogate models. Alternatives must beat the GP on published datasets first.
+## Branches and pull requests
 
-## Deploy and operate
+`main` (last merged: [#119](https://github.com/itsbrendandang/kalos-engine/pull/119)) has: upload, sheet check, the model and its tests on unseen runs, the campaign loop, several campaigns per tenant, background jobs, service tokens and signed-token verification, the scale-up readout, the synthetic benchmarks, the deploy pack. Everything below is **not yet merged**. Merge order: #120 → #121 → #122 → #125 → #124 → #123, then `desktop-engine` and `assistant`.
 
-The deploy pack in `deploy/` has a container image for each service, a `compose.yaml` file, and a SQLite backup sidecar.
-By default, the engine binds to loopback. It refuses to serve unauthenticated on any other interface.
-Auth uses bearer tokens. Set them with `KALOS_AUTH_TOKENS`. Copy `deploy/.env.example` and fill it in.
-The runbook says what is and is not verified. A first deployment on 2026-09-10 ran the stack end to end. However, the runbook's own "NOT verified" list still says that no image was built and no container was run. The backup drill was not exercised.
-TLS is out of scope. Put a reverse proxy in front. Full steps are in [`deploy/RUNBOOK.md`](deploy/RUNBOOK.md).
+| PR / branch | One line |
+| --- | --- |
+| [#120](https://github.com/itsbrendandang/kalos-engine/pull/120) `gxp-integrity` | Append-only results and activity log, coded fit-cap refusal, provenance on every analysis, pinned torch stack, numerics fixes. Base of every branch below. |
+| [#121](https://github.com/itsbrendandang/kalos-engine/pull/121) `postgres-backend` | PostgreSQL behind one storage layer; SQLite stays the default. |
+| [#122](https://github.com/itsbrendandang/kalos-engine/pull/122) `twin-virtual-runs` | Simulated runs with origin labels, their own append-only table (schema v6) and a guard that keeps them out of the fit. |
+| [#123](https://github.com/itsbrendandang/kalos-engine/pull/123) `bench-open-replay` | The 15-dataset replay above, with protocol and attributions. |
+| [#124](https://github.com/itsbrendandang/kalos-engine/pull/124) `skills-framework` | Typed skill files, a registry, a runner with receipts, read-only routes behind `KALOS_SKILLS=1`. |
+| [#125](https://github.com/itsbrendandang/kalos-engine/pull/125) `bench-ports` | More benchmark simulators, warm start, other model types as benchmark arms, opt-in exclusion of QC-flagged rows. |
+| `desktop-engine` (this branch, no PR yet) | Desktop mode, `/api/health`, the packaged engine, `contract_version` 3, `columns[]` with reasons, `direction` per target, `applicability` flags, the analysis cache, faster fits on small sheets. |
+| `assistant` (no PR yet) | The grounded assistant: next step, questions answered only from your own sheets and rounds with sources, procedure drafts. Uses `KALOS_LLM_PROVIDER`. |
+| `benchling-connector` (no PR yet) | Read Benchling studies and results; push proposals as drafts only. Off unless `KALOS_INTEGRATIONS=benchling`. |
 
-**Warning:** the web UI has no login. Treat any deployment as private-network only.
-The web port is published on loopback (`127.0.0.1`) by default in the compose file.
+kalos-web's matching work is [kalos-web #82](https://github.com/itsbrendandang/kalos-web/pull/82) (branch `redesign-notion`, not yet merged): the redesigned pages in plain words, the desktop app and its local mode, Ask Kalos.
 
-## Extending to other domains
+## Docs index
 
-The optimization engine (`kalos/core/`) and the upload and validate pipeline are domain-neutral. Biology lives in `kalos/domains/` as data, not as code in the engine.
-
-- Declare a `ColumnRoles` schema (target, features, categoricals, groups, ids). Or pass the `roles` JSON field to `POST /api/run`. The analysis then runs under the generic profile.
-- Mixed continuous and categorical design spaces fit a BoTorch `MixedSingleTaskGP`. They propose with `optimize_acqf_mixed`.
-- To target a new domain, copy `kalos/domains/generic.py` into a new profile. Nothing in `core/` changes.
-
-## Data policy
-
-This repository holds no client or proprietary data.
-The examples and tests use synthetic data. Synthetic data is always labeled as such.
-The anonymizer (`anonymize=true` on upload) is opt-in.
-
-## Stack and cost
-
-The whole stack is free and open source: Python, FastAPI, BoTorch/PyTorch, SQLite, Next.js. Local development needs no paid service. Optional external-provider slots (`/api/providers`) and the optional LLM header-normalization tier (`normalize` extra) use paid APIs only if you supply keys. Neither is required.
+| File | What it covers |
+| --- | --- |
+| [`docs/DESKTOP.md`](docs/DESKTOP.md) | What the Mac app passes, exit codes, `/api/health`, stopping, cold start and fit times, the packaged engine. |
+| [`docs/UPLOADS.md`](docs/UPLOADS.md) | Uploading a sheet: formats, caps, the sheet check, column-role safety. |
+| [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md) | The single-campaign loop: start, result, reanalyze, runs in the lab. |
+| [`docs/CAMPAIGNS_API.md`](docs/CAMPAIGNS_API.md) | Several campaigns per tenant; the analysis contract (`contract_version` 3), determinism. |
+| [`docs/JOBS.md`](docs/JOBS.md) | Background analysis jobs and their limits. |
+| [`docs/SCALE_READOUT.md`](docs/SCALE_READOUT.md), [`docs/SCALE_EVIDENCE.md`](docs/SCALE_EVIDENCE.md) | The scale-up readout and the one measurement behind it. |
+| [`BENCHMARK.md`](BENCHMARK.md), [`docs/BENCHMARK.md`](docs/BENCHMARK.md) | Made-up surface benchmarks and the pre-registered comparison with other optimizers. |
+| [`docs/ENGINE_TOKEN.md`](docs/ENGINE_TOKEN.md) | The signed token kalos-web sends in hosted mode. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How the browser, kalos-web and the engine talk. |
+| [`docs/HARDENING.md`](docs/HARDENING.md) | The hardening track, what exists and what is out of scope. |
+| [`docs/MIGRATIONS.md`](docs/MIGRATIONS.md) | `portal.db` schema versions and how to move between them. |
+| [`deploy/RUNBOOK.md`](deploy/RUNBOOK.md) | The compose stack: quickstart, checklist, backups, what is verified. |
+| [`docs/STE_STYLE_NOTES.md`](docs/STE_STYLE_NOTES.md) | How this README is written. |
+| [`CHANGELOG.md`](CHANGELOG.md), [`docs/CHANGELOG_ARCHIVE.md`](docs/CHANGELOG_ARCHIVE.md) | What changed, by branch. |
+| [`SECURITY.md`](SECURITY.md) | How to report a vulnerability. |
 
 ## Repository layout
 
-- `kalos/core/`: the BoTorch surrogate, acquisition, grouped CV, conformal bands, and gates.
-- `kalos/kit/`: torch-free facade over the splits, drivers, conformal, gates, and anonymizer.
-- `kalos/validation/`: the data-quality checks and their report.
-- `kalos/normalize/`: unit registry and header-to-column mapping.
-- `kalos/scale/`: scale-up features, transfer, and leave-one-scale-out evaluation.
-- `kalos/domains/`: declared column roles and domain profiles.
-- `kalos/portal/`: the FastAPI service.
-- `kalos/bench/`: the benchmark harness.
-- `kalos/data/`, `kalos/features/`, `kalos/providers/`: anonymizer, optional feature embedders, provider credential slots.
-- `deploy/`: container files, compose, backup sidecar, runbook.
-- `docs/`: API contracts and evidence.
-- `examples/`: demos and synthetic data sets.
-- `experiments/`: off-path research prototypes, not part of the package or its guarantees.
-- `tests/`: pytest suite.
-
-## Contributing
-
-- Make one focused pull request per change. Use conventional commits (`feat:`, `fix:`, `docs:`, `chore:`).
-- Run the checks above (`ruff`, `mypy`, `pytest`) before you open a PR. Update `CHANGELOG.md` in the same change as the code.
-- Use synthetic data only. Never commit client or proprietary data, secrets, or tokens.
-- Do not describe a result as validated unless it was measured on independent data and reported with its caveats.
-- A PR description states what is implemented, what is incomplete, the tests run, the security impact, and the dependencies.
+`kalos/core/` the model, the search, the tests on unseen runs, the likely ranges and the checks · `kalos/kit/` a torch-free subset · `kalos/validation/` the sheet check · `kalos/normalize/` units and column names · `kalos/scale/` scale-up · `kalos/domains/` column roles per domain · `kalos/portal/` the service · `kalos/bench/` benchmarks · `kalos/data/`, `kalos/features/`, `kalos/providers/` anonymizer, optional embedders, provider slots · `deploy/` containers · `examples/` demos and generated sheets · `experiments/` research prototypes outside the package · `tests/`.
 
 ## License
 
@@ -374,6 +272,4 @@ Apache-2.0. See [`LICENSE`](LICENSE).
 
 ## About the author
 
-Brendan Dang.
-Founder-operator in biotech process optimization, now an ML engineer.
-[github.com/itsbrendandang](https://github.com/itsbrendandang)
+Brendan Dang. Founder-operator in biotech process optimization, now an ML engineer. [github.com/itsbrendandang](https://github.com/itsbrendandang)
