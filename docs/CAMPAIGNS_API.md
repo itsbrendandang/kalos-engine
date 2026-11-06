@@ -513,6 +513,9 @@ only added; a field never changes meaning or disappears within a version.
 - `validation.findings[].code` can be `category_not_modeled`.
 - `fixed_inputs`: `{input: value}` for inputs fixed at their median because their spread is within sensor precision. Proposals carry the value in `recipe`. Provenance status `fixed_near_constant` is new.
 
+- **v3** (branch desktop-engine-2): the fields added in v3 are listed below this
+  line, one bullet per field.
+
 ## Not in this slice
 
 - Background jobs for reanalyze (it still runs synchronously; upload has a job route).

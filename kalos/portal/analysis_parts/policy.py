@@ -49,7 +49,7 @@ _GROUP_HINT = BIOPROCESS_PROFILE.group_hint
 # `contract_version`. It goes up by one when fields are added in a round of
 # changes (docs/CAMPAIGNS_API.md, "Contract version"); no field is removed or
 # changes meaning without a new version. 1 = every response before this field.
-ANALYSIS_CONTRACT_VERSION = 2
+ANALYSIS_CONTRACT_VERSION = 3
 
 # Deterministic seed for the analyze path. The same upload -> the same GP fit and
 # the same proposed batch, which matters for client reproducibility and audit.
