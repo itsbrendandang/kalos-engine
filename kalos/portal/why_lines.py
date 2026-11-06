@@ -123,7 +123,7 @@ ENGINE_LINES: dict[str, str] = {
     ),
     "concentration_before_target": (
         "A concentration column before the result was kept as a setting; if it was measured "
-        "during the run rather than set, untick it, or the model will look better than it is."
+        "during the run rather than set, untick it, or the model looks better than it is."
     ),
     # Refused column choices (400 before any work)
     "invalid_linear_constraint": (

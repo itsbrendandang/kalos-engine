@@ -161,3 +161,14 @@ def test_full_analysis_and_campaign_findings_carry_their_why(tmp_path, monkeypat
         assert bad.json()["why"] == WHY["invalid_allow_beyond"]
     finally:
         app.dependency_overrides.pop(get_campaign_store, None)
+
+
+
+def test_why_lines_make_no_will_claim():
+    """The assistant and the web glossary refuse the claim word 'will'; the
+    engine copy matches them (concentration_before_target)."""
+    import re
+
+    from kalos.portal.why_lines import WHY
+
+    assert not [c for c, line in WHY.items() if re.search(r"\bwill\b", line or "")]
