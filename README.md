@@ -84,6 +84,7 @@ Latin hypercube sampling (LHS) spreads random points evenly across the design sp
 | Organizations as tenants, with membership | PLANNED | the engine only reads a `tenant` string (from an operator-provisioned token or an engine JWT claim). No organization model or membership exists in the engine |
 | Multiple campaigns per tenant | IMPLEMENTED | `kalos/portal/campaigns_api.py`, `docs/CAMPAIGNS_API.md`, `tests/test_cross_tenant_isolation.py`; PRs [#89](https://github.com/itsbrendandang/kalos-engine/pull/89), [#90](https://github.com/itsbrendandang/kalos-engine/pull/90) |
 | Background analysis jobs with a local worker process (`/api/campaigns/{id}/jobs`) | IMPLEMENTED | `kalos/portal/jobs.py`, `job_runner.py`, `job_worker.py`, `docs/JOBS.md`, `tests/test_jobs.py`, `tests/test_jobs_api.py`; PR [#91](https://github.com/itsbrendandang/kalos-engine/pull/91). The synchronous routes still return 503 busy when the analysis slot is taken |
+| Grounded assistant: cited chat over the tenant's own records and docs, next-step guide, SOP drafts. Local-first model seam (`ollama`, `openai`-compatible, `anthropic`, or none) | IMPLEMENTED | `kalos/assist/`, `docs/ASSISTANT.md`; retrieval quality in [Assistant retrieval quality](#assistant-retrieval-quality); `tests/test_assist_*`, `tests/test_assist_retrieval_bench.py` |
 | Sparse/variational surrogate model beyond 2,000 rows | PLANNED | `docs/HARDENING.md` Phase 2 |
 | Metrics, structured logging, alert hooks | PLANNED | `docs/HARDENING.md` Phase 3 |
 | Scientific validation on independent real wet-lab data | PLANNED | not done; see below |
@@ -295,6 +296,54 @@ What the table shows, and what it does not:
 python -m pip install -e ".[ml,bench]"
 python -m kalos.bench --vs-baselines           # confirmatory run: writes benchmarks/results/
 python -m kalos.bench --vs-baselines --quick   # smoke test, 2 seeds, writes nothing
+```
+
+## Assistant retrieval quality
+
+The assistant answers only from the tenant's own records and the docs, and every
+sentence it keeps must cite a retrieved chunk (see [`docs/ASSISTANT.md`](docs/ASSISTANT.md)).
+Retrieval quality therefore bounds what the assistant can answer. This is a
+**measurement of the local index, not a validation claim**: the numbers come from
+a seeded synthetic two-campaign fixture, not real labs.
+
+**Setup.** A two-campaign tenant (fermentation and media optimization) is indexed,
+then queried with a labelled set of bioprocess questions whose relevant chunk kind
+(sheet, finding, analysis, or doc) is known. Two arms: a **literal** arm (12
+questions worded with the stored terms) and a **paraphrase** arm (8 questions in
+lay/synonym wording that shares little literal overlap, e.g. "sugar" for glucose,
+"unusual" for outlier). Metrics: recall@6 (the relevant chunk is in the top 6),
+precision@1 (it is ranked first), and MRR (mean reciprocal rank). The retriever
+here is BM25, the always-available offline default; embeddings are used only when a
+local model is already on disk (none was, so BM25 is what ships by default).
+
+**Result (BM25, this fixture).**
+
+| Arm | recall@6 | precision@1 | MRR |
+|---|---|---|---|
+| Literal (12 q) | 1.000 | 0.833 | 0.896 |
+| Paraphrase (8 q) | 0.500 | 0.500 | 0.500 |
+
+Per chunk kind, recall@6 under paraphrasing drops to 0.000 for `sheet`
+("sugar" never matches "glucose") and `finding` ("unusual" never matches
+"outlier"), while `analysis` stays 1.000. So BM25 ranks relevant chunks well when
+the wording matches, and its one real weak spot is vocabulary mismatch on the
+sheet and finding chunks - the headroom a synonym map or a local embedding model
+would recover.
+
+What this does and does not show:
+
+- It shows the ranking is sound on literal queries and pinpoints where lexical
+  retrieval fails (synonyms), on a small synthetic fixture.
+- It does **not** measure answer quality, only which chunks are retrieved. It says
+  nothing about real questions, real data, or the model's generated text.
+- The paraphrase arm is a diagnostic with no pass/fail floor; the literal arm has
+  loose regression floors (recall@6 >= 0.70, MRR >= 0.40).
+
+**Reproduce.** Runs in under a second; writes nothing.
+
+```bash
+python -m pip install -e ".[ml]"
+python -m pytest tests/test_assist_retrieval_bench.py -s   # prints the table
 ```
 
 ## Current limitations
