@@ -1,8 +1,8 @@
 """Seeded CHO screen: 109 runs x 49 features with a KNOWN optimum.
 
 STRUCTURE ONLY. The table has the shape of a CHO screening dataset (109 rows,
-49 numeric process/media features, one titer outcome) as described in
-`/tmp/redesign/research/bioqore-mine.md`. Every value comes from the latent
+49 numeric process/media features, one titer outcome), taken from a prior
+prototype, shape only. Every value comes from the latent
 function below; nothing was read from, fitted on, or calibrated to any real
 screen. Column names are generic (`feature_01` ... `feature_49`), ranges are
 the unit interval.

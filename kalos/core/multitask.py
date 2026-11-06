@@ -10,7 +10,7 @@ intrinsic-coregionalization (ICM) kernel learns how campaigns correlate and
 lends the old campaigns' shape to the new one.
 
 Clean-room re-implementation of an idea (partial pooling across campaigns
-with a three-regime evaluation) from a Bioqore prototype; that prototype used a
+with a three-regime evaluation) from a prior prototype; that prototype used a
 scalar shrunk per-campaign offset on an sklearn GP, and named BoTorch
 `MultiTaskGP` as the production path, which is what this module uses.
 

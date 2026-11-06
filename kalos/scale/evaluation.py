@@ -45,8 +45,8 @@ module answers the harder one directly:
       smaller training scale (or a recipe never run at it) predicts `nan`: the
       baseline does not apply there and is scored only where it does. This is
       the scientist's default ("it did X at 50 L, so expect X at 500 L"); the
-      idea comes from a carry-forward baseline in the earlier voyager-brain
-      rebuild (re-implemented here).
+      idea comes from a carry-forward baseline in a prior prototype
+      (re-implemented here).
 
 HONESTY CLAUSE. This module does not assert that the physics-feature GP beats
 either naive baseline. `beats_naive_mean`/`beats_naive_nn` on the returned

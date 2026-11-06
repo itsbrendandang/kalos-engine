@@ -236,9 +236,9 @@ ZERO_INFLATED_FACTORS = ("media_g_L", "temp_C", "feed_pct", "pH", "glucose_g_L")
 def zero_inflated_titer(p_random_crash: float = 0.05) -> ZeroInflatedObjective:
     """5-factor separable log-paraboloid titer with an x-dependent crash region.
 
-    Clean-room re-implementation of the idea in voyager-mini's demo surface
-    (media, temp, feed, pH, glucose; optimum titer 3.0), with the change the
-    Bioqore mine asked for: there the 15% crash-to-zero was independent of x,
+    Clean-room re-implementation of the idea in a prior prototype's demo
+    surface (media, temp, feed, pH, glucose; optimum titer 3.0), with one
+    change: there the 15% crash-to-zero was independent of x,
     so no classifier could learn it. Here a run crashes when glucose > 9.8 g/L
     (overflow; about half the box), plus a 5% random crash. The optimum
     (titer 3.0 at media 19, temp 36.5, feed 3.2, pH 7.0, glucose 9.0) sits just
@@ -256,7 +256,7 @@ def zero_inflated_titer(p_random_crash: float = 0.05) -> ZeroInflatedObjective:
 
     def f(X: np.ndarray) -> np.ndarray:
         z = (X - opt) / (hi - lo)
-        # log-titer is a separable paraboloid (the voyager-mini surface is a
+        # log-titer is a separable paraboloid (the prototype surface is a
         # paraboloid in titer; the exp keeps the floor positive so every zero
         # is a crash, never the clip of a wide paraboloid)
         val = peak * np.exp(-4.0 * (curv * z**2).sum(axis=1))

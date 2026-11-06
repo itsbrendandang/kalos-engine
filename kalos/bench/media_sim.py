@@ -1,9 +1,9 @@
 """Seeded media-optimization campaign: 100 runs over 37 recipes, a scale
 column, replicate noise, and a KNOWN optimum.
 
-STRUCTURE ONLY. The table has the shape of a media-optimization dataset as
-described in `/tmp/redesign/research/bioqore-mine.md` (about 100 rows over 37
-distinct recipes, so most recipes are replicated; a culture-scale column).
+STRUCTURE ONLY. The table has the shape of a media-optimization dataset from a
+prior prototype, shape only (about 100 rows over 37 distinct recipes, so most
+recipes are replicated; a culture-scale column).
 Every value comes from the latent function below; nothing was read from,
 fitted on, or calibrated to any real media data. Component names are generic
 (`component_01` ... `component_08`, g/L on made-up ranges).

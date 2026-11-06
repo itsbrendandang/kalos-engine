@@ -34,7 +34,7 @@ outcome.
 ## Usage
 
 ```bash
-python examples/blood_reactor_profile/make_template.py /tmp/blood_reactor_runs.csv
+python examples/blood_reactor_profile/make_template.py blood_reactor_runs.csv
 # fill in your own measured runs, then upload the sheet with roles.json as the roles schema
 ```
 

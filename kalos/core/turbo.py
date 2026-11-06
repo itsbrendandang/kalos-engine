@@ -14,8 +14,8 @@ is what helps (the tutorial's regime is d = 20+). Below `TURBO_MIN_DIM`,
 `propose_batch(..., trust_region=...)` ignores the region and says so in the
 log, so a caller can pass a state unconditionally.
 
-The idea of a trust region for kalos came from an earlier sklearn-GP prototype
-(voyager-brain-rebuild `algorithms.py`); this is written from the BoTorch
+The idea of a trust region for kalos came from an earlier sklearn-GP prototype;
+this is written from the BoTorch
 tutorial, not from that code. Continuous designs only (no categoricals).
 """
 from __future__ import annotations

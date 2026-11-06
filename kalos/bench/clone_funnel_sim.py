@@ -3,7 +3,7 @@
 STRUCTURE ONLY. This generator has the shape of a clone-selection funnel
 dataset (504 clones x 49 per-clone features, clones grouped by parental
 strain, a multi-stage screen where each stage gates which clones advance)
-as described in `/tmp/redesign/research/bioqore-mine.md`. Every VALUE comes
+from a prior prototype, shape only. Every VALUE comes
 from the latent function below; nothing was read from, fitted on, or
 calibrated to any real funnel data. Column names are generic.
 
