@@ -416,7 +416,8 @@ if _DESKTOP:
     # before the token check (defense in depth; the token is still required).
     from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "::1"])
+    # Exact, case-sensitive names; the port is ignored; no Host header is refused.
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(_desktop.ALLOWED_HOST_HEADERS))
 
 # Log the effective security posture (auth + CORS) once at import/startup.
 log_security_posture(auth_enforced=_AUTH_ENFORCED_AT_STARTUP)

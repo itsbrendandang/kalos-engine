@@ -17,7 +17,8 @@ What it sets, unless the variable is already set:
 
 What it refuses (exit 2, one line on stderr):
 
-- a bind address other than loopback;
+- a bind address other than 127.0.0.1 (`localhost`, `::1` and other loopback
+  spellings included: the Host allowlist only names 127.0.0.1 and localhost);
 - no token (`KALOS_AUTH_TOKENS` / `KALOS_AUTH_TOKENS_FILE` / JWT keys): the
   desktop engine never runs open, even on loopback;
 - `KALOS_ALLOW_OPEN_ACCESS`;
@@ -49,6 +50,9 @@ from collections.abc import MutableMapping
 from pathlib import Path
 
 DESKTOP_ENV = "KALOS_DESKTOP"
+# The only bind address desktop mode accepts, and the Host names it answers.
+DESKTOP_HOST = "127.0.0.1"
+ALLOWED_HOST_HEADERS = ("127.0.0.1", "localhost")
 _TRUE = {"1", "true", "yes", "on"}
 
 # Exit codes the shell reads (docs/DESKTOP.md).
@@ -129,10 +133,8 @@ def state_dir(environ: MutableMapping[str, str] | None = None) -> Path:
 
 def check_posture(host: str, *, auth_source: bool, environ: MutableMapping[str, str] | None = None) -> None:
     """Refuse a desktop start that would be reachable off the machine or open."""
-    from kalos.portal.config import is_loopback_bind
-
     env = os.environ if environ is None else environ
-    if not is_loopback_bind(host):
+    if host.strip() != DESKTOP_HOST:
         raise DesktopConfigError(
             f"desktop mode only listens on this machine (127.0.0.1); KALOS_HOST={host!r} is not allowed"
         )

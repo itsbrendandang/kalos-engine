@@ -23,7 +23,7 @@ runs the same token, open-access and `KALOS_HOST` refusals when it is imported.
 | Variable | Required | Value |
 | --- | --- | --- |
 | `KALOS_DESKTOP` | yes (or `--desktop`) | `1` |
-| `KALOS_HOST` | no | `127.0.0.1` (the default). Any address that is not loopback is refused. |
+| `KALOS_HOST` | no | `127.0.0.1` (the default). Any other value, `::1` and `localhost` included, is refused. |
 | `KALOS_PORT` | yes | A free port the shell picked on 127.0.0.1. |
 | `KALOS_STATE_DIR` | yes | The data folder. Holds `portal.db`. Created if missing. Without it the engine uses `~/.kalos`. |
 | `KALOS_AUTH_TOKENS` | yes | A JSON list with one record: `[{"token_sha256": "<sha256 hex of the launch secret>", "subject": "desktop-app", "tenant": "local", "scopes": ["read", "write"]}]`. The shell keeps the plain secret and sends it as `Authorization: Bearer <secret>`. |
@@ -46,9 +46,11 @@ desktop app uses `local`.
 ### What desktop mode changes
 
 - A token is required. Without one the engine does not start.
-- Only loopback. Requests whose `Host` header is not `127.0.0.1`, `localhost`
-  or `[::1]` get 400 (a page that points its own name at 127.0.0.1 is refused
-  before the token check).
+- Only 127.0.0.1. `KALOS_HOST` must be `127.0.0.1` (`::1`, `localhost` and
+  any other address are refused, exit 2). Requests whose `Host` header is not
+  `127.0.0.1` or `localhost` (any port; no `Host` header and other spellings
+  such as `LOCALHOST` included) get 400 (a page that points its own name at
+  127.0.0.1 is refused before the token check).
 - One analysis at a time (`KALOS_JOB_WORKERS=1`); a second upload while one
   runs gets 503 `engine_busy` with `Retry-After`.
 - Torch threads capped (see above), so the rest of the laptop stays usable.

@@ -193,6 +193,56 @@ def test_uvicorn_direct_import_with_a_token_loads(tmp_path):
     assert out.stdout.strip().splitlines()[-1] == "True"
 
 
+@pytest.mark.parametrize("host", ["::1", "localhost", "127.0.0.2", "0.0.0.0"])  # noqa: S104
+def test_desktop_binds_only_127_0_0_1(host):
+    with pytest.raises(desktop.DesktopConfigError, match="only listens"):
+        desktop.check_posture(host, auth_source=True, environ={"KALOS_CORS_ORIGINS": WEB_ORIGIN})
+
+
+def test_desktop_refuses_kalos_host_ipv6_loopback_with_exit_2(tmp_path):
+    out = _run_main(tmp_path, "--desktop", KALOS_AUTH_TOKENS=_tokens(), KALOS_HOST="::1")
+    assert out.returncode == 2, out.stderr
+    assert "KALOS_HOST='::1' is not allowed" in out.stderr.strip().splitlines()[-1]
+
+
+def test_desktop_host_allowlist_and_no_api_docs(tmp_path):
+    """DNS-rebinding defence: only Host 127.0.0.1 / localhost (any port) reach the
+    app; a foreign, absent, uppercase, IPv6 or suffix-trick Host is 400 before
+    the token check. /docs, /redoc and /openapi.json do not exist."""
+    code = (
+        "import json\n"
+        "from fastapi.testclient import TestClient\n"
+        "c = TestClient(m.app, base_url='http://127.0.0.1:8050')\n"
+        "auth = {'Authorization': 'Bearer desk-secret'}\n"
+        "hosts = ['127.0.0.1:8050', 'localhost:8050', '127.0.0.1', '127.0.0.1:1',\n"
+        "         'evil.example', 'evil.example:8050', 'LOCALHOST:8050', 'Localhost',\n"
+        "         '[::1]:8050', '127.0.0.1.evil.example', 'localhost.evil.example', '']\n"
+        "out = {'hosts': {h: c.get('/api/health', headers={**auth, 'Host': h}).status_code for h in hosts}}\n"
+        "import asyncio\n"
+        "sent = []\n"
+        "async def recv():\n"
+        "    return {'type': 'http.request', 'body': b'', 'more_body': False}\n"
+        "async def send(msg):\n"
+        "    sent.append(msg)\n"
+        "scope = {'type': 'http', 'asgi': {'version': '3.0'}, 'http_version': '1.1', 'method': 'GET',\n"
+        "         'scheme': 'http', 'path': '/api/health', 'raw_path': b'/api/health', 'query_string': b'',\n"
+        "         'root_path': '', 'headers': [(b'authorization', b'Bearer desk-secret')],\n"
+        "         'client': ('127.0.0.1', 5000), 'server': ('127.0.0.1', 8050)}\n"
+        "asyncio.run(m.app(scope, recv, send))\n"
+        "out['absent'] = sent[0]['status']\n"
+        "out['docs'] = {p: c.get(p, headers=auth).status_code for p in ('/docs', '/redoc', '/openapi.json')}\n"
+        "print(json.dumps(out))\n"
+    )
+    out = _import_app(tmp_path, code, KALOS_DESKTOP="1", KALOS_AUTH_TOKENS=_tokens())
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout.strip().splitlines()[-1])
+    ok = {"127.0.0.1:8050", "localhost:8050", "127.0.0.1", "127.0.0.1:1"}
+    assert {h for h, code in got["hosts"].items() if code == 200} == ok, got
+    assert all(code == 400 for h, code in got["hosts"].items() if h not in ok), got
+    assert got["absent"] == 400
+    assert got["docs"] == {"/docs": 404, "/redoc": 404, "/openapi.json": 404}
+
+
 # --- startup self-check ------------------------------------------------------- #
 
 
