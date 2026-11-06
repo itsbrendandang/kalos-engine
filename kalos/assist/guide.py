@@ -26,7 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from kalos.assist.why import why_for
+from kalos.assist.why import WHY, why_for
 
 ROUTE_SETUP = "/campaign/setup"
 ROUTE_PLAN = "/campaign/plan"
@@ -246,12 +246,12 @@ def _gate_blockers(analysis: dict[str, Any] | None) -> list[dict[str, str]]:
         text = (_GATE_UNMEASURED if unmeasured else _GATE_TEXT).get(
             code, "One of the model checks did not pass."
         )
-        out.append({"code": code, "text": text, "why": why_for(code)})
+        out.append({"code": code, "text": text, "why": why_for("unmeasured" if unmeasured else code)})
     if not out:
         out.append({
             "code": "model_check",
             "text": "Kalos has not yet shown this model fit to rely on.",
-            "why": why_for("surrogate_spearman"),
+            "why": why_for("model_check"),
         })
     return out
 
@@ -264,7 +264,8 @@ def _notice_blocker(analysis: dict[str, Any] | None) -> list[dict[str, str]]:
     text = "The batch is shorter than asked for."
     if isinstance(returned, int) and isinstance(requested, int):
         text = f"Kalos proposed {returned} of the {requested} recipes asked for."
-    return [{"code": "proposal_notice", "text": text, "why": why_for("proposal_notice")}]
+    code = str(notice.get("code") or "fewer_distinct_candidates")
+    return [{"code": code, "text": text, "why": why_for(code)}]
 
 
 def next_step(
@@ -277,8 +278,6 @@ def next_step(
     """The guide output for one campaign. Pure: same input, same output."""
     f = facts_from(summary, analysis, refusal)
     state = classify(f)
-    target = (analysis or {}).get("target") or (summary or {}).get("target")
-    goal = f"{target}" if isinstance(target, str) and target else "the result"
     people_round = f.round + 1
     blockers: list[dict[str, str]] = []
 
@@ -289,23 +288,12 @@ def next_step(
             f"{done} of {f.n_started} started runs have a result. "
             f"{_plural(f.n_awaiting, 'run')} still {'has' if f.n_awaiting == 1 else 'have'} none."
         )
-        matters = (
-            "Kalos only learns from runs with a measured result. "
-            "If you skip this, the next batch is planned without them."
-        )
+        matters = WHY["record_partial" if done else "run_waiting"]
         route = ROUTE_RECORD
-        blockers.append({
-            "code": "runs_awaiting",
-            "text": f"{_plural(f.n_awaiting, 'run')} without a recorded result.",
-            "why": why_for("runs_awaiting"),
-        })
     elif state == "runs_all_recorded":
         step = f"Learn from round {people_round}"
         why = f"Every one of the {_plural(f.n_started, 'started run')} has a recorded result."
-        matters = (
-            "Updating the model adds these results to what Kalos knows. "
-            "If you skip this, the next batch ignores what this round showed."
-        )
+        matters = WHY["learn_ready"]
         route = ROUTE_LEARN
         if refusal and refusal.get("code") and _refusal_is_current(refusal, analysis):
             blockers.append(_refusal_blocker(refusal))
@@ -324,10 +312,7 @@ def next_step(
     elif state == "no_sheet":
         step = "Upload a run sheet"
         why = "This campaign has no runs yet. Kalos needs the runs you already have."
-        matters = (
-            "Kalos learns only from your own measured runs. "
-            "Without a sheet there is nothing to learn from and no batch to plan."
-        )
+        matters = WHY["setup_no_sheet"]
         route = ROUTE_SETUP
     elif state == "sheet_errors":
         step = f"Fix {_plural(f.n_errors, 'error')} in the sheet"
@@ -344,12 +329,10 @@ def next_step(
             f"Kalos proposed {_plural(f.n_proposed, 'recipe')}, but its own checks did not show "
             "the model fit to rely on."
         )
-        matters = (
-            "The batch can still be run to learn more. "
-            f"Treat its predicted values for {goal} as rough until the checks pass."
-        )
-        route = ROUTE_PLAN
         blockers.extend(_gate_blockers(analysis))
+        all_unmeasured = all(b["why"] == WHY["unmeasured"] for b in blockers)
+        matters = WHY["insufficient" if all_unmeasured else "not-yet"]
+        route = ROUTE_PLAN
     elif state == "sheet_warnings":
         step = f"Review {_plural(f.n_warnings, 'warning')}, then start the batch"
         why = (
@@ -365,16 +348,13 @@ def next_step(
     elif state == "no_batch":
         step = "Look at why no recipes were proposed"
         why = "The analysis finished, but it holds no proposed recipes."
-        matters = "There is nothing to start until a batch exists. The details explain what to change."
+        matters = WHY["empty_batch"]
         route = ROUTE_PLAN
         blockers.extend(_notice_blocker(analysis))
     elif state == "batch_proposed":
         step = f"Review and start round {people_round}"
         why = f"Kalos proposed {_plural(f.n_proposed, 'recipe')}. Untick any you do not plan to run, then start the rest."
-        matters = (
-            "Starting the batch records which recipes you chose to run. "
-            "Results can only be recorded for started runs."
-        )
+        matters = WHY["plan_ready"]
         route = ROUTE_PLAN
         blockers.extend(_notice_blocker(analysis))
     else:  # round_complete
@@ -383,10 +363,7 @@ def next_step(
             f"The model now includes round {f.round}. "
             f"Kalos proposed {_plural(f.n_proposed, 'recipe')} for round {people_round}."
         )
-        matters = (
-            "Each round adds measured runs. "
-            "Starting the next batch keeps the record of what was chosen and when."
-        )
+        matters = WHY["plan_ready"]
         route = ROUTE_PLAN
         blockers.extend(_notice_blocker(analysis))
 

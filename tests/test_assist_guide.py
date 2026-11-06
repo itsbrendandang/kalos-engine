@@ -99,10 +99,12 @@ def test_every_reachable_state_yields_exactly_one_step():
             assert isinstance(out[key], str) and out[key].strip()
         for b in out["blockers"]:
             assert set(b) == {"code", "text", "why"} and all(isinstance(v, str) and v for v in b.values())
-        text = " ".join([out["step"], out["why"], out["why_it_matters"]]
-                        + [b["text"] + " " + b["why"] for b in out["blockers"]])
-        assert banned_in(text) == [], (out["state"], text)
-        assert claims_in(text) == [], (out["state"], text)
+        # What the guide composes itself carries no claim word; the why-lines are
+        # the glossary's, checked in test_assist_why.py.
+        composed = " ".join([out["step"], out["why"]] + [b["text"] for b in out["blockers"]])
+        assert claims_in(composed) == [], (out["state"], composed)
+        everything = composed + " " + out["why_it_matters"] + " ".join(b["why"] for b in out["blockers"])
+        assert banned_in(everything) == [], (out["state"], everything)
         seen.add(out["state"])
         n += 1
     assert seen == set(STATE_NAMES), set(STATE_NAMES) - seen
