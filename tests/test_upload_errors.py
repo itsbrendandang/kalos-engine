@@ -161,10 +161,10 @@ def test_no_numeric_columns(client):
 
 
 def test_no_process_inputs(client):
-    # Only outputs and an id: nothing to optimize over.
+    # Only outcome columns and an id: nothing to optimize over.
     df = pd.DataFrame({
         "run_id": [f"R{i}" for i in range(8)],
-        "biomass_od600": np.linspace(1, 3, 8),
+        "product_yield": np.linspace(1, 3, 8),
         "lipase_titer": np.linspace(2, 9, 8),
     })
     _assert_error(_post(client, df.to_csv(index=False).encode()), "no_process_inputs")

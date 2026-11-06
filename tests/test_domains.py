@@ -197,7 +197,11 @@ def test_analyze_bioprocess_inference_unchanged_by_default():
     assert out["categorical_features"] == ["medium"]
     assert out["auto_categorical"] == ["medium"]
     assert out["proposal_optimizer"] != "continuous"
-    assert "biomass_od600" not in out["features"]
+    # Owner decision (desktop-engine-2): a measurement name before the target
+    # (biomass OD) is not excluded by name; it stays an input and is flagged.
+    assert "biomass_od600" in out["features"]
+    assert any(f["code"] == "possibly_measured_after_run" and f["column"] == "biomass_od600"
+               for f in out["validation"]["findings"])
     assert "Methanol" in out["features"]
 
 

@@ -25,9 +25,12 @@ def _sheet(n=40, seed=0):
 def test_analyze_excludes_outputs_and_reports_honest_cv():
     out = _analyze(_sheet())
     assert out["target"] == "lipase_titer"
-    # other measured outputs must never become input features (anti-leakage)
-    assert "biomass_od600" not in out["features"]
+    # The target is never an input. A measurement name before the target
+    # (biomass OD) stays an input with a check-it finding (owner decision,
+    # desktop-engine-2); an outcome word would exclude it.
     assert "lipase_titer" not in out["features"]
+    cols = {c["name"]: c for c in out["columns"]}
+    assert cols["biomass_od600"]["finding_code"] == "possibly_measured_after_run"
     assert "Methanol" in out["features"]
     # the honest grouped-CV report is surfaced with a confidence band + group count
     assert out["cv_spearman"] is not None
