@@ -104,6 +104,21 @@ def _anonymize_result(
                         "text": text}
             items.append(item)
         out["linear_constraints"] = {**lin, "constraints": items}
+    jf = out.get("joint_feasibility")
+    if isinstance(jf, dict) and isinstance(jf.get("specs"), list):
+        out["joint_feasibility"] = {**jf, "specs": [
+            {**sp, "column": alias(str(sp["column"]))} if isinstance(sp, dict) and "column" in sp else sp
+            for sp in jf["specs"]
+        ]}
+    if isinstance(out.get("proposals"), list):
+        out["proposals"] = [
+            {**r, "p_specs": {alias(str(k)): v for k, v in r["p_specs"].items()}}
+            if isinstance(r, dict) and isinstance(r.get("p_specs"), dict) else r
+            for r in out["proposals"]
+        ]
+    opt = out.get("model_optimum")
+    if isinstance(opt, dict) and isinstance(opt.get("p_specs"), dict):
+        out["model_optimum"] = {**opt, "p_specs": {alias(str(k)): v for k, v in opt["p_specs"].items()}}
     corr = out.get("correlation")
     if isinstance(corr, dict) and isinstance(corr.get("labels"), list):
         out["correlation"] = {**corr, "labels": [alias(str(c)) for c in corr["labels"]]}

@@ -758,6 +758,21 @@ only added; a field never changes meaning or disappears within a version.
 - `proposals[].constraints_ok` and `model_optimum.constraints_ok`: true when the
   shown recipe meets every linear constraint within its tolerance; null when none
   are declared.
+- `joint_feasibility`: `{specs, n_samples, method, predicts, seed, available,
+  reason}`. Set specs in the column roles: `"specs": [{"column": "Purity", "min":
+  95}]` (outcome columns, the target may be one; `min`, `max` or both; at most 20;
+  a spec on a declared input or a malformed spec is 400 `invalid_specs`). One model
+  per spec column (rows with a value, at least 6). `specs[]` adds
+  `n_rows_with_value`, `available`, `reason`. `method` is `independent_mc`: draws
+  from each spec's model, sampled independently, so the joint chance is an estimate
+  of the product of the per-spec chances (outcome correlation is not modelled).
+  `predicts` says the draws are for a new measurement (model plus assay noise).
+  `available` is false, with a `reason`, when any spec column is missing or too
+  sparse. Advisory: the batch is the same with or without specs.
+- `proposals[].p_all_specs` and `model_optimum.p_all_specs`: the chance that every
+  spec is met at once (0 to 1), null when `joint_feasibility.available` is false.
+- `proposals[].p_specs` and `model_optimum.p_specs`: `{column: chance}` per spec,
+  or null.
 
 ## Not in this slice
 

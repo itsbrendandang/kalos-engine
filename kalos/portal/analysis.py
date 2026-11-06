@@ -136,6 +136,7 @@ from kalos.portal.analysis_parts.search_box import (
     beyond_tried,
     search_box_finding,
 )
+from kalos.portal.analysis_parts.specs import evaluate_specs, guard_spec_columns
 from kalos.portal.cells import (
     BLANK,
     CENSORED,
@@ -554,6 +555,8 @@ def _analyze_body(
         _constraint_col_name = str(constraint["column"])
         cont_feats = [c for c in cont_feats if str(c) != _constraint_col_name]
         cat_feats = [c for c in cat_feats if str(c) != _constraint_col_name]
+    # roles.specs: same rule for spec columns (analysis_parts/specs.py).
+    cont_feats, cat_feats = guard_spec_columns(roles, cont_feats, cat_feats)
     if roles is None:
         outcomes = [c for c in num if profile.outcome_hint.search(str(c))]
         candidate_targets = outcomes or [target]
@@ -1611,6 +1614,12 @@ def _analyze_body(
     near_best_run = proposal_separation(
         optimum_x, _best_row, bounds[0], bounds[1], list(cat_dims or []),
     ) < NEAR_DUPLICATE_TOL
+    # roles.specs: P(all specs met) for the final batch and the best bet.
+    # Advisory and computed after both, so it never changes them.
+    spec_eval = evaluate_specs(
+        roles, df, keep_index, X, bounds, cat_dims, np.vstack([batch, optimum_x.reshape(1, -1)]),
+        seed=ANALYZE_SEED, min_rows=CONSTRAINT_MIN_ROWS,
+    )
     show = [d["name"] for d in drv[:4]]
     show_idx = [d["_idx"] for d in drv[:4]]  # carry the feature index, not a name lookup
     for d in drv:
@@ -1843,6 +1852,8 @@ def _analyze_body(
         )
     model_optimum["constraints_ok"] = recipe_constraints_ok(linear_cons, opt_recipe)
     linear_block = linear_constraints_block(linear_cons, [*proposals, model_optimum])
+    for row, spec_row in zip([*proposals, model_optimum], spec_eval["rows"]):
+        row.update(spec_row)
     if near_best_run:
         model_optimum["predicted_vs_best"]["plain"] += (
             " It is close to the recipe of your best run, so running it again checks "
@@ -2008,6 +2019,8 @@ def _analyze_body(
         "stopping": stopping,
         # roles.linear_constraints as applied, and whether every shown recipe meets them.
         "linear_constraints": linear_block,
+        # roles.specs: how P(all specs met) on proposals and the best bet was computed.
+        "joint_feasibility": spec_eval["block"],
         # Observed (tried) range of each continuous input, and how far past it
         # the search was allowed (roles.allow_beyond). `feature_ranges` is the
         # search box actually used.

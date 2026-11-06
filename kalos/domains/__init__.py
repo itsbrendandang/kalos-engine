@@ -20,7 +20,9 @@ from .profile import (
     InvalidExplorationDesign,
     InvalidLinearConstraint,
     InvalidPerRecipeNoise,
+    InvalidSpecs,
     LinearConstraint,
+    Spec,
     build_design_space,
     parse_direction,
 )
@@ -40,7 +42,9 @@ __all__ = [
     "InvalidExplorationDesign",
     "InvalidLinearConstraint",
     "InvalidPerRecipeNoise",
+    "InvalidSpecs",
     "LinearConstraint",
+    "Spec",
     "build_design_space",
     "parse_direction",
 ]

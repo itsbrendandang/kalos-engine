@@ -229,6 +229,69 @@ def parse_linear_constraints(value: object) -> tuple[LinearConstraint, ...]:
     return tuple(out)
 
 
+# At most this many `roles.specs` per upload.
+MAX_SPECS = 20
+
+
+class InvalidSpecs(ValueError):
+    """A malformed `roles.specs` entry, or a spec on a model input
+    (HTTP 400 `invalid_specs`)."""
+
+    code = "invalid_specs"
+
+
+@dataclass(frozen=True)
+class Spec:
+    """A specification on an outcome column: met when `min <= value <= max`
+    (either side may be open)."""
+
+    column: str
+    min: float | None = None
+    max: float | None = None
+
+    def to_dict(self) -> dict:
+        return {"column": self.column, "min": self.min, "max": self.max}
+
+
+def parse_specs(value: object) -> tuple[Spec, ...]:
+    """`roles.specs`: a list of `{column, min?, max?}` on outcome columns, at
+    least one limit each, `min <= max`, one entry per column. Empty when not
+    given. Raises `InvalidSpecs` with a plain message for anything else."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise InvalidSpecs("roles.specs must be a list")
+    if len(value) > MAX_SPECS:
+        raise InvalidSpecs(f"roles.specs has {len(value)} entries; the most allowed is {MAX_SPECS}")
+    out: list[Spec] = []
+    for k, item in enumerate(value, start=1):
+        where = f"Spec {k}"
+        if not isinstance(item, dict):
+            raise InvalidSpecs(f"{where} must be an object with column, min and/or max")
+        column = item.get("column")
+        if not isinstance(column, str) or not column.strip():
+            raise InvalidSpecs(f"{where} needs a column name")
+        limits: list[float | None] = []
+        for key in ("min", "max"):
+            raw = item.get(key)
+            if raw is None:
+                limits.append(None)
+                continue
+            v = _finite_number(raw)
+            if v is None:
+                raise InvalidSpecs(f"{where}: {key} must be a finite number")
+            limits.append(v)
+        lo, hi = limits
+        if lo is None and hi is None:
+            raise InvalidSpecs(f"{where} needs a min, a max, or both")
+        if lo is not None and hi is not None and lo > hi:
+            raise InvalidSpecs(f"{where}: min is above max")
+        if any(sp.column == column for sp in out):
+            raise InvalidSpecs(f"{where}: {column!r} already has a spec; give min and max in one entry")
+        out.append(Spec(column, lo, hi))
+    return tuple(out)
+
+
 def parse_direction(value: object) -> str | None:
     """None for no stated direction, else "maximize"/"minimize". Raises
     `InvalidDirection` for anything else (case and surrounding spaces are
@@ -284,6 +347,8 @@ class ColumnRoles:
     noise is uneven across recipes (`noise.per_recipe` in the analysis).
     `linear_constraints` are hard linear limits on continuous inputs (for
     example a mixture that sums to 100); every proposal meets them.
+    `specs` are limits on outcome columns; each proposal reports the chance
+    that all of them are met at once (advisory, the batch is unchanged).
     """
 
     target: str
@@ -298,6 +363,7 @@ class ColumnRoles:
     per_recipe_noise: bool = False
     exploration_design: str | None = None
     linear_constraints: tuple[LinearConstraint, ...] = ()
+    specs: tuple[Spec, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict) -> ColumnRoles:
@@ -337,6 +403,7 @@ class ColumnRoles:
             per_recipe_noise=parse_per_recipe_noise(data.get("per_recipe_noise")),
             exploration_design=parse_exploration_design(data.get("exploration_design")),
             linear_constraints=parse_linear_constraints(data.get("linear_constraints")),
+            specs=parse_specs(data.get("specs")),
         )
 
 
