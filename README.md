@@ -30,6 +30,14 @@ This repository is the engine. The engine is a FastAPI service. It has no built-
 
 The workbench UI is in the separate [kalos-web](https://github.com/itsbrendandang/kalos-web) repository.
 
+## Related repositories
+
+Kalos is three repositories with a clear split:
+
+- **kalos-engine** (here) — the optimization engine and its FastAPI service.
+- **[kalos-web](https://github.com/itsbrendandang/kalos-web)** — the scientist-facing workbench. The browser talks to it; its server-side proxy forwards to this engine over HTTP with a short-lived token. The response fields it depends on are guarded here by `tests/test_web_contract.py`.
+- **kalos-workspace** (private) — the project hub: working notes, reviews, research, plans, and the cross-machine handoff. No product code.
+
 ## Target users and use cases
 
 Intended users. The product is not yet available to external users.
