@@ -55,6 +55,12 @@ class Skill:
     content_hash: str  # "sha256:<hex>" over sorted (relpath, sha256(bytes)) of the folder
     files: tuple[str, ...]
     source: str = "kalos"  # "kalos" (curated, shipped) | "team" (tenant folder)
+    # (relpath, sha256 hex) of every file as hashed at load time. The file route
+    # serves a file only if its bytes still match this snapshot.
+    file_sha256: tuple[tuple[str, str], ...] = ()
+
+    def file_digest(self, rel: str) -> str | None:
+        return dict(self.file_sha256).get(rel)
 
     @property
     def slug(self) -> str:
@@ -73,7 +79,13 @@ def _skip(rel: str) -> bool:
 
 
 def tree_hash(folder: Path) -> tuple[str, tuple[str, ...]]:
-    """Content hash of a skill folder and the relative paths it covers.
+    """Content hash of a skill folder and the relative paths it covers."""
+    digest, rels, _ = tree_digests(folder)
+    return digest, rels
+
+
+def tree_digests(folder: Path) -> tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]:
+    """Content hash, relative paths, and (relpath, sha256 hex) per file.
 
     Dotfiles and `__pycache__` are ignored. A symlink anywhere in the folder is an
     error: the bytes a link points at are not part of the package.
@@ -81,6 +93,7 @@ def tree_hash(folder: Path) -> tuple[str, tuple[str, ...]]:
     folder = Path(folder)
     h = hashlib.sha256()
     rels: list[str] = []
+    per_file: list[tuple[str, str]] = []
     for p in sorted(folder.rglob("*"), key=lambda x: x.relative_to(folder).as_posix()):
         rel = p.relative_to(folder).as_posix()
         if _skip(rel):
@@ -90,8 +103,10 @@ def tree_hash(folder: Path) -> tuple[str, tuple[str, ...]]:
         if not p.is_file():
             continue
         rels.append(rel)
-        h.update(rel.encode("utf-8") + b"\0" + hashlib.sha256(p.read_bytes()).digest())
-    return "sha256:" + h.hexdigest(), tuple(rels)
+        fd = hashlib.sha256(p.read_bytes())
+        per_file.append((rel, fd.hexdigest()))
+        h.update(rel.encode("utf-8") + b"\0" + fd.digest())
+    return "sha256:" + h.hexdigest(), tuple(rels), tuple(per_file)
 
 
 def split_frontmatter(text: str) -> tuple[dict, str]:
@@ -146,14 +161,15 @@ def parse_skill(folder: Path, *, source: str = "kalos") -> Skill:
     if meta.slug != folder.name:
         raise SkillFormatError(f"slug {meta.slug!r} != folder name {folder.name!r}")
     check_body(body)
-    digest, files = tree_hash(folder)
+    digest, files, per_file = tree_digests(folder)
     check_files(folder, files)
     ds = folder / DATA_SOURCES_FILE
     if ds.is_file() and ds.read_text(encoding="utf-8") != render_data_sources(meta):
         raise SkillFormatError(
             "DATA_SOURCES.md differs from the frontmatter rows (the frontmatter is "
             "authoritative; re-render it with `kalos skills data-sources`)")
-    return Skill(meta=meta, body=body, path=folder, content_hash=digest, files=files, source=source)
+    return Skill(meta=meta, body=body, path=folder, content_hash=digest, files=files, source=source,
+                 file_sha256=per_file)
 
 
 def _first_line(exc: Exception) -> str:

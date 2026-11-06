@@ -15,6 +15,7 @@ Kalos-original code.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from pathlib import PurePosixPath
@@ -185,8 +186,14 @@ def get_file(
         raise HTTPException(status_code=404, detail="file not found") from None
     if full.stat().st_size > MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail="file too large")
+    data = full.read_bytes()
+    # Serve only the bytes the skill's content hash covers: a file edited (or
+    # swapped) on disk after load is refused, never served under the old ETag.
+    if hashlib.sha256(data).hexdigest() != s.file_digest(path):
+        raise HTTPException(status_code=409,
+                            detail="skill file changed since it was loaded; reload the registry")
     media = _MEDIA.get(p.suffix.lower(), "text/plain")
-    return Response(full.read_bytes(), media_type=f"{media}; charset=utf-8",
+    return Response(data, media_type=f"{media}; charset=utf-8",
                     headers={"ETag": f'"{s.content_hash}"',
                              "X-Content-Type-Options": "nosniff"})
 

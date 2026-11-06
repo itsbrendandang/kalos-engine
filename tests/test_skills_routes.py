@@ -150,6 +150,16 @@ def test_files(client):
     assert f.headers["content-type"].startswith("text/markdown")
 
 
+def test_file_changed_after_load_is_not_served(client, tmp_path):
+    notes = tmp_path / "team" / "acme" / TEAM_SLUG / "references" / "notes.md"
+    url = f"/api/skills/{TEAM_SLUG}/files/references/notes.md"
+    assert client.get(url, headers=A).status_code == 200
+    notes.write_text("# Notes\nSWAPPED after load.\n", encoding="utf-8")
+    r = client.get(url, headers=A)
+    assert r.status_code == 409 and r.json()["code"] == "conflict"
+    assert "SWAPPED" not in r.text
+
+
 @pytest.mark.parametrize("path", [
     "%2e%2e/driver-ranking/SKILL.md", "references/%2e%2e/SKILL.md", "%2e%2e/%2e%2e/etc/passwd",
     "/etc/passwd", "references/missing.md", "references", "SKILL.md%00.txt",
