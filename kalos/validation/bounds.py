@@ -233,6 +233,49 @@ _DIMENSION_HINTS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+# Coded / pseudonymised columns (queue 16). A design factor written as a code
+# (-1/0/+1 levels, or values shifted and scaled by the authors) is not in
+# physical units, so a unit-based range check on it is wrong: a coded feed rate
+# with negative values is not a negative flow. A column is treated as coded when
+#   - its name says so (`CODED_NAME`: code, coded, level, scaled, normalised,
+#     pseudonymised, anonymised, z-score), or
+#   - its dimension came from a WEAK name hint (`WEAK_DIMENSIONS`: "feed",
+#     "flow", "rate", "time", "day" with no unit), the name carries no unit
+#     (`UNIT_IN_NAME`), no cell carries a unit, and at least one value is below
+#     the dimension's physical minimum.
+# A coded column gets an `info` finding (`coded_column`) instead of a bounds
+# finding, and its design box is its observed range. A column with a unit in its
+# name or cells (`feed_mL_h`, "0.45 mL/h") is always checked.
+CODED_NAME = re.compile(
+    r"(?<![a-z])(codes?|coded|level|lvl|scaled|normali[sz]ed|pseudonymi[sz]ed|pseudo"
+    r"|anonymi[sz]ed|z[ _\-]?score)(?![a-z])",
+    re.I,
+)
+WEAK_DIMENSIONS = frozenset({"flow_rate", "time_h", "nonneg_count"})
+UNIT_IN_NAME = re.compile(
+    r"(?<![a-z])(u|µ|m)?l[ _/\-]?(per[ _]?)?(h|hr|min|d|day)(?![a-z])|(?<![a-z])(lph|sccm|slpm|vvm)(?![a-z])"
+    r"|(?<![a-z])(g|mg|kg)[ _/\-]?(per[ _]?)?(h|hr|min|d|day)(?![a-z])"
+    r"|(?<![a-z])(h|hr|hrs|hours?|min|mins|minutes?|days?|s|sec)(?![a-z])"
+    r"|\[[^\]]+\]|\([^)]+\)",
+    re.I,
+)
+
+
+def is_coded_column(
+    column_name: str, values: list[float], *, cell_units: bool = False
+) -> bool:
+    """Whether a column with an inferred dimension is a coded factor (see above)."""
+    dim = infer_dimension(column_name)
+    if dim is None:
+        return False
+    if CODED_NAME.search(column_name):
+        return True
+    if dim not in WEAK_DIMENSIONS or cell_units or UNIT_IN_NAME.search(column_name):
+        return False
+    lo = DIMENSION_BOUNDS[dim].hard_lo
+    return any(v < lo for v in values)
+
+
 def infer_dimension(column_name: str) -> str | None:
     """Guess a column's measurement dimension from its header text alone.
 
@@ -252,4 +295,7 @@ def infer_dimension(column_name: str) -> str | None:
     return None
 
 
-__all__ = ["DIMENSION_BOUNDS", "DimensionBounds", "infer_dimension"]
+__all__ = [
+    "CODED_NAME", "DIMENSION_BOUNDS", "UNIT_IN_NAME", "WEAK_DIMENSIONS", "DimensionBounds",
+    "infer_dimension", "is_coded_column",
+]

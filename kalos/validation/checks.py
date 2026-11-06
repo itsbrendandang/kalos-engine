@@ -42,7 +42,7 @@ from scipy.stats import spearmanr
 from kalos.core.replicates import noise_report
 from kalos.normalize import units
 
-from .bounds import DIMENSION_BOUNDS, infer_dimension
+from .bounds import DIMENSION_BOUNDS, infer_dimension, is_coded_column
 from .report import Finding, UnitConversion, cap_rows
 
 __all__ = [
@@ -257,6 +257,28 @@ def check_physical_bounds(df: pd.DataFrame) -> list[Finding]:
         series = df[col]
         mask = _nonblank_mask(series)
         if not mask.any():
+            continue
+        parsed = [units.parse_value(raw) for raw in series[mask]]
+        values = [v for v, _ in parsed if v is not None]
+        if is_coded_column(name, values, cell_units=any(t for _, t in parsed)):
+            findings.append(
+                Finding(
+                    check="physical_bounds",
+                    code="coded_column",
+                    severity="info",
+                    message=(
+                        f"column '{name}' looks coded (a coded name, or negative values with "
+                        "no unit), so no physical range was checked. Its observed range is "
+                        "used as the search range."
+                    ),
+                    column=name,
+                    detail={
+                        "dimension_hint": dim,
+                        "min_seen": min(values) if values else None,
+                        "max_seen": max(values) if values else None,
+                    },
+                )
+            )
             continue
 
         error_rows: list[int] = []

@@ -31,6 +31,10 @@ Newest first.
 - With fewer than 3 CV groups `cv_ci95` and `reliability.ci95` are now null, with `cv_ci95_reason` and a `cv_ci_unavailable` finding. They were NaN, which JSON cannot encode.
 - Every analysis passes a last check that turns any NaN or infinity into null and logs the top-level keys.
 - Reanalyze checks the analysis encodes before the fold is committed. On any error nothing is committed: campaign, runs and `/api/latest` stay as they were.
+### Fixed - coded columns are not read as flow rates
+
+- A coded or pseudonymised factor with negative values (the Rudt `feed_code`) failed validation as a negative flow rate and its search range was cut to [0, 1]. Unit-based checks now skip coded columns with an `info` finding (`coded_column`), and the observed range is kept. Columns with a unit are still checked.
+
 ### Fixed - two-column sheets read as transposed
 
 - A `condition,y` sheet (labels such as `A pH 4`) and its 3-column variant were read as transposed and refused as "1 data row". A first column with repeated labels, or a sheet too narrow to hold 3 runs, now stays a normal sheet. A transposed sheet that is still too short gets a message with its real rows and columns (`rows_as_written`).

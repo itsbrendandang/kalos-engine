@@ -27,7 +27,7 @@ def _absent_is_zero_columns(cont_feats: list, roles: ColumnRoles | None) -> set[
 
 
 def _physical_range(
-    name: str, col: np.ndarray, *, absent: int = 0
+    name: str, col: np.ndarray, *, absent: int = 0, coded: bool = False
 ) -> tuple[float, float, int]:
     """Observed range of `col`, computed over PHYSICALLY POSSIBLE values only.
 
@@ -51,11 +51,14 @@ def _physical_range(
     column with no physically valid values at all - clamping the latter would
     invent a range from nothing, which is a worse lie than reporting the real
     one alongside an error-severity finding.
+
+    A `coded` column (`bounds.is_coded_column`, reported by the validation gate
+    as `coded_column`) is not in physical units, so its observed range is kept.
     """
     lo_obs, hi_obs = float(col.min()), float(col.max())
     lo_obs, hi_obs = _with_absent(lo_obs, hi_obs, absent)
     dim = infer_dimension(name)
-    if dim is None:
+    if dim is None or coded:
         return lo_obs, hi_obs, 0
     b = DIMENSION_BOUNDS[dim]
     valid = col[(col >= b.hard_lo) & (col <= b.hard_hi)]

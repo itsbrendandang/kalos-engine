@@ -668,13 +668,16 @@ def _analyze_body(
     dims: list[Dimension] = []
     cont_arr = Xc_zf.to_numpy(float) if cont_feats else np.empty((len(y), 0))
     box_exclusions: list[dict] = []
+    coded_columns = {f.column for f in validation.findings if f.code == "coded_column"}
     for c in cont_feats:
         # The box is built from OBSERVED cells only: blanks (absent-zero columns
         # only) are counted, not read as values.
         raw_col = Xc_raw[c].to_numpy(float)
         observed = raw_col[~np.isnan(raw_col)]
         n_absent = int(np.isnan(raw_col).sum())
-        lower, upper, n_excluded = _physical_range(str(c), observed, absent=n_absent)
+        lower, upper, n_excluded = _physical_range(
+            str(c), observed, absent=n_absent, coded=str(c) in coded_columns
+        )
         if n_excluded:
             box_exclusions.append(
                 {"column": str(c), "n_excluded": n_excluded, "lower": lower, "upper": upper}
