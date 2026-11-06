@@ -2,15 +2,14 @@
 
 [![CI](https://github.com/itsbrendandang/kalos-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/itsbrendandang/kalos-engine/actions/workflows/ci.yml)
 
-> **Status: under development. Not a public SaaS.**
-> Kalos is a scientific optimization platform. It is being built toward a public SaaS.
-> There is no hosted service today. User login and organization management are under development. They are **not** on `main`.
-> The optimizer is **not scientifically validated**. See [Scientific methodology](#scientific-methodology-and-benchmark-limitations).
-> Nothing here claims enterprise readiness, regulatory compliance, or security certification.
+> **Early software. Not a product yet.**
+> There is no hosted service, no login, and no accounts. It runs on your own machine.
+> **The optimizer is not proven to improve real lab results** — see [Scientific methodology](#scientific-methodology-and-benchmark-limitations).
+> Nothing here is certified for regulated, enterprise, or secure use.
 
 ## Contents
 
-- [Overview](#overview) · [Related repositories](#related-repositories) · [Target users](#target-users-and-use-cases)
+- [Overview](#overview) · [Related repositories](#related-repositories) · [Who it's for](#who-its-for)
 - [Capabilities](#capabilities) · [Architecture](#architecture)
 - [Local development](#local-development) · [API](#api) · [Security model](#security-model)
 - [Scientific methodology](#scientific-methodology-and-benchmark-limitations) · [Benchmark vs other optimizers](#benchmark-vs-other-optimizers)
@@ -19,17 +18,25 @@
 
 ## Overview
 
-Kalos proposes the next batch of experiments for a bioprocess campaign. A campaign runs in rounds of three steps — **propose, measure, re-propose** — and Kalos drives the propose step.
+Kalos suggests which experiments to run next in a lab campaign, so you reach a
+better result in fewer runs.
 
-**What you give it.** A run sheet of past runs (CSV, TSV, or Excel) and the name of a target column, such as titer or yield.
+You work in rounds: Kalos **proposes** a batch of recipes, you **run and measure**
+them, and it **proposes** the next batch using what it learned.
 
-**What it does.** Kalos checks the data, then runs Bayesian optimization (BO): it fits a *surrogate model* — a fast statistical approximation of the process — as a Gaussian process (GP) using BoTorch (a PyTorch library for BO). The GP also reports *uncertainty* (how far a prediction may be wrong). An *acquisition function* scores each candidate experiment, and Kalos uses those scores to choose the batch.
+- **You give it:** a spreadsheet of past runs (CSV, TSV, or Excel) and the column
+  you want to improve, such as titer or yield.
+- **It does:** check the data, fit a model to the past results, and pick the next
+  batch. The model is a Gaussian process (via BoTorch); it also says how sure it
+  is about each guess.
+- **You get back:** a batch of recipes to try, plus plain numbers telling you how
+  far to trust them.
 
-**What you get back.** A proposed batch of recipes, plus the diagnostics you need to judge how far to trust it. You run the experiments, log the measured results, and ask for the next batch.
+It also has a **scale-up readout** that guesses how a recipe does at a larger
+scale — and says "I can't tell" when the data doesn't back up a guess.
 
-**Scale-up readout (separate feature).** Predicts performance at a larger scale, and *refuses to predict* when its backtest — a check of past predictions against known results — does not support it.
-
-This repository is the engine: a **FastAPI service with no built-in UI**. The scientist-facing workbench is the separate [kalos-web](https://github.com/itsbrendandang/kalos-web) repository.
+This repo is the **engine** (a backend service, no screens). The app you click is
+the separate [kalos-web](https://github.com/itsbrendandang/kalos-web) repo.
 
 ## Related repositories
 
@@ -39,24 +46,23 @@ Kalos is three repositories with a clear split:
 - **[kalos-web](https://github.com/itsbrendandang/kalos-web)** — the scientist-facing workbench. The browser talks to it; its server-side proxy forwards to this engine over HTTP with a short-lived token. The response fields it depends on are guarded here by `tests/test_web_contract.py`.
 - **kalos-workspace** (private) — the project hub: working notes, reviews, research, plans, and the cross-machine handoff. No product code.
 
-## Target users and use cases
+## Who it's for
 
-Intended users. The product is not yet available to external users.
+Not available to outside users yet. It's built for:
 
-- **Bioprocess scientists and process-development teams.** They have a spreadsheet of runs (media, feeds, pH, temperature). They want a suggested next round. They also want a candid assessment of what the data can support.
-- **Small teams that run iterative campaigns** (propose, measure, re-propose). They have a few dozen to a couple of thousand runs. The exact GP is capped at 2,000 fit rows (`KALOS_MAX_FIT_ROWS`).
-- **Platform or machine learning (ML) engineers.** They want a tenant-aware optimization API that they can self-host. A tenant is one data owner.
+- **Lab scientists** with a spreadsheet of past runs (media, feeds, pH,
+  temperature) who want a suggested next round and an honest read on what the
+  data can support.
+- **Small teams** running the propose-measure-repeat loop, with a few dozen to a
+  couple thousand runs (the model is capped at 2,000 rows).
+- **Engineers** who want a self-hosted optimization API, with each customer's
+  data kept separate.
 
-Use cases:
+Good for: picking the next batch, tracking a round that's still running, and the
+scale-up readout.
 
-- Next-batch proposals for media or process optimization.
-- Tracking an in-flight campaign. In-flight runs have started but are not yet measured.
-- A scale-up readout from a multi-scale run sheet.
-
-These are not use cases yet:
-
-- Regulated work under good practice rules (GxP).
-- Work that depends on the optimizer being validated against real wet-lab outcomes.
+Not for (yet): regulated (GxP) work, or anything that needs the optimizer proven
+on real lab results.
 
 ## Capabilities
 
