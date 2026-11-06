@@ -25,6 +25,17 @@ import numpy as np
 # error of a probability is at most 0.008.
 N_SAMPLES = 4096
 
+# The caveat every `joint_feasibility` block carries in plain words (code
+# mirrored in the assistant's why.py).
+CAVEAT = {
+    "code": "specs_treated_independently",
+    "plain": (
+        "Kalos judges each spec on its own and multiplies the chances. When two results "
+        "tend to rise and fall together, for example titer and purity, the chance of "
+        "meeting every spec at once can be too high or too low. Read it as a rough guide."
+    ),
+}
+
 METHOD = (
     "independent_mc: draws from each spec's own model, sampled independently; "
     "the joint probability is the share of draws meeting every spec, an estimate "

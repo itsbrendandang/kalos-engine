@@ -44,6 +44,7 @@ def _check_shape(st: dict) -> None:
 
 def test_flat_surface_with_replicates_says_gains_within_noise():
     st = _analyze(_sheet("flat"), "titer_g_L")["stopping"]
+    assert st["caveat"]["code"] == "stopping_advice_only"
     _check_shape(st)
     assert st["state"] == "gains_within_noise"
     assert st["p_gain_beyond_noise"] < STOP_P_THRESHOLD
@@ -53,6 +54,7 @@ def test_flat_surface_with_replicates_says_gains_within_noise():
 
 def test_steep_surface_far_from_optimum_says_keep_going():
     st = _analyze(_sheet("steep"), "titer_g_L")["stopping"]
+    assert st["caveat"]["code"] == "stopping_advice_only"
     _check_shape(st)
     assert st["state"] == "keep_going"
     assert st["p_gain_beyond_noise"] >= STOP_P_THRESHOLD
@@ -94,3 +96,18 @@ def test_bench_simulation_smoke():
     assert r["n_snapshots"] == ROUNDS
     assert {row["state"] for row in r["rows"]} <= {"keep_going", "gains_within_noise", "unknown"}
     json.dumps(r, allow_nan=False)
+
+
+def test_the_caveats_are_in_the_response_in_plain_words():
+    """The stopping and joint-feasibility caveats are in every block, not only
+    in the docs (owner decision), with codes the assistant's why.py maps."""
+    from kalos.core.feasibility_joint import CAVEAT as SPECS_CAVEAT
+    from kalos.core.stopping import CAVEAT as STOP_CAVEAT
+
+    jargon = ("posterior", "regret", "monte carlo", "covariance", "independent_mc", "sigma")
+    for cav, code in ((STOP_CAVEAT, "stopping_advice_only"),
+                      (SPECS_CAVEAT, "specs_treated_independently")):
+        assert cav["code"] == code
+        assert not any(w in cav["plain"].lower() for w in jargon)
+    assert "not a stop" in STOP_CAVEAT["plain"] and "simulated" in STOP_CAVEAT["plain"]
+    assert "rise and fall together" in SPECS_CAVEAT["plain"]

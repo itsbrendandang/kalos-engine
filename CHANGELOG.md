@@ -12,6 +12,8 @@ Newest first.
 
 ### Added - desktop-engine-2 (first-time-user study)
 
+- `stopping.caveat` (`stopping_advice_only`) and `joint_feasibility.caveat` (`specs_treated_independently`): the two caveats in plain words in every response, not only in the docs.
+
 - `POST /api/preflight` (and the job pre-check) refuses infeasible linear constraints with the same 400 `infeasible_linear_constraints` as `/api/run`: the preflight now stops after the search box is built, still without a fit.
 
 - Name rule (owner decision): a column is left out by its name only on an outcome word (titer, yield, product, purity, recovery, activity, response, endpoint, harvest, viability at end, `final` without a concentration unit) or, after the target, on a measurement word. A concentration unit is not outcome evidence. Before the target, measurement words (OD, biomass, lactate, ammonium, ...) keep the column as an input with an info finding `possibly_measured_after_run` (reason `possibly_measured`). `columns[].finding_code` names the finding for every excluded or flagged column. Candida's `ammonium_g_L` and scFv's `Final Urea (M)` are inputs again; tested on all 8 sample sheets.

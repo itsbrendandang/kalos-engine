@@ -23,7 +23,7 @@ from typing import Any
 
 import numpy as np
 
-__all__ = ["STOP_N_SAMPLES", "STOP_P_THRESHOLD", "stopping_advice"]
+__all__ = ["CAVEAT", "STOP_N_SAMPLES", "STOP_P_THRESHOLD", "stopping_advice"]
 
 STOP_N_SAMPLES = 2000
 # Joint posterior samples. The Monte Carlo error on a probability is at most
@@ -34,6 +34,17 @@ STOP_P_THRESHOLD = 0.10
 # the regret-bound rule: the gain is within noise with probability >= 0.9).
 
 _ADVICE = " This is advice, not a stop."
+
+# The caveat every `stopping` block carries in plain words (code mirrored in the
+# assistant's why.py), so no client has to find it in the docs.
+CAVEAT = {
+    "code": "stopping_advice_only",
+    "plain": (
+        "This is advice, not a stop: Kalos never ends a campaign. It has been tried only "
+        "on one small simulated case, not on real assays, so decide yourself whether "
+        "another round is worth it."
+    ),
+}
 
 
 def _fmt(x: float) -> str:
@@ -70,6 +81,7 @@ def _sample(mean: np.ndarray, cov: np.ndarray, n: int, seed: int) -> np.ndarray:
 def unknown_advice(plain: str, *, noise_sd: float | None = None) -> dict:
     return {
         "advisory": True,
+        "caveat": dict(CAVEAT),
         "state": "unknown",
         "plain": plain + _ADVICE,
         "p_gain_beyond_noise": None,
@@ -140,6 +152,7 @@ def stopping_advice(
         )
     return {
         "advisory": True,
+        "caveat": dict(CAVEAT),
         "state": state,
         "plain": plain + _ADVICE,
         "p_gain_beyond_noise": round(p, 4),

@@ -69,7 +69,12 @@ def evaluate_specs(
     import pandas as pd
     import torch
 
-    from kalos.core.feasibility_joint import METHOD, N_SAMPLES, joint_feasibility
+    from kalos.core.feasibility_joint import (
+        CAVEAT,
+        METHOD,
+        N_SAMPLES,
+        joint_feasibility,
+    )
     from kalos.core.surrogate import FitError, Surrogate
 
     specs = tuple(getattr(roles, "specs", None) or ())
@@ -78,6 +83,7 @@ def evaluate_specs(
     block: dict[str, Any] = {
         "specs": [], "n_samples": N_SAMPLES, "method": METHOD, "predicts": PREDICTS,
         "seed": int(seed), "available": False, "reason": "no specs declared",
+        "caveat": dict(CAVEAT),
     }
     if not specs:
         return {"rows": empty_rows, "block": block}

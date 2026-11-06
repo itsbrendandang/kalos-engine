@@ -742,7 +742,8 @@ only added; a field never changes meaning or disappears within a version.
   `df0` prior repeats, divided by its repeat count. Off by default; proposals
   are unchanged when it is off.
 - `stopping`: advice on whether more rounds can still be told apart from assay
-  noise. Never removes proposals and never stops anything. `{advisory: true,
+  noise. Every block carries `caveat` `{code: "stopping_advice_only", plain}`:
+  advice, not a stop, tried only on one small simulated case. Never removes proposals and never stops anything. `{advisory: true,
   state, plain, p_gain_beyond_noise, max_expected_gain, gain_over_noise,
   noise_sd, threshold, method, n_samples, seed}`. `state` is `keep_going`,
   `gains_within_noise` (the chance of beating the best measured recipe by more
@@ -769,7 +770,9 @@ only added; a field never changes meaning or disappears within a version.
 - `proposals[].constraints_ok` and `model_optimum.constraints_ok`: true when the
   shown recipe meets every linear constraint within its tolerance; null when none
   are declared.
-- `joint_feasibility`: `{specs, n_samples, method, predicts, seed, available,
+- `joint_feasibility` (every block carries `caveat` `{code:
+  "specs_treated_independently", plain}`: each spec is judged on its own, so the
+  joint chance can be off when results move together): `{specs, n_samples, method, predicts, seed, available,
   reason}`. Set specs in the column roles: `"specs": [{"column": "Purity", "min":
   95}]` (outcome columns, the target may be one; `min`, `max` or both; at most 20;
   a spec on a declared input or a malformed spec is 400 `invalid_specs`). One model

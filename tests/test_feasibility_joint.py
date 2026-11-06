@@ -85,6 +85,7 @@ def test_specs_through_analyze():
         [{"column": "Purity", "min": 95}, {"column": "Titer", "min": 12}]))
     json.dumps(out, allow_nan=False)
     jf = out["joint_feasibility"]
+    assert jf["caveat"]["code"] == "specs_treated_independently"
     assert jf["available"] is True and jf["reason"] is None and jf["n_samples"] == N_SAMPLES
     assert jf["method"].startswith("independent_mc")
     assert [s["column"] for s in jf["specs"]] == ["Purity", "Titer"]
@@ -97,6 +98,7 @@ def test_specs_through_analyze():
     assert [p["recipe"] for p in out["proposals"]] == [p["recipe"] for p in base["proposals"]]
     assert out["model_optimum"]["recipe"] == base["model_optimum"]["recipe"]
     assert base["joint_feasibility"]["available"] is False
+    assert base["joint_feasibility"]["caveat"]["code"] == "specs_treated_independently"
     assert all(p["p_all_specs"] is None for p in base["proposals"])
 
 
