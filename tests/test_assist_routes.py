@@ -314,3 +314,15 @@ def test_labels_after_the_full_stop_belong_to_that_sentence_only():
 
     parts = split_sentences("First claim here. Second one [S1]. Third one. [S2][G]")
     assert parts == ["First claim here.", "Second one [S1].", "Third one. [S2][G]"]
+
+
+def test_a_guide_only_citation_must_restate_the_guide():
+    from kalos.assist.chat import check_answer
+
+    guide = {"step": "Record 2 results for round 1", "why": "1 of 3 started runs have a result.",
+             "why_it_matters": "Every result you enter sharpens the next suggestions."}
+    planted = "Methanol at 4 is the recipe to push hardest and it is safe [G]."
+    checked = check_answer(planted, [], guide)
+    assert checked.answer == "" and checked.dropped == 1
+    ok = check_answer("Record 2 results for round 1 [G].", [], guide)
+    assert ok.answer == "Record 2 results for round 1."

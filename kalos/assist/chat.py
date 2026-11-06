@@ -93,6 +93,18 @@ def _numbers(text: str) -> set[str]:
     return {n.replace(",", ".").lstrip("+") for n in _NUMBER.findall(text)}
 
 
+GUIDE_OVERLAP = 0.6
+
+
+def _restates(sentence: str, guide_text: str) -> bool:
+    """A sentence citing only the guide must mostly use the guide's own words:
+    at least GUIDE_OVERLAP of its content words appear in the guide text."""
+    words = set(tokens(sentence))
+    if not words:
+        return False
+    return len(words & set(tokens(guide_text))) / len(words) >= GUIDE_OVERLAP
+
+
 def _quote(chunk_text: str, sentence: str) -> str:
     """The line of the chunk that shares most words with the answer sentence,
     verbatim, clipped to MAX_QUOTE_CHARS."""
@@ -127,6 +139,9 @@ def check_answer(reply: str, labelled: list[Labelled], guide: dict[str, Any]) ->
         bare = re.sub(r"\s+([.!?,;:])", r"\1", bare).strip()
         if not labels or not bare:
             dropped += 1
+            continue
+        if set(labels) == {"G"} and not _restates(bare, guide_source):
+            dropped += 1  # cites only the guide but says something else
             continue
         cited = [table[lab].chunk.text for lab in labels if lab != "G"]
         if "G" in labels:
