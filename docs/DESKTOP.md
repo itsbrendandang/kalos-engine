@@ -125,9 +125,11 @@ liveness ping.
 
 Send SIGTERM, wait up to 15 s, then SIGKILL. On SIGTERM the engine stops taking
 requests. An analysis that is running gets 12 s to finish; if it finishes, its
-result is saved and returned as usual. If it does not, the engine drops it:
-from then on no write to the database can commit, so the campaign, its runs and
-the latest analysis stay exactly as they were. Then the process exits 0.
+result is saved and returned as usual. If it does not, the engine stops
+waiting for it and from then on refuses every database commit in this process,
+so its result is not saved: the campaign, its runs and the latest analysis in
+`portal.db` stay as they were before it started. Then the process exits 0
+(the unfinished computation ends with it).
 
 Measured (Apple M3 Pro, loaded machine): a SIGTERM 1.5 s into a small upload let
 it finish and commit (exit 0 after 5 s); a SIGTERM 4 s into a 30 s upload
