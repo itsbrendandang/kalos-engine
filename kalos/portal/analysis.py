@@ -53,6 +53,8 @@ from kalos.portal.analysis_parts.applicability import (
     proposal_applicability,
 )
 from kalos.portal.analysis_parts.best_bet import (
+    best_bet_candidates,
+    choose_best_bet,
     label_proposals,
     place_best_bet,
     predicted_vs_best,
@@ -1604,13 +1606,28 @@ def _analyze_body(
         s, bounds, cat_dims=cat_dims, cat_cardinalities=cat_cardinalities, seed=ANALYZE_SEED,
         linear_constraints=lin_ge or None, equality_constraints=lin_eq or None,
     )
+    # The optimizer can stop at a local optimum (security review B1): the best
+    # bet is the highest predicted of the optimum, every batch row, every
+    # training row and a Sobol sample of the box, among those that meet the
+    # same rules as the batch (linear constraints, the outcome constraint and
+    # the feasibility gate; S2).
+    _cands = best_bet_candidates(
+        optimum_x, batch, X, bounds, cat_dims=cat_dims, cat_cardinalities=cat_cardinalities,
+        ge=lin_ge or None, eq=lin_eq or None, seed=ANALYZE_SEED,
+    )
+    _cand_mean, _ = s.posterior(_cands)
+    _pick, best_bet_notice = choose_best_bet(_cands, np.asarray(_cand_mean, float))
     if len(batch):
         _batch_model_mean, _ = s.posterior(batch)
     else:
         _batch_model_mean = np.empty(0)
-    batch, best_bet_idx, optimum_running = place_best_bet(
-        batch, optimum_x, _batch_model_mean, bounds, cat_dims, X_pending, PROPOSAL_BATCH_Q,
-    )
+    if _pick is not None:
+        optimum_x = _cands[_pick]
+        batch, best_bet_idx, optimum_running = place_best_bet(
+            batch, optimum_x, _batch_model_mean, bounds, cat_dims, X_pending, PROPOSAL_BATCH_Q,
+        )
+    else:
+        best_bet_idx, optimum_running = None, False
     opt_mean, opt_std = s.posterior(optimum_x.reshape(1, -1))
     _best_row = X[int(np.argmin(y) if minimize else np.argmax(y))]
     near_best_run = proposal_separation(
@@ -1861,6 +1878,7 @@ def _analyze_body(
             " It is close to the recipe of your best run, so running it again checks "
             "whether that result repeats."
         )
+    model_optimum["beyond_tried_range"] = beyond_tried(opt_recipe, tried_ranges)
 
     result = {
         "n": len(y), "d": len(kept_features), "target": str(target), "group_col": gcol,
@@ -2012,7 +2030,10 @@ def _analyze_body(
         # The model's best bet (analysis_parts/best_bet.py): the recipe with the
         # highest predicted value inside the search box, its likely range, and
         # where it is in `proposals`.
-        "model_optimum": model_optimum,
+        "model_optimum": model_optimum if best_bet_notice is None else None,
+        # Why there is no best bet this round (no candidate met the outcome
+        # constraint or the feasibility gate), else null.
+        "best_bet_notice": best_bet_notice,
         # Whose picks the batch is: the model's, or an exploration design when
         # the model cannot rank recipes yet (analysis_parts/exploration.py).
         "batch_strategy": strategy,

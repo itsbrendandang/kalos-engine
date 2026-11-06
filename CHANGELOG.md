@@ -4,6 +4,8 @@ Newest first.
 
 ## Unreleased
 
+- Security review B1: the best bet is the highest predicted recipe among the optimizer's answer, every batch row, every training row and a Sobol sample of the box (within the linear constraints), so a local optimum can no longer leave a higher-predicted proposal labelled `learn` (pichia_HSA: 74.9 -> 110.0). `model_optimum.beyond_tried_range` added.
+
 ### Added - desktop-engine-2-q8 (constraints and specs)
 
 - `roles.linear_constraints`: hard linear limits on continuous inputs, including equalities for mixtures (A + B + C == 100) and budgets (Glucose + Glycerol <= 30). Every proposal and the best bet meet them; each carries `constraints_ok`, and the analysis reports `linear_constraints`. Bad or impossible constraints are refused with a 400 before any fit.

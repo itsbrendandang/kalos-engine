@@ -44,8 +44,9 @@ def _check(out: dict) -> None:
         assert pvb["plain"]
         if pvb["relation"] == "worse":
             assert "to learn, not to win" in pvb["plain"]
-        # the best bet is the highest predicted value (within optimizer tolerance)
-        assert sign * p["pred"] <= sign * opt["predicted"] + 0.02 * max(1.0, abs(opt["predicted"]))
+        # Invariant (security review B1): no proposal is predicted higher than the
+        # best bet; only the 3-decimal rounding of `pred` separates them.
+        assert sign * p["pred"] <= sign * opt["predicted"] + 1e-3, (p["pred"], opt["predicted"])
 
 
 def test_best_bet_is_first_and_highest_predicted():
@@ -100,12 +101,11 @@ def test_predicted_vs_best_wording():
     assert low["relation"] == "better" and "below your best" in low["plain"]
 
 
-SAMPLES = [
-    Path(os.path.expanduser("~/Desktop/kalos-samples/pichia_RBDJ.csv")),
-    Path(os.path.expanduser("~/Desktop/kalos-samples/cho_bioreactor_20829178.csv")),
-    Path(os.path.expanduser("~/Desktop/kalos-samples/candida_rsm_nr1.csv")),
+SAMPLES = sorted(Path(os.path.expanduser("~/Desktop/kalos-samples")).glob("*.csv")) + [
     Path("/tmp/redesign/firsttime/samples/my_messy_sheet.csv"),
 ]
+if len(SAMPLES) == 1:  # the sample folder is absent: keep one id so the test skips
+    SAMPLES.insert(0, Path(os.path.expanduser("~/Desktop/kalos-samples/pichia_RBDJ.csv")))
 
 
 @pytest.mark.parametrize("path", SAMPLES, ids=lambda p: p.stem)
@@ -117,10 +117,42 @@ def test_first_time_study_sheets_have_a_best_bet(path):
         pytest.skip(f"{path} not present")
     from kalos.portal.pipeline import compute_upload_analysis
 
-    target = "Titer" if path.stem in {"pichia_RBDJ", "my_messy_sheet"} else None
+    target = "Titer" if path.stem.startswith("pichia") or path.stem == "my_messy_sheet" else None
     _, out = compute_upload_analysis(path.read_bytes(), target, False, path.name)
     if out["verdict"]["state"] == "refused":
         # A refused verdict has no recipes and therefore no best bet.
         assert out["proposals"] == [] and out["model_optimum"] is None
         return
     _check(out)
+
+
+
+def test_best_bet_is_the_argmax_over_all_candidates_not_a_local_optimum():
+    """Planted (security review B1): the optimizer's answer is a local optimum
+    at 1.0 while a batch row is predicted 5.0; the best bet must be that row."""
+    from kalos.portal.analysis_parts.best_bet import (
+        best_bet_candidates,
+        choose_best_bet,
+    )
+
+    bounds = np.array([[0.0, 0.0], [1.0, 1.0]])
+    optimizer_x = np.array([0.1, 0.1])
+    batch = np.array([[0.9, 0.9], [0.5, 0.5]])
+    X = np.array([[0.2, 0.3]])
+    cands = best_bet_candidates(optimizer_x, batch, X, bounds, cat_dims=None,
+                                cat_cardinalities=None, ge=None, eq=None, seed=0, n_samples=16)
+    assert len(cands) == 1 + 2 + 1 + 16
+    mean = np.zeros(len(cands))
+    mean[0], mean[1] = 1.0, 5.0  # optimizer 1.0, first batch row 5.0
+    idx, why = choose_best_bet(cands, mean)
+    assert why is None and np.array_equal(cands[idx], batch[0])
+
+
+def test_linear_constraints_filter_candidates():
+    from kalos.portal.analysis_parts.best_bet import meets_linear
+
+    C = np.array([[1.0, 2.0], [5.0, 5.0], [10.0, 0.0]])
+    ge = [([0, 1], [-1.0, -1.0], -6.0)]  # x0 + x1 <= 6
+    assert meets_linear(C, ge, None).tolist() == [True, False, False]
+    eq = [([0, 1], [1.0, 1.0], 10.0)]
+    assert meets_linear(C, None, eq).tolist() == [False, True, True]

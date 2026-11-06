@@ -24,6 +24,81 @@ from typing import Any
 
 import numpy as np
 
+# Sobol points added to the best-bet candidates (inside the box and the
+# inequality constraints), so a local optimum of the optimizer cannot hide a
+# higher predicted recipe (security review B1, pichia_HSA: optimizer 74.9 while
+# a batch row was predicted 110.0).
+BEST_BET_SAMPLES = 2048
+
+
+def meets_linear(C: np.ndarray, ge: list | None, eq: list | None, tol: float = 1e-6) -> np.ndarray:
+    """Rows of C that meet every `>=` and `==` constraint triple."""
+    C = np.asarray(C, float)
+    ok = np.ones(len(C), dtype=bool)
+    for idx, coef, rhs in ge or []:
+        ok &= C[:, list(idx)] @ np.asarray(coef, float) >= float(rhs) - tol
+    for idx, coef, rhs in eq or []:
+        scale = 1.0 + float(np.abs(np.asarray(coef, float)).sum())
+        ok &= np.abs(C[:, list(idx)] @ np.asarray(coef, float) - float(rhs)) <= tol * scale + 1e-6
+    return ok
+
+
+def best_bet_candidates(
+    optimizer_x: np.ndarray, batch: np.ndarray, X_train: np.ndarray, bounds: np.ndarray, *,
+    cat_dims: list[int] | None, cat_cardinalities: list[int] | None,
+    ge: list | None, eq: list | None, seed: int, n_samples: int = BEST_BET_SAMPLES,
+) -> np.ndarray:
+    """Every recipe the best bet is chosen from: the optimizer's optimum, every
+    batch row, every training row, and a Sobol sample of the box (skipped
+    under an equality constraint, which a sample cannot meet). Only rows inside
+    the box and the linear constraints are kept."""
+    from scipy.stats import qmc
+
+    b = np.asarray(bounds, float)
+    lower, upper = b[0], b[1]
+    d = lower.shape[0]
+    parts = [np.asarray(optimizer_x, float).reshape(1, d)]
+    if len(batch):
+        parts.append(np.asarray(batch, float).reshape(-1, d))
+    if len(X_train):
+        parts.append(np.asarray(X_train, float).reshape(-1, d))
+    if not eq and n_samples > 0:
+        u = qmc.Sobol(d=d, scramble=True, seed=int(seed)).random(int(n_samples))
+        S = lower + u * (upper - lower)
+        for j, k in zip(cat_dims or [], cat_cardinalities or [], strict=False):
+            S[:, j] = np.clip(np.floor(u[:, j] * int(k)), 0, int(k) - 1)
+        parts.append(S)
+    C = np.vstack(parts)
+    inside = np.all((lower - 1e-9 <= C) & (upper + 1e-9 >= C), axis=1)
+    return C[inside & meets_linear(C, ge, eq)]
+
+
+def choose_best_bet(
+    candidates: np.ndarray, model_mean: np.ndarray, *,
+    constraint_mean: np.ndarray | None = None, constraint_floor: float | None = None,
+    p_feasible: np.ndarray | None = None,
+) -> tuple[int | None, str | None]:
+    """Index of the candidate with the highest predicted value (model sign) that
+    meets the same outcome rules as the batch: the constraint model's
+    prediction at or above its floor, and P(feasible) at least 0.5 when the
+    feasibility gate is on (security review S2). (None, plain reason) when no
+    candidate qualifies."""
+    ok = np.ones(len(candidates), dtype=bool)
+    if constraint_mean is not None and constraint_floor is not None:
+        ok &= np.asarray(constraint_mean, float) >= float(constraint_floor)
+    if p_feasible is not None:
+        ok &= np.asarray(p_feasible, float) >= 0.5
+    if not ok.any():
+        why = (
+            "No recipe the model looked at is predicted to meet the limit you set, so there "
+            "is no best bet this round."
+            if constraint_mean is not None else
+            "No recipe the model looked at is predicted to work, so there is no best bet this round."
+        )
+        return None, why
+    scores = np.where(ok, np.asarray(model_mean, float), -np.inf)
+    return int(np.argmax(scores)), None
+
 
 def place_best_bet(
     batch: np.ndarray,
@@ -129,4 +204,7 @@ def label_proposals(
     return proposals
 
 
-__all__ = ["label_proposals", "place_best_bet", "predicted_vs_best"]
+__all__ = [
+    "BEST_BET_SAMPLES", "best_bet_candidates", "choose_best_bet", "label_proposals",
+    "meets_linear", "place_best_bet", "predicted_vs_best",
+]
