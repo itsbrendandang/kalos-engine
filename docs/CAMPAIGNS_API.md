@@ -443,6 +443,14 @@ not loaded, and the analysis slot is not taken, so it answers in about a
 second. The fit-dependent findings (`search_box`, `cv_ci_unavailable`) only
 come with the analysis.
 
+Preflight needs the write scope, not read (owner decision); a read-only token
+gets 403 `forbidden` (tests/test_preflight_scope.py). It stores nothing, but
+it takes a whole sheet from the caller and parses it: the same untrusted-file
+work, size caps and parser exposure as an upload, and it reflects the sheet's
+column names and cells back. A read token is for looking at campaigns that
+already exist, so it never sends Kalos a file. Every route that accepts a file
+needs write.
+
 ### Column kinds (additive)
 
 `columns`: one entry per uploaded column, in sheet order.
