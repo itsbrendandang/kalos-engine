@@ -158,7 +158,8 @@ python -m pytest -q    # 804 tests collected at the time of writing
 
 ## API
 
-Routes are defined in `kalos/portal/app.py`, `campaign_routes.py`, and `scale_routes.py`.
+Routes are defined in `kalos/portal/app.py`, `campaign_routes.py`, `campaigns_api.py`, `jobs_api.py`, and `scale_routes.py`.
+The legacy `/api/campaign*` routes act on one default campaign per tenant. The `/api/campaigns/*` routes are the multi-campaign API (many campaigns per tenant), with background jobs under `/api/campaigns/{id}/jobs` and `/api/jobs/{id}`.
 Scopes come from `kalos/portal/auth.py`.
 Every tenant-scoped route reads the tenant from the authenticated token (`Principal.tenant`). It never reads the tenant from the request.
 In open mode (no tokens configured, loopback only), every caller is an anonymous `default`-tenant principal with `read`+`write`.
@@ -170,10 +171,23 @@ In open mode (no tokens configured, loopback only), every caller is an anonymous
 | GET | `/api/campaign` | read | per tenant (SQLite row) | Current campaign state |
 | POST | `/api/campaign/start` | write | per tenant | Start a batch of proposed runs |
 | POST | `/api/campaign/result` | write | per tenant | Log a measured outcome |
-| POST | `/api/campaign/reanalyze` | write | per tenant | Add results to the dataset and re-propose |
+| POST | `/api/campaign/reanalyze` | write | per tenant | Add results to the dataset and re-propose (legacy single-campaign path) |
+| GET | `/api/campaigns` | read | per tenant | List the tenant's campaigns (multi-campaign API) |
+| POST | `/api/campaigns` | write | per tenant | Create a campaign |
+| GET | `/api/campaigns/{id}` | read | per tenant | One campaign's state |
+| PATCH | `/api/campaigns/{id}` | write | per tenant | Rename or update a campaign |
+| POST | `/api/campaigns/{id}/upload` | write | per tenant | Upload a run sheet to that campaign |
+| GET | `/api/campaigns/{id}/analysis` | read | per tenant | That campaign's latest analysis |
+| POST | `/api/campaigns/{id}/runs` | write | per tenant | Add proposed/measured runs |
+| POST | `/api/campaigns/{id}/runs/{run_id}/result` | write | per tenant | Log a measured outcome for one run |
+| POST | `/api/campaigns/{id}/reanalyze` | write | per tenant | Re-propose for that campaign |
+| POST | `/api/campaigns/{id}/jobs` | write | per tenant | Queue a background analysis job (returns 202) |
+| GET | `/api/campaigns/{id}/jobs` | read | per tenant | Recent jobs for the campaign |
+| GET | `/api/jobs/{id}` | read | per tenant | One job's status, stage, and progress |
+| POST | `/api/jobs/{id}/cancel` | write | per tenant | Cancel a queued or running job |
 | POST | `/api/scale/readout` | write | none stored; request-scoped | Scale-up readout: prediction with interval, or refusal |
-| GET | `/api/single` | read | none (built-in demo surface) | Single-objective demo loop |
-| GET | `/api/multi` | read | none (built-in demo surface) | Multi-objective demo loop |
+| GET | `/api/single` | read | none (demo; **development only**) | Single-objective demo loop. Not registered when `KALOS_ENV=production` |
+| GET | `/api/multi` | read | none (demo; **development only**) | Multi-objective demo loop. Not registered when `KALOS_ENV=production` |
 | GET | `/api/providers` | read | none | Credential status of optional provider slots (not the credentials) |
 | GET | `/healthz` | none | none | Liveness |
 | GET | `/readyz` | none | none | Readiness (store check) |
@@ -181,6 +195,24 @@ In open mode (no tokens configured, loopback only), every caller is an anonymous
 Contracts: [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md), [`docs/SCALE_READOUT.md`](docs/SCALE_READOUT.md), [`docs/UPLOADS.md`](docs/UPLOADS.md).
 FastAPI also serves its generated OpenAPI docs at `/docs` when the service runs.
 On `main`, `/readyz` returns a fixed, generic reason. It never returns exception text (`kalos/portal/app.py`).
+
+### Environment variables
+
+The common operational knobs (see `kalos/portal/config.py`, `jobs.py`, and `__main__.py` for the full set and defaults):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `KALOS_HOST` / `KALOS_PORT` | `127.0.0.1` / `8050` | Bind address and port |
+| `KALOS_ENV` | `development` | `production` hardens the deployment (see Security model) |
+| `KALOS_STATE_DIR` | platform state dir | Where SQLite and caches live |
+| `KALOS_AUTH_TOKENS` / `KALOS_AUTH_TOKENS_FILE` | unset | Bearer tokens; once set, auth is enforced |
+| `KALOS_ALLOW_OPEN_ACCESS` | unset | Serve unauthenticated off loopback (use with care) |
+| `KALOS_TRUSTED_PROXIES` | unset | Proxy IPs allowed to set `X-Forwarded-For` |
+| `KALOS_CORS_ORIGINS` | localhost | Explicit CORS allowlist |
+| `KALOS_MAX_UPLOAD_MB` | `25` | Upload size cap |
+| `KALOS_MAX_FIT_ROWS` | `2000` | Exact-GP fit-row cap |
+| `KALOS_VALIDATION_MODE` | `warn` | `warn` or `strict` validation gate |
+| `KALOS_JOBS_ENABLED` | enabled | Set to `0` to disable background jobs |
 
 ## Security model
 
@@ -190,7 +222,8 @@ These controls exist today (`kalos/portal/auth.py`, `config.py`, `uploads.py`, `
 - Once any token is configured, auth is enforced on every scoped route. There is no half-authenticated state.
 - Campaign and latest-analysis state are keyed by tenant. The latest-analysis cache filename is sanitized against path traversal.
 - Upload caps: `KALOS_MAX_UPLOAD_MB` (default 25), 100,000 CSV rows, 512 columns, 2,000,000 xlsx cells, 2,000 GP fit rows.
-- Loopback guard: `python -m kalos.portal` binds 127.0.0.1. It refuses to serve unauthenticated on another interface. A middleware also refuses non-loopback peers while auth is not enforced. The exception is when `KALOS_ALLOW_OPEN_ACCESS` is set.
+- Loopback guard: `python -m kalos.portal` binds 127.0.0.1. It refuses to serve unauthenticated on another interface. A middleware also refuses non-loopback peers while auth is not enforced. The exception is when `KALOS_ALLOW_OPEN_ACCESS` is set. Forwarded headers (`X-Forwarded-For`) are ignored unless `KALOS_TRUSTED_PROXIES` names the proxy IPs, so a client cannot spoof its peer address.
+- `KALOS_ENV=production` hardens the deployment: it disables the demo routes (`/api/single`, `/api/multi`) and the generated `/docs` / `/redoc` pages, and requires an explicit CORS allowlist.
 - CORS uses an explicit allowlist when `KALOS_CORS_ORIGINS` is set. Otherwise, the default allows localhost only.
 - The anonymizer for uploads is opt-in (`anonymize=true`).
 
