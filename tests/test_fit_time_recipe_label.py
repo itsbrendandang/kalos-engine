@@ -77,5 +77,21 @@ def test_a_text_factor_that_is_not_a_label_stays_an_input():
     df = _replicate_sheet()
     # `medium` is crossed with the recipes: A and B both appear at several settings.
     df["medium"] = ["A", "B", "A"] * 10
+    t0 = time.perf_counter()
     out = _analyze(df, "Titer")
+    elapsed = time.perf_counter() - t0
     assert "medium" in out["categorical_features"]
+    # 10 x 2 combinations x 5 proposals is over the exact-solve budget.
+    assert out["proposal_optimizer"] == "mixed_alternating"
+    if not os.environ.get("KALOS_SKIP_TIMING"):
+        assert elapsed < 45, f"mixed 30-row sheet took {elapsed:.1f} s (was about 57 s)"
+
+
+def test_mixed_strategy_bounds_the_exact_solves():
+    from kalos.core.optimize import mixed_strategy
+
+    assert mixed_strategy([4, 3], 4) == "mixed_exact"      # the benchmark's mixed task
+    assert mixed_strategy([4, 3], 5) == "mixed_exact"      # 60 solves
+    assert mixed_strategy([10, 2], 5) == "mixed_alternating"  # 100 solves
+    assert mixed_strategy([10, 2], 1) == "mixed_exact"
+    assert mixed_strategy([65], 1) == "mixed_alternating"  # combination cap unchanged

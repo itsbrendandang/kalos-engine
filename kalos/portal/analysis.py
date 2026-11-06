@@ -162,6 +162,9 @@ _RNG_LOCK = threading.RLock()
 # Measured cost: see docs/CAMPAIGNS_API.md "Model diagnostics".
 PROPOSAL_FIT_RESTARTS = 3
 
+# Proposals per analysis (the batch size handed to `propose_batch`).
+PROPOSAL_BATCH_Q = 5
+
 
 @contextlib.contextmanager
 def _seeded_analysis(seed: int = ANALYZE_SEED) -> Iterator[None]:
@@ -304,7 +307,7 @@ def _analyze_body(
             feasible_labels,
         )
         from kalos.core.gates import GatesConfig, check_gates
-        from kalos.core.optimize import MAX_MIXED_COMBOS, propose_batch
+        from kalos.core.optimize import mixed_strategy, propose_batch
         from kalos.core.surrogate import FitError, Surrogate, proposal_restarts
         from kalos.portal.viz_utils import (
             _correlation_spearman,
@@ -1237,7 +1240,7 @@ def _analyze_body(
     proposal = propose_batch(
         s,
         bounds,
-        q=5,
+        q=PROPOSAL_BATCH_Q,
         cat_dims=cat_dims,
         cat_cardinalities=cat_cardinalities,
         pending=X_pending,
@@ -1421,10 +1424,7 @@ def _analyze_body(
     if not cat_dims:
         proposal_optimizer = "continuous"
     else:
-        n_combos = 1
-        for k in cat_cardinalities or []:
-            n_combos *= int(k)
-        proposal_optimizer = "mixed_exact" if n_combos <= MAX_MIXED_COMBOS else "mixed_alternating"
+        proposal_optimizer = mixed_strategy(cat_cardinalities, PROPOSAL_BATCH_Q)
 
     result = {
         "n": len(y), "d": len(kept_features), "target": str(target), "group_col": gcol,

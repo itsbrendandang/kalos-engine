@@ -73,6 +73,26 @@ logger = logging.getLogger(__name__)
 # we switch to the alternating optimizer, which does not enumerate. 64 keeps the
 # exact path (the better optimizer) for realistic small categorical spaces.
 MAX_MIXED_COMBOS = 64
+# The exact path is also bounded by the number of continuous solves it runs:
+# `optimize_acqf_mixed` builds a batch of q points one point at a time and
+# enumerates every combination for each, so it runs n_combos * q full solves.
+# Measured (Apple M3 Pro, loaded): 20 combinations x q=5 took 44 s with the
+# exact path and 10 s with the alternating one, with the same predicted means
+# on the shared points (docs/DESKTOP.md, "Fit time"). 64 keeps every case the
+# benchmarks use exact (12 combinations x q=4 or 5).
+MAX_MIXED_SOLVES = 64
+
+
+def mixed_strategy(cat_cardinalities, q: int) -> str:
+    """`"mixed_exact"` when enumerating every categorical combination for each
+    of the q points stays within MAX_MIXED_COMBOS combinations and
+    MAX_MIXED_SOLVES solves, else `"mixed_alternating"`. A pure function of the
+    design shape and q, never of wall-clock time."""
+    n_combos = 1
+    for k in cat_cardinalities or []:
+        n_combos *= max(int(k), 1)
+    exact = n_combos <= MAX_MIXED_COMBOS and n_combos * max(int(q), 1) <= MAX_MIXED_SOLVES
+    return "mixed_exact" if exact else "mixed_alternating"
 
 NEAR_DUPLICATE_TOL = 0.05
 # Two proposals in one batch are NEAR-DUPLICATES when they use the same level of
@@ -847,7 +867,7 @@ def _optimize_mixed(
     n_combos = 1
     for k in cardinalities:
         n_combos *= k
-    if n_combos <= MAX_MIXED_COMBOS:
+    if mixed_strategy(cardinalities, q) == "mixed_exact":
         fixed_features_list = [
             {dim: float(code) for dim, code in zip(cat_dims, combo)}
             for combo in itertools.product(*(range(k) for k in cardinalities))
