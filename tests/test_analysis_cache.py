@@ -236,3 +236,13 @@ def test_job_worker_keys_the_cache_by_the_job_tenant(tmp_path):
     finally:
         store.close()
     assert calls["n"] == 2
+
+
+def test_cache_size_has_an_upper_bound(monkeypatch):
+    monkeypatch.setenv("KALOS_ANALYSIS_CACHE", "1000000000")
+    assert pipeline._cache_size() == pipeline.ANALYSIS_CACHE_MAX == 32
+    analyze, _ = _stub()
+    for i in range(40):
+        pipeline.compute_upload_analysis(CSV + f"6.{i},30,1\n".encode(), "Titer", False, "a.csv",
+                                         analyze=analyze)
+    assert len(pipeline.ANALYSIS_CACHE._entries) == 32

@@ -163,13 +163,15 @@ def preflight_upload(
 # validation mode, the row caps, ...). Only successful analyses are kept; a
 # refusal is recomputed. Results are deep-copied in and out. Per process: the
 # background-job workers do not share it. `KALOS_ANALYSIS_CACHE` is the number
-# of entries (default 4; 0 turns it off).
+# of entries (default 4; 0 turns it off; at most `ANALYSIS_CACHE_MAX`, since each
+# entry is a whole analysis held in memory).
+ANALYSIS_CACHE_MAX = 32
 
 
 def _cache_size() -> int:
     raw = os.environ.get("KALOS_ANALYSIS_CACHE", "").strip()
     try:
-        return max(0, int(raw)) if raw else 4
+        return min(ANALYSIS_CACHE_MAX, max(0, int(raw))) if raw else 4
     except ValueError:
         return 4
 
