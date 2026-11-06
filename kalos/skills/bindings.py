@@ -897,8 +897,11 @@ def scale_build_readout(a: ScaleReadoutArgs, ctx: ToolContext) -> dict:
     spec = TargetSpec(scale_L=a.target.scale_L, process_params=dict(a.target.process_params),
                       agitation_rpm=a.target.agitation_rpm,
                       airflow_L_per_min=a.target.airflow_L_per_min)
-    return {"readout": jsonable(fn(df, a.target_column, list(a.process_columns), spec,
-                                   seed=a.seed))}
+    readout = dict(fn(df, a.target_column, list(a.process_columns), spec, seed=a.seed))
+    # The wall-clock stamp would make equal runs hash differently; the receipt
+    # already records when the run happened.
+    readout.pop("generated_at_utc", None)
+    return {"readout": jsonable(readout)}
 
 
 # campaign-status / campaign-provenance-report -----------------------------------
