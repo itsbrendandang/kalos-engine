@@ -101,6 +101,13 @@ def _anonymize_result(
     out["provenance"] = [
         {**row, "name": alias(row["name"])} for row in out.get("provenance", [])
     ]
+    if isinstance(out.get("columns"), list):
+        from kalos.portal.analysis_parts.column_kinds import anonymize_columns
+
+        out["columns"] = anonymize_columns(
+            out["columns"], alias,
+            lambda column, value: f"level_{_hash(column + chr(31) + value)[:8]}",
+        )
 
     # The validation report names columns too, in two places: a `column` field and
     # the human-readable `message` built around it ("column 'Sample Name' carries

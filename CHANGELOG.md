@@ -4,6 +4,10 @@ Newest first.
 
 ## Unreleased
 
+### Added - column kinds
+
+- Every analysis carries `columns`: each uploaded column with `kind` (numeric, category, text_id, row_number, outcome_like, constant), `role`, `used_in_fit`, and for categories the levels with counts. A text column with more than 12 labels (Pichia CarbonSource = src_0..src_18) is reported as an excluded category with the finding `category_not_modeled` instead of `dropped_sparse` with no finding; categories with up to 12 labels are fitted as categorical inputs as before.
+
 ### Added - desktop engine (`docs/DESKTOP.md`)
 
 - Importing the portal no longer imports torch. The scale readout module is loaded on first use.

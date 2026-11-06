@@ -392,6 +392,38 @@ wins. A reanalyze keeps a roles-set threshold.
 Proposed values are rounded to 3 places and then clipped into the box, so a
 recipe never sits outside `feature_ranges` (replay F9).
 
+### Column kinds (additive)
+
+`columns`: one entry per uploaded column, in sheet order.
+
+```json
+{"name": "CarbonSource", "kind": "category", "role": "excluded", "used_in_fit": false,
+ "n_values": 213, "n_levels": 19,
+ "levels": [{"label": "src_12", "count": 17}, {"label": "src_10", "count": 14}],
+ "finding_code": "category_not_modeled", "reason": "too_many_levels"}
+```
+
+- `kind` describes the values: `numeric`, `category` (text labels that repeat),
+  `text_id` (about one value per row, or an identifier name), `row_number`,
+  `outcome_like` (measured during or after the run), `constant` (one value or
+  none on the fitted rows). The target is `numeric`.
+- `role` says what the engine did: `target`, `input`, `categorical_input`,
+  `group` (a recipe label that groups replicates), `fixed` (a near-constant
+  input held at its median), `excluded`. `used_in_fit` is true for `target`,
+  `input` and `categorical_input`.
+- `levels` (category only): label and row count, most frequent first, at most
+  50; `n_levels` is the full count. Null for other kinds.
+- A category with at most 12 levels, or one declared in `roles.categoricals`,
+  is a categorical input: the model is a mixed categorical + continuous GP and
+  `proposals[].recipe` carries the label text. A category with more levels that
+  was not declared is excluded, with `finding_code` `category_not_modeled`
+  (the same code as its `validation.findings` entry) and `reason`
+  `too_many_levels`, `mixed_text_and_numbers` or `too_few_repeats`.
+- A client should draw `category` columns on a categorical axis using
+  `levels`, never on a numeric one.
+- With `anonymize=true`, identifier-like names are aliased and so are the level
+  labels of those columns.
+
 ### Contract version
 
 Every analysis (`/api/run`, `/api/latest`, reanalyze, job results) carries
@@ -433,6 +465,8 @@ only added; a field never changes meaning or disappears within a version.
 - `validation.findings[].code`: a machine code for the finding.
 - `promotion.status` and `promotion.unmeasured` (see "Promotion gate changes").
 - `validation.findings[].code` is never null: it is the check name when no more specific code exists.
+- `columns`: the kind and role of every uploaded column (see "Column kinds").
+- `validation.findings[].code` can be `category_not_modeled`.
 - `fixed_inputs`: `{input: value}` for inputs fixed at their median because their spread is within sensor precision. Proposals carry the value in `recipe`. Provenance status `fixed_near_constant` is new.
 
 ## Not in this slice

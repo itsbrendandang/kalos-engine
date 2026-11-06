@@ -49,6 +49,7 @@ from kalos.portal.analysis_parts.applicability import (
     applicability_block,
     proposal_applicability,
 )
+from kalos.portal.analysis_parts.column_kinds import column_kinds
 from kalos.portal.analysis_parts.columns import (
     AUTO_CATEGORICAL_MAX_LEVELS,
     _dedupe_columns,
@@ -1537,6 +1538,15 @@ def _analyze_body(
         )
     )
 
+    # What kind of data each column holds and what the engine did with it, so a
+    # client never draws a text input on a numeric axis (analysis_parts/column_kinds.py).
+    columns_block, kind_findings = column_kinds(
+        df, provenance, kept_cont=[str(c) for c in cont_feats],
+        kept_cats=[str(c) for c in kept_cats], max_auto_levels=AUTO_CATEGORICAL_MAX_LEVELS,
+        declared_cats=[str(c) for c in roles.categoricals] if roles is not None else [],
+        is_identifier=lambda name: is_identifier_name(name, profile.id_hint),
+    )
+
     # Which acquisition optimizer actually served these proposals, so the audit
     # trail is explicit (mirrors seed / timestamp / engine_version): a large
     # categorical space silently switches from exact enumeration to the
@@ -1710,6 +1720,9 @@ def _analyze_body(
         "applicability": applicability,
         "oof": [[round(a, 4), round(p, 4)] for a, p in zip(oof_a, oof_p)],
         "provenance": provenance,
+        # One entry per uploaded column: kind (numeric, category, text_id,
+        # row_number, outcome_like, constant), role, levels for categories.
+        "columns": columns_block,
         # Orientation pre-pass fact from the upload path (kalos/portal/uploads.py):
         # present when the sheet was confidently detected as transposed and
         # normalized before analysis, so the client can see the frame they sent is
@@ -1722,7 +1735,8 @@ def _analyze_body(
                     by_column, n_rows_dropped, n_censored_rows, zero_filled,
                     auto_cats=[str(c) for c in auto_cats if c in kept_cats],
                     header=header_info,
-                ) + role_safety.findings + near_constant_findings(fixed_inputs) + (
+                ) + role_safety.findings + near_constant_findings(fixed_inputs)
+                + kind_findings + (
                     [Finding(
                         check="cv_ci_unavailable", severity="info", message=ci95_reason,
                         detail={"cv_n_groups": int(rep["n_groups"])},
