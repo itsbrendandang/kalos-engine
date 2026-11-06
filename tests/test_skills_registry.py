@@ -3,6 +3,7 @@ every tenant, Team skills only for their tenant, user skills never in v1, and
 listing filters with beta/planned hidden by default."""
 from __future__ import annotations
 
+import dataclasses
 import shutil
 from pathlib import Path
 
@@ -114,3 +115,35 @@ def test_bad_tenant_folder_name_refused(tmp_path):
     (tmp_path / "bad tenant!").mkdir()
     reg = SkillRegistry.from_dirs(None, tmp_path)
     assert reg.errors
+
+
+def test_cross_tenant_duplicate_slug_is_refused_by_name(tmp_path):
+    team_skill(tmp_path, "acme", slug="shared-name")
+    team_skill(tmp_path, "globex", slug="shared-name")
+    reg = SkillRegistry.from_dirs(BUILTIN_DIR, tmp_path)
+    # acme loads first (sorted); globex's copy is refused, never served to anyone
+    assert reg.get("shared-name", "acme").meta.owner == "tenant:acme"
+    assert reg.get("shared-name", "globex") is None
+    assert any(slug == "shared-name" and m.startswith("DuplicateSlugError:")
+               and "tenant:acme" in m and "tenant:globex" in m for slug, m in reg.errors)
+
+
+def test_constructor_refuses_team_copy_of_kalos_slug():
+    from kalos.skills.loader import load_dir
+
+    base = {s.slug: s for s in load_dir(BUILTIN_DIR).skills}
+    dr = base["driver-ranking"]
+    shadow = dataclasses.replace(dr, meta=dr.meta.model_copy(
+        update={"owner": "tenant:acme", "visibility": "tenant"}), source="team")
+    reg = SkillRegistry([*base.values(), shadow])
+    assert reg.get("driver-ranking", "acme").meta.owner == "system"
+    assert any(m.startswith("DuplicateSlugError:") for _, m in reg.errors)
+
+
+def test_lookup_is_by_owner_then_system(tmp_path):
+    team_skill(tmp_path, "acme", slug="acme-only")
+    reg = SkillRegistry.from_dirs(BUILTIN_DIR, tmp_path)
+    assert reg.get("acme-only", "acme").source == "team"
+    assert reg.get("driver-ranking", "acme").source == "kalos"
+    assert reg.get("acme-only", "globex") is None
+    assert len(reg.all()) == 20

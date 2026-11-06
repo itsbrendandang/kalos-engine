@@ -50,27 +50,39 @@ def tokens(text: str, *, drop_stopwords: bool = False) -> set[str]:
     }
 
 
+class DuplicateSlugError(ValueError):
+    """Two skills with one slug: the same owner twice, or two owners (Kalos and
+    a tenant, or two tenants). Slugs are unique across the whole registry, so a
+    slug can never mean different skills to different tenants."""
+
+
 class SkillRegistry:
-    """In-memory and immutable after construction."""
+    """In-memory and immutable after construction. Skills are stored by
+    (owner, slug); a lookup tries the caller's tenant first, then Kalos."""
 
     def __init__(self, skills: Iterable[Skill], errors: list[tuple[str, str]] | None = None):
-        self._by_slug: dict[str, Skill] = {}
+        self._by_key: dict[tuple[str, str], Skill] = {}
+        owner_of: dict[str, str] = {}
         self.errors: list[tuple[str, str]] = list(errors or [])
         for s in skills:
-            if s.slug in self._by_slug:
-                self.errors.append((s.slug, "duplicate slug; later copy ignored"))
+            first = owner_of.get(s.slug)
+            if first is not None:
+                what = "twice" if first == s.meta.owner else f"by {first} and {s.meta.owner}"
+                err = DuplicateSlugError(f"slug {s.slug!r} is used {what}; later copy refused")
+                self.errors.append((s.slug, f"{type(err).__name__}: {err}"))
                 continue
-            self._by_slug[s.slug] = s
+            owner_of[s.slug] = s.meta.owner
+            self._by_key[(s.meta.owner, s.slug)] = s
         # Precompute field token sets for search.
-        self._fields: dict[str, dict[str, set[str]]] = {
-            slug: {
+        self._fields: dict[tuple[str, str], dict[str, set[str]]] = {
+            key: {
                 "name": tokens(s.meta.slug.replace("-", " ") + " " + s.meta.name),
                 "keywords": tokens(" ".join(s.meta.keywords)),
                 "category": tokens(s.meta.category.replace("-", " ")),
                 "summary": tokens(s.meta.summary),
                 "body": tokens(s.body),
             }
-            for slug, s in self._by_slug.items()
+            for key, s in self._by_key.items()
         }
 
     # --- construction -------------------------------------------------------- #
@@ -114,7 +126,7 @@ class SkillRegistry:
 
     def all(self) -> list[Skill]:
         """Every loaded skill, for tooling only (not tenant-filtered)."""
-        return [self._by_slug[k] for k in sorted(self._by_slug)]
+        return [self._by_key[k] for k in sorted(self._by_key, key=lambda k: (k[1], k[0]))]
 
     def visible(self, tenant: str) -> list[Skill]:
         return [s for s in self.all() if self._visible_to(s, tenant)]
@@ -122,8 +134,11 @@ class SkillRegistry:
     def get(self, slug: str, tenant: str) -> Skill | None:
         """The skill, or None when it does not exist OR is not visible to this
         tenant (callers answer 404 for both, never 403)."""
-        s = self._by_slug.get(slug)
-        return s if s is not None and self._visible_to(s, tenant) else None
+        for owner in (f"tenant:{tenant}", "system"):
+            s = self._by_key.get((owner, slug))
+            if s is not None and self._visible_to(s, tenant):
+                return s
+        return None
 
     # --- listing ------------------------------------------------------------- #
 
@@ -170,7 +185,7 @@ class SkillRegistry:
         out: list[tuple[float, Skill]] = []
         for s in self.list_skills(tenant, category=category, include_beta=include_beta,
                            include_planned=include_planned):
-            f = self._fields[s.slug]
+            f = self._fields[(s.meta.owner, s.slug)]
             score = sum(w * len(qt & f[name]) for name, w in FIELD_WEIGHTS)
             if score > 0:
                 out.append((round(score, 4), s))
@@ -203,6 +218,7 @@ def reset_cache() -> None:
 __all__ = [
     "BUILTIN_DIR",
     "SKILLS_DIR_ENV",
+    "DuplicateSlugError",
     "SkillRegistry",
     "get_registry",
     "load_builtin",
