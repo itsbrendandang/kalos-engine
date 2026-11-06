@@ -26,17 +26,32 @@ def _normalise(X: np.ndarray, lower: np.ndarray, upper: np.ndarray, cats: Sequen
     return Z
 
 
-def _distances(C: np.ndarray, P: np.ndarray, cats: Sequence[int]) -> np.ndarray:
-    """Euclidean distance from every row of C to every row of P (continuous
-    dims normalised; a categorical dim adds 1 when the level differs)."""
-    cont = [j for j in range(C.shape[1]) if j not in set(cats)]
-    d2 = np.zeros((C.shape[0], P.shape[0]))
-    if cont:
-        diff = C[:, None, cont] - P[None, :, cont]
-        d2 += (diff ** 2).sum(-1)
-    for j in cats:
-        d2 += (np.rint(C[:, None, j]) != np.rint(P[None, :, j])).astype(float)
-    return np.sqrt(d2)
+# Cells of one (candidates x rows) distance block. Security review S4: the old
+# code built a candidates x rows x inputs array (2048 x 2000 x 40 = 1.3 GB);
+# blocks of at most this many cells keep peak memory near 32 MB.
+_BLOCK_CELLS = 1 << 22
+
+
+def _nearest(C: np.ndarray, P: np.ndarray, cats: Sequence[int]) -> np.ndarray:
+    """Distance from every row of C to its nearest row of P (continuous dims
+    normalised, Euclidean; a categorical dim adds 1 when the level differs).
+    Computed in row blocks with `cdist`, never a C x P x inputs array."""
+    from scipy.spatial.distance import cdist
+
+    catset = set(cats)
+    cont = [j for j in range(C.shape[1]) if j not in catset]
+    out = np.full(C.shape[0], np.inf)
+    if P.shape[0] == 0:
+        return out
+    step = max(1, _BLOCK_CELLS // max(1, P.shape[0]))
+    Pc = P[:, cont]
+    for start in range(0, C.shape[0], step):
+        blk = C[start : start + step]
+        d2 = cdist(blk[:, cont], Pc, "sqeuclidean") if cont else np.zeros((len(blk), len(P)))
+        for j in cats:
+            d2 += np.rint(blk[:, j])[:, None] != np.rint(P[:, j])[None, :]
+        out[start : start + step] = np.sqrt(d2.min(axis=1))
+    return out
 
 
 def maximin_batch(
@@ -73,17 +88,14 @@ def maximin_batch(
         anchors.append(np.asarray(pending, float).reshape(-1, d))
     P = np.vstack(anchors) if anchors[0].size else np.empty((0, d))
     Cn = _normalise(C, lower, upper, cats)
-    nearest = (
-        _distances(Cn, _normalise(P, lower, upper, cats), cats).min(axis=1)
-        if len(P) else np.full(len(C), np.inf)
-    )
+    nearest = _nearest(Cn, _normalise(P, lower, upper, cats), cats)
     picked: list[int] = []
     for _ in range(min(int(q), len(C))):
         i = int(np.argmax(nearest))
         if picked and nearest[i] <= 0:
             break
         picked.append(i)
-        nearest = np.minimum(nearest, _distances(Cn, Cn[i : i + 1], cats)[:, 0])
+        nearest = np.minimum(nearest, _nearest(Cn, Cn[i : i + 1], cats))
     return C[picked]
 
 
