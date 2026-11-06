@@ -3,8 +3,116 @@ explain every excluded row and cell, appended to the validation report.
 """
 from __future__ import annotations
 
-from kalos.portal.cells import REASON_CENSORED, REASON_MISSING, REASON_NON_NUMERIC
+from collections.abc import Callable, Mapping
+from dataclasses import replace
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+from kalos.portal.cells import (
+    BLANK,
+    CENSORED,
+    MISSING,
+    NON_NUMERIC,
+    REASON_CENSORED,
+    REASON_MISSING,
+    REASON_NON_NUMERIC,
+)
 from kalos.validation.report import Finding, ValidationReport, build_report
+
+# (check, column) -> (affected row labels, {row label: cell} or None).
+RowSets = dict[tuple[str, str | None], tuple[tuple[int, ...], dict[int, Any] | None]]
+
+
+def data_finding_rows(
+    df: pd.DataFrame,
+    *,
+    active: np.ndarray,
+    incomplete: np.ndarray,
+    censored: np.ndarray,
+    target: str,
+    tgt_kinds: np.ndarray,
+    cont_feats: list,
+    feat_kind: Mapping[Any, np.ndarray],
+    absent_zero: set[str],
+    kept_cats: list,
+    cat_ok: Mapping[Any, np.ndarray],
+    fit_pos: np.ndarray,
+) -> RowSets:
+    """Which rows each data-accounting finding is about, from the same masks the
+    tallies use (positions over `df`, reported as its row labels), with the
+    offending cells for the per-column findings."""
+    labels = np.asarray(df.index)
+
+    def rows(mask: np.ndarray) -> tuple[int, ...]:
+        return tuple(int(labels[i]) for i in np.flatnonzero(mask))
+
+    def cells(column: Any, picked: tuple[int, ...]) -> dict[int, Any]:
+        col = df[column]
+        return {r: col.loc[r] for r in picked}
+
+    out: RowSets = {
+        ("dropped_rows", None): (rows(incomplete & active), None),
+        ("censored_rows", None): (rows(censored & ~incomplete & active), None),
+    }
+
+    def per_column(column: Any, kinds: np.ndarray, blank_is_missing: bool) -> None:
+        bad = [MISSING, NON_NUMERIC] + ([BLANK] if blank_is_missing else [])
+        dropped = rows(np.isin(kinds, bad) & active)
+        if dropped:
+            out[("dropped_cells", str(column))] = (dropped, cells(column, dropped))
+        cens = rows((kinds == CENSORED) & active)
+        if cens:
+            out[("censored_values", str(column))] = (cens, cells(column, cens))
+
+    per_column(target, tgt_kinds, True)
+    for c in cont_feats:
+        per_column(c, feat_kind[c], str(c) not in absent_zero)
+        if str(c) in absent_zero:
+            fitted_blank = np.zeros(len(df), dtype=bool)
+            fitted_blank[fit_pos] = feat_kind[c][fit_pos] == BLANK
+            if fitted_blank.any():
+                out[("blank_as_absent", str(c))] = (rows(fitted_blank), None)
+    for c in kept_cats:
+        dropped = rows(~cat_ok[c] & active)
+        if dropped:
+            out[("dropped_cells", str(c))] = (dropped, cells(c, dropped))
+    return out
+
+
+def sheet_row_mapper(
+    header: Mapping[str, Any], row_map: list[int] | None, transposed: bool
+) -> Callable[[int], int | None]:
+    """Frame row label -> the row number the user sees in the sheet: header on
+    row 1 (or 2 when the names came from the second row), first data row next,
+    blank lines the parser skipped counted. None for a transposed sheet, where
+    runs are columns."""
+    if transposed:
+        return lambda _r: None
+    if row_map:
+        lines = list(row_map)
+        return lambda r: lines[r] if 0 <= r < len(lines) else None
+    offset = int(header.get("header_row") or 0) + 2
+    return lambda r: int(r) + offset
+
+
+def _with_rows(findings: list[Finding], row_sets: RowSets | None) -> list[Finding]:
+    """Attach `all_rows`, `values` and `detail.n_rows_affected` from `row_sets`."""
+    if not row_sets:
+        return findings
+    out = []
+    for f in findings:
+        hit = row_sets.get((f.check, f.column))
+        if hit is None:
+            out.append(f)
+            continue
+        picked, values = hit
+        out.append(replace(
+            f, all_rows=picked, values=values,
+            detail={**f.detail, "n_rows_affected": len(picked)},
+        ))
+    return out
 
 
 def _data_drops_block(
@@ -47,6 +155,7 @@ def _data_findings(
     *,
     auto_cats: list[str],
     header: dict,
+    row_sets: RowSets | None = None,
 ) -> list[Finding]:
     """Findings for everything the data accounting did. Column names appear only in
     `column` and in a message that names that one column, so `anonymize` can alias
@@ -137,7 +246,7 @@ def _data_findings(
                 "Check that it is a real input, or give it a name in the sheet."
             ),
         ))
-    return out
+    return _with_rows(out, row_sets)
 
 
 def _with_data_findings(report: ValidationReport, extra: list[Finding]) -> ValidationReport:

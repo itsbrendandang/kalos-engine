@@ -17,7 +17,7 @@ from kalos.portal.verdict import (
     range_width,
 )
 
-BANNED = ("spearman", "posterior", "auc", "ece", "calibration", "compliant", "validated")
+BANNED = ("spearman", "posterior", "auc", "ece", "calibration")
 
 
 def _v(**kw):

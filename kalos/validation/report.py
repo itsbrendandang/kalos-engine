@@ -21,14 +21,41 @@ only defines the vocabulary the checks and the runner speak.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from kalos.normalize import units
 
 Severity = Literal["error", "warning", "info"]
 
 ROW_CAP = 20
+# `sheet_rows` lists every affected row up to this many (a sanity cap for a huge
+# sheet); `sheet_rows_truncated` says when more were affected.
+SHEET_ROW_CAP = 5000
+
+# Frame row label -> the row number the user sees in the sheet (1-based,
+# header = row 1 on a standard sheet), or None when the sheet's rows are not
+# the frame's rows (a transposed sheet). See `report_dict`.
+SheetRow = Callable[[int], "int | None"]
+
+
+def default_sheet_row(position: int) -> int:
+    """Row number in a sheet whose header is its first row: data row 0 is row 2."""
+    return int(position) + 2
+
+
+def plain_value(value: object) -> object:
+    """A cell value as a plain JSON value (numpy scalars unwrapped)."""
+    item = getattr(value, "item", None)
+    if callable(item) and not isinstance(value, (str, bytes)):
+        try:
+            value = item()
+        except (TypeError, ValueError):
+            return str(value)
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
 
 
 def cap_rows(rows: list[int] | tuple[int, ...]) -> tuple[tuple[int, ...], int]:
@@ -64,9 +91,16 @@ class Finding:
     # Serialized as the check name when no more specific code was set, so a
     # finding's `code` is never null.
     code: str | None = None
+    # EVERY affected row (frame positions, uncapped) for a finding about
+    # specific rows; None for a finding that is not about rows. Serialized as
+    # `sheet_rows` (sheet row numbers), next to the capped `rows`.
+    all_rows: tuple[int, ...] | None = None
+    # The offending cell per row (frame position -> value), for a finding about
+    # one column; serialized as `values` keyed by sheet row.
+    values: dict[int, Any] | None = None
 
-    def to_dict(self) -> dict:
-        return {
+    def to_dict(self, sheet_row: SheetRow | None = None) -> dict:
+        out: dict[str, Any] = {
             "check": self.check,
             "code": self.code or self.check,
             "severity": self.severity,
@@ -75,6 +109,39 @@ class Finding:
             "rows": list(self.rows),
             "detail": dict(self.detail),
         }
+        if self.all_rows is not None:
+            to_sheet = sheet_row or default_sheet_row
+            shown = self.all_rows[:SHEET_ROW_CAP]
+            mapped = [to_sheet(r) for r in shown]
+            if any(m is None for m in mapped):
+                out["sheet_rows"] = None
+                out["sheet_rows_truncated"] = False
+                if self.values is not None:
+                    out["values"] = None
+                return out
+            out["sheet_rows"] = [int(m) for m in mapped if m is not None]
+            out["sheet_rows_truncated"] = len(self.all_rows) > SHEET_ROW_CAP
+            if self.values is not None:
+                out["values"] = {
+                    str(m): plain_value(self.values[r])
+                    for r, m in zip(shown, mapped)
+                    if r in self.values
+                }
+        return out
+
+
+def row_finding_fields(
+    rows: list[int] | tuple[int, ...], values: dict[int, Any] | None = None
+) -> dict[str, Any]:
+    """`rows` (capped), `all_rows` and `values` for a Finding about specific rows,
+    plus the `n_rows_affected` to put in its `detail`."""
+    plain = tuple(int(r) for r in rows)
+    return {
+        "rows": plain[:ROW_CAP],
+        "all_rows": plain,
+        "values": values,
+        "n_rows_affected": len(plain),
+    }
 
 
 @dataclass(frozen=True)
@@ -209,11 +276,14 @@ _POS_INF = float("inf")
 _NEG_INF = float("-inf")
 
 
-def report_dict(report: ValidationReport) -> dict:
+def report_dict(report: ValidationReport, *, sheet_row: SheetRow | None = None) -> dict:
     """Serialize a report to a plain, `json.dumps`-safe dict for the JSON response.
 
     Safe means safe under `allow_nan=False`, which is what Starlette uses - see
     `_json_safe` for why that distinction cost a 400.
+
+    `sheet_row` maps a frame row position to the row number the user sees in
+    the sheet (`sheet_rows`, `values`); the default assumes the header is row 1.
     """
     return {
         "status": report.status,
@@ -222,7 +292,7 @@ def report_dict(report: ValidationReport) -> dict:
         "n_columns": report.n_columns,
         "checks_run": list(report.checks_run),
         "counts": dict(report.counts),
-        "findings": [_json_safe(f.to_dict()) for f in report.findings],
+        "findings": [_json_safe(f.to_dict(sheet_row)) for f in report.findings],
         "conversions": [_json_safe(c.to_dict()) for c in report.conversions],
         "schema_version": report.schema_version,
     }
@@ -230,11 +300,16 @@ def report_dict(report: ValidationReport) -> dict:
 
 __all__ = [
     "ROW_CAP",
+    "SHEET_ROW_CAP",
     "Finding",
     "Severity",
+    "SheetRow",
     "UnitConversion",
     "ValidationReport",
     "build_report",
     "cap_rows",
+    "default_sheet_row",
+    "plain_value",
     "report_dict",
+    "row_finding_fields",
 ]

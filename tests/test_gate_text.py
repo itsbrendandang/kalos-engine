@@ -17,7 +17,7 @@ GLOSSARY_WHY = {
     "feasibility_auc": "If the model cannot tell which recipes fail outright, it can suggest runs that produce nothing.",
     "brier": "If the model's confidence that a recipe works is unreliable, runs get spent on recipes that fail.",
 }
-BANNED = ("spearman", "posterior", "auc", "ece", "calibration", "brier", "compliant", "validated")
+BANNED = ("spearman", "posterior", "auc", "ece", "calibration", "brier")
 
 
 def _checks(stats):

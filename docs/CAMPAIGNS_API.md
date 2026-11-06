@@ -539,6 +539,31 @@ When a campaign gets a new analysis, `supersedes` names the one it replaced:
 plain sentence. `supersedes` is null for a campaign's first analysis. A stored
 analysis written before ids existed gets an id derived from its record.
 
+### Affected rows in findings (additive)
+
+A finding about specific rows (`outliers`, `duplicate_rows`,
+`physical_bounds`, `units_consistency`, `missingness`,
+`informative_missingness`, `dropped_rows`, `dropped_cells`, `censored_rows`,
+`censored_values`, `blank_as_absent`) carries:
+
+- `sheet_rows`: EVERY affected row, as the row number the user sees in the
+  sheet: the header is row 1 and the first data row is row 2. When the names
+  were read from the second row, the header is row 2 and data starts on row 3.
+  Blank lines that the CSV reader skipped are counted, so the number matches
+  the file. `null` for a sheet read as transposed (runs are columns there).
+- `sheet_rows_truncated`: true when more than 5,000 rows were affected; only
+  the first 5,000 are listed.
+- `values`: `{sheet row: cell}` for a finding about one column (the cell as
+  read). Not on findings about whole rows (`duplicate_rows`, row-level
+  `missingness`, `dropped_rows`). `null` for an identifier column under
+  `anonymize`.
+- `detail.n_rows_affected` equals the number of affected rows (the length of
+  `sheet_rows` unless truncated).
+
+`rows` is unchanged: at most 20 zero-based row positions in the parsed frame.
+A finding not about rows has none of these keys. `counts` counts findings per
+severity, so `counts.warning` is the number of warning findings.
+
 ### Contract version
 
 Every analysis (`/api/run`, `/api/latest`, reanalyze, job results) carries
@@ -652,6 +677,7 @@ only added; a field never changes meaning or disappears within a version.
   `{low, high}`, the published analysis's likely range around the run's `pred`
   when the run was started, or null.
 - `promotion.checks`: each promotion check in plain words, with its state and whether it is optional (see "Promotion gate changes").
+- `validation.findings[].sheet_rows`, `sheet_rows_truncated` and `values`: every affected row as a sheet row number, with the cells (see "Affected rows in findings").
 
 ## Not in this slice
 

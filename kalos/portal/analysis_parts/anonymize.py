@@ -225,6 +225,8 @@ def _alias_named_row(row: dict, alias: Callable[[str], str]) -> dict:
     if aliased == name:
         return dict(row)
     out = {**row, "column": aliased}
+    if out.get("values") is not None:
+        out["values"] = None  # the cells of an identifier column are not shown
     message = out.get("message")
     if isinstance(message, str):
         out["message"] = message.replace(name, aliased)

@@ -65,6 +65,8 @@ from kalos.portal.analysis_parts.diagnostics import (
     _data_drops_block,
     _data_findings,
     _with_data_findings,
+    data_finding_rows,
+    sheet_row_mapper,
 )
 from kalos.portal.analysis_parts.identifiers import (
     identifier_pattern,
@@ -412,6 +414,10 @@ def _analyze_body(
     # any frame operation below could drop the attrs.
     header_info: dict = dict(df.attrs.get("kalos_header") or {})
     shape_as_written = df.attrs.get("kalos_shape_as_written")
+    # Frame row -> the row number in the sheet as the user sees it (findings' `sheet_rows`).
+    sheet_row = sheet_row_mapper(
+        header_info, df.attrs.get("kalos_row_map"), transposed=shape_as_written is not None
+    )
     original_columns = {str(c) for c in df.columns}
     n_header_columns = int(df.shape[1])
     # Which uploaded columns are entirely blank, in sheet order: they are dropped
@@ -1873,6 +1879,12 @@ def _analyze_body(
                     by_column, n_rows_dropped, n_censored_rows, zero_filled,
                     auto_cats=[str(c) for c in auto_cats if c in kept_cats],
                     header=header_info,
+                    row_sets=data_finding_rows(
+                        df, active=active, incomplete=inc, censored=cens, target=target,
+                        tgt_kinds=tgt_kinds, cont_feats=cont_feats, feat_kind=feat_kind,
+                        absent_zero=absent_zero, kept_cats=kept_cats, cat_ok=cat_ok,
+                        fit_pos=fit_pos,
+                    ),
                 ) + role_safety.findings + near_constant_findings(fixed_inputs)
                 + kind_findings
                 + [search_box_finding(tried_ranges, beyond_applied, design)] + (
@@ -1883,7 +1895,8 @@ def _analyze_body(
                     if ci95_reason is not None
                     else []
                 ),
-            )
+            ),
+            sheet_row=sheet_row,
         ),
         # Features whose search range was narrowed because some observed cells
         # were physically impossible. Reported, never silent: the client needs to

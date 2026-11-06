@@ -159,6 +159,8 @@ def check_units_consistency(
                     ),
                     column=name,
                     rows=capped_unknown,
+                    all_rows=tuple(unknown_rows),
+                    values={r: series.loc[r] for r in unknown_rows},
                     detail={
                         "unrecognized_tokens": sorted(unknown_tokens),
                         "n_rows_affected": total_unknown,
@@ -221,6 +223,8 @@ def check_units_consistency(
                 message=message,
                 column=name,
                 rows=capped,
+                all_rows=tuple(offending_rows),
+                values={r: series.loc[r] for r in offending_rows},
                 detail={"tokens": tokens_sorted, "n_rows_affected": total},
             )
         )
@@ -285,15 +289,18 @@ def check_physical_bounds(df: pd.DataFrame) -> list[Finding]:
         error_vals: list[float] = []
         warning_rows: list[int] = []
         warning_vals: list[float] = []
+        raw_cells: dict[int, object] = {}
         for idx, raw in series[mask].items():
             value, token = units.parse_value(raw)
             if value is None:
                 continue
             base_value, _ = units.convert(value, token)
             if base_value < bounds.hard_lo or base_value > bounds.hard_hi:
+                raw_cells[_row_index(idx)] = raw
                 error_rows.append(_row_index(idx))
                 error_vals.append(base_value)
             elif base_value < bounds.typical_lo or base_value > bounds.typical_hi:
+                raw_cells[_row_index(idx)] = raw
                 warning_rows.append(_row_index(idx))
                 warning_vals.append(base_value)
 
@@ -309,6 +316,8 @@ def check_physical_bounds(df: pd.DataFrame) -> list[Finding]:
                     ),
                     column=name,
                     rows=capped,
+                    all_rows=tuple(error_rows),
+                    values={r: raw_cells[r] for r in error_rows},
                     detail={
                         "dimension": dim,
                         "hard_range": [bounds.hard_lo, bounds.hard_hi],
@@ -331,6 +340,8 @@ def check_physical_bounds(df: pd.DataFrame) -> list[Finding]:
                     ),
                     column=name,
                     rows=capped,
+                    all_rows=tuple(warning_rows),
+                    values={r: raw_cells[r] for r in warning_rows},
                     detail={
                         "dimension": dim,
                         "typical_range": [bounds.typical_lo, bounds.typical_hi],
@@ -374,6 +385,7 @@ def check_duplicate_rows(df: pd.DataFrame, *, outcome_hint: Pattern[str]) -> lis
                 severity="warning",
                 message="exact duplicate rows found (identical across every column)",
                 rows=capped,
+                all_rows=tuple(rows),
                 detail={"n_rows_affected": total},
             )
         )
@@ -395,6 +407,7 @@ def check_duplicate_rows(df: pd.DataFrame, *, outcome_hint: Pattern[str]) -> lis
                         "these look like replicates of the same condition"
                     ),
                     rows=capped,
+                    all_rows=tuple(rows),
                     detail={
                         "outcome_columns": [str(c) for c in outcome_cols],
                         "n_rows_affected": total,
@@ -426,6 +439,7 @@ def check_missingness(df: pd.DataFrame) -> list[Finding]:
         name = str(col)
         mask = _nonblank_mask(df[col])
         frac_blank = 1.0 - (int(mask.sum()) / n_rows)
+        blank_rows = tuple(int(i) for i in df.index[~mask])
         if frac_blank > 0.90:
             findings.append(
                 Finding(
@@ -433,7 +447,8 @@ def check_missingness(df: pd.DataFrame) -> list[Finding]:
                     severity="warning",
                     message=f"column '{name}' is {frac_blank:.0%} blank - effectively unusable",
                     column=name,
-                    detail={"frac_blank": frac_blank},
+                    all_rows=blank_rows,
+                    detail={"frac_blank": frac_blank, "n_rows_affected": len(blank_rows)},
                 )
             )
         elif frac_blank >= 0.50:
@@ -443,7 +458,8 @@ def check_missingness(df: pd.DataFrame) -> list[Finding]:
                     severity="warning",
                     message=f"column '{name}' is {frac_blank:.0%} blank - sparse",
                     column=name,
-                    detail={"frac_blank": frac_blank},
+                    all_rows=blank_rows,
+                    detail={"frac_blank": frac_blank, "n_rows_affected": len(blank_rows)},
                 )
             )
 
@@ -460,6 +476,7 @@ def check_missingness(df: pd.DataFrame) -> list[Finding]:
                 severity="warning",
                 message="rows more than 50% blank across their columns",
                 rows=capped,
+                all_rows=tuple(rows),
                 detail={"n_rows_affected": total},
             )
         )
@@ -553,6 +570,8 @@ def check_outliers(df: pd.DataFrame) -> list[Finding]:
                     ),
                     column=name,
                     rows=capped,
+                    all_rows=tuple(rows),
+                    values={r: valid.loc[r] for r in rows},
                     # median/mad are in the assessed scale's units: for a log10
                     # assessment they are log10 values, not raw ones. Reported
                     # alongside `scale` so the two can never be misread.
@@ -897,6 +916,7 @@ def check_informative_missingness(df: pd.DataFrame, target: str | None) -> list[
 
     # --- row-level: fraction of blank feature cells vs. the target -------------- #
     row_frac_blank = 1.0 - (nonblank.sum(axis=1) / len(feature_cols))
+    rows_with_blanks = tuple(int(i) for i in df.index[row_frac_blank > 0])
     frac_valid = row_frac_blank.loc[valid_target]
     y_valid = y_all.loc[valid_target]
     if frac_valid.nunique() >= 2:
@@ -912,10 +932,12 @@ def check_informative_missingness(df: pd.DataFrame, target: str | None) -> list[
                         "missingness looks informative, not random; zero-filling "
                         "before the fit may be encoding the outcome into the features"
                     ),
+                    all_rows=rows_with_blanks,
                     detail={
                         "target": target,
                         "rho": float(rho),
                         "n": int(frac_valid.shape[0]),
+                        "n_rows_affected": len(rows_with_blanks),
                     },
                 )
             )
@@ -945,11 +967,13 @@ def check_informative_missingness(df: pd.DataFrame, target: str | None) -> list[
                         "outcome into the features"
                     ),
                     column=name,
+                    all_rows=tuple(int(i) for i in df.index[~col_nonblank]),
                     detail={
                         "target": target,
                         "rho": float(rho),
                         "frac_blank": frac_blank_col,
                         "n": len(indicator),
+                        "n_rows_affected": int((~col_nonblank).sum()),
                     },
                 )
             )
