@@ -127,6 +127,8 @@ CREATE TABLE IF NOT EXISTS benchling_changes (
 );
 CREATE TRIGGER IF NOT EXISTS benchling_changes_no_update BEFORE UPDATE ON benchling_changes
 BEGIN SELECT RAISE(ABORT, 'benchling_changes is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS benchling_changes_no_delete BEFORE DELETE ON benchling_changes
+BEGIN SELECT RAISE(ABORT, 'benchling_changes is append-only'); END;
 CREATE TABLE IF NOT EXISTS benchling_cursors (
     tenant TEXT NOT NULL,
     key TEXT NOT NULL,

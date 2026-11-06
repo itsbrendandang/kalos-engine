@@ -247,3 +247,19 @@ def test_push_audit_is_append_only_and_tenant_scoped(tmp_path):
     with pytest.raises(ValueError):
         store.record_push(tenant="acme", subject=None, kalos_auth_method=None, benchling_identity="root",
                           action="x", campaign_id=None, source_id=None, outcome="ok", benchling_ids={})
+
+
+def test_change_notices_are_append_only(tmp_path):
+    store = IntegrationStore(tmp_path)
+    assert store.record_change(tenant="acme", origin="poll", event_type="procedureRun.modified",
+                               resource_id="prun_1", marker="2026-10-01T00:00:00+00:00")
+    with pytest.raises(sqlite3.IntegrityError):
+        store._conn.execute("UPDATE benchling_changes SET marker = 'x'")
+    with pytest.raises(sqlite3.IntegrityError):
+        store._conn.execute("DELETE FROM benchling_changes")
+    assert len(store.changes(tenant="acme")) == 1
+    # an existing database gets the trigger when it is opened again
+    store.close()
+    again = IntegrationStore(tmp_path)
+    with pytest.raises(sqlite3.IntegrityError):
+        again._conn.execute("DELETE FROM benchling_changes WHERE tenant = 'acme'")
