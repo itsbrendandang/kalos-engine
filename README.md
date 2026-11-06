@@ -145,6 +145,7 @@ curl http://127.0.0.1:8050/api/latest
 
 Both commands were run on a fresh install of this branch's code. `/healthz` returned ok. The upload returned a 10-feature analysis for 160 rows.
 State is written to `~/.kalos`. Set `KALOS_STATE_DIR` to change the location.
+For the desktop app the engine runs as `python -m kalos.portal --desktop` (token required, loopback only); `scripts/build_desktop_engine.sh` builds a self-contained arm64 macOS engine. See [`docs/DESKTOP.md`](docs/DESKTOP.md).
 With no tokens configured, the API is open on loopback only. See Security model.
 
 Run these checks. They are the same as CI:

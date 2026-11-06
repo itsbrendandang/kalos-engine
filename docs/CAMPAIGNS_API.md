@@ -412,22 +412,22 @@ only added; a field never changes meaning or disappears within a version.
   engine's in-memory copy of an earlier analysis instead of a new fit
   (`KALOS_ANALYSIS_CACHE`, docs/DESKTOP.md); `{"hit": false}` after a fit.
   Upload responses only; reanalyze always fits.
-  - `cv_ci95_reason`: why `cv_ci95` is null (string), else null. The interval
-    needs at least 3 CV groups. A `cv_ci_unavailable` info finding says the same.
-  - `direction`: `maximize` or `minimize`, what the proposals optimize. `best`
-    is the max or the min accordingly. Also on the campaign summary.
-  - `conformal_caveat`: `{code: "coverage_not_guaranteed", message}`. The
-    `conformal_q` band's coverage (`conformal_coverage`) was measured on
-    held-out rows near the data. It is not guaranteed for proposals, least of
-    all those flagged `far_from_data` or `at_box_edge`. Proposals carry no
-    conformal interval of their own, so there is nothing per proposal to label.
-  - `proposals[].applicability`: per-proposal `far_from_data` and `at_box_edge`
-    flags (see "Applicability flags").
-  - `applicability`: the threshold used, its source and rule.
-  - `model_diagnostics.kernel`: the GP kernel name (see "Model diagnostics").
-  - `run.direction`: the effective direction, also in `config_sha256`.
-  - `proposal_gating.off_for_minimize`: true when the P(feasible) gate was not
-    applied because the target is minimized. `proposal_gating.reason` says so.
+- `cv_ci95_reason`: why `cv_ci95` is null (string), else null. The interval
+  needs at least 3 CV groups. A `cv_ci_unavailable` info finding says the same.
+- `direction`: `maximize` or `minimize`, what the proposals optimize. `best`
+  is the max or the min accordingly. Also on the campaign summary.
+- `conformal_caveat`: `{code: "coverage_not_guaranteed", message}`. The
+  `conformal_q` band's coverage (`conformal_coverage`) was measured on
+  held-out rows near the data. It is not guaranteed for proposals, least of
+  all those flagged `far_from_data` or `at_box_edge`. Proposals carry no
+  conformal interval of their own, so there is nothing per proposal to label.
+- `proposals[].applicability`: per-proposal `far_from_data` and `at_box_edge`
+  flags (see "Applicability flags").
+- `applicability`: the threshold used, its source and rule.
+- `model_diagnostics.kernel`: the GP kernel name (see "Model diagnostics").
+- `run.direction`: the effective direction, also in `config_sha256`.
+- `proposal_gating.off_for_minimize`: true when the P(feasible) gate was not
+  applied because the target is minimized. `proposal_gating.reason` says so.
 - `provenance[].role_inferred`: the role the engine gave the column (`target`, `input`, `identifier`, `outcome`, `group`, `fixed_input`, `unused`).
 - `provenance[].reason`: a short code for why the column has its status (docs/UPLOADS.md, "Column-role safety").
 - `validation.findings[].code`: a machine code for the finding.
