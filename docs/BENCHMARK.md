@@ -33,7 +33,8 @@ Descriptive comparisons. Each cell reports mean regret, 95% bootstrap intervals,
 Not run, and why:
 
 - **scikit-optimize** (`gp_minimize`): last release 0.10.2 and effectively unmaintained. It has no native pending-run handling beyond the constant-liar trick, so it is not a like-for-like comparator here.
-- **HEBO, Dragonfly, GPyOpt, EDBO, Summit, Atlas**: not evaluated for this run.
+- **HEBO** (`HEBO==0.3.6`): evaluated for inclusion on 2026-11-06 and **not added**, on dependency grounds, not quality grounds. In a clean, isolated venv it forces a six-way downgrade cascade of the core stack and still will not import against a current toolchain: `GPy==1.9.9` fails to compile its Cython on Python 3.11+, newer GPy then hits `pymoo.factory` (removed in pymoo 0.6), then `DataFrame.append` (removed in pandas 2.0), then a numpy/scipy ABI mismatch, then a `cma` API change, then matplotlib requiring `numpy>=1.25` against the `numpy==1.23` the pandas/scipy pins force - a genuine deadlock. Co-installing it in this repo would downgrade numpy (2.x->1.23), pandas (3.x->1.5) and scipy, breaking the GP tests. If HEBO is wanted as a comparator, it must run in its own pinned environment over a saved query log, not in-process. (Reproduction notes are in `benchmarks/results/` commit history.)
+- **Dragonfly, GPyOpt, EDBO, Summit, Atlas**: not evaluated for this run.
 
 Any method that raises during a step gets a uniform-random fallback for that step, and the fallback is counted per run and reported. It is not silently hidden.
 
