@@ -294,3 +294,16 @@ def test_one_fetch_at_a_time_per_app():
     for t in threads:
         t.join()
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("stamp", ["nan", "NaN", "inf", "-inf", "1e9", " 1700000000", "1700000000.5", "-5",
+                                   "\uff11\uff17" + "\uff10" * 8, "0x6553f100", ""])
+def test_non_integer_or_non_finite_timestamps_are_rejected(keyed, stamp):
+    key, jwks = keyed
+    body = payload()
+    headers = sign(key, body)
+    # sign over the planted timestamp so only the timestamp check can reject it
+    der = key.sign(f"msg_1.{stamp}.".encode() + body, ec.ECDSA(hashes.SHA256()))
+    headers.update({"webhook-timestamp": stamp, "webhook-signature": "v1bder," + base64.b64encode(der).decode()})
+    with pytest.raises(WebhookRejected):
+        verify_webhook(headers, body, jwks.keys(APP_DEF))

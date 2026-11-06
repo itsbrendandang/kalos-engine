@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -57,6 +58,9 @@ TIMESTAMP_TOLERANCE_S = 300.0
 MAX_WEBHOOK_BYTES = 1024 * 1024
 HANDLED_EVENTS = frozenset({"v2.assayRun.created", "v3.run.created"})
 MAX_SIGNATURES = 10
+
+
+_TIMESTAMP = re.compile(r"[0-9]{1,12}")
 
 
 class WebhookRejected(Exception):
@@ -192,10 +196,12 @@ def check_headers(headers: Mapping[str, str], *, now: float | None = None) -> Si
         raise WebhookRejected("missing signature headers")
     if len(wid) > 128 or len(sig) > 4096:
         raise WebhookRejected("oversized signature headers")
-    try:
-        sent = float(ts)
-    except ValueError:
-        raise WebhookRejected("bad timestamp") from None
+    # Whole seconds since the epoch, digits only: float() would accept "nan",
+    # "inf" and "1e9", and abs(now - nan) > tolerance is False, so a "nan"
+    # timestamp would pass the window check.
+    if _TIMESTAMP.fullmatch(ts) is None:
+        raise WebhookRejected("bad timestamp")
+    sent = int(ts)
     current = time.time() if now is None else now
     if abs(current - sent) > TIMESTAMP_TOLERANCE_S:
         raise WebhookRejected("timestamp outside tolerance")
