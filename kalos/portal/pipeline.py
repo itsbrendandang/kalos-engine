@@ -21,9 +21,13 @@ freshly spawned interpreter, and torch is imported only when `_analyze` runs.
 """
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import logging
 import os
+import threading
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any
 
@@ -136,6 +140,77 @@ def preflight_upload(
     return parsed
 
 
+# --- same upload, same analysis: an in-process result cache ------------------ #
+# A re-upload of identical bytes with identical settings (the "replace" retry, a
+# page reload, the desktop app re-sending its sheet) returned the same seeded
+# analysis after a full refit: 6-60 s on a laptop for nothing. The analysis is
+# now kept for the last few distinct inputs and returned on a repeat, so the
+# same upload is not refit and gives the same proposals every time.
+#
+# The key covers everything the analysis reads: the uploaded bytes, the file
+# name (it picks the parser), the sheet, target, roles, anonymize, the profile,
+# the engine version, the analyze function, and every KALOS_* setting (the
+# validation mode, the row caps, ...). Only successful analyses are kept; a
+# refusal is recomputed. Results are deep-copied in and out. Per process: the
+# background-job workers do not share it. `KALOS_ANALYSIS_CACHE` is the number
+# of entries (default 4; 0 turns it off).
+
+
+def _cache_size() -> int:
+    raw = os.environ.get("KALOS_ANALYSIS_CACHE", "").strip()
+    try:
+        return max(0, int(raw)) if raw else 4
+    except ValueError:
+        return 4
+
+
+class _AnalysisCache:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._entries: OrderedDict[str, tuple[Callable[..., dict], dict]] = OrderedDict()
+
+    @staticmethod
+    def key(raw: bytes, *parts: object) -> str:
+        from kalos import __version__
+
+        h = hashlib.sha256()
+        h.update(hashlib.sha256(raw).digest())
+        for part in (*parts, __version__):
+            h.update(b"\x00" + repr(part).encode("utf-8"))
+        for name in sorted(k for k in os.environ if k.startswith("KALOS_")):
+            h.update(b"\x01" + name.encode() + b"=" + os.environ[name].encode("utf-8", "replace"))
+        return h.hexdigest()
+
+    def get(self, key: str, analyze: Callable[..., dict]) -> dict | None:
+        if _cache_size() == 0:
+            return None
+        with self._lock:
+            entry = self._entries.get(key)
+            # The entry holds the function, so its identity cannot be reused by a
+            # different function while the entry exists.
+            if entry is None or entry[0] is not analyze:
+                return None
+            self._entries.move_to_end(key)
+            return copy.deepcopy(entry[1])
+
+    def put(self, key: str, analyze: Callable[..., dict], result: dict) -> None:
+        size = _cache_size()
+        if size == 0:
+            return
+        with self._lock:
+            self._entries[key] = (analyze, copy.deepcopy(result))
+            self._entries.move_to_end(key)
+            while len(self._entries) > size:
+                self._entries.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+
+ANALYSIS_CACHE = _AnalysisCache()
+
+
 def compute_upload_analysis(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
     *, sheet: str | None = None, progress: ProgressFn | None = None,
@@ -160,7 +235,18 @@ def compute_upload_analysis(
         if roles is not None:
             kwargs["roles"] = roles
         profile_name = profile.name
-        result = analyze(parsed.df, target, profile=profile, **kwargs)
+        cache_key = ANALYSIS_CACHE.key(
+            raw, filename, sheet, target, roles_json, bool(anonymize), profile_name,
+        )
+        cached = ANALYSIS_CACHE.get(cache_key, analyze)
+        if cached is not None:
+            if progress is not None:
+                progress("proposing", 0.8)
+            result = {**cached, "analysis_cache": {"hit": True}}
+        else:
+            result = analyze(parsed.df, target, profile=profile, **kwargs)
+            ANALYSIS_CACHE.put(cache_key, analyze, result)
+            result = {**result, "analysis_cache": {"hit": False}}
     except Exception as exc:
         annotated = _annotated(parsed, exc, anonymize)
         if annotated is exc:

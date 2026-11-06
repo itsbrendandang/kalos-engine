@@ -16,6 +16,10 @@ import pytest
 def _isolated_kalos_state(tmp_path_factory, monkeypatch):
     state = tmp_path_factory.mktemp("kalos-state")
     monkeypatch.setenv("KALOS_STATE_DIR", str(state))
+    # The in-process analysis cache (kalos/portal/pipeline.py) is off by default in
+    # tests, so a test that patches engine internals never reads another test's
+    # analysis of the same bytes. tests/test_analysis_cache.py turns it on.
+    monkeypatch.setenv("KALOS_ANALYSIS_CACHE", "0")
     try:
         from kalos.portal import campaign
     except ImportError:  # the portal extra is not installed
