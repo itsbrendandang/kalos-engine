@@ -316,19 +316,24 @@ precision@1 (it is ranked first), and MRR (mean reciprocal rank). The retriever
 here is BM25, the always-available offline default; embeddings are used only when a
 local model is already on disk (none was, so BM25 is what ships by default).
 
-**Result (BM25, this fixture).**
+**Result (BM25, this fixture).** Query-side synonym expansion
+(`kalos/assist/retrieval_synonyms.py`) maps lay terms to the canonical terms the
+engine stores ("sugar" -> "glucose", "unusual" -> "outlier") before scoring, so the
+paraphrase arm recovers to parity with the literal arm:
 
 | Arm | recall@6 | precision@1 | MRR |
 |---|---|---|---|
 | Literal (12 q) | 1.000 | 0.833 | 0.896 |
-| Paraphrase (8 q) | 0.500 | 0.500 | 0.500 |
+| Paraphrase, no expansion (8 q) | 0.500 | 0.500 | 0.500 |
+| Paraphrase, with expansion (8 q) | 1.000 | 0.750 | 0.817 |
 
-Per chunk kind, recall@6 under paraphrasing drops to 0.000 for `sheet`
-("sugar" never matches "glucose") and `finding` ("unusual" never matches
-"outlier"), while `analysis` stays 1.000. So BM25 ranks relevant chunks well when
-the wording matches, and its one real weak spot is vocabulary mismatch on the
-sheet and finding chunks - the headroom a synonym map or a local embedding model
-would recover.
+Without expansion, recall@6 under paraphrasing dropped to 0.000 for `sheet`
+("sugar" never matched "glucose") and `finding` ("unusual" never matched
+"outlier"), while `analysis` stayed 1.000. The synonym map is a small, curated,
+offline dict applied to the query only - it changes no stored chunk, needs no
+model, and downloads nothing, so citations and chunk text are untouched. A local
+embedding model would generalise further to unlisted synonyms; the map covers the
+common bioprocess vocabulary today without a dependency.
 
 What this does and does not show:
 

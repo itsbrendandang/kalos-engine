@@ -43,6 +43,7 @@ from typing import Any, Protocol
 import numpy as np
 
 from kalos.assist.paths import tenant_dir
+from kalos.assist.retrieval_synonyms import expand_query_tokens
 
 log = logging.getLogger("kalos.assist")
 
@@ -601,7 +602,7 @@ def _lock_for(path: Path) -> threading.Lock:
 class AssistIndex:
     """One tenant's index. Cheap to construct; reads its file lazily."""
 
-    def __init__(self, store: Any, tenant: str, *, embedder: Embedder | None | bool = True) -> None:
+    def __init__(self, store: Any, tenant: str, *, embedder: Embedder | bool | None = True) -> None:
         self.store = store
         self.tenant = tenant
         self.dir = tenant_dir(store.state_dir, tenant)
@@ -776,12 +777,18 @@ class AssistIndex:
             return []
         data = self._load()
         if data.get("retriever") == "embeddings" and self._embedder is not None:
+            # The embedding path uses the raw query text (semantics handle
+            # synonyms on their own), so it is left untouched.
             vectors = self._load_vectors()
             if all(c.chunk_id in vectors for c in pool):
                 qv = self._embedder.encode([query])[0]
                 sims = np.asarray([float(np.dot(vectors[c.chunk_id], qv)) for c in pool])
                 order = np.argsort(-sims)
                 return [Hit(pool[i], float(sims[i])) for i in order[:k] if sims[i] >= min_similarity]
+        # BM25 is lexical, so expand the query with canonical bioprocess terms
+        # for any lay/synonym token ("sugar" -> "glucose"). Query-side only:
+        # stored chunks are unchanged, so citations and text are unaffected.
+        q = expand_query_tokens(q)
         corpus = [tokens(c.title + " " + c.text) for c in pool]
         scores = _bm25_scores(corpus, q)
         # The lab's own records first: a doc must match clearly better to outrank them.

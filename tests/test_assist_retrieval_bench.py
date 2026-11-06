@@ -205,3 +205,29 @@ def test_empty_when_nothing_matches(seeded_store):
     hits = index.search("quarterly revenue forecast for the sales team",
                         campaign_id=ids["ferment"], k=6)
     assert hits == []
+
+
+# --- synonym expansion (the fix for the paraphrase gap) ------------------------ #
+
+def test_synonym_expansion_adds_canonical_terms_without_dropping_originals():
+    from kalos.assist.retrieval_synonyms import expand_query_tokens
+
+    # a lay term brings in its canonical term, original kept
+    out = expand_query_tokens(["sugar"])
+    assert "sugar" in out and "glucose" in out
+    # an already-canonical query is unchanged (no duplicate, no reorder)
+    assert expand_query_tokens(["glucose"]) == ["glucose"]
+    # de-duplication across tokens
+    assert expand_query_tokens(["sugar", "glucose"]).count("glucose") == 1
+    # an unknown token passes through untouched
+    assert expand_query_tokens(["kinetics"]) == ["kinetics"]
+
+
+def test_paraphrase_recall_is_recovered_by_synonyms(seeded_store):
+    """Regression guard for the fix: with query-side synonym expansion, the
+    paraphrase arm recovers to parity with the literal arm on this fixture."""
+    store, ids = seeded_store
+    index = AssistIndex(store, "acme", embedder=False)
+    index.refresh()
+    p = _metrics(index, ids["ferment"], queries=_PARAPHRASE_QUERIES)
+    assert p["recall_at_k"] >= 0.90, f"synonym expansion regressed: {p}"
