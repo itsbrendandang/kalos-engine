@@ -217,3 +217,40 @@ def test_health_is_503_with_a_plain_reason_when_the_store_fails(client):
     assert r.status_code == 503
     assert r.json()["code"] == "store_unavailable"
     assert "/secret/path" not in r.text
+
+
+def test_sigterm_stops_a_desktop_engine_with_exit_0(tmp_path):
+    """The desktop shell sends SIGTERM first. The engine answers health, stops,
+    and exits 0 with a last plain line (not killed by the re-raised signal)."""
+    import signal
+    import socket
+    import time
+    import urllib.request
+
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    env = _env(tmp_path, KALOS_DESKTOP="1", KALOS_PORT=str(port), KALOS_AUTH_TOKENS=_tokens())
+    proc = subprocess.Popen([sys.executable, "-m", "kalos.portal"], cwd=ROOT, env=env,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 90
+        while True:
+            assert proc.poll() is None, proc.stderr.read() if proc.stderr else ""
+            try:
+                req = urllib.request.Request(f"http://127.0.0.1:{port}/api/health",
+                                             headers={"Authorization": "Bearer desk-secret"})
+                with urllib.request.urlopen(req, timeout=2) as r:  # noqa: S310 - loopback test URL
+                    assert json.loads(r.read())["mode"] == "desktop"
+                break
+            except OSError:
+                assert time.monotonic() < deadline
+                time.sleep(0.1)
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=30) == 0
+        assert proc.stderr is not None
+        assert proc.stderr.read().strip().splitlines()[-1] == "kalos engine: stopped"
+    finally:
+        if proc.poll() is None:
+            proc.kill()

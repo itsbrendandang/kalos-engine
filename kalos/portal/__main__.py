@@ -20,6 +20,7 @@ check never runs at all.
 from __future__ import annotations
 
 import os
+import signal
 import sys
 from typing import IO
 
@@ -135,6 +136,11 @@ def main(argv: list[str] | None = None) -> None:
     # the open-mode remote guard. Ignore forwarded headers unless the operator names the
     # trusted proxy addresses explicitly.
     trusted = os.environ.get("KALOS_TRUSTED_PROXIES", "").strip()
+    if is_desktop:
+        # uvicorn restores the previous SIGTERM handler after its graceful shutdown
+        # and raises the signal again; this handler is that previous one, so the
+        # process ends with exit 0 and a last log line instead of dying by signal.
+        signal.signal(signal.SIGTERM, _desktop_exit)
     uvicorn.run(
         "kalos.portal.app:app", host=host, port=port, log_level="warning",
         proxy_headers=bool(trusted), forwarded_allow_ips=trusted or None,
@@ -143,12 +149,17 @@ def main(argv: list[str] | None = None) -> None:
         timeout_graceful_shutdown=desktop.SHUTDOWN_GRACE_S if is_desktop else None,
     )
     if is_desktop:
-        # A cancelled analysis keeps computing on its worker thread (threads cannot
-        # be stopped) and would hold the interpreter open past the shell's SIGKILL
-        # deadline. It can no longer commit (desktop.check_not_abandoned), so exit now.
-        print("kalos engine: stopped", file=sys.stderr)
-        sys.stderr.flush()
-        os._exit(0)
+        _desktop_exit()
+
+
+def _desktop_exit(*_signal_args: object) -> None:
+    """End a desktop engine after uvicorn's shutdown. A cancelled analysis keeps
+    computing on its worker thread (threads cannot be stopped) and would hold the
+    interpreter open past the shell's SIGKILL deadline. It can no longer commit
+    (desktop.check_not_abandoned), so exit now."""
+    print("kalos engine: stopped", file=sys.stderr)
+    sys.stderr.flush()
+    os._exit(0)
 
 
 if __name__ == "__main__":
