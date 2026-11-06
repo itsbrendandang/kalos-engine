@@ -354,6 +354,13 @@ only added; a field never changes meaning or disappears within a version.
 
 - **v2**: adds `contract_version`. The fields added in v2 are listed below this
   line, one bullet per field.
+- `provenance[].status` can be `dropped_recipe_label`: with no declared roles, a
+  text column that the engine picked as the CV group because each of its levels
+  is one recipe of the other inputs (for example `recipe` = R1..R10 next to pH and
+  temperature). It groups replicates and CV folds; it is not a model input and
+  proposals do not carry it. A declared categorical is never dropped this way.
+- `cv_logo.reason` can say that the group column labels exactly the recipes;
+  leave-one-group-out is then not run (it would repeat the grouped CV).
 
 ## Not in this slice
 

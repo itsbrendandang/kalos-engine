@@ -32,6 +32,7 @@ ColumnStatus = Literal[
     "dropped_sparse",
     "dropped_non_numeric",
     "dropped_all_blank",
+    "dropped_recipe_label",
 ]
 
 
@@ -86,6 +87,7 @@ def column_provenance(
     declared: set[str] | None = None,
     declared_ids: set[str] | None = None,
     declared_features: set[str] | None = None,
+    recipe_labels: set[str] | None = None,
 ) -> list[ColumnProvenance]:
     """Build a per-column provenance report mirroring `_analyze`'s selection.
 
@@ -110,7 +112,8 @@ def column_provenance(
         this categorical" - rather than the misleading `dropped_sparse`.
 
     Status precedence per column:
-      target -> kept_feature -> dropped_id(declared) -> dropped_constant_on_fitted_rows
+      target -> kept_feature -> dropped_id(declared) -> dropped_recipe_label
+      -> dropped_constant_on_fitted_rows
       -> dropped_all_blank -> dropped_non_numeric(declared) -> dropped_id -> dropped_output
       -> dropped_constant -> dropped_sparse.
     """
@@ -133,6 +136,10 @@ def column_provenance(
             # the caller explicitly excluded this column; its drop is an
             # instruction, not a data-quality inference.
             status = "dropped_id"
+        elif name in (recipe_labels or set()):
+            # a text column whose levels each name one recipe of the other inputs:
+            # used to group replicates and CV folds, not as a model input.
+            status = "dropped_recipe_label"
         elif name in constant_fitted:
             status = "dropped_constant_on_fitted_rows"
         elif non_null == 0:

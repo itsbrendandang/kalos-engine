@@ -186,6 +186,15 @@ def _seeded_analysis(seed: int = ANALYZE_SEED) -> Iterator[None]:
             np.random.set_state(np_state)
 
 
+def _recipe_label_columns(roles: ColumnRoles | None, gcol: Any, cat_feats: list) -> list:
+    """The inferred categoricals that are recipe labels (see the note at the call
+    in `_analyze_body`): the inferred group column, when it was also picked as a
+    text factor. Empty when roles are declared."""
+    if roles is None and gcol is not None and gcol in cat_feats:
+        return [gcol]
+    return []
+
+
 def _analyze(
     df: pd.DataFrame,
     target: str | None = None,
@@ -378,6 +387,17 @@ def _analyze_body(
     target, cont_feats, cat_feats, gcol, declared = _resolve_columns(
         df, num, target, roles, profile
     )
+    # A RECIPE LABEL is not a factor. An inferred group column is chosen only when
+    # each of its levels is one recipe of the other inputs (`_auto_group_column`),
+    # so with no declared roles a text group column such as `recipe` = R1..R10
+    # next to pH and temperature names the recipe: it groups replicates and CV
+    # folds, but as a model input it only repeats what pH and temperature already
+    # say, and a proposal cannot set it ("R3 at pH 7.9" is not a recipe). Used as
+    # a categorical it also made the fit a mixed GP whose acquisition enumerates
+    # every label (77-88 s on a 30-row sheet; docs/DESKTOP.md "Fit time").
+    # Declared categoricals are never removed.
+    recipe_labels = _recipe_label_columns(roles, gcol, cat_feats)
+    cat_feats = [c for c in cat_feats if c not in recipe_labels]
     # With no declared roles, text factors are auto-detected (see `_auto_categorical`);
     # they are reported as findings so the uploader can confirm or override them.
     auto_cats = list(cat_feats) if roles is None else []
@@ -968,8 +988,27 @@ def _analyze_body(
             ),
         }
     else:
-        n_logo_groups = len(np.unique(np.asarray(pd.Series(groups).astype(str).values)))
-        if n_logo_groups > LOGO_MAX_GROUPS:
+        _grp = pd.Series(groups).astype(str).to_numpy()
+        n_logo_groups = len(np.unique(_grp))
+        # The group column labels exactly the recipes (one group per recipe and
+        # one recipe per group): leaving one group out is then the grouped CV
+        # above with smaller folds, one GP fit per recipe for no new question.
+        _same_as_recipes = (
+            n_logo_groups == len(set(recipe_key))
+            == len(set(zip(_grp.tolist(), list(recipe_key), strict=True)))
+        )
+        if _same_as_recipes:
+            cv_logo = {
+                "spearman": None,
+                "n_groups": n_logo_groups,
+                "n_oof": None,
+                "reason": (
+                    "the group column labels exactly the recipes, so leaving one "
+                    "group out would repeat the grouped CV already reported as "
+                    "cv_spearman"
+                ),
+            }
+        elif n_logo_groups > LOGO_MAX_GROUPS:
             cv_logo = {
                 "spearman": None,
                 "n_groups": n_logo_groups,
@@ -1368,6 +1407,7 @@ def _analyze_body(
             outcome_hint=profile.outcome_hint,
             constant_on_fitted_rows=[str(c) for c in constant_on_fitted]
             + [str(c) for c in constant_cats],
+            recipe_labels={str(c) for c in recipe_labels},
             declared={str(c) for c in declared},
             declared_ids={str(c) for c in roles.ids} if roles is not None else set(),
             declared_features={str(c) for c in roles.features} if roles is not None else set(),
