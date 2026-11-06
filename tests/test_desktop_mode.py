@@ -21,6 +21,7 @@ from kalos.portal.app import app, get_campaign_store
 from kalos.portal.campaign import CampaignStore
 
 ROOT = Path(__file__).resolve().parents[1]
+WEB_ORIGIN = "http://127.0.0.1:3360"
 
 
 def _tokens(secret: str = "desk-secret") -> str:
@@ -34,7 +35,8 @@ def _tokens(secret: str = "desk-secret") -> str:
 
 def _env(tmp_path: Path, **extra: str) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("KALOS_")}
-    env.update({"KALOS_STATE_DIR": str(tmp_path / "state"), "KALOS_JOBS_ENABLED": "0", **extra})
+    env.update({"KALOS_STATE_DIR": str(tmp_path / "state"), "KALOS_JOBS_ENABLED": "0",
+                "KALOS_CORS_ORIGINS": WEB_ORIGIN, **extra})
     return env
 
 
@@ -104,13 +106,45 @@ def test_llm_provider_default_follows_a_local_ollama(monkeypatch):
 
 
 def test_check_posture_refusals():
+    ok = {"KALOS_CORS_ORIGINS": WEB_ORIGIN}
     with pytest.raises(desktop.DesktopConfigError, match="only listens"):
-        desktop.check_posture("0.0.0.0", auth_source=True, environ={})  # noqa: S104 - refused
+        desktop.check_posture("0.0.0.0", auth_source=True, environ=ok)  # noqa: S104 - refused
     with pytest.raises(desktop.DesktopConfigError, match="needs a token"):
-        desktop.check_posture("127.0.0.1", auth_source=False, environ={})
+        desktop.check_posture("127.0.0.1", auth_source=False, environ=ok)
     with pytest.raises(desktop.DesktopConfigError, match="KALOS_ALLOW_OPEN_ACCESS"):
-        desktop.check_posture("127.0.0.1", auth_source=True, environ={"KALOS_ALLOW_OPEN_ACCESS": "1"})
-    desktop.check_posture("127.0.0.1", auth_source=True, environ={})
+        desktop.check_posture("127.0.0.1", auth_source=True, environ={**ok, "KALOS_ALLOW_OPEN_ACCESS": "1"})
+    for cors in ({}, {"KALOS_CORS_ORIGINS": " "}, {"KALOS_CORS_ORIGINS": "*"}):
+        with pytest.raises(desktop.DesktopConfigError, match="KALOS_CORS_ORIGINS"):
+            desktop.check_posture("127.0.0.1", auth_source=True, environ=cors)
+    desktop.check_posture("127.0.0.1", auth_source=True, environ=ok)
+
+
+def test_desktop_without_cors_origins_refuses_with_exit_2(tmp_path):
+    out = _run_main(tmp_path, "--desktop", KALOS_AUTH_TOKENS=_tokens(), KALOS_CORS_ORIGINS="")
+    assert out.returncode == 2, out.stderr
+    assert out.stderr.strip().splitlines()[-1].startswith(
+        "kalos engine: desktop mode needs KALOS_CORS_ORIGINS")
+
+
+def test_cors_in_desktop_mode_allows_only_the_app_origin(tmp_path):
+    """The server-mode default (any localhost origin) is not used: only the
+    origin the shell named gets CORS headers back."""
+    code = (
+        "import json\n"
+        "from fastapi.testclient import TestClient\n"
+        "c = TestClient(m.app, base_url='http://127.0.0.1:8050')\n"
+        "out = {}\n"
+        f"for o in ({WEB_ORIGIN!r}, 'http://localhost:5173', 'http://127.0.0.1:9999', 'https://evil.example'):\n"
+        "    r = c.options('/api/health', headers={'Origin': o, 'Access-Control-Request-Method': 'GET',"
+        " 'Access-Control-Request-Headers': 'authorization'})\n"
+        "    out[o] = r.headers.get('access-control-allow-origin')\n"
+        "print(json.dumps(out))\n"
+    )
+    out = _import_app(tmp_path, code, KALOS_DESKTOP="1", KALOS_AUTH_TOKENS=_tokens())
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout.strip().splitlines()[-1])
+    assert got == {WEB_ORIGIN: WEB_ORIGIN, "http://localhost:5173": None,
+                   "http://127.0.0.1:9999": None, "https://evil.example": None}
 
 
 def test_desktop_without_token_refuses_with_exit_2(tmp_path):

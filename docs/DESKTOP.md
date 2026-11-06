@@ -27,7 +27,7 @@ runs the same token, open-access and `KALOS_HOST` refusals when it is imported.
 | `KALOS_PORT` | yes | A free port the shell picked on 127.0.0.1. |
 | `KALOS_STATE_DIR` | yes | The data folder. Holds `portal.db`. Created if missing. Without it the engine uses `~/.kalos`. |
 | `KALOS_AUTH_TOKENS` | yes | A JSON list with one record: `[{"token_sha256": "<sha256 hex of the launch secret>", "subject": "desktop-app", "tenant": "local", "scopes": ["read", "write"]}]`. The shell keeps the plain secret and sends it as `Authorization: Bearer <secret>`. |
-| `KALOS_CORS_ORIGINS` | yes | `http://127.0.0.1:<web port>`, the app's own origin. |
+| `KALOS_CORS_ORIGINS` | yes | `http://127.0.0.1:<web port>`, the app's own origin. Unset (or `*`) is refused, exit 2. |
 | `KALOS_TORCH_THREADS` | no | Threads for one fit. Default: half the cores, between 1 and 4. |
 
 Local LLM: in desktop mode an unset `KALOS_LLM_PROVIDER` becomes `ollama` when

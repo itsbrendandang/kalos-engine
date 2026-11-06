@@ -105,6 +105,7 @@ PORT="$("$PY" -I -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); 
 t0=$("$PY" -I -c 'import time; print(time.time())')
 env -i HOME="$WORK" PATH=/usr/bin:/bin KALOS_DESKTOP=1 KALOS_HOST=127.0.0.1 KALOS_PORT="$PORT" \
   KALOS_STATE_DIR="$SMOKE_STATE" KALOS_AUTH_TOKENS="$TOKENS" KALOS_JOBS_ENABLED=0 \
+  KALOS_CORS_ORIGINS="http://127.0.0.1:1" \
   "$OUT/kalos-engine" >"$WORK/smoke.log" 2>&1 &
 ENGINE_PID=$!
 HEALTH=""

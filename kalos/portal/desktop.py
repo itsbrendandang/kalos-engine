@@ -20,7 +20,9 @@ What it refuses (exit 2, one line on stderr):
 - a bind address other than loopback;
 - no token (`KALOS_AUTH_TOKENS` / `KALOS_AUTH_TOKENS_FILE` / JWT keys): the
   desktop engine never runs open, even on loopback;
-- `KALOS_ALLOW_OPEN_ACCESS`.
+- `KALOS_ALLOW_OPEN_ACCESS`;
+- no `KALOS_CORS_ORIGINS` (or `*`): without it the server-mode default lets any
+  localhost origin read responses, so the shell must name the app's own origin.
 
 What it turns off: the interactive API docs and the audit-archive timer
 (`KALOS_AUDIT_RETENTION_DAYS` is ignored with a warning; nothing is deleted
@@ -139,6 +141,12 @@ def check_posture(host: str, *, auth_source: bool, environ: MutableMapping[str, 
     if not auth_source:
         raise DesktopConfigError(
             "desktop mode needs a token: set KALOS_AUTH_TOKENS (the desktop app does this)"
+        )
+    origins = [o.strip() for o in env.get("KALOS_CORS_ORIGINS", "").split(",") if o.strip()]
+    if not origins or "*" in origins:
+        raise DesktopConfigError(
+            "desktop mode needs KALOS_CORS_ORIGINS set to the app's own origin, e.g. "
+            "http://127.0.0.1:<web port> (the desktop app does this)"
         )
 
 
