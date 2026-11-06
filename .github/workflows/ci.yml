@@ -1,0 +1,49 @@
+name: CI
+
+# Runs exactly the checks the README documents under "Local development":
+# ruff, mypy, and the pytest suite, on the Python floor the project requires.
+# Kept honest: if this changes, the README's "the same as CI" line must too.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-type:
+    name: ruff + mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python 3.11
+        run: uv python install 3.11
+      - name: Install (ml, portal, bench, dev)
+        run: uv pip install --system -e ".[ml,portal,bench,dev]"
+      - name: ruff
+        run: ruff check kalos/ tests/ examples/
+      - name: mypy
+        run: mypy
+
+  tests:
+    name: pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python 3.11
+        run: uv python install 3.11
+      - name: Install (ml, portal, bench, dev)
+        run: uv pip install --system -e ".[ml,portal,bench,dev]"
+      - name: pytest
+        run: python -m pytest -q

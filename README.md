@@ -1,5 +1,7 @@
 # Kalos engine
 
+[![CI](https://github.com/itsbrendandang/kalos-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/itsbrendandang/kalos-engine/actions/workflows/ci.yml)
+
 > **Status: under development. Not a public SaaS.**
 > Kalos is a scientific optimization platform. It is being built toward a public SaaS.
 > There is no hosted service today. User login and organization management are under development. They are **not** on `main`.
@@ -79,7 +81,7 @@ Latin hypercube sampling (LHS) spreads random points evenly across the design sp
 | Bearer-token authentication (a secret string that grants access) with `read`/`write`/`admin` scopes. Tokens are hashed | IMPLEMENTED | `kalos/portal/auth.py` |
 | Campaign and latest-analysis store, keyed by tenant (SQLite) | IMPLEMENTED | `kalos/portal/campaign.py`, `docs/HARDENING.md` Phase 1b |
 | Upload limits. Loopback-only default (loopback means this machine only). Remote requests are refused when the API is open | IMPLEMENTED | `kalos/portal/uploads.py`, `__main__.py`, `app.py` middleware |
-| Container deploy pack | IMPLEMENTED (limited verification, see runbook; no CI runs today, use `scripts/check.sh`) | `deploy/` |
+| Container deploy pack | IMPLEMENTED (limited verification, see runbook; the deploy image itself is not built in CI, use `scripts/check.sh`) | `deploy/` |
 | Optimizer beats LHS/random on synthetic surfaces | IMPLEMENTED as a benchmark; not validation | `BENCHMARK.md`, `python -m kalos.bench` |
 | Head-to-head against random, LHS, Optuna TPE, Ax, and vanilla GP-EI on synthetic tasks | IMPLEMENTED as a benchmark; not validation | [Benchmark vs other optimizers](#benchmark-vs-other-optimizers), `docs/BENCHMARK.md`, `benchmarks/results/` |
 | Mechanistic (Monod) prior mean | EXPERIMENTAL, opt-in, simulation benchmark only | `kalos/core/mechanistic.py`, `examples/mechanistic_benchmark.py` |
