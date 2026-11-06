@@ -81,7 +81,8 @@ def test_desktop_engine_codes_have_why_lines():
     from kalos.assist.why import VERDICT_STATE_KEYS
 
     for code in ("no_ordering", "too_few_groups", "model_refused", "category_not_modeled", "headerless_column",
-                 "search_box", "inputs_changed", "coded_column", "near_constant_input", "outcome_like_name"):
+                 "search_box", "inputs_changed", "coded_column", "near_constant_input", "outcome_like_name",
+                 "stopping_advice_only", "specs_treated_independently", "possibly_measured_after_run"):
         assert code in WHY, code
     assert WHY["no_ordering"].startswith("If the model does no better than chance at putting your past runs")
     assert all(v in GLOSSARY for v in VERDICT_STATE_KEYS.values())
