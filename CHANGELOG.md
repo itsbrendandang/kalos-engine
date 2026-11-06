@@ -16,6 +16,7 @@ Newest first.
 
 - `noise.floor`: the pooled assay noise with a 95% interval and its degrees of freedom. `roles.per_recipe_noise` (off by default) lets the proposal model use each recipe's own spread, shrunk toward the pooled one, when the noise rises with the recipe mean; `noise.per_recipe` says whether it was used and why.
 - Exploration design (QUEUE 6): with fewer than 2 x inputs distinct recipes, or when the model cannot rank recipes yet, the batch is the best bet plus recipes spread over the untested parts of the box, labelled (`batch_strategy`, `pick: exploration_design`). `roles.exploration_design: "off"` turns it off. No detectable difference against the model's picks on two synthetic surfaces (12 seeds).
+- Public benchmark (QUEUE 10): DataHow's in-silico fed-batch runs (MIT, data not in the repo, `KALOS_DATAHOW_DATA`) as an endpoint table (`kalos/bench/insilico_hybrid.py`, `examples/insilico_hybrid_benchmark.py`, `benchmarks/INSILICO_HYBRID.md`). Noisy variant, 20 seeds: ranking of the 100 test runs from 20 train runs Spearman 0.20 (-0.02 to 0.40); pool replay BO 31.4 vs random 32.8 runs to 90% of the best (difference -1.5, -11.8 to 8.0): not separated.
 
 - `GET /api/campaigns/{id}/rows`: the campaign's rows (upload and folded rounds) with `_origin`, `_round`, `_run_id`, `_kind` (`measured`), paged.
 

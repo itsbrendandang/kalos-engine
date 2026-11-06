@@ -176,6 +176,7 @@ Every setting is an environment variable. Unset and empty both mean the default.
 | `KALOS_GIT_SHA` | unset; then `git rev-parse HEAD`, else `unknown` | text | Commit written into a scale-up readout. |
 | `KALOS_DATASET_DIR` | unset | a folder | Where the private `dataset_0.csv` lives for `examples/real_data_validation.py`. Tests skip without it. |
 | `KALOS_MEDIA_DATA`, `KALOS_AMII_DATA`, `KALOS_INDPENSIM_PATH` | unset | a folder or file | Private benchmark data for `kalos/bench/`. Never in this repository. |
+| `KALOS_DATAHOW_DATA` | unset | a folder | DataHow's public in-silico runs (MIT) for `examples/insilico_hybrid_benchmark.py`; see `benchmarks/INSILICO_HYBRID.md`. Never in this repository. |
 | `KALOS_INTEGRATIONS` | unset | comma-separated names, e.g. `benchling` | Turns on a connector. On branch `benchling-connector`, not yet merged. |
 | `KALOS_SKILLS` | unset | `1` | Serves the read-only `/api/skills` routes. On branch `skills-framework` ([PR #124](https://github.com/itsbrendandang/kalos-engine/pull/124)), not yet merged. |
 | `KALOS_SKILLS_DIR` | unset | a folder | Team skill folders, one per tenant. On branch `skills-framework` (PR #124), not yet merged. |
