@@ -773,6 +773,27 @@ def _analyze_body(
         ],
     }
 
+    # SPACE-FILLING HONESTY (reported, never used to reject an upload). Real-data
+    # validation (the Amii cell-media pool replay) showed that when the surrogate
+    # has not shown it can rank held-out runs, model-guided proposals are no
+    # better than a space-filling design - and on a small, smooth sheet they can
+    # be worse (HeLa_regular: BO reached the top 5%% slower than Latin-hypercube).
+    # So when `clears_floor` is false we say so plainly: the batch is exploration,
+    # and a space-filling design would do about as well until more data arrives.
+    # This mirrors the scale readout's "I can't tell" refusal rather than dressing
+    # an unproven model as a confident recommendation.
+    reliability["space_filling_advice"] = (
+        None
+        if reliability["clears_floor"]
+        else (
+            "The model has not yet shown it can rank unseen runs (CV Spearman "
+            f"below the {RELIABILITY_SPEARMAN_FLOOR} floor), so this batch explores "
+            "rather than exploits. On data like this a space-filling design (e.g. "
+            "Latin hypercube) is expected to do about as well; the model's "
+            "advantage appears once it clears the floor."
+        )
+    )
+
     # PROMOTION VERDICT. `check_gates` (kalos/core/gates.py) has existed since
     # the lean-engine port but had ZERO callers on this path, and
     # `feasibility_cv_auc` had zero callers outside its own tests - the
