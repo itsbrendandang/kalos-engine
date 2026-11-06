@@ -317,10 +317,7 @@ def next_step(
     elif state == "sheet_errors":
         step = f"Fix {_plural(f.n_errors, 'error')} in the sheet"
         why = f"Kalos found {_plural(f.n_errors, 'error')} in the sheet. They are listed below."
-        matters = (
-            "An error in the sheet can point the model the wrong way. "
-            "If you plan from it anyway, the next recipes may chase a typing mistake."
-        )
+        matters = WHY["sheet_has_errors"]
         route = ROUTE_SETUP
         blockers.extend(_finding_blockers(analysis, "error"))
     elif state == "not_trusted":
@@ -339,10 +336,7 @@ def next_step(
             f"Kalos proposed {_plural(f.n_proposed, 'recipe')}. "
             f"The sheet has {_plural(f.n_warnings, 'warning')} worth a look first."
         )
-        matters = (
-            "A warning does not stop the round. "
-            "Some warnings mean a run was left out or a value looks unusual."
-        )
+        matters = WHY["sheet_usable_with_warnings"]
         route = ROUTE_PLAN
         blockers.extend(_finding_blockers(analysis, "warning"))
     elif state == "no_batch":

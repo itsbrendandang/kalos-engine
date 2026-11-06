@@ -190,3 +190,38 @@ def test_builtin_bm25_matches_without_rank_bm25(store, monkeypatch):
     monkeypatch.setitem(sys.modules, "rank_bm25", None)  # import now raises ImportError
     without = [h.chunk.chunk_id for h in index.search("lipase titer drivers methanol")]
     assert without and set(without[:2]) <= set(with_lib)
+
+
+def test_campaign_state_chunks_for_the_simple_view(store):
+    cid, run_id = _seed(store)
+    store.set_result(run_id, 9.5, tenant="acme", campaign_id=cid)
+    chunks = {c.source_id: c for c in campaign_chunks(
+        store.campaign_info(tenant="acme", campaign_id=cid), store.get(tenant="acme", campaign_id=cid),
+        {**ANALYSIS, "proposals": [{"recipe": {"Methanol": 2.5}, "pred": 3.3, "std": 0.4, "mode": "explore"}]},
+    ) if c.kind == "analysis"}
+    assert {"verdict", "drivers", "proposals", "best_run", "round_delta", "promotion"} <= set(chunks)
+    verdict = chunks["verdict"].text
+    assert "Not yet reliable" in verdict and "surrogate_spearman" in verdict and "Why this matters:" in verdict
+    assert "went with, not a cause" in chunks["drivers"].text
+    assert "Higher Methanol went with higher lipase_titer" in chunks["drivers"].text
+    assert "(New ground)" in chunks["proposals"].text and "Predicted lipase_titer 3.3" in chunks["proposals"].text
+    best = chunks["best_run"].text
+    assert "Measured lipase_titer 9.5" in best and run_id in best and "Methanol = 2.5" in best
+    assert f"Run {run_id}: Predicted lipase_titer 3.3, Measured 9.5." in chunks["round_delta"].text
+
+
+def test_every_number_in_a_state_chunk_sits_next_to_a_label(store):
+    cid, run_id = _seed(store)
+    store.set_result(run_id, 9.5, tenant="acme", campaign_id=cid)
+    chunks = campaign_chunks(store.campaign_info(tenant="acme", campaign_id=cid),
+                             store.get(tenant="acme", campaign_id=cid), ANALYSIS)
+    for c in chunks:
+        if c.source_id in ("best_run", "proposals"):
+            assert "Measured" in c.text or "Predicted" in c.text, c.text
+
+
+def test_no_recipes_gives_a_refusal_chunk():
+    chunks = campaign_chunks({"id": "cmp_" + "2" * 32, "name": "x"}, None,
+                             {**ANALYSIS, "proposals": [], "proposal_notice": None})
+    refusal = next(c for c in chunks if c.source_id == "refusal")
+    assert "empty_batch" in refusal.text and "Why this matters:" in refusal.text

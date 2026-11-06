@@ -57,6 +57,9 @@ GLOSSARY: dict[str, str] = {
     'constant_within_group': 'An input that only changes between groups stands in for the group itself, so a pattern on it may be the group, not the setting.',
     'mixed_row_types': 'If simulated or synthetic rows sit among measured ones, the model learns from numbers the lab never saw and can look better than it is.',
     'no_data_check': 'Without a sheet check, nothing here has been confirmed, so a mistake in the sheet would pass straight into the model.',
+    'sheet_has_errors': 'A sheet with errors cannot be trusted as it is: a wrong unit, an impossible value or a doubled run would pass straight into the model and bend its suggestions.',
+    'sheet_usable_with_warnings': 'The model can learn from this sheet, but each warning is a place where a mistake in the sheet could pass into the model, so read them before you trust its suggestions.',
+    'sheet_passed': 'A sheet that passes every check gives the model clean runs to learn from, so a surprise later is more likely a real result than a sheet error.',
     # Sheet facts (Your data flags)
     'column_empty': 'A column with no values adds nothing and may mean a column header was shifted.',
     'column_missing': 'Runs with a blank in this column may be left out of the model, so fewer runs teach it.',

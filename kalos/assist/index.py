@@ -233,28 +233,42 @@ def campaign_chunks(
                 f"{k.replace('_', ' ')} {_fmt(noise[k])}" for k in keys if noise.get(k) is not None
             ) + "."
             out.append(_chunk("analysis", "noise", cid, "Run-to-run spread", text))
+        verdict_chunk = _verdict_chunk(cid, name, a)
+        if verdict_chunk is not None:
+            out.append(verdict_chunk)
         drivers = [d for d in a.get("drivers") or [] if isinstance(d, dict) and d.get("name")]
         if drivers:
-            text = f"Inputs that went with {target} in campaign {name!r} (went with, not a cause): " + "; ".join(
-                f"{d['name']} (rank association {d.get('rho')}, range {d.get('ci95')})" for d in drivers[:8]
-            ) + "."
-            out.append(_chunk("analysis", "drivers", cid, "Drivers", text))
+            ordered = sorted(drivers, key=lambda d: -abs(float(d.get("rho") or 0.0)))
+            rows = []
+            for d in ordered[:8]:
+                rho = d.get("rho")
+                way = "higher" if isinstance(rho, (int, float)) and rho >= 0 else "lower"
+                sure = "clear signal" if d.get("significant") else "could be chance"
+                rows.append(f"Higher {d['name']} went with {way} {target} (strength {rho} on a scale "
+                            f"from -1 to 1; {sure})")
+            text = (f"What went with {target} in campaign {name!r}, strongest first "
+                    "(went with, not a cause):\n" + "\n".join(rows))
+            out.append(_chunk("analysis", "drivers", cid, "What went with the target", text))
         proposals = [p for p in a.get("proposals") or [] if isinstance(p, dict)]
         if proposals:
-            rows = [
-                f"Recipe {i + 1}: {_recipe_text(p.get('recipe') or {})}; Predicted {target} "
-                f"{_fmt(p.get('pred'))} (plus or minus {_fmt(p.get('std'))})"
-                for i, p in enumerate(proposals)
-            ]
-            text = f"Proposed recipes for campaign {name!r} (predicted values, not measured):\n" + "\n".join(rows)
+            rows = []
+            for i, p in enumerate(proposals):
+                mode = {"exploit": "Best bet", "explore": "New ground"}.get(str(p.get("mode")), "")
+                rows.append(
+                    f"Recipe {i + 1}" + (f" ({mode})" if mode else "") + f": {_recipe_text(p.get('recipe') or {})}; "
+                    f"Predicted {target} {_fmt(p.get('pred'))}"
+                    + (f" (model spread {_fmt(p.get('std'))}, Predicted)" if p.get("std") is not None else "")
+                )
+            text = (f"Proposed recipes for campaign {name!r} (Predicted values, not measured; "
+                    "Best bet = the model expects a high value, New ground = tries a recipe the model is unsure about):\n"
+                    + "\n".join(rows))
             out.append(_chunk("analysis", "proposals", cid, "Proposed recipes", text[:MAX_CHUNK_CHARS * 3]))
 
-    if refusal and refusal.get("code"):
-        from kalos.assist.why import why_for
-
-        code = str(refusal["code"])
-        text = f"The last sheet for campaign {name!r} was not analysed (reason code {code}). {why_for(code)}"
-        out.append(_chunk("analysis", "refusal", cid, "Last refusal", text))
+    refusal_chunk = _refusal_chunk(cid, name, a, refusal)
+    if refusal_chunk is not None:
+        out.append(refusal_chunk)
+    if state and target:
+        out.extend(_best_and_delta_chunks(cid, name, state, a, str(target)))
 
     if state:
         rounds: dict[int, list[dict[str, Any]]] = {}
@@ -274,6 +288,108 @@ def campaign_chunks(
                 text = (f"After round number {h.get('round')} of campaign {name!r}: best measured {target} "
                         f"{_fmt(h['best'])} across {h.get('n_base')} runs.")
                 out.append(_chunk("round", str(h.get("round")), cid, "Best so far", text))
+    return out
+
+
+def _verdict_chunk(cid: str, name: str, a: dict[str, Any]) -> Chunk | None:
+    """`analysis:verdict`: the model's reliability state in plain words, the
+    reasons (the guide's own sentences) and the glossary why-line."""
+    from kalos.assist.guide import _gate_blockers, _trusted
+    from kalos.assist.why import WHY
+
+    trusted = _trusted(a)
+    if trusted is None:
+        return None
+    if trusted:
+        state, why, reasons = "Reliable", WHY["reliable"], []
+    else:
+        blockers = _gate_blockers(a)
+        unmeasured = all(b["why"] == WHY["unmeasured"] for b in blockers)
+        state = "Not enough runs to tell" if unmeasured else "Not yet reliable"
+        why = WHY["insufficient" if unmeasured else "not-yet"]
+        reasons = [f"{b['text']} (check {b['code']})" for b in blockers]
+    text = f"Model verdict for campaign {name!r}: {state}."
+    if reasons:
+        text += " Reasons: " + " ".join(reasons)
+    text += f" Why this matters: {why}"
+    return _chunk("analysis", "verdict", cid, "Model verdict", text)
+
+
+def _refusal_chunk(
+    cid: str, name: str, a: dict[str, Any], refusal: dict[str, Any] | None,
+) -> Chunk | None:
+    """`analysis:refusal`: why there are no recipes to run: the last refusal
+    (with its code), or a published analysis that proposed nothing."""
+    from kalos.assist.why import why_for
+
+    if refusal and refusal.get("code"):
+        code = str(refusal["code"])
+        text = (f"The last sheet for campaign {name!r} was not read into a model (reason code {code}). "
+                f"Why this matters: {why_for(code)}")
+        return _chunk("analysis", "refusal", cid, "Why there are no recipes", text)
+    if a and not (a.get("proposals") or []):
+        notice = a.get("proposal_notice") if isinstance(a.get("proposal_notice"), dict) else {}
+        code = str((notice or {}).get("code") or "empty_batch")
+        text = (f"The last analysis of campaign {name!r} proposed no recipes (code {code}). "
+                f"Why this matters: {why_for(code)}")
+        return _chunk("analysis", "refusal", cid, "Why there are no recipes", text)
+    return None
+
+
+def _num(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if math.isfinite(float(value)) else None
+    try:
+        out = float(str(value))
+    except (TypeError, ValueError):
+        return None
+    return out if math.isfinite(out) else None
+
+
+def _best_and_delta_chunks(
+    cid: str, name: str, state: dict[str, Any], a: dict[str, Any], target: str,
+) -> list[Chunk]:
+    """`analysis:best_run` (best measured run so far, with its settings) and
+    `analysis:round_delta` (what changed since the round before)."""
+    out: list[Chunk] = []
+    features = [str(f) for f in state.get("features") or []]
+    candidates: list[tuple[float, str, dict[str, Any]]] = []
+    for row in state.get("base_rows") or []:
+        if isinstance(row, dict) and _num(row.get(target)) is not None:
+            candidates.append((float(_num(row.get(target)) or 0.0), "from the run sheet or an earlier round",
+                               {k: row.get(k) for k in features if k in row}))
+    for run in state.get("pending") or []:
+        if isinstance(run, dict) and _num(run.get("result")) is not None:
+            r = run.get("round")
+            where = f"run {run.get('id')}" + (f", round number {r}" if isinstance(r, int) else "")
+            candidates.append((float(_num(run.get("result")) or 0.0), where, dict(run.get("recipe") or {})))
+    if candidates:
+        value, where, recipe = max(candidates, key=lambda c: c[0])
+        text = (f"Best measured run so far in campaign {name!r}: Measured {target} {_fmt(value)} ({where}). "
+                f"Its settings: {_recipe_text(recipe)}.")
+        out.append(_chunk("analysis", "best_run", cid, "Best measured run", text))
+
+    history = [h for h in state.get("history") or [] if isinstance(h, dict)]
+    lines: list[str] = []
+    if len(history) >= 2:
+        before, after = history[-2], history[-1]
+        lines.append(
+            f"After round number {after.get('round')}: best Measured {target} {_fmt(after.get('best'))}, "
+            f"before it {_fmt(before.get('best'))} (Measured); runs the model learns from went from "
+            f"{before.get('n_base')} to {after.get('n_base')}."
+        )
+    elif history:
+        lines.append(f"No round has been added to the model yet; best Measured {target} so far "
+                     f"{_fmt(history[-1].get('best'))} across {history[-1].get('n_base')} runs.")
+    for run in state.get("pending") or []:
+        if isinstance(run, dict) and _num(run.get("result")) is not None and _num(run.get("pred")) is not None:
+            lines.append(f"Run {run.get('id')}: Predicted {target} {_fmt(run.get('pred'))}, "
+                         f"Measured {_fmt(run.get('result'))}.")
+    if lines:
+        text = f"What changed in campaign {name!r}:\n" + "\n".join(lines)
+        out.append(_chunk("analysis", "round_delta", cid, "What changed since the last round", text))
     return out
 
 
