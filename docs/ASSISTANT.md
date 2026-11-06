@@ -40,7 +40,7 @@ The **next step** and **SOP drafts** use no model, so they work on any engine.
 | `anthropic` | The Anthropic API. The question and the retrieved pieces of your data are **sent off the machine** to Anthropic. Needs `ANTHROPIC_API_KEY`. |
 | `none` | No model. Ask and revise answer 404 with code `assist_disabled`. The next step, the index and SOP drafts keep working. |
 
-Unset means `ollama` in desktop mode (`KALOS_DESKTOP=1`) and `anthropic` otherwise.
+Unset means `ollama` in desktop mode (`KALOS_DESKTOP=1`) and `none` everywhere else. Data goes to Anthropic only when someone sets `anthropic` on purpose.
 
 Only the question, the pieces of your data that were found for it (at most six), and the next step are sent to the model. Never the whole sheet, never another tenant's data.
 
@@ -48,7 +48,7 @@ If you point `KALOS_OLLAMA_URL` at another computer, your data goes to that comp
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `KALOS_LLM_PROVIDER` | see above | `ollama`, `anthropic` or `none` |
+| `KALOS_LLM_PROVIDER` | `ollama` in desktop mode, else `none` | `ollama`, `anthropic` or `none` |
 | `KALOS_OLLAMA_URL` | `http://localhost:11434` | where Ollama listens |
 | `KALOS_OLLAMA_MODEL` | `llama3.1` | the Ollama model to use |
 | `KALOS_OLLAMA_TIMEOUT_S` | `120` | how long to wait for an answer |

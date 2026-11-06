@@ -6,8 +6,9 @@
     `normalize` extra). Retrieved chunks are sent off the machine.
   - `none`: no model. `/api/assist/ask` and SOP revise answer 404; the guide,
     the index and SOP drafts keep working.
-Unset means `ollama` in desktop mode (`KALOS_DESKTOP=1`) and `anthropic`
-otherwise, the same default `kalos.normalize` has always had.
+Unset means `ollama` in desktop mode (`KALOS_DESKTOP=1`) and `none`
+otherwise: the assistant sends data off the machine only when someone set
+`anthropic` on purpose. (`kalos.normalize` keeps its own `anthropic` default.)
 
 A model here only ever receives retrieved chunks and the guide step, and its
 reply is checked before anyone sees it (`kalos.assist.chat`, `.sop`).
@@ -57,7 +58,7 @@ class ChatModel(Protocol):
 def assist_provider() -> AssistProvider:
     """The provider the assistant uses right now. A bad value raises ConfigError."""
     desktop = (os.environ.get("KALOS_DESKTOP") or "").strip().lower() in {"1", "true", "yes", "on"}
-    default: AssistProvider = "ollama" if desktop else "anthropic"
+    default: AssistProvider = "ollama" if desktop else "none"
     return env_enum("KALOS_LLM_PROVIDER", _PROVIDERS, default)  # type: ignore[return-value]
 
 

@@ -192,6 +192,7 @@ These controls exist today (`kalos/portal/auth.py`, `config.py`, `uploads.py`, `
 - Upload caps: `KALOS_MAX_UPLOAD_MB` (default 25), 100,000 CSV rows, 512 columns, 2,000,000 xlsx cells, 2,000 GP fit rows.
 - Loopback guard: `python -m kalos.portal` binds 127.0.0.1. It refuses to serve unauthenticated on another interface. A middleware also refuses non-loopback peers while auth is not enforced. The exception is when `KALOS_ALLOW_OPEN_ACCESS` is set.
 - CORS uses an explicit allowlist when `KALOS_CORS_ORIGINS` is set. Otherwise, the default allows localhost only.
+- Assistant (`/api/assist/*`, docs/ASSISTANT.md): questions and SOP revisions need a model, chosen with `KALOS_LLM_PROVIDER`. Unset means `ollama` (local) in desktop mode and `none` (off) everywhere else; `anthropic` sends the question and the matching pieces of your data off the machine and is used only when set explicitly. The next-step guide and SOP drafts use no model.
 - The anonymizer for uploads is opt-in (`anonymize=true`).
 
 These controls are missing or limited:

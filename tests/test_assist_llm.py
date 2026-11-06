@@ -20,8 +20,11 @@ def _clean(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
 
-def test_unset_is_anthropic_outside_desktop_and_ollama_in_desktop(monkeypatch):
-    assert assist_provider() == "anthropic"
+def test_unset_is_none_outside_desktop_and_ollama_in_desktop(monkeypatch):
+    """sec-assist (e): nothing leaves the machine unless anthropic is set on purpose."""
+    assert assist_provider() == "none"
+    assert get_chat_model() is None
+    assert model_info()["provider"] == "none"
     monkeypatch.setenv("KALOS_DESKTOP", "1")
     assert assist_provider() == "ollama"
     assert isinstance(get_chat_model(), OllamaChat)
