@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from kalos.integrations.benchling.client import BenchlingClient, BenchlingError, api_id
+from kalos.integrations.benchling.pull import FORMULA_START
 
 V2 = "/api/v2"
 V3 = "/api/v3"
@@ -91,7 +92,12 @@ def _typed(value: Any) -> dict[str, Any] | None:
             return None
         return {"value": {"type": "ft_float", "floatValue": f, "value": repr(f)}}
     if isinstance(value, str) and value.strip():
-        return {"value": {"type": "ft_string", "value": value.strip()}}
+        text = value.strip()
+        # Undo the import's spreadsheet-formula guard (pull.csv_safe) so Benchling
+        # gets its own level back.
+        if len(text) > 1 and text[0] == "'" and text[1] in FORMULA_START:
+            text = text[1:]
+        return {"value": {"type": "ft_string", "value": text}}
     return None
 
 

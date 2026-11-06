@@ -139,9 +139,9 @@ class RunSheet:
     def to_csv(self) -> bytes:
         buf = io.StringIO()
         writer = csv.writer(buf, lineterminator="\n")
-        writer.writerow(self.columns)
+        writer.writerow([csv_safe(c) for c in self.columns])
         for row in self.rows:
-            writer.writerow([_cell(row.get(c)) for c in self.columns])
+            writer.writerow([csv_safe(_cell(row.get(c))) for c in self.columns])
         return buf.getvalue().encode("utf-8")
 
     def provenance_table(self) -> list[dict[str, Any]]:
@@ -158,6 +158,7 @@ class RunSheet:
 
 
 def _cell(value: Any) -> str:
+    """Floats as repr (exact round trip); text as is (csv_safe is applied by the caller)."""
     if value is None:
         return ""
     if isinstance(value, float):
@@ -165,10 +166,28 @@ def _cell(value: Any) -> str:
     return str(value)
 
 
+# A cell or header that a spreadsheet would run as a formula (CSV injection):
+# text starting with one of these, unless it is a plain number like -2.5 or +1.
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+_PLAIN_NUMBER = re.compile(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+
+
+def csv_safe(text: str) -> str:
+    """Prefix `'` to text a spreadsheet would treat as a formula. Idempotent
+    (the result starts with `'`). Numbers written as text are left alone."""
+    if text and text[0] in FORMULA_START and _PLAIN_NUMBER.fullmatch(text) is None:
+        return "'" + text
+    return text
+
+
 def _clean_name(name: Any, fallback: str) -> str:
     text = name if isinstance(name, str) else ""
     text = "".join(ch for ch in text if unicodedata.category(ch)[0] != "C").strip()
-    return (text or fallback)[:MAX_NAME_CHARS]
+    return csv_safe((text or fallback)[:MAX_NAME_CHARS])
+
+
+def _safe_value(value: Any) -> Any:
+    return csv_safe(value) if isinstance(value, str) else value
 
 
 def _unique(name: str, taken: set[str]) -> str:
@@ -528,7 +547,7 @@ def map_study(data: StudyData, *, target_field_id: str) -> RunSheet:
                 conflict = True
                 break
             if vals:
-                row[col] = vals[0]
+                row[col] = _safe_value(vals[0])
                 counts[col] += 1
         if conflict:
             report.skip("conflicting_values_for_one_parameter", key)
@@ -674,7 +693,7 @@ def map_assay(data: AssayData, *, target_field: str) -> RunSheet:
             f = (run.get("fields") or {}).get(key) or {}
             value = parameter_value(f.get("textValue") if f.get("type") == "dropdown" else f.get("value"))
             if value is not None:
-                row[col] = value
+                row[col] = _safe_value(value)
                 counts[col] += 1
         if len(row) == 2:
             report.skip("no_parameter_values", rid)

@@ -198,3 +198,46 @@ def test_v2_target_missing_is_refused():
         data = fetch_assay(c, RUN_SCHEMA, "assaysch_v2res001")
     with pytest.raises(ImportRefused):
         map_assay(data, target_field="nope")
+
+
+# --- review fix: spreadsheet formula injection ------------------------------------------------- #
+
+
+@pytest.mark.parametrize("text, want", [
+    ("=HYPERLINK(\"http://x\")", "'=HYPERLINK(\"http://x\")"), ("+cmd", "'+cmd"), ("-abc", "'-abc"),
+    ("@SUM(A1)", "'@SUM(A1)"), ("\tx", "'\tx"), ("\rx", "'\rx"), ("-2.5", "-2.5"), ("+1", "+1"),
+    ("1e-3", "1e-3"), ("CD-CHO", "CD-CHO"), ("'=x", "'=x"), ("", ""),
+])
+def test_csv_safe(text, want):
+    from kalos.integrations.benchling.pull import csv_safe
+
+    assert csv_safe(text) == want
+
+
+def test_formula_text_in_headers_and_cells_is_neutralized():
+    fake = bioprocess_study(FakeBenchling(), n_runs=1, conditions_per_run=2, replicates=1)
+    for v in fake.param_versions:
+        if v["name"] == "Medium":
+            v["name"] = "=HYPERLINK(\"http://evil\",\"x\")"
+    evil = ["=cmd|' /C calc'!A0", "@SUM(1+1)"]
+    media = [p for p in fake.planned if p["parameterVersion"]["id"] == "schver_media001"]
+    for p, level in zip(media, evil):
+        p["value"] = {"type": "ft_string", "value": level}
+    sheet = _sheet(fake)
+    raw = sheet.to_csv().decode()
+    header = next(csv.reader(io.StringIO(raw)))
+    assert "'=HYPERLINK(\"http://evil\",\"x\")" in header
+    cells = [c for row in csv.reader(io.StringIO(raw)) for c in row]
+    assert not any(c[:1] in ("=", "+", "@", "\t", "\r") for c in cells)
+    assert not any(c.startswith("-") and not c[1:2].isdigit() for c in cells)
+    assert {"'=cmd|' /C calc'!A0", "'@SUM(1+1)"} <= set(cells)
+    # rows and provenance hold the same text the CSV has
+    col = next(p.column for p in sheet.provenance if p.benchling_id == "schver_media001")
+    assert col.startswith("'=") and {r[col] for r in sheet.rows} == {"'=cmd|' /C calc'!A0", "'@SUM(1+1)"}
+
+
+def test_pushed_levels_get_the_original_text_back():
+    from kalos.integrations.benchling.push import _typed
+
+    assert _typed("'=cmd")["value"]["value"] == "=cmd"
+    assert _typed("'quoted")["value"]["value"] == "'quoted"
