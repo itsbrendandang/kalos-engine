@@ -51,6 +51,8 @@ from kalos.integrations.benchling.store import IntegrationStore
 JWKS_URL = "https://apps.benchling.com/api/v1/apps/{app_definition_id}/jwks"
 JWKS_MAX_AGE_S = 6 * 3600.0
 JWKS_REFRESH_MIN_INTERVAL_S = 60.0
+JWKS_FAILURE_BACKOFF_S = 60.0
+JWKS_FAILURE_BACKOFF_MAX_S = 3600.0
 TIMESTAMP_TOLERANCE_S = 300.0
 MAX_WEBHOOK_BYTES = 1024 * 1024
 HANDLED_EVENTS = frozenset({"v2.assayRun.created", "v3.run.created"})
@@ -99,28 +101,56 @@ def fetch_jwks(app_definition_id: str, *, transport: httpx.BaseTransport | None 
 
 
 class JwksCache:
-    """Keys per app definition, refetched after JWKS_MAX_AGE_S, or early (at most
-    once a minute) when no cached key verifies a delivery (rotation)."""
+    """Keys per app definition.
+
+    - Refetched after JWKS_MAX_AGE_S, or early (at most once a minute) when no
+      cached key verifies a delivery (rotation).
+    - One fetch at a time per app definition: concurrent callers wait for it and
+      use its result.
+    - A failed fetch is remembered with a backoff (1 min, doubling to 1 h). Until
+      the backoff ends no new fetch is made: stale keys are used if there are any,
+      otherwise the delivery is rejected. So unauthenticated requests cannot make
+      Kalos hammer the key endpoint."""
 
     def __init__(self, fetch: Callable[[str], Mapping[str, Any]] = fetch_jwks, *,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self._fetch = fetch
         self._clock = clock
         self._cache: dict[str, tuple[float, list[ec.EllipticCurvePublicKey]]] = {}
+        self._failures: dict[str, tuple[float, int]] = {}
+        self._app_locks: dict[str, threading.Lock] = {}
         self._lock = threading.Lock()
 
-    def keys(self, app_definition_id: str, *, force: bool = False) -> list[ec.EllipticCurvePublicKey]:
-        now = self._clock()
+    def _app_lock(self, app_definition_id: str) -> threading.Lock:
         with self._lock:
+            return self._app_locks.setdefault(app_definition_id, threading.Lock())
+
+    def keys(self, app_definition_id: str, *, force: bool = False) -> list[ec.EllipticCurvePublicKey]:
+        with self._app_lock(app_definition_id):
+            now = self._clock()
             hit = self._cache.get(app_definition_id)
             fresh = hit is not None and now - hit[0] < JWKS_MAX_AGE_S
             recent = hit is not None and now - hit[0] < JWKS_REFRESH_MIN_INTERVAL_S
             if hit is not None and ((fresh and not force) or (force and recent)):
                 return hit[1]
-        keys = public_keys(self._fetch(app_definition_id))
-        with self._lock:
+            failed = self._failures.get(app_definition_id)
+            if failed is not None and now < failed[0] + min(JWKS_FAILURE_BACKOFF_S * 2 ** (failed[1] - 1),
+                                                            JWKS_FAILURE_BACKOFF_MAX_S):
+                if hit is not None:
+                    return hit[1]
+                raise WebhookRejected("key fetch is backing off after a failure")
+            try:
+                keys = public_keys(self._fetch(app_definition_id))
+            except Exception as exc:  # noqa: BLE001 - any fetch failure backs off the same way
+                self._failures[app_definition_id] = (now, (failed[1] + 1) if failed else 1)
+                if hit is not None:
+                    return hit[1]
+                if isinstance(exc, WebhookRejected):
+                    raise
+                raise WebhookRejected(f"key fetch failed ({type(exc).__name__})") from None
+            self._failures.pop(app_definition_id, None)
             self._cache[app_definition_id] = (now, keys)
-        return keys
+            return keys
 
 
 # --- verification ------------------------------------------------------------------- #
@@ -144,12 +174,18 @@ def _signatures(header: str) -> list[tuple[str, bytes]]:
     return out
 
 
-def verify_webhook(
-    headers: Mapping[str, str], body: bytes, keys: list[ec.EllipticCurvePublicKey], *,
-    now: float | None = None,
-) -> str:
-    """Check timestamp and signature. Returns the webhook id. Raises
-    WebhookRejected. `headers` keys are matched case-insensitively."""
+@dataclass(frozen=True)
+class SignedDelivery:
+    """The parsed signature headers of one delivery (timestamp already checked)."""
+
+    webhook_id: str
+    timestamp: str
+    signatures: list[bytes]
+
+
+def check_headers(headers: Mapping[str, str], *, now: float | None = None) -> SignedDelivery:
+    """Presence, size and timestamp checks. Cheap and key-free: run it BEFORE any
+    key is fetched. `headers` keys are matched case-insensitively."""
     h = {k.lower(): v for k, v in headers.items()}
     wid, ts, sig = h.get("webhook-id"), h.get("webhook-timestamp"), h.get("webhook-signature")
     if not wid or not ts or not sig:
@@ -163,15 +199,34 @@ def verify_webhook(
     current = time.time() if now is None else now
     if abs(current - sent) > TIMESTAMP_TOLERANCE_S:
         raise WebhookRejected("timestamp outside tolerance")
-    signed = f"{wid}.{ts}.".encode() + body
-    for _kind, der in _signatures(sig):
+    sigs = [der for _kind, der in _signatures(sig)]
+    if not sigs:
+        raise WebhookRejected("no usable signature")
+    return SignedDelivery(wid, ts, sigs)
+
+
+def signature_matches(delivery: SignedDelivery, body: bytes, keys: list[ec.EllipticCurvePublicKey]) -> bool:
+    signed = f"{delivery.webhook_id}.{delivery.timestamp}.".encode() + body
+    for der in delivery.signatures:
         for key in keys:
             try:
                 key.verify(der, signed, ec.ECDSA(hashes.SHA256()))
-                return wid
+                return True
             except InvalidSignature:
                 continue
-    raise WebhookRejected("no signature verified")
+    return False
+
+
+def verify_webhook(
+    headers: Mapping[str, str], body: bytes, keys: list[ec.EllipticCurvePublicKey], *,
+    now: float | None = None,
+) -> str:
+    """Check timestamp and signature. Returns the webhook id. Raises
+    WebhookRejected."""
+    delivery = check_headers(headers, now=now)
+    if not signature_matches(delivery, body, keys):
+        raise WebhookRejected("no signature verified")
+    return delivery.webhook_id
 
 
 @dataclass
@@ -196,11 +251,13 @@ def handle_webhook(
         api_id(app_def)
     except BenchlingConfigError:
         raise WebhookRejected("stored app definition id is malformed") from None
-    try:
-        wid = verify_webhook(headers, body, jwks.keys(app_def), now=now)
-    except WebhookRejected:
-        # One early refetch covers a key rotated since the cache was filled.
-        wid = verify_webhook(headers, body, jwks.keys(app_def, force=True), now=now)
+    # Headers and timestamp first: a delivery that fails them never causes a key fetch.
+    delivery = check_headers(headers, now=now)
+    if not signature_matches(delivery, body, jwks.keys(app_def)) and not signature_matches(
+        delivery, body, jwks.keys(app_def, force=True),  # one early refetch covers a rotated key
+    ):
+        raise WebhookRejected("no signature verified")
+    wid = delivery.webhook_id
     try:
         payload = json.loads(body)
     except ValueError:

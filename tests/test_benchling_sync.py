@@ -210,3 +210,87 @@ def test_polling_records_each_modified_run_once(tmp_path):
     polls = [c for c in fake.calls if c.path == "/api/v3/procedure-run/items"]
     assert "modifiedAt.gte" not in polls[0].params and polls[1].params["modifiedAt.gte"].startswith("2026-10-01")
     assert all(c.params["sort"] == "modifiedAt:asc" for c in polls)
+
+
+# --- review fixes: no key fetch before cheap checks; fetch backoff; one fetch at a time ---------- #
+
+
+def _counting(jwk: dict | None = None, *, fail: bool = False, delay: float = 0.0):
+    calls: list[str] = []
+
+    def fetch(app):
+        calls.append(app)
+        if delay:
+            time.sleep(delay)
+        if fail:
+            raise RuntimeError("network down")
+        return {"keys": [jwk]}
+
+    return calls, fetch
+
+
+@pytest.mark.parametrize("bad", ["missing", "old", "garbage_sig"])
+def test_bad_headers_never_fetch_keys(tmp_path, bad):
+    key, jwk = make_key()
+    calls, fetch = _counting(jwk)
+    store = IntegrationStore(tmp_path)
+    body = payload()
+    headers = sign(key, body)
+    if bad == "missing":
+        headers.pop("webhook-id")
+    elif bad == "old":
+        headers = sign(key, body, ts=time.time() - 3600)
+    else:
+        headers["webhook-signature"] = "junk"
+    with pytest.raises(WebhookRejected):
+        handle_webhook(store, tenant="acme", connection=_conn(), headers=headers, body=body, jwks=JwksCache(fetch))
+    assert calls == []
+
+
+def test_failed_key_fetch_backs_off():
+    clock = {"t": 0.0}
+    calls, fetch = _counting(fail=True)
+    jwks = JwksCache(fetch, clock=lambda: clock["t"])
+    for _ in range(5):
+        with pytest.raises(WebhookRejected):
+            jwks.keys(APP_DEF)
+    assert len(calls) == 1
+    clock["t"] = 61.0
+    with pytest.raises(WebhookRejected):
+        jwks.keys(APP_DEF)
+    assert len(calls) == 2
+    clock["t"] = 61.0 + 100.0  # second failure backs off 120 s
+    with pytest.raises(WebhookRejected):
+        jwks.keys(APP_DEF)
+    assert len(calls) == 2
+
+
+def test_stale_keys_are_used_while_a_refetch_backs_off():
+    _key, jwk = make_key()
+    clock = {"t": 0.0}
+    state = {"fail": False}
+
+    def fetch(_app):
+        if state["fail"]:
+            raise RuntimeError("down")
+        return {"keys": [jwk]}
+
+    jwks = JwksCache(fetch, clock=lambda: clock["t"])
+    assert len(jwks.keys(APP_DEF)) == 1
+    state["fail"] = True
+    clock["t"] = 7 * 3600.0
+    assert len(jwks.keys(APP_DEF)) == 1  # stale but usable
+
+
+def test_one_fetch_at_a_time_per_app():
+    import threading
+
+    _, jwk = make_key()
+    calls, fetch = _counting(jwk, delay=0.2)
+    jwks = JwksCache(fetch)
+    threads = [threading.Thread(target=jwks.keys, args=(APP_DEF,)) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(calls) == 1
