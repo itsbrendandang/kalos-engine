@@ -6,29 +6,28 @@
 > The optimizer is **not scientifically validated**. See [Scientific methodology](#scientific-methodology-and-benchmark-limitations).
 > Nothing here claims enterprise readiness, regulatory compliance, or security certification.
 
+## Contents
+
+- [Overview](#overview) · [Related repositories](#related-repositories) · [Target users](#target-users-and-use-cases)
+- [Capabilities](#capabilities) · [Architecture](#architecture)
+- [Local development](#local-development) · [API](#api) · [Security model](#security-model)
+- [Scientific methodology](#scientific-methodology-and-benchmark-limitations) · [Benchmark vs other optimizers](#benchmark-vs-other-optimizers)
+- [Limitations](#current-limitations) · [Roadmap](#roadmap) · [Deploy](#deploy-and-operate)
+- [Data policy](#data-policy) · [Stack & cost](#stack-and-cost) · [Repository layout](#repository-layout) · [Contributing](#contributing)
+
 ## Overview
 
-Kalos proposes the next batch of experiments for a bioprocess campaign. A campaign runs in rounds. Each round has three steps: propose, measure, and re-propose.
+Kalos proposes the next batch of experiments for a bioprocess campaign. A campaign runs in rounds of three steps — **propose, measure, re-propose** — and Kalos drives the propose step.
 
-You give Kalos a run sheet of past runs. The run sheet is a CSV, TSV, or Excel file. You also name a target column, such as titer or yield.
+**What you give it.** A run sheet of past runs (CSV, TSV, or Excel) and the name of a target column, such as titer or yield.
 
-Kalos checks the data. Then it runs Bayesian optimization (BO). BO fits a model to past results. It uses that model to choose the next experiments.
+**What it does.** Kalos checks the data, then runs Bayesian optimization (BO): it fits a *surrogate model* — a fast statistical approximation of the process — as a Gaussian process (GP) using BoTorch (a PyTorch library for BO). The GP also reports *uncertainty* (how far a prediction may be wrong). An *acquisition function* scores each candidate experiment, and Kalos uses those scores to choose the batch.
 
-That model is a surrogate model. It is a fast statistical approximation of the process. Kalos fits it as a Gaussian process (GP), using BoTorch. BoTorch is a PyTorch library for BO.
+**What you get back.** A proposed batch of recipes, plus the diagnostics you need to judge how far to trust it. You run the experiments, log the measured results, and ask for the next batch.
 
-A GP also reports uncertainty. Uncertainty is the model's estimate of how far a prediction may be wrong.
+**Scale-up readout (separate feature).** Predicts performance at a larger scale, and *refuses to predict* when its backtest — a check of past predictions against known results — does not support it.
 
-An acquisition function scores each candidate experiment. Kalos uses these scores to choose the batch.
-
-Kalos returns a proposed batch of recipes. It also returns the diagnostics that you need to judge how far to trust the batch.
-
-You run the experiments. You log the measured results. Then you ask for the next batch.
-
-The scale-up readout is a separate feature. It predicts performance at a larger scale. It refuses to predict when its backtest does not support the prediction. A backtest checks past predictions against known results.
-
-This repository is the engine. The engine is a FastAPI service. It has no built-in user interface (UI).
-
-The workbench UI is in the separate [kalos-web](https://github.com/itsbrendandang/kalos-web) repository.
+This repository is the engine: a **FastAPI service with no built-in UI**. The scientist-facing workbench is the separate [kalos-web](https://github.com/itsbrendandang/kalos-web) repository.
 
 ## Related repositories
 
