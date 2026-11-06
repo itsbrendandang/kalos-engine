@@ -115,8 +115,9 @@ Poll it with the bearer token. 401 without it.
 - 503: `status` `unavailable` with `code` `store_unavailable` or
   `schema_mismatch` and a plain `error`. The exception itself is only logged.
 - Versions are read from package metadata; the route never imports torch.
-- Outside desktop mode `state_dir`, `pid` and `analysis_in_flight` are only
-  returned to a token with the `admin` scope.
+- Outside desktop mode `state_dir`, `pid`, `analysis_in_flight` and the
+  library versions (`python_version`, `torch_version`, `botorch_version`) are
+  only returned to a token with the `admin` scope.
 
 `/healthz` (no token, `{"status": "ok"}`) is unchanged and stays a bare
 liveness ping.

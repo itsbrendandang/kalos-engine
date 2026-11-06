@@ -550,6 +550,14 @@ async def healthz() -> dict:
     return {"status": "ok"}
 
 
+# Host facts and library versions: outside desktop mode only an admin token sees
+# them (a version list tells a caller which advisories apply).
+_HEALTH_ADMIN_ONLY = (
+    "state_dir", "pid", "analysis_in_flight", "python_version", "torch_version",
+    "botorch_version",
+)
+
+
 @app.get("/api/health")
 def health(
     principal: Principal = Depends(require_scope(READ)),
@@ -603,7 +611,7 @@ def health(
     except Exception:  # noqa: BLE001 - reported as unavailable, never as a 500
         log.exception("health check: campaign store unavailable")
         if not (_DESKTOP or principal.has(ADMIN)):
-            for key in ("state_dir", "pid", "analysis_in_flight"):
+            for key in _HEALTH_ADMIN_ONLY:
                 body.pop(key, None)
         return JSONResponse(
             {**body, "status": "unavailable", "code": "store_unavailable",
@@ -611,7 +619,7 @@ def health(
             status_code=503,
         )
     if not (_DESKTOP or principal.has(ADMIN)):
-        for key in ("state_dir", "pid", "analysis_in_flight"):
+        for key in _HEALTH_ADMIN_ONLY:
             body.pop(key, None)
     if body["schema_version"] != SCHEMA_VERSION:
         return JSONResponse(

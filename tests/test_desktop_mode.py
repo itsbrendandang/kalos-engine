@@ -400,9 +400,12 @@ def desktop_app(monkeypatch):
 def test_health_hides_host_facts_from_a_tenant_token_in_server_mode(client):
     body = client.get("/api/health", headers={"Authorization": "Bearer desk-secret"}).json()
     assert body["status"] == "ok" and body["mode"] == "server"
-    assert not {"state_dir", "pid", "analysis_in_flight"} & set(body)
+    private = {"state_dir", "pid", "analysis_in_flight", "python_version", "torch_version",
+               "botorch_version"}
+    assert not private & set(body)
+    assert {"engine_version", "contract_version"} <= set(body)
     admin = client.get("/api/health", headers={"Authorization": "Bearer admin-secret"}).json()
-    assert {"state_dir", "pid", "analysis_in_flight"} <= set(admin)
+    assert private <= set(admin)
 
 
 def test_health_reports_versions_state_and_schema(client, tmp_path, desktop_app):
