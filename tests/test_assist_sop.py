@@ -535,3 +535,40 @@ def test_markdown_uses_only_the_agreed_constructs(env, template):
             continue
         assert not line.startswith((" ", "\t")), f"nested or indented line: {line!r}"
         assert re.match(r"(#{1,3} |> |[-*] |\d+\. |\|)", line) or line[0].isalnum() or line[0] in "[`*", line
+
+
+# --- security review sec-assist: BLOCKER ------------------------------------------- #
+
+
+def _two_recipe_draft(tmp_path):
+    store = CampaignStore(tmp_path)
+    cid = store.create_campaign(tenant="acme", name="c", created_by="x")["id"]
+    df = pd.DataFrame({"pH": [6.0, 6.5, 7.0], "Temp": [25, 28, 30], "titer": [1.1, 2.2, 3.3]})
+    store.seed(df, "titer", ["pH", "Temp"], tenant="acme", campaign_id=cid,
+               analysis={"target": "titer", "proposals": [
+                   {"recipe": {"pH": 6.0, "Temp": 30}, "pred": 3.1, "std": 0.4},
+                   {"recipe": {"pH": 7.0, "Temp": 25}, "pred": 2.9, "std": 0.5}]})
+    return sop.draft(store, "acme", cid, {"proposal_index": [0, 1]}, "batch_recipe", None, "alice")
+
+
+def test_revise_cannot_swap_values_between_recipes_in_prose(tmp_path):
+    d = _two_recipe_draft(tmp_path)
+    md = d.markdown
+    a, b = "Recipe A: pH 6.0; Temp 30", "Recipe B: pH 7.0; Temp 25"
+    assert a in md and b in md
+    swapped = md.replace(a, "\x00").replace(b, a).replace("\x00", b)
+    assert swapped != md
+    reasons = sop.check_revision(d, swapped)
+    assert any("record values" in r for r in reasons), reasons
+
+
+def test_revise_cannot_reword_predicted_into_measured(tmp_path):
+    d = _two_recipe_draft(tmp_path)
+    md = d.markdown
+    line = "Predicted values are the model's estimate at the time of the analysis, not a measurement."
+    assert line in md
+    reworded = md.replace(line, "These values were measured in the lab.")
+    assert sop.check_revision(d, reworded)
+    assert sop.check_revision(d, md.replace(line, "")), "dropping the line is refused too"
+    # prose lines without values or Predicted/Measured wording stay editable
+    assert sop.check_revision(d, md.replace("It is a starting point", "Treat it as a starting point")) == []

@@ -660,10 +660,44 @@ def _strip_fence(text: str) -> str:
     return t.strip("\n") + "\n"
 
 
+_LABEL_WORDS = re.compile(r"\b(predicted|measured|measurement|measure)\b", re.IGNORECASE)
+
+
+def _value_re(value: str) -> re.Pattern[str]:
+    return re.compile(r"(?<![\w.])" + re.escape(value) + r"(?![\w])")
+
+
+def locked_lines(draft: Draft) -> Counter[str]:
+    """Lines a revision must keep exactly, with their counts: the header, every
+    table row, every line holding a record or filled value (so values can never
+    move between recipes, e.g. a procedure sentence listing each recipe's
+    settings), and every line using Predicted/Measured wording (so a predicted
+    value can never be reworded into a measured one)."""
+    values = [str(e["value"]) for e in draft.fields_from_record] + [str(e["value"]) for e in draft.filled]
+    patterns = [_value_re(v) for v in values if v.strip()]
+    lines = draft.markdown.splitlines()
+    locked: Counter[str] = Counter()
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if (
+            i == 0 or line.startswith("|") or _LABEL_WORDS.search(line)
+            or any(p.search(line) for p in patterns)
+        ):
+            locked[line] += 1
+    return locked
+
+
 def check_revision(previous: Draft, revised: str) -> list[str]:
     """Why `revised` may not replace `previous.markdown`; empty when it may."""
     reasons: list[str] = []
     old, new = previous.markdown, revised
+    new_lines = Counter(ln for ln in new.splitlines() if ln.strip())
+    changed = [ln for ln, n in locked_lines(previous).items() if new_lines[ln] < n]
+    if changed:
+        reasons.append(
+            f"{len(changed)} line(s) holding record values or Predicted/Measured wording were changed"
+        )
     old_header = old.split("\n", 1)[0]
     new_header = new.split("\n", 1)[0] if new else ""
     if new_header != old_header:
