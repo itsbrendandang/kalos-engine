@@ -199,10 +199,15 @@ def unknown_path(rest: str) -> None:
     raise HTTPException(status_code=404, detail="Not Found")
 
 
+# Auth runs before the 405, so an unauthenticated write gets 401 like every
+# other route (and learns nothing about which paths exist).
+_WRITE_DEPS = [Depends(_require_enabled), Depends(require_scope(READ))]
+
+
 @router.api_route("/api/skills", methods=["POST", "PUT", "PATCH", "DELETE"],
-                  include_in_schema=False, dependencies=[Depends(_require_enabled)])
+                  include_in_schema=False, dependencies=_WRITE_DEPS)
 @router.api_route("/api/skills/{rest:path}", methods=["POST", "PUT", "PATCH", "DELETE"],
-                  include_in_schema=False, dependencies=[Depends(_require_enabled)])
+                  include_in_schema=False, dependencies=_WRITE_DEPS)
 def no_writes(rest: str = "") -> None:
     """Skills are read-only in v1: no create, edit, delete or run route."""
     raise HTTPException(status_code=405, detail="skills are read-only",

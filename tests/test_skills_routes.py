@@ -171,6 +171,16 @@ def test_writes_are_405(client, method, url):
     assert r.headers["allow"] == "GET"
 
 
+@pytest.mark.parametrize("method", ["post", "put", "patch", "delete"])
+def test_unauthenticated_write_is_401_not_405(client, method):
+    r = getattr(client, method)("/api/skills/bo-next-batch")
+    assert r.status_code == 401 and r.json()["code"] == "unauthenticated"
+    r = getattr(client, method)("/api/skills", headers={"Authorization": "Bearer c-none"})
+    assert r.status_code == 403
+    r = getattr(client, method)("/api/skills", headers=A)  # read scope: 405
+    assert r.status_code == 405
+
+
 def test_unknown_get_path_is_404_not_405(client):
     r = client.get("/api/skills/bo-next-batch/nope/deeper", headers=A)
     assert r.status_code == 404
