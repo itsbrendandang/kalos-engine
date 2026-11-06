@@ -24,7 +24,7 @@ def _cache_on(monkeypatch):
 def _stub():
     calls = {"n": 0}
 
-    def analyze(df, target, **kwargs):
+    def analyze(df, target, direction=None, **kwargs):
         calls["n"] += 1
         return {"target": target or "Titer", "d": 2, "seed": 1234, "proposals": [{"x": calls["n"]}]}
 
@@ -56,10 +56,12 @@ def test_returned_results_are_independent_copies():
     {"filename": "a.tsv"},
     {"roles_json": '{"target": "Titer"}'},
     {"anonymize": True},
+    {"direction": "minimize"},
 ])
 def test_any_input_change_refits(change):
     analyze, calls = _stub()
-    base = {"raw": CSV, "target": "Titer", "anonymize": False, "filename": "a.csv", "roles_json": ""}
+    base = {"raw": CSV, "target": "Titer", "anonymize": False, "filename": "a.csv", "roles_json": "",
+            "direction": None}
     pipeline.compute_upload_analysis(**base, analyze=analyze)
     pipeline.compute_upload_analysis(**{**base, **change}, analyze=analyze)
     assert calls["n"] == 2

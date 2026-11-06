@@ -247,8 +247,10 @@ def compute_upload_analysis(
         if roles is not None:
             kwargs["roles"] = roles
         profile_name = profile.name
+        # Every argument the analysis receives is in the key (progress aside).
         cache_key = ANALYSIS_CACHE.key(
             raw, filename, sheet, target, roles_json, bool(anonymize), profile_name,
+            direction or None,
         )
         cached = ANALYSIS_CACHE.get(cache_key, analyze)
         if cached is not None:
