@@ -26,7 +26,9 @@ What it does:
   the spec marks beta (`/api/v3/procedure*`, the result-schema
   field-definitions list, the study authors list). Nowhere else.
 - **Pagination.** `paginate()` follows `nextToken` (v3 `items`, v2 named lists).
-- **Drafts only.** Any `:promote` call is refused before it is sent.
+- **Drafts only.** Writes are allowed by list (run plan, plan conditions, result
+  transaction, blob, entry field); anything else, `:promote` in any spelling
+  included, is refused before it is sent.
 - **Errors.** Every failure is a `BenchlingError` subclass carrying the status and
   Benchling's short title. Tokens and secrets never appear in a message, a repr or a
   log line.
@@ -73,9 +75,25 @@ _BETA_PATHS = (
 )
 
 
-# Kalos writes drafts only. Promoting a run plan starts a run in the lab, which is
-# a human's decision in Benchling, so the client refuses the call outright.
-_REFUSED_ACTIONS = re.compile(r":promote$")
+# Kalos writes drafts only. Writes are allowed BY LIST: the five write paths the
+# connector uses, matched in full with plain ids. Anything else is refused before
+# it is sent, whatever its spelling (`:Promote`, `%3Apromote`, `:promote/`), and
+# so is any other method. Promoting a run plan starts a run in the lab, which is a
+# person's decision in Benchling.
+_ID = r"[A-Za-z0-9_-]{1,128}"
+_ALLOWED_WRITES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("POST", re.compile(r"/api/v3/procedure-run-plan")),
+    ("POST", re.compile(r"/api/v3/procedure-run-plan-condition:batch-create")),
+    ("POST", re.compile(rf"/api/v2/result-transactions(?:/{_ID}/results|/{_ID}:commit|/{_ID}:abort)?")),
+    ("POST", re.compile(r"/api/v2/blobs")),
+    ("PATCH", re.compile(rf"/api/v2/entries/{_ID}")),
+)
+_READ_PATH = re.compile(r"/api/v[23](?:/[A-Za-z0-9_-]+)+")
+
+
+def write_allowed(method: str, path: str) -> bool:
+    """Whether (method, path) is one of the connector's own writes."""
+    return any(m == method and p.fullmatch(path) for m, p in _ALLOWED_WRITES)
 
 
 def is_beta_path(path: str) -> bool:
@@ -586,10 +604,13 @@ class BenchlingClient:
         """Send one call and return the decoded JSON body (None for an empty body).
         `path` starts with `/api/v2/` or `/api/v3/`."""
         method = method.upper()
-        if not path.startswith(("/api/v2/", "/api/v3/")) or "?" in path or ".." in path:
-            raise BenchlingConfigError("path must be an /api/v2 or /api/v3 path without a query")
-        if _REFUSED_ACTIONS.search(path):
+        if "promote" in path.lower():
             raise BenchlingConfigError("Kalos never promotes a run plan; a person does that in Benchling")
+        if method in _IDEMPOTENT:
+            if _READ_PATH.fullmatch(path) is None:
+                raise BenchlingConfigError("path must be a plain /api/v2 or /api/v3 path")
+        elif not write_allowed(method, path):
+            raise BenchlingConfigError("Kalos only makes the writes it documents (drafts and delegated results)")
         headers: dict[str, str] = {}
         if is_beta_path(path):
             headers["EARLY-ACCESS"] = "true"

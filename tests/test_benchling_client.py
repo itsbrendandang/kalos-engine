@@ -410,3 +410,51 @@ def test_paginate_caps_items_and_pages():
         with pytest.raises(BenchlingTooMuchData):
             list(c.paginate("/api/v2/projects", items_key="projects", page_size=10, max_pages=5))
     assert DEFAULT_MAX_PAGES <= 100
+
+
+# --- review fix: writes by allowlist ------------------------------------------------------------ #
+
+
+@pytest.mark.parametrize("method, path", [
+    ("POST", "/api/v3/procedure-run-plan/prp_Xk9mLpQr:promote"),
+    ("POST", "/api/v3/procedure-run-plan/prp_Xk9mLpQr:Promote"),
+    ("POST", "/api/v3/procedure-run-plan/prp_Xk9mLpQr%3Apromote"),
+    ("POST", "/api/v3/procedure-run-plan/prp_Xk9mLpQr%3apromote"),
+    ("POST", "/api/v3/procedure-run-plan/prp_Xk9mLpQr:promote/"),
+    ("POST", "/api/v3/procedure-run-plan/prp_Xk9mLpQr"),
+    ("POST", "/api/v3/procedure-run-plan:batch-create"),
+    ("POST", "/api/v3/procedure-run-plan:bulk-create"),
+    ("POST", "/api/v3/procedure-run-plan-condition"),
+    ("POST", "/api/v3/procedure-run-plan-condition:batch-create/"),
+    ("POST", "/api/v3/result"),
+    ("POST", "/api/v2/assay-results"),
+    ("POST", "/api/v2/assay-results:bulk-create"),
+    ("POST", "/api/v2/entries"),
+    ("POST", "/api/v2/result-transactions/txn_1/results/x"),
+    ("POST", "/api/v2/result-transactions/../projects"),
+    ("POST", "/api/v2/blobs:start-multipart-upload"),
+    ("PATCH", "/api/v3/procedure-run-plan/prp_Xk9mLpQr"),
+    ("PATCH", "/api/v2/entries/etr_1/fields"),
+    ("PATCH", "/api/v2/assay-runs/77af3205"),
+    ("DELETE", "/api/v2/entries/etr_1"),
+    ("PUT", "/api/v2/blobs"),
+    ("GET", "/api/v3/procedure-run-plan/prp_1%3Apromote"),
+    ("GET", "/api/v2/assay-results:bulk-get"),
+])
+def test_only_the_connector_writes_are_sent(method, path):
+    fake = FakeBenchling()
+    with _client(fake) as c, pytest.raises(BenchlingConfigError):
+        c.request(method, path, json={})
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize("method, path", [
+    ("POST", "/api/v3/procedure-run-plan"), ("POST", "/api/v3/procedure-run-plan-condition:batch-create"),
+    ("POST", "/api/v2/result-transactions"), ("POST", "/api/v2/result-transactions/txn_1/results"),
+    ("POST", "/api/v2/result-transactions/txn_1:commit"), ("POST", "/api/v2/result-transactions/txn_1:abort"),
+    ("POST", "/api/v2/blobs"), ("PATCH", "/api/v2/entries/etr_Hds1XAaq"),
+])
+def test_the_documented_writes_are_allowed(method, path):
+    from kalos.integrations.benchling.client import write_allowed
+
+    assert write_allowed(method, path)
