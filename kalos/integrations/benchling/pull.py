@@ -38,7 +38,12 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from kalos.integrations.benchling.client import BenchlingClient, BenchlingError, chunks
+from kalos.integrations.benchling.client import (
+    BenchlingClient,
+    BenchlingError,
+    api_id,
+    chunks,
+)
 
 V3 = "/api/v3"
 V2 = "/api/v2"
@@ -302,7 +307,7 @@ def find_result_schema(client: BenchlingClient, field_id: str) -> tuple[str, lis
 
 
 def field_definitions(client: BenchlingClient, schema_id: str) -> list[dict[str, Any]]:
-    body = client.get(f"{V3}/result-schema/{schema_id}/field-definitions/items", {"archived.anyOf": [False]})
+    body = client.get(f"{V3}/result-schema/{api_id(schema_id)}/field-definitions/items", {"archived.anyOf": [False]})
     items = body.get("items") if isinstance(body, dict) else None
     return [i for i in items or [] if isinstance(i, dict)]
 
@@ -318,9 +323,7 @@ def fetch_study(
     conditions: list[dict[str, Any]] = []
     meis: list[dict[str, Any]] = []
     for run in runs:
-        rid = run.get("id")
-        if not isinstance(rid, str):
-            continue
+        rid = api_id(run.get("id"))
         body = client.get(f"{V3}/procedure-run/{rid}/conditions/items")
         conditions.extend(i for i in (body or {}).get("items", []) if isinstance(i, dict))
         body = client.get(f"{V3}/procedure-run/{rid}/method-execution-instances/items",
@@ -583,7 +586,7 @@ def fetch_assay(client: BenchlingClient, run_schema_id: str, result_schema_id: s
     results = list(client.paginate(f"{V2}/assay-results",
                                    {"schemaId": result_schema_id, "archiveReason": "NOT_ARCHIVED"},
                                    items_key="assayResults"))
-    schema = client.get(f"{V2}/assay-result-schemas/{result_schema_id}") or {}
+    schema = client.get(f"{V2}/assay-result-schemas/{api_id(result_schema_id)}") or {}
     return AssayData(run_schema_id, result_schema_id, runs, results, schema, fetched_at)
 
 

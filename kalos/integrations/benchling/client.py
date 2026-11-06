@@ -26,6 +26,7 @@ What it does:
   the spec marks beta (`/api/v3/procedure*`, the result-schema
   field-definitions list, the study authors list). Nowhere else.
 - **Pagination.** `paginate()` follows `nextToken` (v3 `items`, v2 named lists).
+- **Drafts only.** Any `:promote` call is refused before it is sent.
 - **Errors.** Every failure is a `BenchlingError` subclass carrying the status and
   Benchling's short title. Tokens and secrets never appear in a message, a repr or a
   log line.
@@ -65,6 +66,11 @@ _BETA_PATHS = (
     re.compile(r"^/api/v3/result-schema/[^/]+/field-definitions/items$"),
     re.compile(r"^/api/v3/study/[^/]+/authors/items$"),
 )
+
+
+# Kalos writes drafts only. Promoting a run plan starts a run in the lab, which is
+# a human's decision in Benchling, so the client refuses the call outright.
+_REFUSED_ACTIONS = re.compile(r":promote$")
 
 
 def is_beta_path(path: str) -> bool:
@@ -514,6 +520,8 @@ class BenchlingClient:
         method = method.upper()
         if not path.startswith(("/api/v2/", "/api/v3/")) or "?" in path or ".." in path:
             raise BenchlingConfigError("path must be an /api/v2 or /api/v3 path without a query")
+        if _REFUSED_ACTIONS.search(path):
+            raise BenchlingConfigError("Kalos never promotes a run plan; a person does that in Benchling")
         headers: dict[str, str] = {}
         if is_beta_path(path):
             headers["EARLY-ACCESS"] = "true"
@@ -612,6 +620,17 @@ def _param(value: Any) -> str:
     if isinstance(value, (list, tuple, set, frozenset)):
         return ",".join(_param(v) for v in value)
     return str(value)
+
+
+_API_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
+
+
+def api_id(value: object) -> str:
+    """A Benchling object id that is safe to put in a path segment (letters,
+    digits, `_`, `-`). Raises BenchlingConfigError otherwise; never echoes it."""
+    if not isinstance(value, str) or _API_ID.fullmatch(value) is None:
+        raise BenchlingConfigError("not a Benchling id")
+    return value
 
 
 def chunks(ids: list[str], size: int = 100) -> Iterator[list[str]]:
