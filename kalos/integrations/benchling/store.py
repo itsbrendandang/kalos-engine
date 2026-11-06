@@ -13,7 +13,11 @@ tenants. Tables:
   came back, the Kalos subject, and which Benchling identity wrote (`app` or
   `delegated`). Append-only (UPDATE/DELETE rejected by triggers).
 - `benchling_pushed_results`: which (campaign, run, version) went to which
-  Benchling result, so a result is not written twice.
+  Benchling result.
+- `benchling_result_claims`: a (campaign, run, version) is claimed in one
+  transaction BEFORE it is sent, so two pushes at once (threads or processes)
+  never both write it. A claim is released only when Benchling provably wrote
+  nothing (the transaction was aborted, or never opened).
 - `benchling_webhook_deliveries`: webhook-id seen per tenant (re-delivery is a no-op).
 - `benchling_changes`: change notices from webhooks and polling. Append-only.
 - `benchling_cursors`: polling high-water marks.
@@ -93,6 +97,14 @@ CREATE TABLE IF NOT EXISTS benchling_pushed_results (
     version INTEGER NOT NULL,
     benchling_result_id TEXT NOT NULL,
     push_audit_id INTEGER NOT NULL,
+    PRIMARY KEY (tenant, campaign_id, run_id, version)
+);
+CREATE TABLE IF NOT EXISTS benchling_result_claims (
+    tenant TEXT NOT NULL,
+    campaign_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    claimed_at REAL NOT NULL,
     PRIMARY KEY (tenant, campaign_id, run_id, version)
 );
 CREATE TABLE IF NOT EXISTS benchling_webhook_deliveries (
@@ -301,13 +313,48 @@ class IntegrationStore:
         return out
 
     def pushed_versions(self, *, tenant: str, campaign_id: str) -> set[tuple[str, int]]:
+        """(run_id, version) pairs pushed or claimed by a push in flight."""
         validate_tenant_id(tenant)
         with self._lock:
             rows = self._conn.execute(
-                "SELECT run_id, version FROM benchling_pushed_results WHERE tenant = ? AND campaign_id = ?",
-                (tenant, campaign_id),
+                "SELECT run_id, version FROM benchling_pushed_results WHERE tenant = ? AND campaign_id = ? "
+                "UNION SELECT run_id, version FROM benchling_result_claims WHERE tenant = ? AND campaign_id = ?",
+                (tenant, campaign_id, tenant, campaign_id),
             ).fetchall()
         return {(r[0], int(r[1])) for r in rows}
+
+    def claim_results(
+        self, *, tenant: str, campaign_id: str, items: list[tuple[str, int]],
+    ) -> list[tuple[str, int]]:
+        """Claim each (run_id, version) not pushed or claimed before. Returns the
+        ones THIS call claimed; a concurrent push gets none of them."""
+        validate_tenant_id(tenant)
+        claimed: list[tuple[str, int]] = []
+        now = time.time()
+        with self._txn() as c:
+            for run_id, version in items:
+                pushed = c.execute(
+                    "SELECT 1 FROM benchling_pushed_results WHERE tenant = ? AND campaign_id = ? AND run_id = ? "
+                    "AND version = ?", (tenant, campaign_id, run_id, version),
+                ).fetchone()
+                if pushed is not None:
+                    continue
+                cur = c.execute(
+                    "INSERT OR IGNORE INTO benchling_result_claims (tenant, campaign_id, run_id, version, claimed_at) "
+                    "VALUES (?,?,?,?,?)", (tenant, campaign_id, run_id, version, now),
+                )
+                if cur.rowcount == 1:
+                    claimed.append((run_id, version))
+        return claimed
+
+    def release_claims(self, *, tenant: str, campaign_id: str, items: list[tuple[str, int]]) -> None:
+        """Give claims back after a push that provably wrote nothing."""
+        validate_tenant_id(tenant)
+        with self._txn() as c:
+            c.executemany(
+                "DELETE FROM benchling_result_claims WHERE tenant = ? AND campaign_id = ? AND run_id = ? "
+                "AND version = ?", [(tenant, campaign_id, r, v) for r, v in items],
+            )
 
     # --- webhooks and polling ------------------------------------------------ #
 

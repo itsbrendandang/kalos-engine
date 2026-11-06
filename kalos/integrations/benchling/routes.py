@@ -549,18 +549,17 @@ async def push_proposals_route(
                detail=f"push_audit_id={audit_id}")
         return response
     ids = {**out.ids, "columns_not_plannable": out.columns_not_plannable}
-    audit_id = istore.record_push(
-        tenant=tenant, subject=principal.subject, kalos_auth_method=_auth_method(principal),
-        benchling_identity=out.identity, benchling_creator=out.creator, action="benchling.push_proposals",
-        campaign_id=body.campaign_id, source_id=body.study_id, outcome="ok", benchling_ids=ids,
-    )
+    plan_audit_id = _record_push_or_fallback(store, istore, principal, outcome="ok", benchling_ids=ids, common={
+        "tenant": tenant, "subject": principal.subject, "kalos_auth_method": _auth_method(principal),
+        "benchling_identity": out.identity, "benchling_creator": out.creator, "action": "benchling.push_proposals",
+        "campaign_id": body.campaign_id, "source_id": body.study_id})
     _audit(store, principal, "benchling.push_proposals", 200, campaign_id=body.campaign_id,
-           detail=f"push_audit_id={audit_id} conditions={len(out.condition_ids)}")
+           detail=f"push_audit_id={plan_audit_id} conditions={len(out.condition_ids)}")
     return JSONResponse({
         "run_plan_id": out.run_plan_id, "condition_ids": out.condition_ids, "promoted": False,
         "benchling_identity": out.identity, "benchling_creator": out.creator,
         "columns_sent": out.columns_sent, "columns_not_plannable": out.columns_not_plannable,
-        "push_audit_id": audit_id,
+        "push_audit_id": plan_audit_id,
     })
 
 
@@ -606,41 +605,55 @@ async def push_results_route(
     conn, _creds = got
     state = store.get(tenant=tenant, campaign_id=body.campaign_id) or {}
     done = istore.pushed_versions(tenant=tenant, campaign_id=body.campaign_id)
-    todo = [
-        {"run_id": r["id"], "version": int(r.get("result_version") or 1), "value": r["result"]}
+    candidates = {
+        (r["id"], int(r.get("result_version") or 1)): r["result"]
         for r in state.get("pending") or []
         if r.get("result") is not None and (r["id"], int(r.get("result_version") or 1)) not in done
-    ]
+    }
     report: bytes | None = None
     if body.report_entry_id is not None:
         analysis = store.load_analysis(tenant=tenant, campaign_id=body.campaign_id)
         if analysis:
             report = json.dumps(analysis, sort_keys=True, default=str).encode()
+    # Claim before writing: a concurrent push (another thread or process) gets
+    # none of these, so no result is written twice.
+    claimed = istore.claim_results(tenant=tenant, campaign_id=body.campaign_id, items=list(candidates))
+    todo = [{"run_id": r, "version": v, "value": candidates[(r, v)]} for r, v in claimed]
+    if not todo and report is None:
+        return _err(409, "nothing_to_push", "every recorded result of this campaign is already in Benchling")
 
-    def _work() -> tuple[Any, dict[str, str] | None]:
+    def _work() -> tuple[Any, dict[str, str] | None, BenchlingError | None]:
         with _client(conn, user, transport) as c:
             res = push_results(c, schema_id=target["schema_id"], target_system_name=target["system_name"],
                                project_id=target.get("project_id"), results=todo,
                                schema_fields=target.get("schema_fields") or []) if todo else None
-            attached = None
+            attached, attach_error = None, None
             if report is not None and body.report_entry_id and body.report_field:
-                attached = attach_report(c, entry_id=api_id(body.report_entry_id), field_name=body.report_field,
-                                         content=report, name=f"kalos-analysis-{body.campaign_id}.json")
-            return res, attached
+                # The results are committed by now: a report failure must not
+                # turn their success into a failure (and release their claims).
+                try:
+                    attached = attach_report(c, entry_id=api_id(body.report_entry_id),
+                                             field_name=body.report_field, content=report,
+                                             name=f"kalos-analysis-{body.campaign_id}.json")
+                except BenchlingError as exc:
+                    attach_error = exc
+            return res, attached, attach_error
 
-    if not todo and report is None:
-        return _err(409, "nothing_to_push", "every recorded result of this campaign is already in Benchling")
+    common = {"tenant": tenant, "subject": principal.subject, "kalos_auth_method": _auth_method(principal),
+              "benchling_identity": "delegated", "action": "benchling.push_results",
+              "campaign_id": body.campaign_id, "source_id": target.get("schema_id")}
     try:
-        res, attached = await run_in_threadpool(_work)
+        res, attached, attach_error = await run_in_threadpool(_work)
     except BenchlingError as exc:
         created = exc.created if isinstance(exc, PushFailed) else {}
+        # Nothing reached Benchling when the transaction was aborted or never
+        # opened: give the claims back. Otherwise (abort failed) keep them.
+        if not isinstance(exc, PushFailed) or created.get("aborted") is True:
+            istore.release_claims(tenant=tenant, campaign_id=body.campaign_id, items=claimed)
         response = (_err(502, "benchling_push_incomplete", str(exc), created=created)
                     if isinstance(exc, PushFailed) else _benchling_error(exc, delegated=True))
-        audit_id = istore.record_push(
-            tenant=tenant, subject=principal.subject, kalos_auth_method=_auth_method(principal),
-            benchling_identity="delegated", action="benchling.push_results", campaign_id=body.campaign_id,
-            source_id=target.get("schema_id"), outcome=f"http_{response.status_code}", benchling_ids=created,
-        )
+        audit_id = _record_push_or_fallback(store, istore, principal, outcome=f"http_{response.status_code}",
+                                            benchling_ids=created, common=common)
         _audit(store, principal, "benchling.push_results", response.status_code, campaign_id=body.campaign_id,
                detail=f"push_audit_id={audit_id}")
         return response
@@ -649,16 +662,42 @@ async def push_results_route(
         ids.update({"transaction_id": res.transaction_id, "result_ids": res.result_ids})
     if attached is not None:
         ids.update({"report_blob_id": attached["blob_id"], "report_entry_id": attached["entry_id"]})
-    audit_id = istore.record_push(
-        tenant=tenant, subject=principal.subject, kalos_auth_method=_auth_method(principal),
-        benchling_identity="delegated", action="benchling.push_results", campaign_id=body.campaign_id,
-        source_id=target.get("schema_id"), outcome="ok", benchling_ids=ids,
-        pushed_results=res.pushed if res is not None else None,
-    )
+    if attach_error is not None:
+        ids["report_error"] = (attach_error.created if isinstance(attach_error, PushFailed)
+                               else {"benchling_status": attach_error.status})
+    outcome = "ok" if attach_error is None else "ok_report_failed"
+    audit_id = _record_push_or_fallback(store, istore, principal, outcome=outcome, benchling_ids=ids,
+                                        common=common, pushed=res.pushed if res is not None else None)
     _audit(store, principal, "benchling.push_results", 200, campaign_id=body.campaign_id,
            detail=f"push_audit_id={audit_id} results={len(todo)}")
-    return JSONResponse({**ids, "results_written": len(todo), "benchling_identity": "delegated",
-                         "push_audit_id": audit_id})
+    out: dict[str, Any] = {**ids, "results_written": len(todo), "benchling_identity": "delegated",
+                           "push_audit_id": audit_id}
+    if attach_error is not None:
+        out["report_attached"] = False
+    return JSONResponse(out)
+
+
+def _record_push_or_fallback(
+    store: CampaignStore, istore: IntegrationStore, principal: Principal, *, outcome: str,
+    benchling_ids: dict[str, Any], common: dict[str, Any], pushed: list[tuple[str, int, str]] | None = None,
+) -> int | None:
+    """Record a push that already happened in Benchling. If the normal row (with
+    the pushed-result index) cannot be written, write a fallback row without the
+    index; if that fails too, put the ids in the main audit log. The claims stay
+    held either way, so the results are not sent again. Returns the push audit id
+    when one was written."""
+    try:
+        return istore.record_push(**common, outcome=outcome, benchling_ids=benchling_ids, pushed_results=pushed)
+    except Exception:  # noqa: BLE001 - the Benchling write happened; it must still be recorded
+        log.exception("benchling push audit row failed; writing the fallback row")
+    try:
+        return istore.record_push(**common, outcome=f"{outcome}_index_not_recorded", benchling_ids=benchling_ids,
+                                  detail="the pushed-result index could not be written; claims are held")
+    except Exception:  # noqa: BLE001
+        log.exception("benchling fallback push audit row failed; writing to the main audit log")
+    _audit(store, principal, "benchling.push_unrecorded", 500, campaign_id=common.get("campaign_id"),
+           detail=json.dumps(benchling_ids, sort_keys=True)[:500])
+    return None
 
 
 # --- polling and webhooks --------------------------------------------------------------------------- #

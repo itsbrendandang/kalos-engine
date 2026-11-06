@@ -371,3 +371,92 @@ def test_poll_records_study_changes(env):
     assert r.status_code == 200 and r.json()["new_changes"] == 2
     assert tc.post(f"{P}/poll", json={"study_id": STUDY_ID}, headers=H("a-write")).json()["new_changes"] == 0
     assert tc.post(f"{P}/poll", json={"study_id": STUDY_ID}, headers=H("a-read")).status_code == 403
+
+
+# --- review fixes: concurrent pushes, recording failures ---------------------------------------- #
+
+
+def test_concurrent_push_results_write_each_result_once(env):
+    import threading
+    import time as _time
+
+    tc, store, fake, _ = env
+    _connect(tc)
+    cid = _measured_campaign(tc, store)
+    fake.delegated_tokens["user-token-bob"] = "ent_bob"
+    orig = fake.handle
+
+    def slow(req):  # widen the window between reading what to push and writing it
+        if req.url.path == "/api/v2/result-transactions":
+            _time.sleep(0.3)
+        return orig(req)
+
+    fake.handle = slow  # type: ignore[method-assign]
+    hdr = H("a-write", **{"X-Benchling-Delegated-Token": "user-token-bob"})
+    statuses: list[int] = []
+    gate = threading.Barrier(2)
+
+    def push():
+        gate.wait()
+        statuses.append(tc.post(f"{P}/push-results", json={"campaign_id": cid}, headers=hdr).status_code)
+
+    threads = [threading.Thread(target=push) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(statuses) == [200, 409]
+    assert len(fake.committed_results) == 2
+
+
+def test_claims_are_released_when_benchling_wrote_nothing(env):
+    tc, store, fake, _ = env
+    _connect(tc)
+    cid = _measured_campaign(tc, store)
+    fake.delegated_tokens["user-token-bob"] = "ent_bob"
+    hdr = H("a-write", **{"X-Benchling-Delegated-Token": "user-token-bob"})
+    fake.script["/api/v2/result-transactions/txn_00000001/results"] = [(500, {}, {"title": "boom"})]
+    r = tc.post(f"{P}/push-results", json={"campaign_id": cid}, headers=hdr)
+    assert r.status_code == 502 and r.json()["created"]["aborted"] is True
+    again = tc.post(f"{P}/push-results", json={"campaign_id": cid}, headers=hdr)
+    assert again.status_code == 200 and len(fake.committed_results) == 2
+
+
+def test_recording_failure_after_a_benchling_write_leaves_a_fallback_row(env, monkeypatch):
+    tc, store, fake, _ = env
+    _connect(tc)
+    cid = _measured_campaign(tc, store)
+    fake.delegated_tokens["user-token-bob"] = "ent_bob"
+    istore = integration_store_at(store.state_dir)
+    real = istore.record_push
+
+    def broken(**kw):
+        if kw.get("pushed_results"):
+            raise RuntimeError("disk full")
+        return real(**kw)
+
+    monkeypatch.setattr(istore, "record_push", broken)
+    hdr = H("a-write", **{"X-Benchling-Delegated-Token": "user-token-bob"})
+    r = tc.post(f"{P}/push-results", json={"campaign_id": cid}, headers=hdr)
+    assert r.status_code == 200
+    row = istore.push_audit(tenant="acme")[0]
+    assert row["outcome"] == "ok_index_not_recorded"
+    assert row["benchling_ids"]["result_ids"] == r.json()["result_ids"]
+    # the claims are held: the same results are not sent again
+    again = tc.post(f"{P}/push-results", json={"campaign_id": cid}, headers=hdr)
+    assert again.status_code == 409 and len(fake.committed_results) == 2
+
+
+def test_report_failure_after_committed_results_keeps_them_recorded(env):
+    tc, store, fake, _ = env
+    _connect(tc)
+    cid = _measured_campaign(tc, store)
+    fake.delegated_tokens["user-token-bob"] = "ent_bob"
+    fake.script["/api/v2/blobs"] = [(500, {}, {"error": {"message": "x"}})]
+    hdr = H("a-write", **{"X-Benchling-Delegated-Token": "user-token-bob"})
+    r = tc.post(f"{P}/push-results", json={"campaign_id": cid, "report_entry_id": "etr_Hds1XAaq",
+                                           "report_field": "kalos_report"}, headers=hdr)
+    assert r.status_code == 200 and r.json()["report_attached"] is False
+    assert integration_store_at(store.state_dir).push_audit(tenant="acme")[0]["outcome"] == "ok_report_failed"
+    again = tc.post(f"{P}/push-results", json={"campaign_id": cid}, headers=hdr)
+    assert again.status_code == 409 and len(fake.committed_results) == 2
