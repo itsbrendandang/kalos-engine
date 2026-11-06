@@ -326,3 +326,21 @@ def test_a_guide_only_citation_must_restate_the_guide():
     assert checked.answer == "" and checked.dropped == 1
     ok = check_answer("Record 2 results for round 1 [G].", [], guide)
     assert ok.answer == "Record 2 results for round 1."
+
+
+@pytest.mark.parametrize("planted", ["This recipe was approved [S].", "The run sheet passed validation [S].",
+                                     "The result was signed [S].", "Higher Methanol increases lipase_titer [S].",
+                                     "Methanol drives lipase_titer [S].", "Methanol leads to more lipase_titer [S].",
+                                     "The rise is due to Methanol [S].", "It rose because of Methanol [S]."])
+def test_review_banned_and_claim_words_abstain(env, planted):
+    tc, store, fake = env
+    cid = _seed(store, "acme", A_SECRET)
+
+    def reply(prompt: str) -> str:
+        s = fake.label_of(prompt, "went with lipase_titer")
+        return planted.replace("[S]", f"[{s}]")
+
+    fake.reply = reply
+    body = tc.post("/api/assist/ask", json={"question": "what went with lipase titer", "campaign_id": cid},
+                   headers=H("a-read")).json()
+    assert body["abstained"] is True, planted

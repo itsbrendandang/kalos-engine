@@ -727,7 +727,10 @@ def check_revision(previous: Draft, revised: str) -> list[str]:
             reasons.append(f"placeholder {name} appears more often than before")
     if "[[TO FILL:" in new and new.count("[[TO FILL:") != sum(new_tokens.values()):
         reasons.append("a malformed placeholder token appears")
-    banned = sorted(set(banned_in(new)))
+    # The header and the revision table use "approved" on purpose; only words a
+    # revision ADDS count.
+    old_banned, new_banned = Counter(banned_in(old)), Counter(banned_in(new))
+    banned = sorted(w for w, n in new_banned.items() if n > old_banned[w])
     if banned:
         reasons.append("words the assistant never uses appear: " + ", ".join(banned))
     claims = unsupported_claims(new, [old])

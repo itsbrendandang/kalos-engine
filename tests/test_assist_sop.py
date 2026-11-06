@@ -189,7 +189,16 @@ def test_every_number_in_the_parameters_table_is_sourced(env, template, kind):
     assert set(sop.PLACEHOLDER_RE.findall(md)) == names
     assert d["version"] == 1 and d["model"] is None and d["filled"] == []
     assert d["sha256"] == _sha(md)
-    assert not banned_in(md) and not claims_in(md)
+    assert _only_fixed_banned(md) and not claims_in(md)
+
+
+def _only_fixed_banned(md: str) -> bool:
+    """"approved" appears only in the fixed header and the revision table (the
+    owner's header text, the Approved by column and its placeholder)."""
+    lines = md.splitlines()
+    flagged = [ln for ln in lines if banned_in(ln)]
+    revision = md.split("## Revision table", 1)[1].splitlines()
+    return set(banned_in(md)) <= {"approved"} and all(ln == lines[0] or ln in revision for ln in flagged)
 
 
 def test_round_with_no_runs_and_bad_sources_are_400(env):
@@ -484,7 +493,7 @@ def test_draft_from_the_module_is_sourced_and_clean(tmp_path):
     assert d.markdown.startswith(sop.HEADER_PREFIX) and d.version == 1 and d.model is None
     assert {f["value"] for f in d.fields_from_record} >= {"2.5", "6.2", "3.1", "0.4", "0.0", "4.0", "lipase_titer"}
     assert set(sop.PLACEHOLDER_RE.findall(d.markdown)) == {p["name"] for p in d.placeholders}
-    assert not banned_in(d.markdown) and not claims_in(d.markdown)
+    assert _only_fixed_banned(d.markdown) and not claims_in(d.markdown)
     assert sop.load(store, "acme", d.draft_id).markdown == d.markdown
     assert sop.load(store, "globex", d.draft_id) is None
     with pytest.raises(sop.SourceError):
@@ -572,3 +581,13 @@ def test_revise_cannot_reword_predicted_into_measured(tmp_path):
     assert sop.check_revision(d, md.replace(line, "")), "dropping the line is refused too"
     # prose lines without values or Predicted/Measured wording stay editable
     assert sop.check_revision(d, md.replace("It is a starting point", "Treat it as a starting point")) == []
+
+
+def test_revise_refuses_new_review_words(tmp_path):
+    d = _two_recipe_draft(tmp_path)
+    md = d.markdown
+    base = "It is a starting point for the lab's own procedure, not a procedure in itself."
+    for planted in ("This procedure was signed off.", "Passed validation in the lab.",
+                    "Higher pH increases the result.", "Temperature drives the result.",
+                    "Low pH leads to failure.", "It failed due to heat.", "Use it because it works."):
+        assert sop.check_revision(d, md.replace(base, planted)), planted

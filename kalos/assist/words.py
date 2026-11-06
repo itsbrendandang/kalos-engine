@@ -22,10 +22,14 @@ BANNED: tuple[str, ...] = (
     "digital twin",
     "real-time",
     "certified",
+    "signed",
+    "validation",
+    "approved",
 )
 
 # Stronger than any record. Each entry is a stem pattern; the list covers the
-# owner's set (will, guarantees, proves, causes, optimal) and their forms.
+# owner's set (will, guarantees, proves, causes, optimal), the security
+# review's additions (increases, drives, leads to, due to, because), and forms.
 CLAIM: tuple[str, ...] = (
     r"will",
     r"won't",
@@ -36,6 +40,15 @@ CLAIM: tuple[str, ...] = (
     r"causing",
     r"optimal",
     r"optimum",
+    r"increase[sd]?",
+    r"increasing",
+    r"drive[sn]?",
+    r"driving",
+    r"drove",
+    r"leads?\s+to",
+    r"led\s+to",
+    r"due\s+to",
+    r"because",
 )
 
 _BANNED_RE = re.compile(
@@ -51,8 +64,8 @@ def banned_in(text: str) -> list[str]:
 
 
 def claims_in(text: str) -> list[str]:
-    """Claim words found in `text`, lower case, in order of appearance."""
-    return [m.group(1).lower() for m in _CLAIM_RE.finditer(text)]
+    """Claim words found in `text`, lower case (inner spaces collapsed), in order."""
+    return [re.sub(r"\s+", " ", m.group(1).lower()) for m in _CLAIM_RE.finditer(text)]
 
 
 def unsupported_claims(sentence: str, sources: list[str]) -> list[str]:
