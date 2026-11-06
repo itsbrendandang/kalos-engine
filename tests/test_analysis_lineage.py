@@ -281,3 +281,37 @@ def test_delta_summary_names_the_driver_shift_and_the_new_input(client):
     # The verdict object of a newer analysis wins over the reliability flag.
     assert lineage.verdict_code({"verdict": {"code": "trust_ranking"},
                                  "reliability": {"clears_floor": False}}) == "trust_ranking"
+
+
+# --- stored roles that cannot be read are never replaced by inferred ones (S5) ------- #
+
+
+def _write_stored_roles(store, roles):
+    state = store.get(tenant="default")
+    state["settings"]["roles"] = roles
+    with store._txn(write=True) as conn:
+        row = store._row(conn, "default", store._default_id(conn, "default"))
+        store._cas_write(conn, "default", row, state, row.generation)
+
+
+@pytest.mark.parametrize("bad", [
+    {"target": "Titer", "features": INPUTS, "allow_beyond": 5},
+    {"target": "Titer", "features": INPUTS, "linear_constraints": "x"},
+    "not an object",
+])
+def test_unreadable_stored_roles_refuse_the_reanalyze_and_commit_nothing(client, bad):
+    c, store = client
+    upload(c, {"target": "Titer", "features": INPUTS})
+    _start_and_record(c, [63.0])
+    _write_stored_roles(store, bad)
+    cid = store.default_campaign_id(tenant="default")
+    before_state = store.get(tenant="default")
+    before_analysis = store.load_analysis(tenant="default")
+    for path in ("/api/campaign/reanalyze", f"/api/campaigns/{cid}/reanalyze"):
+        r = c.post(path)
+        assert r.status_code == 409, r.text
+        body = r.json()
+        assert body["code"] == "roles_not_applied"
+        assert "Upload the sheet again" in body["error"]
+    assert store.get(tenant="default") == before_state
+    assert store.load_analysis(tenant="default") == before_analysis

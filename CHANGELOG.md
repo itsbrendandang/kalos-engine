@@ -19,6 +19,9 @@ Newest first.
 - Security review S2: the best bet meets the same outcome rules as the batch: the constraint model's prediction at or above its floor, and P(feasible) at least 0.5 when the feasibility gate is on. With no qualifying candidate there is no best bet and `best_bet_notice` says why in plain words.
 
 - Security review B1: the best bet is the highest predicted recipe among the optimizer's answer, every batch row, every training row and a Sobol sample of the box (within the linear constraints), so a local optimum can no longer leave a higher-predicted proposal labelled `learn` (pichia_HSA: 74.9 -> 110.0). `model_optimum.beyond_tried_range` added.
+### Fixed - desktop-engine-2-secb (security review)
+
+- Reanalyze refuses with 409 `roles_not_applied` when the column roles stored with the campaign cannot be read, instead of quietly fitting with inferred roles. Nothing is committed; upload the sheet again with valid roles.
 
 ### Added - desktop-engine-2-q8 (constraints and specs)
 

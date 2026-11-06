@@ -73,6 +73,16 @@ def _archived(exc: CampaignArchived) -> JSONResponse:
 
 _NOT_FOUND_BODY = {"error": "campaign not found", "code": "not_found"}
 
+# 409 when the column roles stored with the campaign cannot be read on a
+# reanalyze. Kalos does not guess other roles in their place.
+ROLES_NOT_APPLIED_BODY = {
+    "error": (
+        "The column choices saved with this campaign could not be read, so Kalos did "
+        "not analyze it again. Upload the sheet again with valid column choices."
+    ),
+    "code": "roles_not_applied",
+}
+
 
 def campaign_not_found_response() -> JSONResponse:
     """THE 404 for a campaign id the caller may not see: malformed, missing,
@@ -316,12 +326,19 @@ async def _reanalyze(
     stored_roles = settings.get("roles") if isinstance(settings, dict) else None
     declared = stored_roles if isinstance(stored_roles, dict) else None
     roles = None
+    # Never fall back silently to inferred roles: a fit with other inputs than
+    # the lab declared would look like the campaign's analysis but is not.
+    # Refuse (409), nothing committed; uploading the sheet again with valid
+    # roles replaces them.
+    unreadable = stored_roles is not None and not isinstance(stored_roles, dict)
     if declared:
         try:
             roles = ColumnRoles.from_dict(declared)
         except ValueError:
-            log.warning("reanalyze: the stored roles could not be read; inferring them")
-            declared = None
+            unreadable = True
+    if unreadable:
+        log.warning("reanalyze rejected: code=roles_not_applied")
+        return JSONResponse(ROLES_NOT_APPLIED_BODY, status_code=409)
 
     if df.empty:
         log.warning("reanalyze rejected: campaign has no base rows to analyze")

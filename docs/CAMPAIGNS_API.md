@@ -793,6 +793,11 @@ only added; a field never changes meaning or disappears within a version.
   spec is met at once (0 to 1), null when `joint_feasibility.available` is false.
 - `proposals[].p_specs` and `model_optimum.p_specs`: `{column: chance}` per spec,
   or null.
+- 409 `roles_not_applied` on `POST /api/campaign/reanalyze` and
+  `POST /api/campaigns/{id}/reanalyze` when the column roles stored with the
+  campaign (`settings.roles`) cannot be read. Nothing is committed. Before, the
+  reanalyze quietly fitted with roles inferred from the column names. Upload the
+  sheet again with valid roles.
 
 ## Not in this slice
 
