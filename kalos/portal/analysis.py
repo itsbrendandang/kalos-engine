@@ -70,6 +70,11 @@ from kalos.portal.analysis_parts.diagnostics import (
     data_finding_rows,
     sheet_row_mapper,
 )
+from kalos.portal.analysis_parts.exploration import (
+    EXPLORE_REASON,
+    batch_strategy,
+    exploration_reason,
+)
 from kalos.portal.analysis_parts.identifiers import (
     identifier_pattern,
     is_identifier_name,
@@ -1512,24 +1517,50 @@ def _analyze_body(
     # `propose_batch` never returns two near-duplicate recipes (see its
     # docstring); on a design space with fewer than q distinct candidates the
     # batch comes back SHORT, and `proposal_notice` below says so.
-    proposal = propose_batch(
-        s,
-        bounds,
-        q=PROPOSAL_BATCH_Q,
-        cat_dims=cat_dims,
-        cat_cardinalities=cat_cardinalities,
-        pending=X_pending,
-        # Explicit, not the global RNG: the seed the run record reports is the seed
-        # the acquisition actually used (review C3).
-        seed=ANALYZE_SEED,
-        # PART 1: only ever passed when GATE POLICY (above) cleared all three
-        # conditions - `None` here is what keeps an ungated run's batch
-        # byte-identical to the pre-gating acquisition.
-        feasibility_classifier=feas_clf if gated else None,
-        # PART 2: only ever passed when the constraint model actually fit.
-        constraint_surrogate=constraint_surrogate if constraint_applied else None,
-        constraint_floor=constraint_floor_val if constraint_applied else None,
+    # EXPLORATION DESIGN (analysis_parts/exploration.py): when the model cannot
+    # rank recipes yet, or there are too few distinct recipes for the number of
+    # inputs, the batch is the best bet plus recipes spread over the untested
+    # parts of the box, and `batch_strategy` says so.
+    _n_distinct = len(set(recipe_key))
+    explore_reason = exploration_reason(
+        verdict, n_distinct=_n_distinct, n_inputs=X.shape[1],
+        setting=roles.exploration_design if roles is not None else None,
     )
+    strategy = batch_strategy(explore_reason, n_distinct=_n_distinct, n_inputs=X.shape[1])
+    if explore_reason is not None:
+        from kalos.core.optimize import ProposalBatch
+        from kalos.core.space_filling import maximin_batch
+
+        _spread = maximin_batch(
+            X, bounds, PROPOSAL_BATCH_Q - 1, cat_dims=cat_dims,
+            cat_cardinalities=cat_cardinalities, pending=X_pending, seed=ANALYZE_SEED,
+        )
+        proposal = ProposalBatch(
+            X=_spread, requested=PROPOSAL_BATCH_Q, near_duplicates_replaced=0,
+            min_separation=NEAR_DUPLICATE_TOL, notice=None,
+        )
+    else:
+        # `propose_batch` never returns two near-duplicate recipes (see its
+        # docstring); on a design space with fewer than q distinct candidates the
+        # batch comes back SHORT, and `proposal_notice` below says so.
+        proposal = propose_batch(
+            s,
+            bounds,
+            q=PROPOSAL_BATCH_Q,
+            cat_dims=cat_dims,
+            cat_cardinalities=cat_cardinalities,
+            pending=X_pending,
+            # Explicit, not the global RNG: the seed the run record reports is the seed
+            # the acquisition actually used (review C3).
+            seed=ANALYZE_SEED,
+            # PART 1: only ever passed when GATE POLICY (above) cleared all three
+            # conditions - `None` here is what keeps an ungated run's batch
+            # byte-identical to the pre-gating acquisition.
+            feasibility_classifier=feas_clf if gated else None,
+            # PART 2: only ever passed when the constraint model actually fit.
+            constraint_surrogate=constraint_surrogate if constraint_applied else None,
+            constraint_floor=constraint_floor_val if constraint_applied else None,
+        )
     batch = proposal.X
     # BEST BET (first-time-user study, Finding 1; analysis_parts/best_bet.py): the
     # recipe with the highest predicted value inside the box is always in the
@@ -1732,6 +1763,12 @@ def _analyze_body(
         proposals, best_bet_idx, best=best_single, half_width=likely_half_width,
         maximize=not minimize, target=str(target),
     )
+    if explore_reason is not None:
+        for row in proposals:
+            if row.get("pick") == "learn":
+                row["pick"] = "exploration_design"
+                row["mode"] = "explore"
+                row["reason"] = EXPLORE_REASON
     opt_pred = float(sign * np.asarray(opt_mean, float)[0])
     opt_hw = (
         float(likely_half_width) if likely_half_width is not None
@@ -1913,6 +1950,9 @@ def _analyze_body(
         # highest predicted value inside the search box, its likely range, and
         # where it is in `proposals`.
         "model_optimum": model_optimum,
+        # Whose picks the batch is: the model's, or an exploration design when
+        # the model cannot rank recipes yet (analysis_parts/exploration.py).
+        "batch_strategy": strategy,
         # Observed (tried) range of each continuous input, and how far past it
         # the search was allowed (roles.allow_beyond). `feature_ranges` is the
         # search box actually used.

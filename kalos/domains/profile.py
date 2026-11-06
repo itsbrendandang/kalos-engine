@@ -68,6 +68,24 @@ def parse_applicability_distance(value: object) -> float | None:
     return v
 
 
+class InvalidExplorationDesign(ValueError):
+    """`roles.exploration_design` other than "auto" or "off" (HTTP 400
+    `invalid_exploration_design`)."""
+
+    code = "invalid_exploration_design"
+
+    def __init__(self) -> None:
+        super().__init__('roles.exploration_design must be "auto" or "off"')
+
+
+def parse_exploration_design(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().lower() in {"auto", "off"}:
+        return value.strip().lower()
+    raise InvalidExplorationDesign()
+
+
 class InvalidAllowBeyond(ValueError):
     """`roles.allow_beyond` that is not a fraction in [0, 1], or a mapping of
     input name to such a fraction (HTTP 400 `invalid_allow_beyond`)."""
@@ -187,6 +205,7 @@ class ColumnRoles:
     applicability_distance: float | None = None
     allow_beyond: tuple[tuple[str, float], ...] = ()
     per_recipe_noise: bool = False
+    exploration_design: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> ColumnRoles:
@@ -224,6 +243,7 @@ class ColumnRoles:
             ),
             allow_beyond=parse_allow_beyond(data.get("allow_beyond")),
             per_recipe_noise=parse_per_recipe_noise(data.get("per_recipe_noise")),
+            exploration_design=parse_exploration_design(data.get("exploration_design")),
         )
 
 

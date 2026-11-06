@@ -640,6 +640,19 @@ only added; a field never changes meaning or disappears within a version.
 
 - **v3** (branch desktop-engine-2): the fields added in v3 are listed below this
   line, one bullet per field.
+- `batch_strategy`: `{kind: "model" | "exploration_design", reason: null |
+  "few_recipes" | "cannot_rank_yet", plain, n_distinct_recipes, n_inputs, rule}`.
+  An exploration design keeps the best bet as P1 and spreads the other recipes
+  over the untested parts of the box (`proposals[].pick` =
+  `exploration_design`, `mode` `explore`). It is used when the sheet has fewer
+  than 2 x inputs distinct recipes, or the verdict is `not_yet` because the
+  ordering is weak or unsure. `roles.exploration_design`: `"auto"` (default) or
+  `"off"`; anything else is 400 `invalid_exploration_design`. Measured on
+  synthetic surfaces only (examples/exploration_design_benchmark.py, 12 seeds,
+  4 inputs, 4 starting runs, 15% noise, 3 rounds of 4): regret 4.20 vs 4.43 on
+  a Gaussian bump (paired difference -0.23, 95% interval -1.39 to 0.75) and
+  4.02 vs 4.03 on Ackley (-0.01, -0.48 to 0.49): no detectable difference
+  either way.
 - `model_optimum`: the model's best bet, the recipe with the highest predicted
   value inside the search box: `recipe`, `predicted`, `likely_range` [low, high]
   (the conformal band; `likely_range_source`), `in_batch` (its index in
