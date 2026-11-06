@@ -74,6 +74,18 @@ def test_preflight_refuses_like_an_upload(client):
     assert bad.status_code == 400 and bad.json()["code"] == "invalid_allow_beyond"
 
 
+def test_allow_beyond_naming_a_column_not_in_the_sheet_is_refused(client):
+    roles = {"target": "Titer", "allow_beyond": {"Glucose_gl": 0.2, "*": 0.1}}
+    for path in ("/api/preflight", "/api/run"):
+        r = _post(client, path, data={"roles": json.dumps(roles)})
+        assert r.status_code == 400, r.text
+        assert r.json()["code"] == "invalid_allow_beyond"
+        assert "'Glucose_gl'" in r.json()["error"] and "not a column of this sheet" in r.json()["error"]
+    # A real column name and "*" are accepted.
+    ok = {"target": "Titer", "allow_beyond": {"Glucose_gL": 0.2, "*": 0.1}}
+    assert _post(client, data={"roles": json.dumps(ok)}).status_code == 200
+
+
 def test_preflight_does_not_import_torch(tmp_path):
     code = (
         "import io, sys\n"

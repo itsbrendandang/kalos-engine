@@ -803,6 +803,9 @@ only added; a field never changes meaning or disappears within a version.
   (kalos/portal/why_lines.py). Coded 400/409 refusals that go through the upload
   refusal envelope or the campaign routes also carry `why` next to `code`.
   `tests/test_why_lines.py` fails when the engine gains a code without a line.
+- 400 `invalid_allow_beyond` also when `roles.allow_beyond` names an input that
+  is not a column of the sheet (other than `"*"`); the message names it. Before,
+  the name was ignored and that input stayed at its tried range.
 
 ## Not in this slice
 

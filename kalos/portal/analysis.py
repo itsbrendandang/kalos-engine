@@ -812,6 +812,17 @@ def _analyze_body(
     # How far past the tried range each input may be searched (roles.allow_beyond,
     # or the `allow_beyond` argument; default 0 = the tried range). Finding 11.
     beyond = _allow_beyond_map(roles, allow_beyond)
+    # A name that is not a column of the sheet would be ignored silently (a typo
+    # leaves that input at the tried range): refuse it, naming it.
+    unknown_beyond = sorted(k for k in beyond if k != "*" and k not in {str(c) for c in df.columns})
+    if unknown_beyond:
+        shown = ", ".join(repr(clip_name(k)) for k in unknown_beyond[:5])
+        more = f" and {len(unknown_beyond) - 5} more" if len(unknown_beyond) > 5 else ""
+        raise UploadRejected(
+            f"allow_beyond names {shown}{more}, which {'is' if len(unknown_beyond) == 1 else 'are'} "
+            'not a column of this sheet. Use the input\'s column name exactly, or "*" for every input.',
+            code="invalid_allow_beyond",
+        )
     tried_ranges: dict[str, list[float]] = {}
     beyond_applied: dict[str, float] = {}
     for c in cont_feats:
