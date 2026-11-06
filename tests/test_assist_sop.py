@@ -611,3 +611,15 @@ def test_draft_and_version_caps_are_409(env, monkeypatch):
     assert tc.get(f"/api/assist/sop/{d['draft_id']}", headers=H("a-read")).json()["version"] == 2
     # other tenant unaffected by acme's count
     assert sop.MAX_DRAFTS_PER_TENANT == 2
+
+
+@pytest.mark.parametrize("bad", ["Ana | Ben", "Ana\x07", "Ana\u202eneB", "Ana\x00"])
+def test_fill_refuses_pipes_and_control_characters(env, bad):
+    """sec-assist nit: a '|' would add a table cell; control and bidi characters
+    can hide text."""
+    tc, store = env
+    cid, _runs = _seed(store)
+    d = _draft(tc, cid, {"round": 0})
+    r = tc.post(f"/api/assist/sop/{d['draft_id']}/fill", json={"values": {"prepared_by": bad}}, headers=H("a-write"))
+    assert r.status_code == 400 and r.json()["code"] == "invalid_value"
+    assert tc.get(f"/api/assist/sop/{d['draft_id']}", headers=H("a-read")).json()["version"] == 1

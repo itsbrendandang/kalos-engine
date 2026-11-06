@@ -30,6 +30,7 @@ import hashlib
 import json
 import re
 import secrets
+import unicodedata
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -781,6 +782,10 @@ def check_fill_value(value: Any) -> str:
         raise InvalidValue(f"a filled value must be 1-{MAX_FILL_CHARS} characters")
     if "\n" in text or "\r" in text or "[[" in text or "]]" in text:
         raise InvalidValue("a filled value must be one line without [[ or ]]")
+    if "|" in text:
+        raise InvalidValue("a filled value must not contain | (it would break a table)")
+    if any(unicodedata.category(ch) in {"Cc", "Cf", "Cs", "Zl", "Zp"} for ch in text):
+        raise InvalidValue("a filled value must not contain control characters")
     return text
 
 
