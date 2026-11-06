@@ -660,3 +660,20 @@ def test_revise_refuses_reordering_steps_that_hold_values(tmp_path):
     swapped[a], swapped[b] = lines[b], lines[a]
     reasons = sop.check_revision(d, "\n".join(swapped) + "\n")
     assert any("reordered" in r for r in reasons), reasons
+
+
+@pytest.mark.parametrize("planted", ["For Recipe A use pH7.0 and Temp25.", "Set pH_7.0 first.",
+                                     "Use x7.0 here.", "Temp25 is enough."])
+def test_revise_refuses_values_glued_to_letters(tmp_path, planted):
+    """sec-assist final (5): a value touching a letter or underscore still counts."""
+    d = _two_recipe_draft(tmp_path)
+    anchor = "It is a starting point for the lab's own procedure, not a procedure in itself."
+    reasons = sop.check_revision(d, d.markdown.replace(anchor, anchor + "\n\n" + planted))
+    assert any("new line" in r for r in reasons), (planted, reasons)
+
+
+def test_numeric_value_does_not_match_inside_a_longer_number():
+    assert sop._value_re("7.0").search("pH 17.05") is None
+    assert sop._value_re("25").search("Temp 250") is None
+    assert sop._value_re("25").search("Temp25") is not None
+    assert sop._value_re("A").search("Apply") is None

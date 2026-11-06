@@ -677,7 +677,15 @@ def _strip_fence(text: str) -> str:
 _LABEL_WORDS = re.compile(r"\b(predicted|measured|measurement|measure)\b", re.IGNORECASE)
 
 
+_NUMERIC = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+
+
 def _value_re(value: str) -> re.Pattern[str]:
+    """Where a record value sits in a line. A number is found wherever no other
+    digit or point touches it, so 'pH7.0', 'Temp25', 'pH_7.0' and 'x7.0' all
+    hold it; a text value must stand as a whole word."""
+    if _NUMERIC.fullmatch(value):
+        return re.compile(r"(?<![\d.])" + re.escape(value) + r"(?![\d])")
     return re.compile(r"(?<![\w.])" + re.escape(value) + r"(?![\w])")
 
 
