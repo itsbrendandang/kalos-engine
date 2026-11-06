@@ -475,7 +475,12 @@ come with the analysis.
   listed in `columns`, in its sheet position: `kind` `constant`, `reason`
   `all_blank`, `used_in_fit` false, `n_values` 0. `provenance`, `features`, `categorical_features` and
   `feature_ranges` are unchanged; `columns` is additive.
-- `finding_code` is null or `category_not_modeled`.
+- `finding_code` is null or one of `category_not_modeled`,
+  `possibly_measured_after_run`, `outcome_like_name`, `after_target_in_sheet`,
+  `row_number_column`, `headerless_column` (the code of the finding about this
+  column). A column left out by a rule has `used_in_fit` false, its `reason` and
+  its `finding_code`, so a client can show it unticked and let the lab tick it
+  (declare it in `roles.features`).
 - `reason` is null or one of these codes (closed list; the same codes appear in
   `provenance[].reason`):
 
@@ -491,7 +496,7 @@ come with the analysis.
 | `headerless` | no header and one number per row: a row index |
 | `monotone_row_number` | a counter up or down from any start, at most a few numbers missing: a row index |
 | `after_target_in_sheet` | after the target and named like a measurement |
-| `outcome_like_name` | named like a measurement taken during or after the run (before the target too) |
+| `outcome_like_name` | named with an outcome word (titer, yield, product, purity, final without a concentration unit, ...) |
 | `name_matches_identifier` | its name reads like an id (sample, operator, ...) |
 | `constant` | one value |
 | `constant_on_fitted_rows` | one value on the rows the model uses |
@@ -506,6 +511,7 @@ come with the analysis.
 | `too_few_repeats` | labels repeat too rarely to learn from |
 | `unique_per_row` | text with about one value per row |
 | `date_or_time` | dates or times |
+| `possibly_measured` | kept as an input, but the name (OD, biomass, lactate, ammonium, ...) reads like something measured during the run; check it |
 
 ### Verdict
 
@@ -677,6 +683,9 @@ only added; a field never changes meaning or disappears within a version.
   amounts). Roles persist with the campaign, so this is a per-campaign setting.
 - `proposals[].beyond_tried_range`: `[{feature, side, tried_limit, proposed, by,
   fraction}]` for inputs a proposal sets outside the tried range.
+- `validation.findings[]` code `possibly_measured_after_run` (info): a column
+  before the target whose name reads like a run measurement (OD, biomass,
+  lactate, ammonium, `final` with a unit) was kept as an input; check it.
 - `validation.findings[]` code `headerless_column`: a text column with no header
   was not used as an input (declare it in roles to use it).
 - `validation.findings[]` code `search_box` (info, always present): where

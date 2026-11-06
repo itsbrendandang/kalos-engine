@@ -51,7 +51,19 @@ COLUMN_KIND_REASONS: tuple[str, ...] = (
     "too_many_levels", "mixed_text_and_numbers", "too_few_repeats",
     "unique_per_row", "date_or_time",
 )
-FINDING_CODES: tuple[str, ...] = ("category_not_modeled",)
+FINDING_CODES: tuple[str, ...] = (
+    "category_not_modeled", "possibly_measured_after_run", "outcome_like_name",
+    "after_target_in_sheet", "row_number_column", "headerless_column",
+)
+# The finding each role-safety reason comes with (kalos/portal/analysis_parts/roles.py),
+# so a client can show the column unticked with its reason and its finding.
+_REASON_FINDING = {
+    "possibly_measured": "possibly_measured_after_run",
+    "outcome_like_name": "outcome_like_name",
+    "after_target_in_sheet": "after_target_in_sheet",
+    "monotone_row_number": "row_number_column",
+    "headerless": "row_number_column",
+}
 
 
 def _looks_like_dates(series: pd.Series, text_cells: int) -> bool:
@@ -187,6 +199,11 @@ def column_kinds(
                 ))
         elif status == "dropped_id":
             entry.update(kind="text_id")
+        if entry["finding_code"] is None and entry["reason"] in _REASON_FINDING:
+            code = _REASON_FINDING[entry["reason"]]
+            if entry["reason"] == "headerless" and entry["kind"] != "row_number":
+                code = "headerless_column"
+            entry["finding_code"] = code
         if entry["reason"] not in COLUMN_KIND_REASONS:
             entry["reason"] = None  # never an undocumented code
         out.append(entry)

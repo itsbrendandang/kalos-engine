@@ -14,20 +14,20 @@ Rules (each one narrow on purpose, so a normal sheet is not changed):
      rows still count). A design factor that is unique, whole, sorted and
      step-1 across the sheet is rare; declaring roles keeps it.
    Status `dropped_id`.
-2. Outcome-like columns are not inputs unless declared (owner decision: a
-   leaky input makes the model look better than it is, so the default is to
-   leave it out and say so). The name must read like a measurement taken during
-   or after the run (`looks_outcome_like`: `OUTCOME_LIKE_NAME`, i.e. OD, optical
-   density, biomass, VCD, viability, DCW, final, harvest, measured, lactate,
-   ammonia, ..., or the profile's outcome hint other than a bare concentration
-   word). After the target the reason is `after_target_in_sheet`; anywhere else
-   it is `outcome_like_name`; each has a warning finding with the same code.
-   Status `dropped_output`. Position alone is not enough: many sheets put
-   inputs after the target. A strong correlation alone is not enough either: it
-   would drop a real strong driver. A non-matching input after the target that
-   correlates strongly with it (|Spearman| >= `AFTER_TARGET_RHO`) is kept and
-   flagged.
-3. A concentration input before a given target is kept. The profile's outcome
+2. Outcome columns are not inputs unless declared. Owner decision
+   (desktop-engine-2): a name excludes a column wherever it sits only on an
+   outcome word (`outcome_word`: titer, yield, product, purity, recovery,
+   activity, response, endpoint, harvest, viability at end, or `final` without
+   a concentration unit) -> reason `outcome_like_name`. A column AFTER the
+   target whose name reads like a measurement taken during the run
+   (`OUTCOME_LIKE_NAME`: OD, biomass, VCD, lactate, ammonia, ...) ->
+   `after_target_in_sheet`. Before the target those measurement words alone do
+   not exclude: the column stays an input with reason `possibly_measured` and
+   an info finding `possibly_measured_after_run`. A concentration unit is never
+   outcome evidence. Status `dropped_output` for the exclusions, each with a
+   warning finding. A non-matching input after the target that correlates
+   strongly with it (|Spearman| >= `AFTER_TARGET_RHO`) is kept and flagged.
+3. A concentration input before the target is kept (named target or not). The profile's outcome
    hint matches `conc`, so `Carbon_conc` was dropped as a possible output. When
    the caller named the target, a column whose only outcome-hint match is the
    concentration token, that sits before the target, and that does not match
@@ -59,8 +59,35 @@ ROW_NUMBER_MIN_ROWS = 8
 ROW_NUMBER_MIN_DENSITY = 0.9
 AFTER_TARGET_RHO = 0.9
 
+# Owner decision (desktop-engine-2): a NAME excludes a column only on an
+# outcome word. A concentration unit (_g_L, _mM, _mg_mL, conc, (M)) is not
+# outcome evidence: Candida's `ammonium_g_L` before the target is the nitrogen
+# source. `final` counts as an outcome word unless the name also carries a
+# concentration unit ("Final Urea (M)" is the urea in the refolding buffer).
+OUTCOME_WORD = re.compile(
+    r"tit(er|re)|yield|product|purity|recovery|activity|response|endpoint|harvest"
+    r"|viab\w*[ _\-]?(at[ _\-]?)?end",
+    re.IGNORECASE,
+)
+_FINAL_WORD = re.compile(r"(?<![a-z])final(?![a-z])", re.IGNORECASE)
+CONC_UNIT = re.compile(
+    r"conc(entration)?|(?<![a-z])(g|mg|ug|ng)[ _/\-]?(l|ml)(?![a-z])|(?<![a-z])[mun]?m(?![a-z])"
+    r"|\((m|mm|um|nm|%|g/l|mg/ml|g/ml)\)|%|pct|percent",
+    re.IGNORECASE,
+)
+
+
+def outcome_word(name: str) -> bool:
+    """The name says outcome: excluded by name wherever it sits."""
+    if OUTCOME_WORD.search(name):
+        return True
+    return bool(_FINAL_WORD.search(name)) and not CONC_UNIT.search(name)
+
+
 # Measurement words for rule 2 and the outcome-like flag. Short tokens (OD,
 # VCD, DCW) must stand alone (not inside a word: "Methanol_dose" is not OD).
+# Before the target these alone do not exclude a column (it stays an input with
+# a `possibly_measured_after_run` info finding); after the target they do.
 OUTCOME_LIKE_NAME = re.compile(
     r"(?<![a-z])(od|vcd|dcw|wcw|abs)(?![a-z])|optical[ _\-]?density|absorbance|biomass"
     r"|viab|cell[ _\-]?density|final|harvest|measured|readout|lactate|ammoni|residual",
@@ -96,7 +123,7 @@ REASON_CODES = (
     "numeric_input", "categorical_text", "concentration_before_target", "headerless",
     "monotone_row_number", "after_target_in_sheet", "name_matches_identifier", "constant",
     "constant_on_fitted_rows", "sparse_or_unparsed", "declared_non_numeric", "all_blank",
-    "recipe_label", "near_constant", "not_declared", "outcome_like_name",
+    "recipe_label", "near_constant", "not_declared", "outcome_like_name", "possibly_measured",
 )
 
 
@@ -193,7 +220,7 @@ def column_role_safety(
 
     # Rule 3: a concentration input before a given target is kept.
     features_inferred = roles is None or not roles.features
-    if features_inferred and target_given:
+    if features_inferred:
         cat_set = set(cat_feats)
         ids = set(roles.ids) if roles is not None else set()
         current = set(out.cont_feats)
@@ -203,11 +230,16 @@ def column_role_safety(
                 c in current or c == target or c in cat_set or c in ids
                 or pos.get(c, len(cols)) >= t_pos
                 or is_identifier_name(name, profile.id_hint)
-                or not _conc_only(name, profile)
-                or OUTCOME_LIKE_NAME.search(name)
+                or not profile.outcome_hint.search(name)
+                or outcome_word(name)
             ):
                 continue
             current.add(c)
+            if not _conc_only(name, profile):
+                # Left out by the profile's outcome hint (biomass, OD, score, ...)
+                # but no outcome word and before the target: an input to check,
+                # flagged by rule 2's `possibly_measured` branch below.
+                continue
             out.reasons[name] = "concentration_before_target"
             out.findings.append(Finding(
                 check="concentration_before_target", code="concentration_before_target",
@@ -241,9 +273,7 @@ def column_role_safety(
                 detail={"reason": reason},
             ))
             continue
-        if out.reasons.get(name) != "concentration_before_target" and looks_outcome_like(
-            name, profile,
-        ) and pos.get(c, -1) <= t_pos:
+        if outcome_word(name) and pos.get(c, -1) <= t_pos:
             out.overrides[name] = ("dropped_output", "outcome_like_name")
             out.findings.append(Finding(
                 check="outcome_like_name", code="outcome_like_name", severity="warning",
@@ -267,6 +297,19 @@ def column_role_safety(
                 ),
             ))
             continue
+        if pos.get(c, -1) <= t_pos and looks_outcome_like(name, profile):
+            # Ambiguous before the target (OD, biomass, lactate, ammonium, ...):
+            # kept as an input and named, so the lab can untick it.
+            out.reasons[name] = "possibly_measured"
+            out.findings.append(Finding(
+                check="possibly_measured_after_run", code="possibly_measured_after_run",
+                severity="info", column=name,
+                message=(
+                    f"Column {name!r} looks like it might be measured during or after the "
+                    "run. It sits before the target, so it was kept as an input: check it, "
+                    "and untick it if it is a result rather than a setting."
+                ),
+            ))
         kept.append(c)
     out.cont_feats = kept
 
@@ -296,9 +339,9 @@ def column_role_safety(
     y = pd.to_numeric(rows[target], errors="coerce")
     for c in [*out.cont_feats, *out.cat_feats]:
         name = str(c)
-        if out.reasons.get(name) == "concentration_before_target":
+        if out.reasons.get(name) in {"concentration_before_target", "possibly_measured"}:
             continue
-        if looks_outcome_like(name, profile):
+        if c in declared and looks_outcome_like(name, profile):
             out.findings.append(Finding(
                 check="feature_looks_outcome_like", code="feature_looks_outcome_like",
                 severity="warning", column=name,

@@ -12,6 +12,8 @@ Newest first.
 
 ### Added - desktop-engine-2 (first-time-user study)
 
+- Name rule (owner decision): a column is left out by its name only on an outcome word (titer, yield, product, purity, recovery, activity, response, endpoint, harvest, viability at end, `final` without a concentration unit) or, after the target, on a measurement word. A concentration unit is not outcome evidence. Before the target, measurement words (OD, biomass, lactate, ammonium, ...) keep the column as an input with an info finding `possibly_measured_after_run` (reason `possibly_measured`). `columns[].finding_code` names the finding for every excluded or flagged column. Candida's `ammonium_g_L` and scFv's `Final Urea (M)` are inputs again; tested on all 8 sample sheets.
+
 - `stopping`: advice on whether more rounds can still beat the best run by more than the assay noise (`keep_going`, `gains_within_noise`, or `unknown` without repeats). Advice only: it never removes proposals. `kalos/bench/stopping_sim.py` measures how often it says "within noise" too early on a synthetic case.
 
 - `noise.floor`: the pooled assay noise with a 95% interval and its degrees of freedom. `roles.per_recipe_noise` (off by default) lets the proposal model use each recipe's own spread, shrunk toward the pooled one, when the noise rises with the recipe mean; `noise.per_recipe` says whether it was used and why.

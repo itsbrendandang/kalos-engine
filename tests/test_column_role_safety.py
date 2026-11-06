@@ -62,10 +62,12 @@ def test_pichia_like_default_roles_exclude_row_index_and_post_target_od():
     }
 
 
-def test_carbon_conc_still_dropped_when_target_is_not_given():
+def test_carbon_conc_is_kept_when_target_is_not_given():
+    """Owner decision (desktop-engine-2): a concentration word is not outcome
+    evidence, whether or not the target was named."""
     df = _parse_upload(_pichia_like_csv())
     out = _safety(df, None)
-    assert "Carbon_conc" not in out.cont_feats
+    assert "Carbon_conc" in out.cont_feats
 
 
 def test_named_consecutive_row_number_is_excluded_but_unsorted_integer_input_is_not():
@@ -169,21 +171,29 @@ def test_a_declared_row_number_like_feature_is_kept():
     assert out.cont_feats == ["Line", "pH"] and "Line" not in out.overrides
 
 
-def test_outcome_like_column_before_the_target_is_excluded_by_default():
-    """Owner decision: a column named like a run measurement is left out of the
-    fit even when it sits before the target, with a code and a reason."""
+def test_measurement_names_before_the_target_stay_inputs_and_are_flagged():
+    """Owner decision (desktop-engine-2): before the target, measurement words
+    alone (lactate, viability, OD, ammonium) do not exclude a column: it stays an
+    input with an info finding to check it. An outcome word excludes it."""
     rng = np.random.default_rng(6)
     n = 12
     df = pd.DataFrame({
         "Lactate_end": rng.uniform(1, 5, n), "Viability_pct": rng.uniform(1, 9, n),
+        "ammonium_g_L": rng.uniform(1, 9, n), "Yield_prev": rng.uniform(1, 9, n),
+        "biomass_g_L": rng.uniform(1, 9, n),
+        "Final Urea (M)": rng.uniform(1, 4, n), "Final_OD": rng.uniform(1, 4, n),
         "pH": rng.uniform(6, 7.5, n), "titer": rng.uniform(1, 5, n),
     })
     out = _safety(df, "titer")
-    assert out.cont_feats == ["pH"]
-    assert out.overrides["Lactate_end"] == ("dropped_output", "outcome_like_name")
-    assert out.overrides["Viability_pct"] == ("dropped_output", "outcome_like_name")
-    codes = {(f.code, f.column) for f in out.findings}
-    assert {("outcome_like_name", "Lactate_end"), ("outcome_like_name", "Viability_pct")} <= codes
+    assert out.cont_feats == [
+        "Lactate_end", "Viability_pct", "ammonium_g_L", "biomass_g_L", "Final Urea (M)", "pH",
+    ]
+    assert "Yield_prev" not in out.cont_feats  # an outcome word: left out by name
+    assert out.overrides["Final_OD"] == ("dropped_output", "outcome_like_name")
+    flagged = {f.column for f in out.findings if f.code == "possibly_measured_after_run"}
+    # "Final" with a unit is kept but ambiguous, so it is flagged too.
+    assert flagged == {"Lactate_end", "Viability_pct", "ammonium_g_L", "biomass_g_L", "Final Urea (M)"}
+    assert all(f.severity == "info" for f in out.findings if f.code == "possibly_measured_after_run")
 
 
 def test_a_declared_role_keeps_an_outcome_like_column_before_the_target():
@@ -197,7 +207,7 @@ def test_a_declared_role_keeps_an_outcome_like_column_before_the_target():
                for f in out.findings)
 
 
-def test_outcome_like_before_target_in_a_real_analysis_is_not_fitted():
+def test_outcome_word_before_target_in_a_real_analysis_is_not_fitted():
     pytest.importorskip("torch")
     from kalos.portal.analysis import _analyze
 
@@ -205,15 +215,17 @@ def test_outcome_like_before_target_in_a_real_analysis_is_not_fitted():
     n = 14
     ph = rng.uniform(6, 7.5, n)
     titer = 3 + ph + rng.normal(0, 0.2, n)
-    df = pd.DataFrame({"VCD_end": titer * 2 + rng.normal(0, 0.1, n), "pH": ph,
+    df = pd.DataFrame({"Harvest_VCD": titer * 2 + rng.normal(0, 0.1, n), "pH": ph,
                        "temp": rng.uniform(30, 37, n), "titer": titer})
     out = _analyze(df, target="titer")
-    assert "VCD_end" not in out["features"]
+    assert "Harvest_VCD" not in out["features"]
     prov = {r["name"]: r for r in out["provenance"]}
-    assert prov["VCD_end"]["status"] == "dropped_output"
-    assert prov["VCD_end"]["reason"] == "outcome_like_name"
+    assert prov["Harvest_VCD"]["status"] == "dropped_output"
+    assert prov["Harvest_VCD"]["reason"] == "outcome_like_name"
     cols = {c["name"]: c for c in out["columns"]}
-    assert cols["VCD_end"]["kind"] == "outcome_like" and cols["VCD_end"]["used_in_fit"] is False
+    assert cols["Harvest_VCD"]["kind"] == "outcome_like"
+    assert cols["Harvest_VCD"]["used_in_fit"] is False
+    assert cols["Harvest_VCD"]["finding_code"] == "outcome_like_name"
     assert "outcome_like_name" in {f["code"] for f in out["validation"]["findings"]}
 
 def test_duplicated_rows_do_not_hide_a_row_number_and_a_headerless_text_column_is_not_an_input():
