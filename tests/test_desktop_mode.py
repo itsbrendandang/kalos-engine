@@ -84,6 +84,25 @@ def test_apply_defaults_never_overrides_an_explicit_setting():
     assert env["KALOS_JOB_WORKERS"] == "1" and env[desktop.DESKTOP_ENV] == "1"
 
 
+def test_llm_provider_default_follows_a_local_ollama(monkeypatch):
+    import socket
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    try:
+        env = {"KALOS_OLLAMA_URL": f"http://127.0.0.1:{port}"}
+        assert desktop.apply_defaults(env)["KALOS_LLM_PROVIDER"] == "ollama"
+    finally:
+        listener.close()
+    env = {"KALOS_OLLAMA_URL": f"http://127.0.0.1:{port}"}
+    assert desktop.apply_defaults(env)["KALOS_LLM_PROVIDER"] == "none"
+    env = {"KALOS_LLM_PROVIDER": "anthropic"}
+    assert "KALOS_LLM_PROVIDER" not in desktop.apply_defaults(env)
+    assert not desktop.ollama_answers("http://example.com:11434")
+
+
 def test_check_posture_refusals():
     with pytest.raises(desktop.DesktopConfigError, match="only listens"):
         desktop.check_posture("0.0.0.0", auth_source=True, environ={})  # noqa: S104 - refused

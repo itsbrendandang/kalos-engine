@@ -28,10 +28,12 @@ From the packaged engine: `<bundle>/kalos-engine --desktop`.
 | `KALOS_CORS_ORIGINS` | yes | `http://127.0.0.1:<web port>`, the app's own origin. |
 | `KALOS_TORCH_THREADS` | no | Threads for one fit. Default: half the cores, between 1 and 4. |
 
-Local assistant (branch `assistant`, `kalos/assist/`, not on this branch yet):
-`KALOS_LLM_PROVIDER` defaults to `ollama` in desktop mode when unset,
-`KALOS_OLLAMA_URL` to `http://127.0.0.1:11434` and `KALOS_OLLAMA_MODEL` to
-`llama3.1:8b`. Ollama is not bundled. When it is not running, the chat route
+Local LLM: in desktop mode an unset `KALOS_LLM_PROVIDER` becomes `ollama` when
+something answers on `KALOS_OLLAMA_URL` (default `http://127.0.0.1:11434`, a
+0.2 s TCP check at start), else `none`; a hosted provider is never the default.
+`KALOS_OLLAMA_MODEL` defaults to `llama3.1`. The local assistant (branch
+`assistant`, `kalos/assist/`, not on this branch yet) uses the same settings.
+Ollama is not bundled. When it is not running, the chat route
 answers 503 `assist_provider_unavailable` and the rest of the engine is
 unaffected. The assistant's index lives under `$KALOS_STATE_DIR/assist/`.
 

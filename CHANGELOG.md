@@ -19,6 +19,7 @@ Newest first.
 - The same upload is not refit: the engine keeps the last 4 analyses in memory (`KALOS_ANALYSIS_CACHE`, 0 = off) keyed on the bytes, file name, sheet, target, roles, anonymize, profile, engine version and every `KALOS_*` setting. A repeat returns the same analysis with `analysis_cache: {"hit": true}`. Off in the test suite by default.
 - `scripts/build_desktop_engine.sh` builds a self-contained engine for arm64 macOS (python-build-standalone + the locked dependencies, launcher `kalos-engine`), smoke-tests it in desktop mode and writes `BUILD_INFO.txt`. 955 MB on disk, 272 MB zipped. `docs/DESKTOP.md` lists what the shell passes and what the engine answers.
 - The desktop build also bundles the `assist` extra when the checkout defines it (`KALOS_BUNDLE_EXTRAS` overrides the list); `docs/DESKTOP.md` lists the assistant's Ollama defaults.
+- Desktop mode sets an unset `KALOS_LLM_PROVIDER` to `ollama` when a local Ollama answers on `KALOS_OLLAMA_URL` (default 127.0.0.1:11434, 0.2 s check), else `none`.
 - Graceful stop in desktop mode: on SIGTERM an in-flight analysis gets 12 s to finish; after that no store write can commit, and the process exits.
 ### Added - conformal caveat
 

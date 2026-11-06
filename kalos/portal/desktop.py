@@ -11,6 +11,9 @@ What it sets, unless the variable is already set:
   the rest of the laptop usable.
 - `KALOS_JOB_WORKERS=1`: one analysis at a time (sync routes and background
   jobs share this limit, kalos/portal/busy.py).
+- `KALOS_LLM_PROVIDER`: `ollama` when something answers on the Ollama port
+  (`KALOS_OLLAMA_URL`, default http://127.0.0.1:11434; one TCP connect, 0.2 s
+  at most), else `none`. Never a hosted provider by default on a laptop.
 
 What it refuses (exit 2, one line on stderr):
 
@@ -86,7 +89,28 @@ def apply_defaults(environ: MutableMapping[str, str] | None = None) -> dict[str,
         if not env.get(name, "").strip():
             env[name] = value
             applied[name] = value
+    if not env.get("KALOS_LLM_PROVIDER", "").strip():
+        provider = "ollama" if ollama_answers(env.get("KALOS_OLLAMA_URL", "")) else "none"
+        env["KALOS_LLM_PROVIDER"] = provider
+        applied["KALOS_LLM_PROVIDER"] = provider
     return applied
+
+
+def ollama_answers(url: str = "", timeout: float = 0.2) -> bool:
+    """Whether something accepts a TCP connection on the Ollama address. Only
+    loopback addresses are probed; any other URL counts as not answering."""
+    import socket
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url.strip() or "http://127.0.0.1:11434")
+    host, port = parts.hostname or "", parts.port or 11434
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        return False
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def state_dir(environ: MutableMapping[str, str] | None = None) -> Path:
