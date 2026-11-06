@@ -667,6 +667,12 @@ class CampaignStore:
         with self._lock:
             self._conn.execute("SELECT MAX(version) FROM schema_migrations").fetchall()
 
+    def schema_version(self) -> int:
+        """The schema version recorded in the database (read-only, tenant-agnostic)."""
+        with self._lock:
+            row = self._conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+
     def get(self, *, tenant: str, campaign_id: str | None = None) -> dict[str, Any] | None:
         """The raw campaign state, or None if none seeded yet."""
         self._check(tenant, campaign_id)

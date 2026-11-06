@@ -530,6 +530,69 @@ async def healthz() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/api/health")
+def health(
+    _principal: Principal = Depends(require_scope(READ)),
+) -> JSONResponse:
+    """What the desktop shell (and an operator) needs to know: versions, where
+    the state lives, the schema, and whether an analysis is running.
+
+    Needs the read scope, unlike `/healthz`: it names the state directory. Never
+    imports torch: versions come from package metadata, `torch_loaded` says
+    whether the GP stack is in memory yet. 503 with a fixed plain reason when the
+    store cannot be read (the exception is logged, not returned)."""
+    import platform
+    import sys
+    from importlib import metadata
+
+    from kalos import __version__
+    from kalos.portal.analysis_parts.policy import ANALYSIS_CONTRACT_VERSION
+    from kalos.portal.busy import limiter
+    from kalos.portal.migrate import SCHEMA_VERSION
+    from kalos.portal.pipeline import TORCH_THREADS
+
+    def _version(dist: str) -> str | None:
+        try:
+            return metadata.version(dist)
+        except metadata.PackageNotFoundError:
+            return None
+
+    body: dict[str, Any] = {
+        "status": "ok",
+        "mode": "desktop" if _DESKTOP else "server",
+        "engine_version": __version__,
+        "contract_version": ANALYSIS_CONTRACT_VERSION,
+        "python_version": platform.python_version(),
+        "torch_version": _version("torch"),
+        "botorch_version": _version("botorch"),
+        "torch_loaded": "torch" in sys.modules,
+        "torch_threads": TORCH_THREADS,
+        "torch_prewarm": _desktop.prewarm_status() if _DESKTOP else None,
+        "analysis_in_flight": limiter().running(),
+        "uptime_s": _desktop.uptime_s(),
+        "pid": os.getpid(),
+        "schema_expected": SCHEMA_VERSION,
+    }
+    try:
+        store = app.dependency_overrides.get(get_campaign_store, get_campaign_store)()
+        body["state_dir"] = str(store.state_dir)
+        body["schema_version"] = store.schema_version()
+    except Exception:  # noqa: BLE001 - reported as unavailable, never as a 500
+        log.exception("health check: campaign store unavailable")
+        return JSONResponse(
+            {**body, "status": "unavailable", "code": "store_unavailable",
+             "error": "The engine cannot read its database. See the engine log."},
+            status_code=503,
+        )
+    if body["schema_version"] != SCHEMA_VERSION:
+        return JSONResponse(
+            {**body, "status": "unavailable", "code": "schema_mismatch",
+             "error": f"The database is at schema v{body['schema_version']}, this engine expects v{SCHEMA_VERSION}."},
+            status_code=503,
+        )
+    return JSONResponse(body)
+
+
 @app.get("/readyz")
 def readyz() -> JSONResponse:
     """Readiness probe: unlike `/healthz`, this DOES touch the database - on

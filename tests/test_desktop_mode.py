@@ -14,8 +14,10 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("fastapi")
+from fastapi.testclient import TestClient
 
 from kalos.portal import desktop
+from kalos.portal.app import app, get_campaign_store
 from kalos.portal.campaign import CampaignStore
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -168,3 +170,50 @@ def test_abandoned_analysis_cannot_commit(tmp_path):
         desktop.reset_abandon()
     store.save_analysis({"n": 1}, "x.csv", tenant="local")
     assert store.load_analysis(tenant="local") is not None
+
+
+# --- GET /api/health ----------------------------------------------------------- #
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    for var in ("KALOS_AUTH_TOKENS_FILE", "KALOS_ALLOW_OPEN_ACCESS"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("KALOS_AUTH_TOKENS", _tokens())
+    store = CampaignStore(tmp_path)
+    app.dependency_overrides[get_campaign_store] = lambda: store
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_campaign_store, None)
+
+
+def test_health_needs_the_token(client):
+    assert client.get("/api/health").status_code == 401
+
+
+def test_health_reports_versions_state_and_schema(client, tmp_path):
+    from kalos.portal.migrate import SCHEMA_VERSION
+
+    r = client.get("/api/health", headers={"Authorization": "Bearer desk-secret"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["state_dir"] == str(tmp_path)
+    assert body["schema_version"] == body["schema_expected"] == SCHEMA_VERSION
+    assert body["contract_version"] >= 2
+    assert isinstance(body["torch_version"], str) and isinstance(body["torch_loaded"], bool)
+    assert body["analysis_in_flight"] == 0 and body["pid"] == os.getpid()
+    assert set(body) >= {"engine_version", "python_version", "botorch_version", "torch_threads",
+                         "uptime_s", "mode"}
+
+
+def test_health_is_503_with_a_plain_reason_when_the_store_fails(client):
+    def _broken():
+        raise sqlite3.DatabaseError("database disk image is malformed /secret/path")
+
+    app.dependency_overrides[get_campaign_store] = _broken
+    r = client.get("/api/health", headers={"Authorization": "Bearer desk-secret"})
+    assert r.status_code == 503
+    assert r.json()["code"] == "store_unavailable"
+    assert "/secret/path" not in r.text
