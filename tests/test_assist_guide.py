@@ -44,7 +44,7 @@ def _all_facts():
             continue  # not reachable: awaiting runs are a subset of started runs
         if not facts.has_sheet and (facts.n_errors or facts.n_warnings or facts.n_proposed
                                     or facts.trusted is not None):
-            continue  # not reachable: findings, checks and a batch come from an analysis
+            continue  # not reachable: findings, checks and recipes come from an analysis
         yield facts
 
 
@@ -116,8 +116,8 @@ def test_routes_per_state():
         "runs_awaiting": "/campaign/record", "runs_all_recorded": "/campaign/learn",
         "fit_refused": "/campaign/setup", "no_sheet": "/campaign/setup",
         "sheet_errors": "/campaign/setup", "not_trusted": "/campaign/plan",
-        "sheet_warnings": "/campaign/plan", "no_batch": "/campaign/plan",
-        "batch_proposed": "/campaign/plan", "round_complete": "/campaign/plan",
+        "sheet_warnings": "/campaign/plan", "no_recipes": "/campaign/plan",
+        "recipes_proposed": "/campaign/plan", "round_complete": "/campaign/plan",
     }
     for facts in _all_facts():
         out = next_step(*_record(facts))
@@ -150,7 +150,7 @@ def test_refusal_codes_give_a_plain_blocker(code):
 def test_old_refusal_is_ignored_once_a_newer_analysis_exists():
     analysis = {"timestamp": 500, "proposals": [{}], "validation": {"findings": []}}
     out = next_step({"pending": []}, analysis, {"code": "fit_failed", "at": 100})
-    assert out["state"] == "batch_proposed"
+    assert out["state"] == "recipes_proposed"
 
 
 def test_numbers_come_from_the_record():
@@ -166,3 +166,18 @@ def test_desktop_promotion_status_is_read():
     out = next_step({"pending": []}, analysis)
     assert out["state"] == "not_trusted"
     assert out["blockers"][0]["code"] == "model_check"
+
+
+def test_state_names_say_recipes_not_batch_and_keep_a_legacy_map():
+    """sec-assist nit: no state name uses 'batch'; the old names map to the new."""
+    from kalos.assist.guide import LEGACY_STATE_NAMES
+
+    assert not [s for s in STATE_NAMES if "batch" in s]
+    assert LEGACY_STATE_NAMES == {"batch_proposed": "recipes_proposed", "no_batch": "no_recipes"}
+    assert set(LEGACY_STATE_NAMES.values()) <= set(STATE_NAMES)
+    from pathlib import Path
+
+    doc = (Path(__file__).resolve().parents[1] / "docs" / "ASSISTANT.md").read_text()
+    leftover = [ln for ln in doc.splitlines() if "batch" in ln.lower()
+                and "batch_recipe" not in ln and "batch_proposed" not in ln]
+    assert leftover == []

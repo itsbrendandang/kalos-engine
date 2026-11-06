@@ -77,7 +77,7 @@ Install: `uv sync --extra assist` (BM25 and the .docx export). The `assist-embed
 
 ## SOP drafts
 
-A draft is written from one set of recipes: some started runs, some proposals, or every run of one round. There are three templates: batch recipe, media preparation, and custom.
+A draft is written from one set of recipes: some started runs, some proposals, or every run of one round. There are three templates: run recipe (template id `batch_recipe`), media preparation, and custom.
 
 - Every number in the draft comes from the campaign record. Each one is listed in `fields_from_record` with the record it came from.
 - Predicted values are labelled Predicted. Measured results are labelled Measured.
@@ -102,6 +102,6 @@ All routes use the caller's tenant. Read scope unless marked.
 | `POST /api/assist/sop/{id}/fill` (write) | the next version, or 400 `unknown_placeholder` |
 | `GET /api/assist/sop`, `GET /api/assist/sop/{id}`, `GET /api/assist/sop/{id}/export` | the list, one version, a file |
 
-The next-step states are `no_sheet`, `fit_refused`, `sheet_errors`, `runs_awaiting`, `runs_all_recorded`, `not_trusted`, `sheet_warnings`, `batch_proposed`, `round_complete` and `no_batch`. Exactly one applies to any campaign; `tests/test_assist_guide.py` checks every combination.
+The next-step states are `no_sheet`, `fit_refused`, `sheet_errors`, `runs_awaiting`, `runs_all_recorded`, `not_trusted`, `sheet_warnings`, `recipes_proposed`, `round_complete` and `no_recipes`. (Earlier engines called the last two `batch_proposed` and `no_batch`.) Exactly one applies to any campaign; `tests/test_assist_guide.py` checks every combination.
 
 The plain sentences behind `why_it_matters` and each blocker's `why` are the same ones the web app shows. They live in `kalos/assist/why.py`.

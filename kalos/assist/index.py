@@ -7,7 +7,7 @@ What goes in (each chunk keeps its source kind and id, so an answer can cite it)
   - `round`: each round's started runs with their recipe and recorded result,
     and the best measured value per round. id = the round number.
   - `analysis`: the model checks, the cross-check numbers, the noise estimate,
-    the drivers, the proposed batch (predicted values labelled as predicted),
+    the drivers, the proposed recipes (predicted values labelled as predicted),
     and the latest refusal. id = the section key.
   - `doc`: docs/*.md split by heading. id = `docs/<file>.md`.
   - `skill`: SKILL.md files, when a skills folder exists. id = the slug.

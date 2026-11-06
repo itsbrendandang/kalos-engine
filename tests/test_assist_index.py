@@ -121,7 +121,7 @@ def test_campaign_filter_keeps_docs_and_drops_other_campaigns(store):
     b, _ = _seed(store, name="Beta")
     index = AssistIndex(store, "acme")
     index.refresh()
-    hits = index.search("proposed batch recipe predicted", campaign_id=a, k=20)
+    hits = index.search("proposed recipes predicted", campaign_id=a, k=20)
     assert hits and all(h.chunk.campaign_id in (a, None) for h in hits)
     assert b not in {h.chunk.campaign_id for h in hits}
 

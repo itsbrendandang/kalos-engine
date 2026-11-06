@@ -173,7 +173,7 @@ def test_ask_keeps_only_cited_sentences_and_returns_sources(env):
                                 "quote": body["sources"][0]["quote"]}]
     chunk = next(c for c in AssistIndex(store, "acme").chunks() if c.source_id == "drivers")
     assert body["sources"][0]["quote"] in chunk.text
-    assert body["next"]["state"] == "batch_proposed"
+    assert body["next"]["state"] == "recipes_proposed"
 
 
 def test_ask_drops_a_number_the_source_does_not_hold(env):
@@ -214,7 +214,7 @@ def test_ask_abstains_without_calling_the_model_when_nothing_is_relevant(env):
     body = tc.post("/api/assist/ask", json={"question": "zebra saxophone quantum", "campaign_id": cid},
                    headers=H("a-read")).json()
     assert body["abstained"] is True and body["sources"] == []
-    assert body["next"]["state"] == "batch_proposed"
+    assert body["next"]["state"] == "recipes_proposed"
     assert fake.prompts == []
 
 
@@ -252,7 +252,7 @@ def test_ask_never_sees_another_tenants_data(env):
     b_cid = _seed(store, "globex", B_SECRET)
     AssistIndex(store, "globex").refresh()
     fake.reply = "Nothing here [G]."
-    tc.post("/api/assist/ask", json={"question": f"{B_SECRET} lipase titer proposed batch"}, headers=H("a-read"))
+    tc.post("/api/assist/ask", json={"question": f"{B_SECRET} lipase titer proposed recipes"}, headers=H("a-read"))
     assert fake.prompts and all(B_SECRET not in p.split("Question:")[0] for p in fake.prompts)
     r = tc.post("/api/assist/ask", json={"question": "lipase", "campaign_id": b_cid}, headers=H("a-read"))
     assert r.status_code == 404 and r.json()["code"] == "not_found"

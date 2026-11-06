@@ -16,7 +16,7 @@ Precedence, in words:
 2. With no runs started: a refusal newer than the last analysis, else no
    sheet at all, else errors on the sheet.
 3. A sheet with an analysis: a model not yet shown fit, else warnings, else
-   the batch (the first one, a later round's, or none proposed).
+   the proposed recipes (the first round's, a later round's, or none).
 
 Nothing here writes, approves, or states a number the record does not hold.
 """
@@ -47,7 +47,7 @@ class Facts:
     n_errors: int  # sheet findings at severity "error"
     n_warnings: int  # sheet findings at severity "warning"
     trusted: bool | None  # the model checks passed; None when not reported
-    n_proposed: int  # recipes in the published batch
+    n_proposed: int  # recipes in the published analysis
     round: int  # re-analyses so far (0 right after an upload)
 
 
@@ -71,11 +71,14 @@ STATES: tuple[tuple[str, Callable[[Facts], bool]], ...] = (
     ("sheet_errors", lambda f: _no_runs(f) and not f.refused and f.has_sheet and f.n_errors > 0),
     ("not_trusted", lambda f: _sheet_ok(f) and f.trusted is False),
     ("sheet_warnings", lambda f: _sheet_ok(f) and f.trusted is not False and f.n_warnings > 0),
-    ("no_batch", lambda f: _clean(f) and f.n_proposed == 0),
-    ("batch_proposed", lambda f: _clean(f) and f.n_proposed > 0 and f.round == 0),
+    ("no_recipes", lambda f: _clean(f) and f.n_proposed == 0),
+    ("recipes_proposed", lambda f: _clean(f) and f.n_proposed > 0 and f.round == 0),
     ("round_complete", lambda f: _clean(f) and f.n_proposed > 0 and f.round > 0),
 )
 STATE_NAMES = tuple(name for name, _ in STATES)
+# Earlier names of two states, for clients built against them (kalos-web maps
+# both). The engine emits only the new names.
+LEGACY_STATE_NAMES = {"batch_proposed": "recipes_proposed", "no_batch": "no_recipes"}
 
 
 def classify(facts: Facts) -> str:
@@ -339,13 +342,13 @@ def next_step(
         matters = WHY["sheet_usable_with_warnings"]
         route = ROUTE_PLAN
         blockers.extend(_finding_blockers(analysis, "warning"))
-    elif state == "no_batch":
+    elif state == "no_recipes":
         step = "Look at why no recipes were proposed"
         why = "The analysis finished, but it holds no proposed recipes."
         matters = WHY["empty_batch"]
         route = ROUTE_PLAN
         blockers.extend(_notice_blocker(analysis))
-    elif state == "batch_proposed":
+    elif state == "recipes_proposed":
         step = f"Review and start round {people_round}"
         why = f"Kalos proposed {_plural(f.n_proposed, 'recipe')}. Untick any you do not plan to run, then start the rest."
         matters = WHY["plan_ready"]
@@ -378,6 +381,7 @@ def guide_text(output: dict[str, Any]) -> str:
 
 
 __all__ = [
+    "LEGACY_STATE_NAMES",
     "ROUTES",
     "STATES",
     "STATE_NAMES",
