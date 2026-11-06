@@ -115,15 +115,19 @@ def _value_numbers(sentence: str) -> set[str]:
 
 
 GUIDE_OVERLAP = 0.6
+GUIDE_EXTRA_WORDS = 2
 
 
 def _restates(sentence: str, guide_text: str) -> bool:
-    """A sentence citing only the guide must mostly use the guide's own words:
-    at least GUIDE_OVERLAP of its content words appear in the guide text."""
+    """A sentence citing only the guide must restate it: at least GUIDE_OVERLAP
+    of its content words appear in the guide text, and it adds at most
+    GUIDE_EXTRA_WORDS content words the guide does not use."""
     words = set(tokens(sentence))
     if not words:
         return False
-    return len(words & set(tokens(guide_text))) / len(words) >= GUIDE_OVERLAP
+    guide_words = set(tokens(guide_text))
+    extra = words - guide_words
+    return len(extra) <= GUIDE_EXTRA_WORDS and len(words & guide_words) / len(words) >= GUIDE_OVERLAP
 
 
 def _quote(chunk_text: str, sentence: str) -> str:

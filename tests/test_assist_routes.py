@@ -471,3 +471,16 @@ def test_one_letter_lab_label_does_not_strip_letters_from_claims(planted):
                   user_terms=("A", "SP", "Titer"))
     checked = check_answer(planted, [Labelled("S1", Hit(chunk, 1.0))], {"step": "", "why": "", "why_it_matters": ""})
     assert checked.rejected, planted
+
+
+def test_a_guide_only_sentence_adds_at_most_two_new_words():
+    """sec-assist re-check nit: a long sentence could pass the 60% overlap while
+    adding several words of its own."""
+    from kalos.assist.chat import check_answer
+
+    guide = {"step": "Record 2 results for round 1", "why": "1 of 3 started runs have a result.",
+             "why_it_matters": "Every result you enter sharpens the next suggestions."}
+    long_ = ("Record 2 results for round 1 since every started run result sharpens the next suggestions "
+             "and Methanol looks safe here [G].")
+    assert check_answer(long_, [], guide).answer == ""
+    assert check_answer("Please record 2 results for round 1 [G].", [], guide).answer  # one new word
