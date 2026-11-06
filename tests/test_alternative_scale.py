@@ -229,8 +229,13 @@ def test_block_is_purely_additive():
     # `timestamp` is `int(time.time())`, wall-clock and unrelated to this block;
     # excluded alongside `alternative_scale` itself.
     skip = {"alternative_scale", "timestamp"}
+    # `model_diagnostics.fit_seconds` is wall-clock time too.
     a = {k: v for k, v in with_block.items() if k not in skip}
     b = {k: v for k, v in without_block.items() if k not in skip}
+    for d in (a, b):
+        d["model_diagnostics"] = {
+            k: v for k, v in d["model_diagnostics"].items() if k != "fit_seconds"
+        }
     assert a == b, "alternative_scale must be purely additive to the rest of the response"
 
 

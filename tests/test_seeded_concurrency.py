@@ -30,8 +30,12 @@ def _sheet() -> pd.DataFrame:
 
 
 def _stable(result: dict) -> str:
-    """The result minus the wall-clock timestamp, as a comparable string."""
+    """The result minus the wall-clock fields (`timestamp`,
+    `model_diagnostics.fit_seconds`), as a comparable string."""
     trimmed = {k: v for k, v in result.items() if k != "timestamp"}
+    trimmed["model_diagnostics"] = {
+        k: v for k, v in trimmed.get("model_diagnostics", {}).items() if k != "fit_seconds"
+    }
     return json.dumps(trimmed, sort_keys=True, default=str)
 
 
