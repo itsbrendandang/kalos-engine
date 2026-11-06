@@ -435,15 +435,17 @@ class CampaignStore:
 
     @staticmethod
     def _analysis_blob(
-        result: dict[str, Any], dataset: str, campaign_generation: str | None, now: float
+        result: dict[str, Any], dataset: str, campaign_generation: str | None, now: float,
+        *, allow_nan: bool = True,
     ) -> str | None:
         """The `/api/latest` payload as stored. None (logged) if it cannot be
         serialized: publishing an analysis is best-effort and must never fail
-        the upload or the fold it accompanies."""
+        the upload it accompanies. `commit_fold` passes `allow_nan=False` and
+        treats None as a reason to commit nothing."""
         state = {**result, "dataset": dataset, "updated": now,
                  "campaign_generation": campaign_generation}
         try:
-            return json.dumps(state)
+            return json.dumps(state, allow_nan=allow_nan)
         except (TypeError, ValueError):
             log.exception("analysis could not be serialized; not published")
             return None
@@ -1052,9 +1054,16 @@ class CampaignStore:
                 raise CampaignConflict(changed) from None
             if analysis is not None:
                 label = dataset or f"campaign round {state['round']}"
-                blob = self._analysis_blob(analysis, label, new_generation, now)
-                if blob is not None:
-                    self._write_analysis(conn, tenant, row.id, blob, label, new_generation, now)
+                blob = self._analysis_blob(
+                    analysis, label, new_generation, now, allow_nan=False
+                )
+                if blob is None:
+                    # Raising inside the transaction rolls the fold back: the
+                    # fold and its analysis land together or not at all.
+                    raise CampaignError(
+                        "the analysis could not be stored; nothing was committed"
+                    )
+                self._write_analysis(conn, tenant, row.id, blob, label, new_generation, now)
             return state
 
     # --- analyses (what /api/latest serves) ---------------------------------- #

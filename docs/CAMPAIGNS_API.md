@@ -366,6 +366,8 @@ only added; a field never changes meaning or disappears within a version.
   engine's in-memory copy of an earlier analysis instead of a new fit
   (`KALOS_ANALYSIS_CACHE`, docs/DESKTOP.md); `{"hit": false}` after a fit.
   Upload responses only; reanalyze always fits.
+  - `cv_ci95_reason`: why `cv_ci95` is null (string), else null. The interval
+    needs at least 3 CV groups. A `cv_ci_unavailable` info finding says the same.
 
 ## Not in this slice
 

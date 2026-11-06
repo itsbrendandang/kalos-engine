@@ -12,6 +12,7 @@ follow-up). Per-tenant isolation of the campaign store is the next slice.
 from __future__ import annotations
 
 import functools
+import json
 import logging
 from typing import Annotated, Any
 
@@ -335,9 +336,17 @@ async def _reanalyze(
         log.error("failed to re-analyze the campaign: code=analysis_failed %s", scrubbed_failure(exc))
         return JSONResponse({"error": "could not analyze the campaign data", "code": "analysis_failed"}, status_code=400)
 
-    # The provenance block (kind=reanalyze): the same fields an upload gets, so
-    # the record of a campaign's current analysis says what produced it.
-    result = attach_reanalyze_run(df, result, anonymize=anonymize, pending_runs=len(awaiting))
+    try:
+        # The provenance block (kind=reanalyze): the same fields an upload gets, so
+        # the record of a campaign's current analysis says what produced it.
+        result = attach_reanalyze_run(df, result, anonymize=anonymize, pending_runs=len(awaiting))
+        # Atomic (replay F1): the analysis must be JSON-encodable BEFORE the fold
+        # is committed. A NaN found only when the response is encoded used to
+        # surface as a 500 for a fold the server had already kept.
+        json.dumps(result, allow_nan=False)
+    except Exception as exc:  # noqa: BLE001 - nothing committed; same generic 400 as above
+        log.error("failed to re-analyze the campaign: code=analysis_failed %s", scrubbed_failure(exc))
+        return JSONResponse({"error": "could not analyze the campaign data", "code": "analysis_failed"}, status_code=400)
 
     try:
         # The fold and the analysis that describes it, in one transaction.

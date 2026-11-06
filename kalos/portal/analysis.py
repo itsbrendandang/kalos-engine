@@ -94,6 +94,7 @@ from kalos.portal.analysis_parts.refusals import (
     _too_few_rows,
     _validate_constraint,
 )
+from kalos.portal.analysis_parts.sanitize import sanitize_non_finite
 from kalos.portal.cells import (
     BLANK,
     CENSORED,
@@ -115,6 +116,7 @@ from kalos.portal.uploads import (
 )
 from kalos.portal.validate import column_provenance, provenance_dicts
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
+from kalos.validation.report import Finding
 
 # Re-exported: each name below was defined in this module before the split into
 # `kalos.portal.analysis_parts`; callers and tests keep importing it from here.
@@ -752,7 +754,21 @@ def _analyze_body(
     # Honest reliability verdict: only what this path can actually assess. The
     # spearman floor mirrors GatesConfig.min_spearman (kalos/core/gates.py); we do
     # NOT assert the feasibility gate, which is not measured here.
-    ci95 = None if rho != rho else [round(rep["ci95"][0], 3), round(rep["ci95"][1], 3)]
+    # The CI needs >= 3 CV groups for the group bootstrap; with fewer it comes
+    # back NaN. Sent as None with a reason, never as NaN (replay F1: a NaN here
+    # made the reanalyze response a 500).
+    _ci_lo, _ci_hi = (float(v) for v in rep["ci95"])
+    ci95 = (
+        [round(_ci_lo, 3), round(_ci_hi, 3)]
+        if rho == rho and np.isfinite(_ci_lo) and np.isfinite(_ci_hi)
+        else None
+    )
+    ci95_reason = None if ci95 is not None else (
+        f"The 95% interval for the CV Spearman needs at least 3 CV groups; this sheet has "
+        f"{int(rep['n_groups'])}. It is reported as null."
+        if rho == rho
+        else "The CV Spearman could not be computed on this sheet, so it has no 95% interval."
+    )
 
     # CALIBRATION. A model can rank held-out runs correctly and still state every
     # uncertainty at half its true width, and the scientist reading "4.2 +/- 0.3"
@@ -1447,6 +1463,8 @@ def _analyze_body(
         "n_pending_dropped": int(n_pending_dropped),
         "cv_spearman": None if rho != rho else round(rho, 3),
         "cv_ci95": ci95,
+        # Why `cv_ci95` is null (None when it was formed).
+        "cv_ci95_reason": ci95_reason,
         "cv_n_groups": rep["n_groups"],
         # How many partitions actually went into `cv_ci95` above - the requested
         # ceiling (`CV_N_REPEATS`) collapses to 1 when the sheet has too few
@@ -1563,6 +1581,13 @@ def _analyze_body(
                     by_column, n_rows_dropped, n_censored_rows, zero_filled,
                     auto_cats=[str(c) for c in auto_cats if c in kept_cats],
                     header=header_info,
+                ) + (
+                    [Finding(
+                        check="cv_ci_unavailable", severity="info", message=ci95_reason,
+                        detail={"cv_n_groups": int(rep["n_groups"])},
+                    )]
+                    if ci95_reason is not None
+                    else []
                 ),
             )
         ),
@@ -1589,4 +1614,6 @@ def _analyze_body(
             result,
             categorical_levels={str(c): cat_dims_map[c] for c in kept_cats},
         )
+    # Last step: no NaN/inf may reach the JSON encoder (see analysis_parts/sanitize.py).
+    result, _sanitized = sanitize_non_finite(result)
     return result
