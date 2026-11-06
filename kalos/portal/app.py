@@ -82,7 +82,11 @@ from kalos.portal.limits import (
     upload_read_timeout_s,
 )
 from kalos.portal.migrate import legacy_latest_filename
-from kalos.portal.pipeline import compute_upload_analysis, publish_upload_analysis
+from kalos.portal.pipeline import (
+    adopt_cached_upload,
+    compute_upload_analysis,
+    publish_upload_analysis,
+)
 from kalos.portal.scale_routes import router as _scale_router
 from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.uploads import (
@@ -859,9 +863,13 @@ def _run_uploaded_sync(
     # functions the background-job worker uses (kalos/portal/pipeline.py).
     # `_analyze` is resolved from THIS module at call time so tests can stub it.
     validate_tenant_id(tenant)
+    target_store = store if store is not None else get_campaign_store()
+    # The campaign this upload publishes in, for the analysis cache key (two
+    # campaigns never share an analysis_id). None: the tenant has none yet.
+    publish_to = campaign_id or target_store.default_campaign_id(tenant=tenant)
     df, result = compute_upload_analysis(
         raw, target, anonymize, filename, roles_json, sheet=sheet, analyze=_analyze,
-        direction=direction or None, tenant=tenant,
+        direction=direction or None, tenant=tenant, campaign_id=publish_to,
     )
     # A fresh upload starts a fresh campaign state (docs/CAMPAIGN_LOOP.md,
     # "Seeding") in THIS tenant's default campaign (or the explicit
@@ -876,11 +884,17 @@ def _run_uploaded_sync(
     publish_kwargs: dict[str, Any] = (
         {} if expected_generation is _NO_GUARD else {"expected_generation": expected_generation}
     )
-    target_store = store if store is not None else get_campaign_store()
     publish_upload_analysis(
         target_store, result, filename,
         tenant=tenant, campaign_id=campaign_id, df=df, **publish_kwargs,
     )
+    if publish_to is None:
+        created = target_store.default_campaign_id(tenant=tenant)
+        if created is not None:
+            adopt_cached_upload(
+                raw, target, anonymize, filename, roles_json, sheet=sheet,
+                direction=direction or None, tenant=tenant, campaign_id=created,
+            )
     # The response is the stored analysis (same `analysis_id`, `supersedes`,
     # `dataset`, `updated` as /api/latest), plus the upload-only fields that are
     # stored too. If the publish did not land this analysis, the computed one.

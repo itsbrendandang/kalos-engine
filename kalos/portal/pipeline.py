@@ -196,7 +196,8 @@ def preflight_report(
 # same upload is not refit and gives the same proposals every time.
 #
 # The key covers the tenant (one tenant never gets another's analysis, even for
-# the same bytes) and everything the analysis reads: the uploaded bytes, the file
+# the same bytes), the campaign it is published in (two campaigns never share
+# one `analysis_id`) and everything the analysis reads: the uploaded bytes, the file
 # name (it picks the parser), the sheet, target, roles, anonymize, the profile,
 # the engine version, the analyze function, and every KALOS_* setting (the
 # validation mode, the row caps, ...). Only successful analyses are kept; a
@@ -254,6 +255,13 @@ class _AnalysisCache:
             while len(self._entries) > size:
                 self._entries.popitem(last=False)
 
+    def move(self, src: str, dst: str) -> None:
+        """Re-file the entry under `src` as `dst` (nothing when there is none)."""
+        with self._lock:
+            entry = self._entries.pop(src, None)
+            if entry is not None:
+                self._entries[dst] = entry
+
     def clear(self) -> None:
         with self._lock:
             self._entries.clear()
@@ -262,15 +270,51 @@ class _AnalysisCache:
 ANALYSIS_CACHE = _AnalysisCache()
 
 
+def upload_cache_key(
+    raw: bytes, tenant: str | None, campaign_id: str | None, filename: str, sheet: str | None,
+    target: str | None, roles_json: str, anonymize: bool, profile_name: str,
+    direction: str | None,
+) -> str:
+    """The `ANALYSIS_CACHE` key of an upload analysis."""
+    return ANALYSIS_CACHE.key(
+        raw, tenant, campaign_id, filename, sheet, target, roles_json, bool(anonymize),
+        profile_name, direction or None,
+    )
+
+
+def adopt_cached_upload(
+    raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
+    *, sheet: str | None = None, direction: str | None = None, tenant: str | None = None,
+    campaign_id: str,
+) -> None:
+    """After an upload computed with no campaign (the tenant's first) created
+    `campaign_id`, re-file its cache entry under that campaign. Moved, not
+    copied: a later upload with no campaign is a new campaign and must not get
+    this analysis's id."""
+    try:
+        _, profile = _roles_and_profile(roles_json)
+    except Exception:  # noqa: BLE001 - nothing was cached for unreadable roles
+        return
+    ANALYSIS_CACHE.move(
+        upload_cache_key(raw, tenant, None, filename, sheet, target, roles_json, anonymize,
+                         profile.name, direction),
+        upload_cache_key(raw, tenant, campaign_id, filename, sheet, target, roles_json,
+                         anonymize, profile.name, direction),
+    )
+
+
 def compute_upload_analysis(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
     *, sheet: str | None = None, progress: ProgressFn | None = None,
     analyze: Callable[..., dict] | None = None, direction: str | None = None,
-    tenant: str | None = None,
+    tenant: str | None = None, campaign_id: str | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """parse -> `_analyze` -> the response dict. Returns `(df, result)`; writes
     nothing. `analyze` defaults to `kalos.portal.analysis._analyze` (the sync
-    route passes `kalos.portal.app._analyze` so its tests can stub it)."""
+    route passes `kalos.portal.app._analyze` so its tests can stub it).
+    `campaign_id` is the campaign the result will be published in (None: the
+    tenant has no campaign yet); it is part of the cache key, so two campaigns
+    never share an `analysis_id`."""
     if analyze is None:
         from kalos.portal.analysis import _analyze
 
@@ -291,10 +335,11 @@ def compute_upload_analysis(
             kwargs["roles"] = roles
         profile_name = profile.name
         # Every argument the analysis receives is in the key (progress aside),
-        # and the tenant, so a cached analysis is never served across tenants.
-        cache_key = ANALYSIS_CACHE.key(
-            raw, tenant, filename, sheet, target, roles_json, bool(anonymize), profile_name,
-            direction or None,
+        # the tenant, so a cached analysis is never served across tenants, and the
+        # campaign, so two campaigns never share one `analysis_id`.
+        cache_key = upload_cache_key(
+            raw, tenant, campaign_id, filename, sheet, target, roles_json, anonymize,
+            profile_name, direction,
         )
         cached = ANALYSIS_CACHE.get(cache_key, analyze)
         if cached is not None:

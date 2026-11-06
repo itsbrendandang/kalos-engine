@@ -358,3 +358,50 @@ def test_roles_change_detail_keeps_unsafe_values_out():
     )
     assert detail == ("settings: target changed; direction maximize -> minimize; "
                       "allow_beyond changed; 1 other key(s) changed")
+
+
+# --- the analysis cache never gives two campaigns one analysis_id ---------------------- #
+
+
+def test_two_campaigns_never_share_an_analysis_id(client, monkeypatch):
+    monkeypatch.setenv("KALOS_ANALYSIS_CACHE", "8")
+    pipeline.ANALYSIS_CACHE.clear()
+    c, store = client
+    roles = {"target": "Titer", "features": INPUTS}
+    try:
+        on_default = upload(c, roles)  # creates the tenant's default campaign
+        other = c.post("/api/campaigns", json={"name": "second"}).json()["id"]
+        in_other = upload(c, roles, path=f"/api/campaigns/{other}/upload")
+        third = c.post("/api/campaigns", json={"name": "third"}).json()["id"]
+        in_third = upload(c, roles, path=f"/api/campaigns/{third}/upload")
+        # The same campaign again is still the cached analysis.
+        again_other = upload(c, roles, path=f"/api/campaigns/{other}/upload")
+        again_default = upload(c, roles)
+    finally:
+        pipeline.ANALYSIS_CACHE.clear()
+    ids = [on_default["analysis_id"], in_other["analysis_id"], in_third["analysis_id"]]
+    assert len(set(ids)) == 3
+    assert in_other["analysis_cache"] == {"hit": False}
+    assert again_other["analysis_cache"] == {"hit": True}
+    assert again_other["analysis_id"] == in_other["analysis_id"]
+    assert again_default["analysis_cache"] == {"hit": True}
+    assert again_default["analysis_id"] == on_default["analysis_id"]
+    cid = store.default_campaign_id(tenant="default")
+    stored = {store.load_analysis(tenant="default", campaign_id=x)["analysis_id"]
+              for x in (cid, other, third)}
+    assert stored == set(ids)
+
+
+def test_a_new_default_campaign_does_not_reuse_the_archived_ones_analysis(client, monkeypatch):
+    monkeypatch.setenv("KALOS_ANALYSIS_CACHE", "8")
+    pipeline.ANALYSIS_CACHE.clear()
+    c, store = client
+    try:
+        first = upload(c)
+        old = store.default_campaign_id(tenant="default")
+        store.archive_campaign(tenant="default", campaign_id=old)
+        second = upload(c)  # a fresh default campaign
+    finally:
+        pipeline.ANALYSIS_CACHE.clear()
+    assert store.default_campaign_id(tenant="default") != old
+    assert second["analysis_id"] != first["analysis_id"]

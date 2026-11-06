@@ -181,7 +181,7 @@ The three-start hyperparameter fit stays inside the budgets stated in
 
 The engine keeps the analyses of the last few distinct uploads in memory
 (`KALOS_ANALYSIS_CACHE`, default 4, 0 = off, at most 32). The same tenant sending the same
-bytes with the same target, roles, sheet, anonymize flag and engine settings return the stored
+bytes to the same campaign with the same target, roles, sheet, anonymize flag and engine settings return the stored
 analysis instead of fitting again, with `analysis_cache: {"hit": true}`.
 `GET /api/latest` reads the published analysis and never fits. Background-job
 workers are separate processes and do not share the cache.

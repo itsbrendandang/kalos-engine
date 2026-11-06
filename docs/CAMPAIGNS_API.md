@@ -572,8 +572,10 @@ analysis, so it has the same fields as `/api/latest` (without `has_data`).
 
 The same file with the same target, roles and settings is not fit again while
 the engine runs (`analysis_cache`). It gets the same analysis and the same id,
-on `/api/run` and on `/api/campaigns/{id}/upload`. Background jobs run in
-their own process and fit again.
+on `/api/run` and on `/api/campaigns/{id}/upload`, when it goes to the same
+campaign. The same file sent to another campaign is fit for that campaign and
+gets its own id: two campaigns never share an `analysis_id`. Background jobs
+run in their own process and fit again.
 
 When a campaign gets a new analysis, `supersedes` names the one it replaced:
 `{analysis_id, code, why}`. `code` is `new_upload`, `target_changed`,
@@ -621,7 +623,7 @@ only added; a field never changes meaning or disappears within a version.
   proposals do not carry it. A declared categorical is never dropped this way.
 - `cv_logo.reason` can say that the group column labels exactly the recipes;
   leave-one-group-out is then not run (it would repeat the grouped CV).
-- `analysis_cache`: `{"hit": true}` when an upload by the same tenant with the same bytes, target,
+- `analysis_cache`: `{"hit": true}` when an upload by the same tenant to the same campaign with the same bytes, target,
   roles, sheet, anonymize flag and engine settings was answered from the
   engine's in-memory copy of an earlier analysis instead of a new fit
   (`KALOS_ANALYSIS_CACHE`, docs/DESKTOP.md); `{"hit": false}` after a fit.
