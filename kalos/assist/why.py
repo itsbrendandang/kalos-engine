@@ -165,15 +165,7 @@ GLOSSARY: dict[str, str] = {
     'stopping_advice_only': 'Kalos never ends a campaign; this advice has been tried only on one small simulated case, not on real assays, so whether another round is worth it is your call.',
     'specs_treated_independently': 'Kalos judges each spec on its own, so when two results rise and fall together the chance of meeting all of them at once can be too high or too low; read it as a rough guide.',
     'possibly_measured_after_run': 'A column that might be measured during the run, used as a setting, would let the model look better than it is; untick it if it is a result.',
-    # Review tool findings
-    'divergence_handling': 'If repeated wells disagree more than they should, handling was uneven and the difference may not be the recipe.',
-    'divergence_unknown': 'Without repeated wells and a record of what was done, a difference cannot be pinned on handling or on the recipe.',
-}
-
-ENGINE_ONLY: dict[str, str] = {
-    # From the desktop engine's kalos/portal/why_lines.py (desktop-engine-2-secb b9a0e62),
-    # verbatim except concentration_before_target ("will look" -> "looks": no claim words).
-    # Sent to the glossary owner to adopt; move to GLOSSARY once the web glossary has them.
+    # Column checks, limits, service errors and scale-up checks (desktop engine, kalos/portal/why_lines.py)
     'row_number_column': 'A column that counts rows is not a setting, so it was left out; used as an input, the model memorises runs instead of learning recipes.',
     'after_target_in_sheet': 'A column after the result whose name reads like a measurement was probably measured during or after the run, so it is not used as a setting.',
     'after_target_outcome': 'A column after the result whose name reads like a measurement was probably measured during or after the run, so it is not used as a setting.',
@@ -221,6 +213,12 @@ ENGINE_ONLY: dict[str, str] = {
     'target_ratio_hard_cap': 'The planned vessel is so much bigger than any run that a projection would be a guess, so no readout was made.',
     'internal_error': 'Kalos hit an error, so the result did not come back; your sheet and recorded results are unaffected.',
     'possibly_measured_driver': 'The model leans most on a column that might be measured during the run; until you confirm it is a setting, the model is not called reliable.',
+    # Review tool findings
+    'divergence_handling': 'If repeated wells disagree more than they should, handling was uneven and the difference may not be the recipe.',
+    'divergence_unknown': 'Without repeated wells and a record of what was done, a difference cannot be pinned on handling or on the recipe.',
+}
+
+ENGINE_ONLY: dict[str, str] = {
 }
 
 # The desktop engine names the verdict states reliable / not_yet / refused; the

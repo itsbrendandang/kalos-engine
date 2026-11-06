@@ -90,10 +90,10 @@ def test_desktop_engine_codes_have_why_lines():
 
 
 def test_desktop_engine_why_lines_are_mirrored():
-    """engine-desktop (desktop-engine-2-secb b9a0e62) emits these codes with
-    these why-lines; the assistant must say the same sentence."""
+    """engine-desktop (desktop-engine-2-secb b9a0e62) emits these codes; the
+    shared glossary now holds their lines (words d1c5866)."""
     for code in ("invalid_linear_constraint", "infeasible_linear_constraints", "linear_constraints_with_categorical",
                  "invalid_specs", "invalid_allow_beyond", "invalid_exploration_design", "invalid_per_recipe_noise",
                  "row_number_column", "after_target_in_sheet", "roles_not_applied", "possibly_measured_driver"):
-        assert code in ENGINE_ONLY, code
-    assert len([k for k in ENGINE_ONLY]) >= 47
+        assert code in GLOSSARY, code
+    assert GLOSSARY["concentration_before_target"].endswith("or the model looks better than it is.")
