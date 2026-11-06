@@ -687,30 +687,50 @@ def locked_lines(draft: Draft) -> Counter[str]:
     move between recipes, e.g. a procedure sentence listing each recipe's
     settings), and every line using Predicted/Measured wording (so a predicted
     value can never be reworded into a measured one)."""
+    return Counter(_locked_sequence(draft, draft.markdown))
+
+
+def _value_patterns(draft: Draft) -> list[re.Pattern[str]]:
     values = [str(e["value"]) for e in draft.fields_from_record] + [str(e["value"]) for e in draft.filled]
-    patterns = [_value_re(v) for v in values if v.strip()]
-    lines = draft.markdown.splitlines()
-    locked: Counter[str] = Counter()
-    for i, line in enumerate(lines):
+    return [_value_re(v) for v in values if v.strip()]
+
+
+def _locked_sequence(draft: Draft, markdown: str) -> list[str]:
+    """The lines of `markdown` that are locked by `draft`'s rules, in order:
+    the first line, table rows, Predicted/Measured wording, and any line holding
+    one of `draft`'s record or filled values (wherever it appears)."""
+    patterns = _value_patterns(draft)
+    out = []
+    for i, line in enumerate(markdown.splitlines()):
         if not line.strip():
             continue
         if (
             i == 0 or line.startswith("|") or _LABEL_WORDS.search(line)
             or any(p.search(line) for p in patterns)
         ):
-            locked[line] += 1
-    return locked
+            out.append(line)
+    return out
 
 
 def check_revision(previous: Draft, revised: str) -> list[str]:
     """Why `revised` may not replace `previous.markdown`; empty when it may."""
     reasons: list[str] = []
     old, new = previous.markdown, revised
-    new_lines = Counter(ln for ln in new.splitlines() if ln.strip())
-    changed = [ln for ln, n in locked_lines(previous).items() if new_lines[ln] < n]
+    old_locked = Counter(_locked_sequence(previous, old))
+    new_locked = Counter(_locked_sequence(previous, new))
+    changed = [ln for ln, n in old_locked.items() if new_locked[ln] < n]
     if changed:
         reasons.append(
             f"{len(changed)} line(s) holding record values or Predicted/Measured wording were changed"
+        )
+    # A line holding a record value (or Predicted/Measured wording) that the
+    # previous version did not have is refused too: values can only stay where
+    # they were, never be restated elsewhere (e.g. one recipe's values put
+    # next to another recipe's name).
+    extra = [ln for ln, n in new_locked.items() if n > old_locked[ln]]
+    if extra:
+        reasons.append(
+            f"{len(extra)} new line(s) hold record values or Predicted/Measured wording"
         )
     old_header = old.split("\n", 1)[0]
     new_header = new.split("\n", 1)[0] if new else ""

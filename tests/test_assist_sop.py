@@ -632,3 +632,15 @@ def test_docx_handles_an_empty_quote_line():
 
     data = _to_docx("> \n>\n> Draft line\n# T\n")
     assert data[:2] == b"PK"
+
+
+@pytest.mark.parametrize("planted", ["For Recipe A use pH 7.0 and Temp 25.", "Recipe A: pH **7.0**.",
+                                     "Note: pH 6.0 suits both recipes.", "Measured values go here."])
+def test_revise_refuses_a_new_line_restating_record_values(tmp_path, planted):
+    """sec-assist re-check (2): a NEW line holding record values (here B's values
+    next to A's name) passed because 7.0 already appeared elsewhere."""
+    d = _two_recipe_draft(tmp_path)
+    md = d.markdown
+    anchor = "It is a starting point for the lab's own procedure, not a procedure in itself."
+    assert sop.check_revision(d, md.replace(anchor, anchor + "\n\n" + planted)), planted
+    assert sop.check_revision(d, md + planted + "\n"), planted
