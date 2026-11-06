@@ -292,8 +292,9 @@ def _target_source(
 ) -> str:
     """Where the target name was read from: the sheet when its hash is known,
     else the analysis, else the first run (runs are measured in the target)."""
-    prov = (analysis or {}).get("provenance")
-    sha = prov.get("input_sha256") if isinstance(prov, dict) else None
+    from kalos.assist.index import input_sha256
+
+    sha = input_sha256(analysis)
     if not sha:
         pending = [p for p in (state or {}).get("pending") or [] if isinstance(p, dict)]
         for p in pending:

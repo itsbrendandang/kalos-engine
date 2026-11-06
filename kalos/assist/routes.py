@@ -101,8 +101,11 @@ def assist_ask(
     return JSONResponse(result)
 
 
-def _status(store: CampaignStore, tenant: str) -> dict[str, Any]:
-    return {**model_info(), **AssistIndex(store, tenant).status()}
+def _status(store: CampaignStore, tenant: str, *, build: bool = False) -> dict[str, Any]:
+    index = AssistIndex(store, tenant)
+    if build and not index.path.exists():
+        index.refresh()  # first look: build it, so the count is real (cheap with BM25)
+    return {**model_info(), **index.status()}
 
 
 @router.get("/api/assist/index/status")
@@ -110,8 +113,9 @@ def assist_index_status(
     principal: Principal = Depends(require_scope(READ)),
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
-    """`{provider, model, local, chunks, built_at, building, retriever}`."""
-    return JSONResponse(_status(store, principal.tenant))
+    """`{provider, model, local, chunks, built_at, building, retriever}`. The
+    index is built on the first call if it does not exist yet."""
+    return JSONResponse(_status(store, principal.tenant, build=True))
 
 
 @router.post("/api/assist/index/rebuild")

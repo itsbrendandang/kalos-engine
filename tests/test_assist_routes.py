@@ -267,7 +267,7 @@ def test_index_status_and_rebuild(env):
     status = tc.get("/api/assist/index/status", headers=H("a-read")).json()
     assert set(status) == {"provider", "model", "local", "chunks", "built_at", "building", "retriever"}
     assert status["provider"] == "ollama" and status["local"] is True
-    assert status["chunks"] == 0 and status["built_at"] is None
+    assert status["chunks"] > 0 and status["built_at"]  # built on first look
     assert tc.post("/api/assist/index/rebuild", headers=H("a-read")).status_code == 403
     r = tc.post("/api/assist/index/rebuild", headers=H("a-write"))
     assert r.status_code == 200
@@ -275,8 +275,9 @@ def test_index_status_and_rebuild(env):
     actions = [e["action"] for e in store.audit_entries(tenant="acme")]
     assert "assist.index.rebuild" in actions
     assert "assist.index.rebuild" not in [e["action"] for e in store.audit_entries(tenant="globex")]
-    # the other tenant's index is untouched
-    assert tc.get("/api/assist/index/status", headers=H("b-write")).json()["chunks"] == 0
+    # the other tenant's index holds none of acme's records
+    assert tc.get("/api/assist/index/status", headers=H("b-write")).status_code == 200
+    assert A_SECRET not in AssistIndex(store, "globex").path.read_text()
 
 
 # --- hooks ------------------------------------------------------------------------- #

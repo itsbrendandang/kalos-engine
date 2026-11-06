@@ -225,3 +225,36 @@ def test_no_recipes_gives_a_refusal_chunk():
                              {**ANALYSIS, "proposals": [], "proposal_notice": None})
     refusal = next(c for c in chunks if c.source_id == "refusal")
     assert "empty_batch" in refusal.text and "Why this matters:" in refusal.text
+
+
+def test_real_analysis_shape_provenance_list_and_run_record(store):
+    """Real analyses carry `provenance` as the per-column list and the sheet hash
+    in `run.input_sha256` (kalos/portal/pipeline.py)."""
+    cid = store.create_campaign(tenant="acme", name="Real", created_by="t")["id"]
+    real = {**ANALYSIS, "provenance": [{"name": "Methanol", "status": "kept_feature"},
+                                       {"name": "Batch", "status": "dropped_id"}],
+            "run": {"input_sha256": "ef" * 32}, "proposal_provenance": {"input_sha256": "ef" * 32}}
+    store.seed(_df(), "lipase_titer", ["Methanol", "pH"], tenant="acme", campaign_id=cid, analysis=real)
+    index = AssistIndex(store, "acme")
+    index.refresh()
+    sheet = next(c for c in index.chunks() if c.kind == "sheet")
+    assert sheet.source_id == "ef" * 32
+    assert "Column 'Batch': dropped_id." in sheet.text
+
+
+def test_one_bad_campaign_does_not_break_the_index(store, monkeypatch):
+    import kalos.assist.index as index_module
+
+    _seed(store, name="Good")
+    real = index_module.campaign_chunks
+
+    def flaky(info, *a, **k):
+        if info["name"] == "Bad":
+            raise AttributeError("odd record")
+        return real(info, *a, **k)
+
+    _seed(store, name="Bad")
+    monkeypatch.setattr(index_module, "campaign_chunks", flaky)
+    index = AssistIndex(store, "acme")
+    assert index.refresh()["chunks"] > 0
+    assert any("Good" in c.text for c in index.chunks())

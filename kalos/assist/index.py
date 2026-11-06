@@ -167,6 +167,17 @@ def _recipe_text(recipe: dict[str, Any]) -> str:
     return ", ".join(f"{k} = {_fmt(v)}" for k, v in recipe.items())
 
 
+def input_sha256(analysis: dict[str, Any] | None) -> str | None:
+    """The analysed sheet's sha256: `run.input_sha256` (the run record), else
+    `proposal_provenance.input_sha256`. (`provenance` is the per-column list.)"""
+    for key in ("run", "proposal_provenance", "provenance"):
+        block = (analysis or {}).get(key)
+        sha = block.get("input_sha256") if isinstance(block, dict) else None
+        if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha):
+            return sha
+    return None
+
+
 def campaign_chunks(
     info: dict[str, Any],
     state: dict[str, Any] | None,
@@ -181,7 +192,7 @@ def campaign_chunks(
     target = a.get("target") or (state or {}).get("target")
 
     if a:
-        sha = ((a.get("provenance") or {}).get("input_sha256")) or cid
+        sha = input_sha256(a) or cid
         lines = [f"Run sheet for campaign {name!r}" + (f" ({a.get('dataset')})" if a.get("dataset") else "") + "."]
         if target:
             lines.append(f"Target (the result Kalos aims to raise): {target}.")
@@ -193,7 +204,8 @@ def campaign_chunks(
             lines.append(f"Runs the model was fit on: {a['n']}.")
         if a.get("n_dropped_incomplete"):
             lines.append(f"Runs left out for blank or unreadable cells: {a['n_dropped_incomplete']}.")
-        for col in a.get("columns") or a.get("column_provenance") or []:
+        columns = a.get("columns") or a.get("column_provenance") or a.get("provenance") or []
+        for col in columns if isinstance(columns, list) else []:
             if isinstance(col, dict) and col.get("name"):
                 lines.append(f"Column {col['name']!r}: {col.get('status') or col.get('role') or col.get('kind')}.")
         out.append(_chunk("sheet", str(sha), cid, f"Sheet: {name}", "\n".join(lines)[:MAX_CHUNK_CHARS * 2]))
@@ -569,7 +581,11 @@ class AssistIndex:
 
             def loader(info: dict[str, Any] = info, analysis: Any = analysis, refusal: Any = refusal) -> list[Chunk]:
                 state = self.store.get(tenant=self.tenant, campaign_id=info["id"])
-                return campaign_chunks(info, state, analysis, refusal)
+                try:
+                    return campaign_chunks(info, state, analysis, refusal)
+                except Exception:  # noqa: BLE001 - one odd record must not break the index
+                    log.exception("assist: could not index one campaign; it is left out")
+                    return []
 
             groups[key] = (fp, loader)
         docs, skills = _doc_files(), _skill_files()
