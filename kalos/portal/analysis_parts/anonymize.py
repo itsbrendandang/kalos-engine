@@ -91,6 +91,19 @@ def _anonymize_result(
     opt = out.get("model_optimum")
     if isinstance(opt, dict) and isinstance(opt.get("recipe"), dict):
         out["model_optimum"] = {**opt, "recipe": alias_recipe(opt["recipe"])}
+    lin = out.get("linear_constraints")
+    if isinstance(lin, dict) and isinstance(lin.get("constraints"), list):
+        items = []
+        for item in lin["constraints"]:
+            if isinstance(item, dict) and isinstance(item.get("terms"), dict):
+                text = str(item.get("text") or "")
+                for k in item["terms"]:
+                    if alias(str(k)) != str(k):
+                        text = text.replace(str(k), alias(str(k)))
+                item = {**item, "terms": {alias(str(k)): v for k, v in item["terms"].items()},
+                        "text": text}
+            items.append(item)
+        out["linear_constraints"] = {**lin, "constraints": items}
     corr = out.get("correlation")
     if isinstance(corr, dict) and isinstance(corr.get("labels"), list):
         out["correlation"] = {**corr, "labels": [alias(str(c)) for c in corr["labels"]]}

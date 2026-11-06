@@ -80,6 +80,12 @@ from kalos.portal.analysis_parts.identifiers import (
     identifier_pattern,
     is_identifier_name,
 )
+from kalos.portal.analysis_parts.linear import (
+    check_linear_inputs,
+    encode_linear_constraints,
+    linear_constraints_block,
+    recipe_constraints_ok,
+)
 from kalos.portal.analysis_parts.near_constant import (
     near_constant_findings,
     near_constant_inputs,
@@ -242,6 +248,14 @@ def _seeded_analysis(seed: int = ANALYZE_SEED) -> Iterator[None]:
                 yield
         finally:
             np.random.set_state(np_state)
+
+
+def _meets_linear_ge(C: np.ndarray, constraints: list) -> np.ndarray:
+    """Rows of C that meet every `(indices, coefficients, rhs)` as `>=`."""
+    ok = np.ones(len(C), dtype=bool)
+    for idx, coef, rhs in constraints:
+        ok &= (np.asarray(C)[:, list(idx)] @ np.asarray(coef, float)) >= float(rhs) - 1e-9
+    return ok
 
 
 def _recipe_label_columns(roles: ColumnRoles | None, gcol: Any, cat_feats: list) -> list:
@@ -759,6 +773,10 @@ def _analyze_body(
             ),
         ) + role_safety.findings + near_constant_findings(fixed_inputs) + kind_findings
 
+    # roles.linear_constraints: inputs checked here so preflight refuses them too.
+    linear_cons = tuple(roles.linear_constraints) if roles is not None else ()
+    check_linear_inputs(linear_cons, cont_feats, kept_cats, fixed_inputs)
+
     if preflight_only:
         # Every refusal that does not need a fitted model has run. The column
         # reading and the sheet check are returned too (POST /api/preflight).
@@ -847,6 +865,9 @@ def _analyze_body(
     bounds = design.bounds()
     cat_dims = design.cat_dims or None
     cat_cardinalities = design.cat_cardinalities or None
+    # Linear constraints in the design's coordinates; refused before any fit
+    # when no recipe in the box can meet them (analysis_parts/linear.py).
+    lin_ge, lin_eq = encode_linear_constraints(linear_cons, design.names, fixed_inputs, bounds)
 
     # PART 2: constrained single-objective proposals. Fit a SECOND `Surrogate`
     # over the constraint column, on the SAME design/bounds/cat_dims the target
@@ -1527,6 +1548,10 @@ def _analyze_body(
         verdict, n_distinct=_n_distinct, n_inputs=X.shape[1],
         setting=roles.exploration_design if roles is not None else None,
     )
+    if explore_reason is not None and lin_eq:
+        # A spread design cannot meet an equality (a mixture summing to 100)
+        # by sampling; the model's constrained picks are used instead.
+        explore_reason = None
     strategy = batch_strategy(explore_reason, n_distinct=_n_distinct, n_inputs=X.shape[1])
     if explore_reason is not None:
         from kalos.core.optimize import ProposalBatch
@@ -1535,6 +1560,7 @@ def _analyze_body(
         _spread = maximin_batch(
             X, bounds, PROPOSAL_BATCH_Q - 1, cat_dims=cat_dims,
             cat_cardinalities=cat_cardinalities, pending=X_pending, seed=ANALYZE_SEED,
+            feasible=(lambda C: _meets_linear_ge(C, lin_ge)) if lin_ge else None,
         )
         proposal = ProposalBatch(
             X=_spread, requested=PROPOSAL_BATCH_Q, near_duplicates_replaced=0,
@@ -1561,6 +1587,8 @@ def _analyze_body(
             # PART 2: only ever passed when the constraint model actually fit.
             constraint_surrogate=constraint_surrogate if constraint_applied else None,
             constraint_floor=constraint_floor_val if constraint_applied else None,
+            linear_constraints=lin_ge or None,
+            equality_constraints=lin_eq or None,
         )
     batch = proposal.X
     # BEST BET (first-time-user study, Finding 1; analysis_parts/best_bet.py): the
@@ -1569,6 +1597,7 @@ def _analyze_body(
     # batch acquisition and its seeds are unchanged.
     optimum_x = posterior_mean_optimum(
         s, bounds, cat_dims=cat_dims, cat_cardinalities=cat_cardinalities, seed=ANALYZE_SEED,
+        linear_constraints=lin_ge or None, equality_constraints=lin_eq or None,
     )
     if len(batch):
         _batch_model_mean, _ = s.posterior(batch)
@@ -1807,6 +1836,13 @@ def _analyze_body(
         # best measured run: the model's best guess is to repeat it.
         "near_best_run": bool(near_best_run),
     }
+    # Linear constraints, checked on the shown (3-decimal) recipes.
+    for row in proposals:
+        row["constraints_ok"] = recipe_constraints_ok(
+            linear_cons, {**{c: v["value"] for c, v in fixed_inputs.items()}, **(row.get("recipe") or {})}
+        )
+    model_optimum["constraints_ok"] = recipe_constraints_ok(linear_cons, opt_recipe)
+    linear_block = linear_constraints_block(linear_cons, [*proposals, model_optimum])
     if near_best_run:
         model_optimum["predicted_vs_best"]["plain"] += (
             " It is close to the recipe of your best run, so running it again checks "
@@ -1970,6 +2006,8 @@ def _analyze_body(
         # Advice on whether more rounds can be told apart from assay noise
         # (kalos/core/stopping.py). Never removes proposals; never auto-stops.
         "stopping": stopping,
+        # roles.linear_constraints as applied, and whether every shown recipe meets them.
+        "linear_constraints": linear_block,
         # Observed (tried) range of each continuous input, and how far past it
         # the search was allowed (roles.allow_beyond). `feature_ranges` is the
         # search box actually used.

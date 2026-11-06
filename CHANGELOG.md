@@ -4,6 +4,10 @@ Newest first.
 
 ## Unreleased
 
+### Added - desktop-engine-2-q8 (constraints and specs)
+
+- `roles.linear_constraints`: hard linear limits on continuous inputs, including equalities for mixtures (A + B + C == 100) and budgets (Glucose + Glycerol <= 30). Every proposal and the best bet meet them; each carries `constraints_ok`, and the analysis reports `linear_constraints`. Bad or impossible constraints are refused with a 400 before any fit.
+
 ### Added - desktop-engine-2 (first-time-user study)
 
 - `stopping`: advice on whether more rounds can still beat the best run by more than the assay noise (`keep_going`, `gains_within_noise`, or `unknown` without repeats). Advice only: it never removes proposals. `kalos/bench/stopping_sim.py` measures how often it says "within noise" too early on a synthetic case.

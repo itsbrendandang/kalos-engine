@@ -138,6 +138,95 @@ def parse_per_recipe_noise(value: object) -> bool:
     if not isinstance(value, bool):
         raise InvalidPerRecipeNoise()
     return value
+# At most this many `roles.linear_constraints` per upload.
+MAX_LINEAR_CONSTRAINTS = 20
+LINEAR_OPS: tuple[str, ...] = ("<=", ">=", "==")
+
+
+class InvalidLinearConstraint(ValueError):
+    """A malformed `roles.linear_constraints` entry, or one that names an input
+    that is not a continuous input of the design (HTTP 400 `invalid_linear_constraint`)."""
+
+    code = "invalid_linear_constraint"
+
+
+@dataclass(frozen=True)
+class LinearConstraint:
+    """`sum(coefficient * input) op rhs` on continuous inputs, in the inputs' own
+    units (`terms` keeps the caller's order)."""
+
+    terms: tuple[tuple[str, float], ...]
+    op: str
+    rhs: float
+    label: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "terms": {k: v for k, v in self.terms}, "op": self.op, "rhs": self.rhs,
+            "label": self.label,
+        }
+
+    def text(self) -> str:
+        """Plain form, e.g. "Glucose + Glycerol <= 30"."""
+        parts: list[str] = []
+        for i, (name, c) in enumerate(self.terms):
+            mag = abs(c)
+            coef = "" if mag == 1 else f"{mag:g} * "
+            sign = ("- " if c < 0 else "") if i == 0 else ("- " if c < 0 else "+ ")
+            parts.append(f"{sign}{coef}{name}")
+        return f"{' '.join(parts)} {self.op} {self.rhs:g}"
+
+
+def _finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    v = float(value)
+    return v if np.isfinite(v) else None
+
+
+def parse_linear_constraints(value: object) -> tuple[LinearConstraint, ...]:
+    """`roles.linear_constraints`: a list of `{terms: {input: coefficient}, op:
+    "<=" | ">=" | "==", rhs: number, label?: string}`. Empty when not given.
+    Raises `InvalidLinearConstraint` with a plain message for anything else.
+    Whether each input is a continuous input is checked against the sheet later."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise InvalidLinearConstraint("roles.linear_constraints must be a list")
+    if len(value) > MAX_LINEAR_CONSTRAINTS:
+        raise InvalidLinearConstraint(
+            f"roles.linear_constraints has {len(value)} entries; the most allowed is "
+            f"{MAX_LINEAR_CONSTRAINTS}"
+        )
+    out: list[LinearConstraint] = []
+    for k, item in enumerate(value, start=1):
+        where = f"Linear constraint {k}"
+        if not isinstance(item, dict):
+            raise InvalidLinearConstraint(f"{where} must be an object with terms, op and rhs")
+        terms = item.get("terms")
+        if not isinstance(terms, dict) or not terms:
+            raise InvalidLinearConstraint(f"{where} needs at least one input in terms")
+        pairs: list[tuple[str, float]] = []
+        for name, coef in terms.items():
+            c = _finite_number(coef)
+            if not str(name).strip() or c is None:
+                raise InvalidLinearConstraint(
+                    f"{where}: each term needs an input name and a finite number"
+                )
+            pairs.append((str(name), c))
+        if not any(c for _, c in pairs):
+            raise InvalidLinearConstraint(f"{where}: every coefficient is zero")
+        op = item.get("op")
+        if op not in LINEAR_OPS:
+            raise InvalidLinearConstraint(f'{where}: op must be "<=", ">=" or "=="')
+        rhs = _finite_number(item.get("rhs"))
+        if rhs is None:
+            raise InvalidLinearConstraint(f"{where}: rhs must be a finite number")
+        label = item.get("label")
+        if label is not None and not isinstance(label, str):
+            raise InvalidLinearConstraint(f"{where}: label must be text")
+        out.append(LinearConstraint(tuple(pairs), str(op), rhs, (label or None)))
+    return tuple(out)
 
 
 def parse_direction(value: object) -> str | None:
@@ -193,6 +282,8 @@ class ColumnRoles:
     `per_recipe_noise` (default False) lets the proposal model use each
     recipe's own replicate spread, shrunk toward the shared one, when the
     noise is uneven across recipes (`noise.per_recipe` in the analysis).
+    `linear_constraints` are hard linear limits on continuous inputs (for
+    example a mixture that sums to 100); every proposal meets them.
     """
 
     target: str
@@ -206,6 +297,7 @@ class ColumnRoles:
     allow_beyond: tuple[tuple[str, float], ...] = ()
     per_recipe_noise: bool = False
     exploration_design: str | None = None
+    linear_constraints: tuple[LinearConstraint, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict) -> ColumnRoles:
@@ -244,6 +336,7 @@ class ColumnRoles:
             allow_beyond=parse_allow_beyond(data.get("allow_beyond")),
             per_recipe_noise=parse_per_recipe_noise(data.get("per_recipe_noise")),
             exploration_design=parse_exploration_design(data.get("exploration_design")),
+            linear_constraints=parse_linear_constraints(data.get("linear_constraints")),
         )
 
 

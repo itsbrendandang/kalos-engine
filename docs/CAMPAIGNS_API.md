@@ -744,6 +744,20 @@ only added; a field never changes meaning or disappears within a version.
   sd 0.5, 10 seeds x 6 rounds) 2 of 30 `gains_within_noise` readings were
   false (the true optimum was still more than one noise sd better), both in
   one seed. One small synthetic case; not a measured rate for real assays.
+- `linear_constraints`: `{constraints, tolerance, all_satisfied}`. Set them in the
+  column roles as `"linear_constraints": [{"terms": {"A": 1, "B": 1, "C": 1},
+  "op": "==", "rhs": 100, "label": "sums to 100"}]` (`op` is `<=`, `>=` or `==`;
+  at most 20; continuous inputs only). Each listed constraint adds `text` and its
+  `tolerance` (0.001 x the sum of its absolute coefficients, because recipes are
+  shown to 3 decimals). The batch, the repair of near-duplicates and the best bet
+  are all searched inside them. 400 codes: `invalid_linear_constraint` (malformed,
+  or an input that is categorical or not an input), `linear_constraints_with_categorical`
+  (the design has a categorical input), `infeasible_linear_constraints` (no recipe in
+  the search box meets them all; checked before any fit). An input held fixed
+  (`fixed_inputs`) counts at its fixed value. Roles persist with the campaign.
+- `proposals[].constraints_ok` and `model_optimum.constraints_ok`: true when the
+  shown recipe meets every linear constraint within its tolerance; null when none
+  are declared.
 
 ## Not in this slice
 

@@ -274,6 +274,8 @@ def posterior_mean_optimum(
     seed: int | None = None,
     num_restarts: int = 10,
     raw_samples: int = 256,
+    linear_constraints: list[tuple[list[int], list[float], float]] | None = None,
+    equality_constraints: list[tuple[list[int], list[float], float]] | None = None,
 ) -> np.ndarray:
     """The model's best bet: the recipe inside the box with the highest
     predicted mean (BoTorch `PosteriorMean`, in the surrogate's own sign, so a
@@ -282,13 +284,21 @@ def posterior_mean_optimum(
     Unlike the batch acquisition this does not reward uncertainty, so it is
     the answer to "where does the model think the best result is?". Seeded
     inside `fork_rng` when `seed` is given, so the caller's RNG is untouched.
-    Returns one row (d,) with categorical coordinates as integer level codes."""
+    Returns one row (d,) with categorical coordinates as integer level codes.
+
+    `linear_constraints` / `equality_constraints` are the same raw-unit
+    `(indices, coefficients, rhs)` triples `propose_batch` takes (`>=` and `==`);
+    the best bet satisfies them like every proposal does."""
     from botorch.acquisition.analytic import PosteriorMean
 
     assert surrogate.model is not None, "fit the surrogate first"
     lower, upper = sanitize_bounds(bounds)
     b = torch.as_tensor(np.vstack([lower, upper]), dtype=DTYPE, device=DEVICE)
     cats = [int(j) for j in (cat_dims or [])]
+    if (linear_constraints or equality_constraints) and cats:
+        raise ValueError("linear_constraints are not supported together with categorical dimensions")
+    lin, eq = _validate_linear_sets(linear_constraints, equality_constraints, lower, upper)
+    ineq_t, eq_t = _as_botorch(lin), _as_botorch(eq)
 
     def _solve() -> np.ndarray:
         acq = PosteriorMean(surrogate.model)
@@ -296,13 +306,20 @@ def posterior_mean_optimum(
             cards = _resolve_cardinalities(cats, cat_cardinalities, lower, upper)
             cand = _optimize_mixed(acq, b, 1, num_restarts, raw_samples, cats, cards)
         else:
+            extra = {}
+            if ineq_t is not None:
+                extra["inequality_constraints"] = ineq_t
+            if eq_t is not None:
+                extra["equality_constraints"] = eq_t
             cand, _ = optimize_acqf(
                 acq_function=acq, bounds=b, q=1,
-                num_restarts=num_restarts, raw_samples=raw_samples,
+                num_restarts=num_restarts, raw_samples=raw_samples, **extra,
             )
         out = np.clip(cand.detach().cpu().numpy().reshape(-1), lower, upper)
         for j in cats:
             out[j] = np.rint(out[j])
+        if eq:
+            out = _project_onto_constraints(out.reshape(1, -1), lin, eq, lower, upper).reshape(-1)
         return out
 
     if seed is None:
@@ -327,57 +344,122 @@ def _is_distinct(
 _LIN_TOL = 1e-6
 
 
-def _validate_linear_constraints(constraints, lower: np.ndarray, upper: np.ndarray):
-    """Normalise and sanity-check `(indices, coefficients, rhs)` triples, and raise a
-    clear ValueError if they cannot all hold inside the box (checked by LP)."""
-    if not constraints:
-        return []
-    d = len(lower)
+def _parse_linear_triples(constraints, d: int, kind: str = "linear constraint"):
     out = []
-    for k, c in enumerate(constraints):
+    for k, c in enumerate(constraints or []):
         try:
             idx, coef, rhs = c
         except (TypeError, ValueError):
-            raise ValueError(f"linear constraint {k} must be (indices, coefficients, rhs)") from None
+            raise ValueError(f"{kind} {k} must be (indices, coefficients, rhs)") from None
         try:
             idx = [int(i) if float(i).is_integer() else -1 for i in idx]
             coef = [float(x) for x in coef]
             rhs = float(rhs)
         except (TypeError, ValueError):
-            raise ValueError(f"linear constraint {k} must be (indices, coefficients, rhs) of numbers") from None
+            raise ValueError(f"{kind} {k} must be (indices, coefficients, rhs) of numbers") from None
         if not idx:
-            raise ValueError(f"linear constraint {k} has no indices")
+            raise ValueError(f"{kind} {k} has no indices")
         if len(idx) != len(coef):
-            raise ValueError(f"linear constraint {k}: {len(idx)} indices but {len(coef)} coefficients")
+            raise ValueError(f"{kind} {k}: {len(idx)} indices but {len(coef)} coefficients")
         if any(i < 0 or i >= d for i in idx):
-            raise ValueError(f"linear constraint {k}: indices must be in [0, {d - 1}] (negative indices are not allowed)")
+            raise ValueError(f"{kind} {k}: indices must be in [0, {d - 1}] (negative indices are not allowed)")
         if len(set(idx)) != len(idx):
-            raise ValueError(f"linear constraint {k}: repeated index")
+            raise ValueError(f"{kind} {k}: repeated index")
         if not np.isfinite(coef).all() or not np.isfinite(float(rhs)):
-            raise ValueError(f"linear constraint {k}: coefficients and rhs must be finite")
+            raise ValueError(f"{kind} {k}: coefficients and rhs must be finite")
         if not any(coef):
-            raise ValueError(f"linear constraint {k}: all coefficients are zero")
+            raise ValueError(f"{kind} {k}: all coefficients are zero")
         out.append((idx, coef, float(rhs)))
-    from scipy.optimize import linprog
-
-    a = np.zeros((len(out), d))
-    for r, (idx, coef, _) in enumerate(out):
-        a[r, idx] = coef
-    b = np.array([rhs for _, _, rhs in out])
-    # sum(coef*x) >= rhs   <=>   -sum(coef*x) <= -rhs
-    res = linprog(np.zeros(d), A_ub=-a, b_ub=-b, bounds=list(zip(lower, upper)), method="highs")
-    if res.status == 2:
-        raise ValueError("linear constraints are infeasible within the bounds: no recipe can satisfy them")
     return out
 
 
-def _linear_ok(X: np.ndarray, lin) -> np.ndarray:
-    """Boolean mask over the rows of `X`: True where every constraint in `lin` holds
-    (to `_LIN_TOL`). A NaN row is False. With no constraints every row is True."""
+def _validate_linear_sets(inequalities, equalities, lower: np.ndarray, upper: np.ndarray):
+    """Normalise and sanity-check `>=` triples (`inequalities`) and `==` triples
+    (`equalities`), and raise a clear ValueError if they cannot all hold inside
+    the box (checked by one LP). Returns `(lin, eq)`."""
+    if not inequalities and not equalities:
+        return [], []
+    d = len(lower)
+    lin = _parse_linear_triples(inequalities, d)
+    eq = _parse_linear_triples(equalities, d, "equality constraint")
+    from scipy.optimize import linprog
+
+    def _mat(rows):
+        a = np.zeros((len(rows), d))
+        for r, (idx, coef, _) in enumerate(rows):
+            a[r, idx] = coef
+        return a, np.array([rhs for _, _, rhs in rows])
+
+    kw: dict = {}
+    if lin:
+        a, b = _mat(lin)
+        # sum(coef*x) >= rhs   <=>   -sum(coef*x) <= -rhs
+        kw.update(A_ub=-a, b_ub=-b)
+    if eq:
+        a, b = _mat(eq)
+        kw.update(A_eq=a, b_eq=b)
+    res = linprog(np.zeros(d), bounds=list(zip(lower, upper)), method="highs", **kw)
+    if res.status == 2:
+        raise ValueError("linear constraints are infeasible within the bounds: no recipe can satisfy them")
+    return lin, eq
+
+
+def _validate_linear_constraints(constraints, lower: np.ndarray, upper: np.ndarray):
+    """Normalise and sanity-check `(indices, coefficients, rhs)` triples, and raise a
+    clear ValueError if they cannot all hold inside the box (checked by LP)."""
+    return _validate_linear_sets(constraints, None, lower, upper)[0]
+
+
+def _as_botorch(rows):
+    """Triples as BoTorch `(indices, coefficients, rhs)` tensors, or None when empty."""
+    return [
+        (torch.as_tensor(idx, dtype=torch.long), torch.as_tensor(coef, dtype=DTYPE), rhs)
+        for idx, coef, rhs in rows
+    ] or None
+
+
+def _project_onto_constraints(X: np.ndarray, lin, eq, lower: np.ndarray, upper: np.ndarray) -> np.ndarray:
+    """Nearest point (least squares) inside the box that meets every constraint,
+    for each row that misses one by more than the check's slack. The optimizer
+    (SLSQP) meets equalities only to its own tolerance, and the box clip after it
+    can move a row off an equality; rows that already pass are returned as is."""
+    from scipy.optimize import Bounds, LinearConstraint, minimize
+
+    d = X.shape[1]
+    cons = []
+    for rows, is_eq in ((lin, False), (eq, True)):
+        for idx, coef, rhs in rows:
+            a = np.zeros(d)
+            a[idx] = coef
+            cons.append(LinearConstraint(a.reshape(1, -1), rhs, rhs if is_eq else np.inf))
+    out = X.copy()
+    for r in range(out.shape[0]):
+        if _linear_ok(out[r : r + 1], lin, eq).all():
+            continue
+        x0 = out[r].copy()
+
+        def dist(x: np.ndarray, x0: np.ndarray = x0) -> float:
+            return float(np.sum((x - x0) ** 2))
+
+        res = minimize(
+            dist, x0, method="SLSQP", bounds=Bounds(lower, upper), constraints=cons,
+            options={"ftol": 1e-12, "maxiter": 200},
+        )
+        out[r] = np.clip(res.x, lower, upper)
+    return out
+
+
+def _linear_ok(X: np.ndarray, lin, eq=()) -> np.ndarray:
+    """Boolean mask over the rows of `X`: True where every constraint in `lin`
+    (`>=`) and `eq` (`==`) holds (to `_LIN_TOL`). A NaN row is False. With no
+    constraints every row is True."""
     ok = np.ones(X.shape[0], dtype=bool)
     for idx, coef, rhs in lin:
         lhs = X[:, idx] @ np.asarray(coef)
         ok &= lhs >= rhs - _LIN_TOL * max(1.0, abs(rhs))
+    for idx, coef, rhs in eq:
+        lhs = X[:, idx] @ np.asarray(coef)
+        ok &= np.abs(lhs - rhs) <= _LIN_TOL * max(1.0, abs(rhs))
     return ok
 
 
@@ -448,6 +530,7 @@ def propose(
     constraint_surrogate: Surrogate | None = None,
     constraint_floor: float | None = None,
     linear_constraints: list[tuple[list[int], list[float], float]] | None = None,
+    equality_constraints: list[tuple[list[int], list[float], float]] | None = None,
 ) -> np.ndarray:
     """The proposed points only (`propose_batch(...).X`); see `propose_batch`.
 
@@ -469,6 +552,7 @@ def propose(
         constraint_surrogate=constraint_surrogate,
         constraint_floor=constraint_floor,
         linear_constraints=linear_constraints,
+        equality_constraints=equality_constraints,
     ).X
 
 
@@ -488,6 +572,7 @@ def propose_batch(
     constraint_floor: float | None = None,
     min_separation: float = NEAR_DUPLICATE_TOL,
     linear_constraints: list[tuple[list[int], list[float], float]] | None = None,
+    equality_constraints: list[tuple[list[int], list[float], float]] | None = None,
 ) -> ProposalBatch:
     """Propose up to `q` DISTINCT points maximizing qLogNEI, with an account of
     the batch's distinctness (`ProposalBatch`).
@@ -582,6 +667,14 @@ def propose_batch(
     candidate pool, and on every returned row, including rows refilled by the
     near-duplicate repair; a set that is infeasible within the box raises
     `ValueError` up front. Not supported together with categorical dimensions.
+
+    `equality_constraints` are HARD linear equalities in the same form,
+    `sum(coefficients[k] * x[indices[k]]) == rhs` (BoTorch's
+    `equality_constraints`; e.g. a 3-component mixture summing to 100). With
+    any equality, the quasi-random part of the repair pool is drawn from the
+    constraint polytope (hit-and-run, `get_polytope_samples`) instead of the
+    box, and a row the solver left off an equality by more than the check's
+    slack is projected back onto it (nearest point, inside the box).
     """
     assert surrogate.model is not None and surrogate._X is not None, "fit the surrogate first"
     if (constraint_surrogate is None) != (constraint_floor is None):
@@ -590,13 +683,14 @@ def propose_batch(
             "(a floor with no model, or a model with no floor, is not a constraint)"
         )
     lower, upper = sanitize_bounds(bounds)
-    if linear_constraints and cat_dims:
+    if (linear_constraints or equality_constraints) and cat_dims:
         raise ValueError("linear_constraints are not supported together with categorical dimensions")
-    lin = _validate_linear_constraints(linear_constraints, lower, upper)
-    ineq = [
-        (torch.as_tensor(idx, dtype=torch.long), torch.as_tensor(coef, dtype=DTYPE), rhs)
-        for idx, coef, rhs in lin
-    ] or None
+    lin, eq = _validate_linear_sets(linear_constraints, equality_constraints, lower, upper)
+    ineq = _as_botorch(lin)
+    eq_t = _as_botorch(eq)
+    # Passed only when there is an equality, so the inequality-only and
+    # unconstrained optimizer calls are exactly what they were.
+    eq_kw = {"equality_constraints": eq_t} if eq_t is not None else {}
     b = torch.stack(
         [
             torch.as_tensor(lower, dtype=DTYPE, device=DEVICE),
@@ -669,6 +763,8 @@ def propose_batch(
         # fractional code that would decode to the wrong level.
         for j in cat_dims or []:
             out[:, j] = np.rint(out[:, j])
+        if eq:
+            out = _project_onto_constraints(out, lin, eq, lower, upper)
         return out
 
     def _run_acqf_optimization() -> torch.Tensor:
@@ -684,6 +780,7 @@ def propose_batch(
             num_restarts=num_restarts,
             raw_samples=raw_samples,
             inequality_constraints=ineq,
+            **eq_kw,
         )
         return candidates
 
@@ -708,6 +805,7 @@ def propose_batch(
                 raw_samples=raw_samples,
                 return_best_only=False,
                 inequality_constraints=ineq,
+                **eq_kw,
             )
             parts.append(_finish(local))
         n_combos = int(np.prod(cards)) if cats else 1
@@ -716,6 +814,16 @@ def propose_batch(
             full = np.zeros((grid.shape[0], d))
             full[:, cats] = grid
             parts.append(_finish(torch.as_tensor(full)))  # clipped into the box like every candidate
+        elif eq:
+            # A box sweep almost never lands on an equality: sample the polytope.
+            from botorch.utils.sampling import get_polytope_samples
+
+            poly = get_polytope_samples(
+                n=max(int(raw_samples), 1), bounds=b, inequality_constraints=ineq,
+                equality_constraints=eq_t, seed=int(torch.randint(0, 2**31 - 1, (1,)).item()),
+                n_burnin=1000, n_thinning=8,
+            )
+            parts.append(_finish(poly))
         else:
             sob = draw_sobol_samples(bounds=b, n=max(int(raw_samples), 1), q=1)
             sob_np = sob.detach().cpu().numpy().reshape(-1, d)
@@ -727,7 +835,7 @@ def propose_batch(
         pool = np.vstack(parts)
         # Hard constraints: a candidate that breaks a linear constraint (the
         # local optima after the clip, or a Sobol / enumerated point) never fills a slot.
-        return pool[_linear_ok(pool, lin)]
+        return pool[_linear_ok(pool, lin, eq)]
 
     def _score(acq: AcquisitionFunction, pool: np.ndarray) -> np.ndarray:
         vals: list[np.ndarray] = []
@@ -763,7 +871,7 @@ def propose_batch(
     def _run() -> ProposalBatch:
         out = _finish(_run_acqf_optimization())
         accepted: list[np.ndarray] = []
-        feasible = _linear_ok(out, lin)
+        feasible = _linear_ok(out, lin, eq)
         for row, ok in zip(out, feasible):
             if ok and _is_distinct(row, accepted + pending_rows, lower, upper, cat_dims, min_separation):
                 accepted.append(row)
@@ -796,13 +904,13 @@ def propose_batch(
             torch.manual_seed(seed + attempt)
             return _run()
 
-    if not lin:
+    if not lin and not eq:
         return _attempt(0)
     # Every stage above filters on the constraints, so this check is a guard over
     # the final batch, repaired rows included: retry with a different draw, then fail loudly.
     for attempt in range(4):
         batch = _attempt(attempt)
-        if _linear_ok(batch.X, lin).all():
+        if _linear_ok(batch.X, lin, eq).all():
             return batch
     raise RuntimeError("could not find proposals satisfying the linear constraints")
 

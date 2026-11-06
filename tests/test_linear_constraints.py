@@ -192,3 +192,41 @@ def test_unconstrained_optimizer_calls_are_unchanged(monkeypatch):
     calls = _patch_joint(monkeypatch, lambda c: c[:1].expand(c.shape[0], -1).clone())
     propose_batch(s, bounds, q=5, seed=0)
     assert calls and all(k.get("inequality_constraints") is None for k in calls)
+
+
+# ---- equalities (mixtures) and the best bet ------------------------------------------
+
+MIX_EQ = [([0, 1, 2], [1.0, 1.0, 1.0], 1.5)]  # x0 + x1 + x2 == 1.5
+
+
+def test_equality_holds_for_every_row_and_the_best_bet():
+    s, b = _fit()
+    pb = propose_batch(s, b, q=4, seed=0, equality_constraints=MIX_EQ)
+    assert pb.returned == 4
+    assert np.abs(pb.X.sum(1) - 1.5).max() <= 1e-6
+    opt = optimize.posterior_mean_optimum(s, b, seed=0, equality_constraints=MIX_EQ)
+    assert abs(opt.sum() - 1.5) <= 1e-6
+
+
+def test_best_bet_respects_an_inequality():
+    s, b = _fit()
+    opt = optimize.posterior_mean_optimum(s, b, seed=0, linear_constraints=[([0, 1, 2], [-1.0] * 3, -1.5)])
+    assert opt.sum() <= 1.5 + 1e-6
+
+
+def test_equality_repair_pool_stays_on_the_plane(monkeypatch):
+    X, y, bounds = _monotonic()
+    s = _fit_seeded(X, y, bounds)
+    eq = [([0, 1], [1.0, 1.0], 7.0)]  # x0 + x1 == 7
+    calls = _patch_joint(monkeypatch, lambda c: c[:1].expand(c.shape[0], -1).clone())
+    pb = propose_batch(s, bounds, q=4, seed=0, equality_constraints=eq)
+    assert pb.returned == 4 and pb.near_duplicates_replaced == 3
+    assert np.abs(pb.X.sum(1) - 7.0).max() <= 1e-6
+    assert _min_sep(pb.X, bounds) >= optimize.NEAR_DUPLICATE_TOL
+    assert all(k.get("equality_constraints") is not None for k in calls)
+
+
+def test_infeasible_equality_raises():
+    s, b = _fit()
+    with pytest.raises(ValueError, match="infeasible"):
+        propose(s, b, q=1, equality_constraints=[([0, 1], [1.0, 1.0], 3.0)])

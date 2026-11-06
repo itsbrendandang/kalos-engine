@@ -18,7 +18,9 @@ from .profile import (
     InvalidApplicabilityDistance,
     InvalidDirection,
     InvalidExplorationDesign,
+    InvalidLinearConstraint,
     InvalidPerRecipeNoise,
+    LinearConstraint,
     build_design_space,
     parse_direction,
 )
@@ -36,7 +38,9 @@ __all__ = [
     "InvalidApplicabilityDistance",
     "InvalidDirection",
     "InvalidExplorationDesign",
+    "InvalidLinearConstraint",
     "InvalidPerRecipeNoise",
+    "LinearConstraint",
     "build_design_space",
     "parse_direction",
 ]
