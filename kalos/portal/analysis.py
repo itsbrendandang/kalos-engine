@@ -1111,7 +1111,17 @@ def _analyze_body(
             n_logo_groups == len(set(recipe_key))
             == len(set(zip(_grp.tolist(), list(recipe_key), strict=True)))
         )
-        if _same_as_recipes:
+        if n_logo_groups > LOGO_MAX_GROUPS:
+            cv_logo = {
+                "spearman": None,
+                "n_groups": n_logo_groups,
+                "n_oof": None,
+                "reason": (
+                    f"{n_logo_groups} groups exceeds the leave-one-group-out cap "
+                    f"of {LOGO_MAX_GROUPS} groups (one GP fit per held-out group)"
+                ),
+            }
+        elif _same_as_recipes:
             cv_logo = {
                 "spearman": None,
                 "n_groups": n_logo_groups,
@@ -1120,16 +1130,6 @@ def _analyze_body(
                     "the group column labels exactly the recipes, so leaving one "
                     "group out would repeat the grouped CV already reported as "
                     "cv_spearman"
-                ),
-            }
-        elif n_logo_groups > LOGO_MAX_GROUPS:
-            cv_logo = {
-                "spearman": None,
-                "n_groups": n_logo_groups,
-                "n_oof": None,
-                "reason": (
-                    f"{n_logo_groups} groups exceeds the leave-one-group-out cap "
-                    f"of {LOGO_MAX_GROUPS} groups (one GP fit per held-out group)"
                 ),
             }
         else:
