@@ -20,7 +20,7 @@ import json
 import logging
 from pathlib import Path
 from string import Template
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -36,16 +36,24 @@ from kalos.portal.uploads import (
     rejection_counts,
     scrubbed_failure,
 )
-from kalos.scale.readout import (
-    MIN_RESIDUALS,
-    MIN_RUNG_N_FOR_LICENSE,
-    NUMBER,
-    NUMBER_WITH_WARNING,
-    REFUSAL,
-    TargetSpec,
-    build_readout,
-)
-from kalos.scale.readout import format_liters_plain as _format_liters_plain
+
+if TYPE_CHECKING:
+    from kalos.scale.readout import TargetSpec
+
+# `kalos.scale.readout` imports the GP stack (torch, botorch, gpytorch) through
+# `kalos.scale.candidates`. It is imported on first use, not here, so starting
+# the portal does not pay for torch (docs/DESKTOP.md, "Cold start"). The three
+# decision labels are plain strings, copied here; tests/test_desktop_mode.py
+# checks they still equal the ones in `kalos.scale.readout`.
+NUMBER = "NUMBER"
+NUMBER_WITH_WARNING = "NUMBER_WITH_WARNING"
+REFUSAL = "REFUSAL"
+
+
+def _readout_module() -> Any:
+    import kalos.scale.readout as readout
+
+    return readout
 
 log = logging.getLogger("kalos.portal")
 
@@ -134,7 +142,7 @@ def _parse_target(raw: str) -> tuple[TargetSpec, str, list[str], dict[str, float
     raw_agitation = data.get("agitation_rpm")
     raw_airflow = data.get("airflow_L_per_min")
     try:
-        target = TargetSpec(
+        target = _readout_module().TargetSpec(
             scale_L=float(data["scale_L"]),
             process_params={str(k): float(v) for k, v in process_params.items()},
             agitation_rpm=float(raw_agitation) if raw_agitation is not None else None,
@@ -168,7 +176,7 @@ def _fmt_sig4(value: float) -> str:
     Delegates to `kalos.scale.readout.format_liters_plain` so a data-plan
     liters figure (computed in that module) and every other rendered scale
     figure on this page always agree."""
-    return _format_liters_plain(value)
+    return str(_readout_module().format_liters_plain(value))
 
 
 def _kv(label: str, value: Any, *, mono: bool = False) -> str:
@@ -316,7 +324,7 @@ def _rungs_table(readout: dict[str, Any]) -> str:
 def _ratio_section(readout: dict[str, Any]) -> str:
     reference = readout.get("reference_ratio")
     requested = readout.get("requested_ratio")
-    reference_str = _FMT_RATIO.format(reference) if reference is not None else f"n/a (no rung with at least {MIN_RUNG_N_FOR_LICENSE} runs beat both baselines)"
+    reference_str = _FMT_RATIO.format(reference) if reference is not None else f"n/a (no rung with at least {_readout_module().MIN_RUNG_N_FOR_LICENSE} runs beat both baselines)"
     requested_str = _FMT_RATIO.format(requested) if requested is not None else "n/a"
     out_of_range = readout.get("out_of_range_params") or []
     extra = ""
@@ -342,7 +350,7 @@ def _baseline_section(readout: dict[str, Any]) -> str:
         + _kv(
             "beats both baselines",
             "too few to judge"
-            if comparison["n_residuals"] < MIN_RESIDUALS
+            if comparison["n_residuals"] < _readout_module().MIN_RESIDUALS
             else ("yes" if comparison["pooled_beats_both"] else "no"),
         )
         + _kv("pooled residuals (n)", comparison["n_residuals"])
@@ -512,7 +520,7 @@ async def scale_readout(
     try:
         readout = await run_in_slot(
             functools.partial(
-                build_readout,
+                _readout_module().build_readout,
                 df,
                 target_column,
                 process_columns,
