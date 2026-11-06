@@ -160,7 +160,12 @@ from kalos.portal.uploads import (
     clip_name,
 )
 from kalos.portal.validate import column_provenance, provenance_dicts
-from kalos.portal.verdict import model_verdict, refusal_for, refusal_notice
+from kalos.portal.verdict import (
+    hold_for_flagged_drivers,
+    model_verdict,
+    refusal_for,
+    refusal_notice,
+)
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
 from kalos.validation.report import Finding
 
@@ -1706,6 +1711,19 @@ def _analyze_body(
         rho_floor=RELIABILITY_SPEARMAN_FLOOR,
         maximize=not minimize,
     ).to_dict()
+
+    # Security review S1: an input flagged `possibly_measured_after_run` that the
+    # model leans on most (largest share or top two) holds the verdict at
+    # not_yet: a result used as a setting makes the model look better than it is.
+    _flagged = [str(c) for c, r in role_safety.reasons.items() if r == "possibly_measured"]
+    if _flagged:
+        _shares = sorted(
+            ((str(f.get("name")), float(f.get("relevance") or 0.0))
+             for f in (gp_shapes.get("features") or []) if isinstance(f, dict)),
+            key=lambda kv: -kv[1],
+        )
+        _top = [n for n, _ in _shares[:2]] or [str(d["name"]) for d in drv[:2]]
+        verdict = hold_for_flagged_drivers(verdict, _flagged, _top)
 
     # VISUALIZATION PAYLOADS: embedding (PCA), correlation (Spearman), and
     # response surface from the fitted GP. Computed while the surrogate is alive

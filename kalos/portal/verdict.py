@@ -200,6 +200,30 @@ def model_verdict(
     return out
 
 
+def hold_for_flagged_drivers(
+    verdict: Mapping[str, Any], flagged: Sequence[str], top_inputs: Sequence[str],
+) -> dict[str, Any]:
+    """Hold a `reliable` verdict at `not_yet` when one of the inputs the model
+    leans on most (`top_inputs`: the largest share or the top two) is an input
+    flagged `possibly_measured_after_run`: a result used as a setting makes the
+    model look better than it is (security review S1; a `VCD_day14` column
+    tracking the target gave "reliable" at 0.995). Adds a plain reason to a
+    `not_yet` verdict; a `refused` verdict is unchanged."""
+    hits = [c for c in top_inputs if c in set(flagged)]
+    if not hits or verdict.get("state") == "refused":
+        return dict(verdict)
+    names = " and ".join(hits)
+    plain = (
+        f"The model leans most on {names}, which may be measured during the run rather "
+        "than set. Until you confirm it is a setting, Kalos does not call the model reliable."
+    )
+    out = dict(verdict)
+    out["reasons"] = [*verdict.get("reasons", []), {"code": "possibly_measured_driver", "plain": plain}]
+    if verdict.get("state") == "reliable":
+        out["state"], out["code"], out["headline"] = "not_yet", "not-yet", plain
+    return out
+
+
 def refusal_for(verdict: Mapping[str, Any]) -> dict[str, str] | None:
     """`{code, plain, what_would_help}` when the verdict is `refused`, else None."""
     if verdict.get("state") != "refused":
@@ -225,5 +249,5 @@ def refusal_notice(refusal: Mapping[str, str], requested: int) -> dict[str, Any]
 
 __all__ = [
     "MIN_GROUPS_FOR_RELIABLE", "MIN_GROUPS_TO_PROPOSE", "MIN_RUNS_FOR_RELIABLE",
-    "model_verdict", "range_width", "refusal_for", "refusal_notice",
+    "hold_for_flagged_drivers", "model_verdict", "range_width", "refusal_for", "refusal_notice",
 ]

@@ -4,6 +4,8 @@ Newest first.
 
 ## Unreleased
 
+- Security review S1: `possibly_measured_after_run` is now a warning. If a flagged input is a top driver, the verdict is held at not_yet with reason `possibly_measured_driver`. New measurement words: ivcd, mab, igg, _end, dayN, peak (residual was already there). A `VCD_day14` column that tracks the target no longer gives "reliable".
+
 - Security review S2: the best bet meets the same outcome rules as the batch: the constraint model's prediction at or above its floor, and P(feasible) at least 0.5 when the feasibility gate is on. With no qualifying candidate there is no best bet and `best_bet_notice` says why in plain words.
 
 - Security review B1: the best bet is the highest predicted recipe among the optimizer's answer, every batch row, every training row and a Sobol sample of the box (within the linear constraints), so a local optimum can no longer leave a higher-predicted proposal labelled `learn` (pichia_HSA: 74.9 -> 110.0). `model_optimum.beyond_tried_range` added.

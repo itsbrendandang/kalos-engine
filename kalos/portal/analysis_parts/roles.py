@@ -90,7 +90,8 @@ def outcome_word(name: str) -> bool:
 # a `possibly_measured_after_run` info finding); after the target they do.
 OUTCOME_LIKE_NAME = re.compile(
     r"(?<![a-z])(od|vcd|dcw|wcw|abs)(?![a-z])|optical[ _\-]?density|absorbance|biomass"
-    r"|viab|cell[ _\-]?density|final|harvest|measured|readout|lactate|ammoni|residual",
+    r"|viab|cell[ _\-]?density|final|harvest|measured|readout|lactate|ammoni|residual"
+    r"|ivcd|(?<![a-z])(mab|igg)(?![a-z])|_end(?![a-z])|(?<![a-z])day[ _\-]?\d+|peak",
     re.IGNORECASE,
 )
 _CONC_TOKEN = re.compile(r"conc(entration)?", re.IGNORECASE)
@@ -303,7 +304,7 @@ def column_role_safety(
             out.reasons[name] = "possibly_measured"
             out.findings.append(Finding(
                 check="possibly_measured_after_run", code="possibly_measured_after_run",
-                severity="info", column=name,
+                severity="warning", column=name,
                 message=(
                     f"Column {name!r} looks like it might be measured during or after the "
                     "run. It sits before the target, so it was kept as an input: check it, "

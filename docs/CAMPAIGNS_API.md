@@ -666,6 +666,8 @@ only added; a field never changes meaning or disappears within a version.
   `proposals`, 0 = P1, or null when it is already running), `already_running`,
   `near_best_run` (it is the recipe of the best measured run, within the batch
   tolerance), `predicted_vs_best`.
+- `verdict.reasons[]` code `possibly_measured_driver`: a flagged input is a top
+  driver, so a `reliable` verdict is held at `not_yet`.
 - `best_bet_notice`: null, or a plain reason when no recipe qualifies as the best bet
   (none meets the outcome constraint floor or the feasibility gate); `model_optimum`
   is then null. `model_optimum.beyond_tried_range` lists inputs past the tried range.
@@ -687,9 +689,10 @@ only added; a field never changes meaning or disappears within a version.
   amounts). Roles persist with the campaign, so this is a per-campaign setting.
 - `proposals[].beyond_tried_range`: `[{feature, side, tried_limit, proposed, by,
   fraction}]` for inputs a proposal sets outside the tried range.
-- `validation.findings[]` code `possibly_measured_after_run` (info): a column
+- `validation.findings[]` code `possibly_measured_after_run` (warning): a column
   before the target whose name reads like a run measurement (OD, biomass,
-  lactate, ammonium, `final` with a unit) was kept as an input; check it.
+  lactate, ammonium, IVCD, mAb, IgG, `_end`, `day14`, peak, residual, `final` with a
+  unit) was kept as an input; check it.
 - `validation.findings[]` code `headerless_column`: a text column with no header
   was not used as an input (declare it in roles to use it).
 - `validation.findings[]` code `search_box` (info, always present): where
