@@ -304,6 +304,8 @@ def test_port_in_use_exits_4_not_3(tmp_path):
     finally:
         listener.close()
     assert out.returncode == desktop.EXIT_SERVER_START == 4, out.stderr
+    # The startup line names the address actually bound (KALOS_HOST).
+    assert f"kalos engine: desktop mode on 127.0.0.1:{port}; " in out.stderr
     line = out.stderr.strip().splitlines()[-1]
     assert line == (f"kalos engine: the engine could not start: port {port} on 127.0.0.1 is "
                     "already in use (another program, or another Kalos engine)")

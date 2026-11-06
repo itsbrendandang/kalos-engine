@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> None:
         except desktop.DesktopStartupError as exc:
             _refuse(str(exc), desktop.EXIT_DAMAGED_STATE)
         print(
-            f"kalos engine: desktop mode on 127.0.0.1:{port}; {summary}; "
+            f"kalos engine: desktop mode on {host}:{port}; {summary}; "
             f"defaults set: {', '.join(f'{k}={v}' for k, v in applied.items()) or 'none'}",
             file=sys.stderr,
         )
