@@ -1616,7 +1616,14 @@ def _analyze_body(
         ge=lin_ge or None, eq=lin_eq or None, seed=ANALYZE_SEED,
     )
     _cand_mean, _ = s.posterior(_cands)
-    _pick, best_bet_notice = choose_best_bet(_cands, np.asarray(_cand_mean, float))
+    _c_mean = None
+    if constraint_applied and constraint_surrogate is not None:
+        _c_mean, _ = constraint_surrogate.posterior(_cands)
+    _pick, best_bet_notice = choose_best_bet(
+        _cands, np.asarray(_cand_mean, float),
+        constraint_mean=_c_mean, constraint_floor=constraint_floor_val if constraint_applied else None,
+        p_feasible=feas_clf.predict_proba(_cands) if gated else None,
+    )
     if len(batch):
         _batch_model_mean, _ = s.posterior(batch)
     else:

@@ -666,6 +666,9 @@ only added; a field never changes meaning or disappears within a version.
   `proposals`, 0 = P1, or null when it is already running), `already_running`,
   `near_best_run` (it is the recipe of the best measured run, within the batch
   tolerance), `predicted_vs_best`.
+- `best_bet_notice`: null, or a plain reason when no recipe qualifies as the best bet
+  (none meets the outcome constraint floor or the feasibility gate); `model_optimum`
+  is then null. `model_optimum.beyond_tried_range` lists inputs past the tried range.
 - `proposals[].pick`: `best_bet` (P1, the model optimum) or `learn`. Every batch
   has one best bet unless it is already running. The best bet has `mode`
   `exploit` even when it is predicted at or slightly below the best run, so a

@@ -148,6 +148,23 @@ def test_best_bet_is_the_argmax_over_all_candidates_not_a_local_optimum():
     assert why is None and np.array_equal(cands[idx], batch[0])
 
 
+def test_best_bet_respects_the_outcome_constraint_and_the_gate():
+    """Planted (security review S2): the highest predicted candidate breaks the
+    purity floor (or the feasibility gate), so the next one is the best bet;
+    with none qualifying there is no best bet and a plain reason."""
+    from kalos.portal.analysis_parts.best_bet import choose_best_bet
+
+    cands = np.array([[0.1], [0.2], [0.3]])
+    mean = np.array([3.0, 2.0, 1.0])
+    purity = np.array([80.0, 96.0, 99.0])
+    idx, _ = choose_best_bet(cands, mean, constraint_mean=purity, constraint_floor=95.0)
+    assert idx == 1
+    idx, _ = choose_best_bet(cands, mean, p_feasible=np.array([0.2, 0.3, 0.9]))
+    assert idx == 2
+    idx, why = choose_best_bet(cands, mean, constraint_mean=purity, constraint_floor=100.0)
+    assert idx is None and "no best bet" in why
+
+
 def test_linear_constraints_filter_candidates():
     from kalos.portal.analysis_parts.best_bet import meets_linear
 
