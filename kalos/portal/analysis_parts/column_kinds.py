@@ -116,8 +116,18 @@ def column_kinds(
             entry.update(kind="date", reason="date_or_time")
         elif status == "fixed_near_constant":
             entry.update(kind="numeric", role="fixed")
-        elif reason in _ROW_NUMBER_REASONS:
+        elif reason in _ROW_NUMBER_REASONS and not is_text:
             entry.update(kind="row_number")
+        elif reason == "headerless" and is_text:
+            # a text column with no header: listed with its labels, never an input
+            levels = _levels(series)
+            entry.update(
+                kind="category" if len(levels) < TEXT_ID_DISTINCT_SHARE * max(text_cells, 1)
+                else "text_id",
+                n_levels=len(levels), levels=levels[:MAX_LEVELS_LISTED],
+            )
+            if entry["kind"] == "text_id":
+                entry["levels"] = None
         elif status == "dropped_output":
             entry.update(kind="outcome_like")
         elif status in _CONSTANT_STATUSES:

@@ -215,3 +215,35 @@ def test_outcome_like_before_target_in_a_real_analysis_is_not_fitted():
     cols = {c["name"]: c for c in out["columns"]}
     assert cols["VCD_end"]["kind"] == "outcome_like" and cols["VCD_end"]["used_in_fit"] is False
     assert "outcome_like_name" in {f["code"] for f in out["validation"]["findings"]}
+
+def test_duplicated_rows_do_not_hide_a_row_number_and_a_headerless_text_column_is_not_an_input():
+    """First-time-user study, Finding 2 (my_messy_sheet): a `Row` counter whose
+    rows were pasted twice, and a scratch column of letters with no header."""
+    pytest.importorskip("botorch")
+    from kalos.portal.analysis import _analyze
+    from kalos.portal.uploads import parse_upload
+
+    lines = ["Row,Strain,Glucose_gL,Titer,,Temp_C"]
+    rng = np.random.default_rng(0)
+    rows = []
+    for i in range(1, 17):
+        strain = ["WT", "dPEP4", "clone7"][i % 3]
+        glu = [10, 20, 30, 40, 50][i % 5]
+        temp = [28, 30, 32][i % 3]
+        titer = round(10 + 0.1 * glu - 0.3 * abs(temp - 31) + rng.normal(0, 0.5), 2)
+        rows.append(f"{i},{strain},{glu},{titer},{'abc'[i % 3]},{temp}")
+    rows += [rows[3], rows[9]]  # two rows entered twice
+    raw = ("\n".join(lines + rows) + "\n").encode()
+    df = parse_upload(raw, filename="messy.csv").df
+    out = _analyze(df, "Titer")
+    assert "Row" not in out["features"]
+    headerless = [c for c in out["columns"] if c["reason"] == "headerless"]
+    assert {c["name"] for c in headerless} >= {"Row"} or any(
+        c["name"] == "Row" and c["kind"] == "row_number" for c in out["columns"]
+    )
+    blank_header = next(c for c in out["columns"] if c["name"].startswith("column "))
+    assert blank_header["used_in_fit"] is False and blank_header["kind"] == "category"
+    assert blank_header["name"] not in out["features"]
+    codes = {f["code"] for f in out["validation"]["findings"]}
+    assert {"row_number_column", "headerless_column"} <= codes
+    assert out["categorical_features"] == ["Strain"]

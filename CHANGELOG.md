@@ -6,6 +6,8 @@ Newest first.
 
 ### Added - desktop-engine-2 (first-time-user study)
 
+- Finding 2 leftovers: a row-number column is still recognised when some rows were entered twice, and a text column with no header is not an input unless declared (finding `headerless_column`). On the study's messy sheet the model no longer uses `Row` or the blank-header column; the fit went from 60 s to 8 s.
+
 - `roles.allow_beyond` lets the search go past the tried range of an input (0.10 = 10% past each end; per input or for all; physical limits still apply). Proposals outside the tried range carry `beyond_tried_range`, the analysis reports `tried_ranges` and `allow_beyond`, and a `search_box` finding always says in plain words where Kalos searches and how to widen it (Finding 11).
 
 - Every batch has the model's best bet as P1 (`proposals[].pick`, `model_optimum`): the highest predicted value inside the search box. It replaces the proposal with the lowest prediction, or the proposal already within 5% of it. Each proposal says how its prediction compares with the best run (`predicted_vs_best`); a run predicted below the best says it is there to learn, not to win. Before, all five proposals were predicted below the best run on 4 of 4 study sheets.

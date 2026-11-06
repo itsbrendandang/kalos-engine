@@ -539,6 +539,8 @@ only added; a field never changes meaning or disappears within a version.
   amounts). Roles persist with the campaign, so this is a per-campaign setting.
 - `proposals[].beyond_tried_range`: `[{feature, side, tried_limit, proposed, by,
   fraction}]` for inputs a proposal sets outside the tried range.
+- `validation.findings[]` code `headerless_column`: a text column with no header
+  was not used as an input (declare it in roles to use it).
 - `validation.findings[]` code `search_box` (info, always present): where
   Kalos searches, in plain words, and how to widen it.
 

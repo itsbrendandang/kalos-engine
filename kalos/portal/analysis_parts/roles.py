@@ -172,6 +172,9 @@ def column_role_safety(
     """Apply the module's rules to the resolved feature lists."""
     cols = list(df.columns)
     rows = df.dropna(axis=0, how="all")
+    # A row entered twice repeats its row number too; judge the row-number rule
+    # on the sheet without exact duplicate rows (first-time-user study, Finding 2).
+    unique_rows = rows.drop_duplicates()
     pos = {c: i for i, c in enumerate(cols)}
     t_pos = pos.get(target, len(cols))
     declared_feats = set(roles.features) if roles is not None else set()
@@ -224,7 +227,7 @@ def column_role_safety(
         if c in declared_feats:
             kept.append(c)
             continue
-        reason = _row_number_reason(rows[c], headerless=name in headerless_set)
+        reason = _row_number_reason(unique_rows[c], headerless=name in headerless_set)
         if reason is not None:
             out.overrides[name] = ("dropped_id", reason)
             out.findings.append(Finding(
@@ -266,6 +269,28 @@ def column_role_safety(
             continue
         kept.append(c)
     out.cont_feats = kept
+
+    # A text column with no header is not an input unless declared: it cannot be
+    # named in a recipe, and on the study sheet it was a scratch column of letters
+    # that became the top "input" (Finding 2).
+    declared_cats = set(roles.categoricals) if roles is not None else set()
+    kept_cats: list = []
+    for c in out.cat_feats:
+        name = str(c)
+        if name in headerless_set and c not in declared_cats and c not in declared_feats:
+            out.overrides[name] = ("dropped_id", "headerless")
+            out.findings.append(Finding(
+                check="headerless_column", code="headerless_column", severity="warning",
+                column=name,
+                message=(
+                    f"{name} has no header in the sheet, so it was not used as an input: a "
+                    "recipe cannot name it. Give it a header, or declare it in the column "
+                    "roles, to use it."
+                ),
+            ))
+            continue
+        kept_cats.append(c)
+    out.cat_feats = kept_cats
 
     # Flags (no exclusion).
     y = pd.to_numeric(rows[target], errors="coerce")
