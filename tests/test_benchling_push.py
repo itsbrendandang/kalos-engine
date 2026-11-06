@@ -263,3 +263,48 @@ def test_change_notices_are_append_only(tmp_path):
     again = IntegrationStore(tmp_path)
     with pytest.raises(sqlite3.IntegrityError):
         again._conn.execute("DELETE FROM benchling_changes WHERE tenant = 'acme'")
+
+
+def test_db_is_owner_only_before_sqlite_opens_it(tmp_path, monkeypatch):
+    import os
+    import stat
+
+    from kalos.integrations.benchling import store as store_module
+
+    seen: list[int] = []
+    real = store_module.sqlite3.connect
+
+    def spy(path, *a, **kw):
+        seen.append(stat.S_IMODE(os.stat(path).st_mode))
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(store_module.sqlite3, "connect", spy)
+    old = os.umask(0o022)
+    try:
+        s = IntegrationStore(tmp_path / "fresh")
+        assert seen == [0o600]
+        assert stat.S_IMODE(s.path.stat().st_mode) == 0o600
+        assert os.umask(0o022) == 0o022  # the process umask is restored
+        # an older world-readable file is tightened on open
+        legacy = tmp_path / "legacy"
+        legacy.mkdir()
+        (legacy / "integrations.db").touch(mode=0o644)
+        os.chmod(legacy / "integrations.db", 0o644)
+        IntegrationStore(legacy)
+        assert stat.S_IMODE((legacy / "integrations.db").stat().st_mode) == 0o600
+    finally:
+        os.umask(old)
+
+
+def test_webhook_ids_are_pruned_after_ten_minutes(tmp_path, monkeypatch):
+    from kalos.integrations.benchling import store as store_module
+
+    clock = {"t": 1_000_000.0}
+    monkeypatch.setattr(store_module.time, "time", lambda: clock["t"])
+    s = IntegrationStore(tmp_path)
+    assert s.claim_delivery(tenant="acme", webhook_id="msg_1", event_type="v3.run.created")
+    assert not s.claim_delivery(tenant="acme", webhook_id="msg_1", event_type="v3.run.created")
+    clock["t"] += 601
+    s.claim_delivery(tenant="acme", webhook_id="msg_2", event_type="v3.run.created")
+    rows = s._conn.execute("SELECT webhook_id FROM benchling_webhook_deliveries").fetchall()
+    assert rows == [("msg_2",)]

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -38,6 +39,8 @@ from kalos.integrations.benchling.secrets import open_sealed, seal
 from kalos.portal.tenancy import validate_tenant_id
 
 DB_FILENAME = "integrations.db"
+DELIVERY_KEEP_S = 600.0  # webhook ids are remembered 10 min (the timestamp window is 5)
+_CREATE_LOCK = threading.Lock()
 MAX_DETAIL_CHARS = 512
 
 _SCHEMA = """
@@ -151,13 +154,22 @@ class IntegrationStore:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._path = self._dir / DB_FILENAME
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(str(self._path), isolation_level=None, check_same_thread=False)
-        self._conn.execute("PRAGMA busy_timeout = 5000")
-        self._conn.executescript(_SCHEMA)
-        try:
-            self._path.chmod(0o600)  # holds sealed secrets; owner-only
-        except OSError:
-            pass
+        # The file holds sealed secrets: owner-only from the first byte. It is
+        # created 0600 before SQLite opens it (SQLite gives its journal and WAL
+        # files the database's mode), under a 077 umask for anything SQLite
+        # creates while the schema is set up. umask is process-wide, so the
+        # change is short and serialized.
+        with _CREATE_LOCK:
+            old_umask = os.umask(0o077)
+            try:
+                fd = os.open(self._path, os.O_CREAT | os.O_RDWR, 0o600)
+                os.close(fd)
+                os.chmod(self._path, 0o600)  # an older file may have been created 0644
+                self._conn = sqlite3.connect(str(self._path), isolation_level=None, check_same_thread=False)
+                self._conn.execute("PRAGMA busy_timeout = 5000")
+                self._conn.executescript(_SCHEMA)
+            finally:
+                os.umask(old_umask)
 
     @property
     def path(self) -> Path:
@@ -371,12 +383,18 @@ class IntegrationStore:
 
     def claim_delivery(self, *, tenant: str, webhook_id: str, event_type: str | None) -> bool:
         """True the first time `webhook_id` is seen for this tenant, False on a
-        re-delivery."""
+        re-delivery. Ids older than DELIVERY_KEEP_S are pruned: a delivery that
+        old fails the 5-minute timestamp check anyway, and a later re-send of an
+        accepted event still adds no change notice (those are keyed on the event
+        id)."""
         validate_tenant_id(tenant)
+        now = time.time()
         with self._txn() as c:
+            c.execute("DELETE FROM benchling_webhook_deliveries WHERE tenant = ? AND received_at < ?",
+                      (tenant, now - DELIVERY_KEEP_S))
             cur = c.execute(
                 "INSERT OR IGNORE INTO benchling_webhook_deliveries (tenant, webhook_id, received_at, event_type) "
-                "VALUES (?,?,?,?)", (tenant, _clip(webhook_id, 128), time.time(), _clip(event_type, 64)),
+                "VALUES (?,?,?,?)", (tenant, _clip(webhook_id, 128), now, _clip(event_type, 64)),
             )
             return cur.rowcount == 1
 
