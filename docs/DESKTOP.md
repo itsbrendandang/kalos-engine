@@ -55,7 +55,7 @@ desktop app uses `local`.
   runs gets 503 `engine_busy` with `Retry-After`.
 - Torch threads capped (see above), so the rest of the laptop stays usable.
 - No API docs (`/docs`, `/openapi.json`) and no audit-archive timer
-  (`KALOS_AUDIT_RETENTION_DAYS` is ignored; nothing is ever deleted).
+  (`KALOS_AUDIT_RETENTION_DAYS` is ignored; no audit row is deleted).
 - Torch and BoTorch are imported in the background once the port is open,
   so the first upload does not wait for them.
 

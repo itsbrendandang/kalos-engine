@@ -26,8 +26,8 @@ What it refuses (exit 2, one line on stderr):
   localhost origin read responses, so the shell must name the app's own origin.
 
 What it turns off: the interactive API docs and the audit-archive timer
-(`KALOS_AUDIT_RETENTION_DAYS` is ignored with a warning; nothing is deleted
-either way).
+(`KALOS_AUDIT_RETENTION_DAYS` is ignored with a warning; no audit row is
+deleted either way).
 
 Startup self-check (exit 3, one plain line on stderr, nothing written): the
 state directory must be writable, and an existing `portal.db` must pass SQLite's
