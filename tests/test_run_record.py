@@ -97,7 +97,7 @@ def test_input_sha256_is_hashlib_over_the_raw_bytes():
     assert run["n_features"] == 2
     assert run["target"] == "lipase_titer"
     assert run["seed"] == 1234
-    assert run["schema_version"] == run_record.RUN_SCHEMA_VERSION == 1
+    assert run["schema_version"] == run_record.RUN_SCHEMA_VERSION == 2
 
 
 def test_n_features_is_the_fitted_feature_count_not_the_top_drivers():

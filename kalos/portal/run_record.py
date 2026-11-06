@@ -39,7 +39,9 @@ from datetime import UTC, datetime
 from importlib import metadata
 from typing import Any
 
-RUN_SCHEMA_VERSION = 1
+# 2: `direction` added to the record and to `config_sha256` (so the hash of a
+# maximize analysis differs from a version-1 hash of the same upload).
+RUN_SCHEMA_VERSION = 2
 
 # What produced the analysis: an uploaded run sheet (`upload`, both the sync
 # route and the job worker), or a re-analysis of a campaign's folded base

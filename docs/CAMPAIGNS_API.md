@@ -193,11 +193,11 @@ the restart rules are in docs/JOBS.md.
 ### Run record (provenance)
 
 Every analysis result carries a `run` block (`kalos/portal/run_record.py`,
-schema `run.schema_version` = 1). It says what produced the result:
+schema `run.schema_version` = 2). It says what produced the result:
 
 | Field | Meaning |
 |---|---|
-| `schema_version` | `1`. Bumped when a field is added, renamed or retyped, from the first release of the record. Schema 1 has not shipped: fields added during review (`kind`, `pending_runs`, the fit and sheet fields below) stayed in version 1. |
+| `schema_version` | `2`. Bumped when a field is added, renamed or retyped, from the first release of the record. Version 2 added `direction`, which is also part of `config_sha256`, so a version-2 `config_sha256` never equals a version-1 one for the same upload. Fields added during review before any release (`kind`, `pending_runs`, the fit and sheet fields below) stayed in version 1. |
 | `kind` | `upload` (a run sheet: `/api/run`, `/api/campaigns/{id}/upload`, jobs) or `reanalyze` (`POST /api/campaign/reanalyze`, the campaign's folded base dataset). |
 | `input_sha256`, `input_bytes` | SHA-256 and length of the uploaded bytes exactly as received. For `kind=reanalyze`: of the folded dataset serialized as CSV (`fold_bytes`). |
 | `filename`, `sheet` | The upload's name and the sheet analyzed (Excel). **Absent** when `anonymize` is true. |
