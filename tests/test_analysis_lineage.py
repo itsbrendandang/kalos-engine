@@ -213,3 +213,71 @@ def test_upload_settings_keep_other_keys_and_replace_roles(client):
     upload(c)
     settings = store.get(tenant="default")["settings"]
     assert settings == {"allow_beyond": True, "roles": None}
+
+
+# --- which recorded runs entered the fit, and what changed (finding 5) --------------- #
+
+
+def test_reanalyze_lists_the_recorded_runs_and_the_delta(client):
+    c, store = client
+    first = upload(c, {"target": "Titer", "features": INPUTS})
+    assert first["runs_used"] == {"n_upload_rows": 8, "n_recorded": 0, "recorded": []}
+    assert first["delta"] is None
+    started = _start_and_record(c, [63.0, 90.0])  # 3 started, 2 recorded
+    assert started[0]["likely_range_at_start"] == {"low": 50.0, "high": 70.0}
+
+    after = c.post("/api/campaign/reanalyze").json()["analysis"]
+    used = after["runs_used"]
+    assert used["n_upload_rows"] == 8 and used["n_recorded"] == 2
+    assert used["recorded"] == [
+        {"run_id": started[0]["id"], "round": 0, "measured_value": 63.0,
+         "predicted_at_start": 60.0, "inside_likely_range": True},
+        {"run_id": started[1]["id"], "round": 0, "measured_value": 90.0,
+         "predicted_at_start": 61.0, "inside_likely_range": False},
+    ]
+    assert after["n"] == used["n_upload_rows"] + used["n_recorded"]
+
+    d = after["delta"]
+    assert d["previous_analysis_id"] == first["analysis_id"] == after["supersedes"]["analysis_id"]
+    assert d["best"] == {"before": 82.0, "after": 90.0}
+    assert d["verdict"] == {"before": "reliable", "after": "reliable"}
+    assert d["n_runs"] == {"before": 8, "after": 10}
+    assert d["inputs_added"] == [] and d["inputs_removed"] == []
+    assert d["driver_shares_source"] == "gp_shapes"
+    assert {s["input"] for s in d["driver_shares"]} == set(INPUTS)
+    assert d["summary"] == "Your 2 results were added. Best went from 82 to 90."
+    # Stored, so every read route shows the same lists.
+    assert c.get("/api/latest").json()["runs_used"] == used
+
+    # The next round lists both rounds' recorded runs.
+    more = _start_and_record(c, [70.0])
+    again = c.post("/api/campaign/reanalyze").json()["analysis"]
+    assert [r["run_id"] for r in again["runs_used"]["recorded"]] == [
+        started[0]["id"], started[1]["id"], more[0]["id"]]
+    assert again["runs_used"]["recorded"][2]["round"] == 1
+    assert again["delta"]["summary"] == "Your 1 result was added. Best is still 90."
+    assert store.get(tenant="default")["round"] == 2
+
+
+def test_delta_summary_names_the_driver_shift_and_the_new_input(client):
+    from kalos.portal import lineage
+
+    before = {"analysis_id": "an_a", "best": 113.65, "n": 235, "features": ["SP", "Met", "Gly"],
+              "reliability": {"clears_floor": True},
+              "gp_shapes": {"available": True, "features": [
+                  {"name": "Gly", "relevance": 0.44}, {"name": "SP", "relevance": 0.44},
+                  {"name": "Met", "relevance": 0.12}]}}
+    after = {"best": 113.65, "n": 237, "features": ["SP", "Met", "Gly", "Carbon_conc"],
+             "reliability": {"clears_floor": False},
+             "gp_shapes": {"available": True, "features": [
+                 {"name": "SP", "relevance": 0.55}, {"name": "Carbon_conc", "relevance": 0.44},
+                 {"name": "Gly", "relevance": 0.004}, {"name": "Met", "relevance": 0.006}]}}
+    d = lineage.delta(after, before, n_folded=2, why="")
+    assert d["summary"] == (
+        "Your 2 results were added. Best is still 113.65. Gly dropped from 44% to under 1% "
+        "after Carbon_conc was added. The verdict changed from reliable to not yet reliable.")
+    assert d["inputs_added"] == ["Carbon_conc"]
+    assert {"input": "Carbon_conc", "before": None, "after": 0.44} in d["driver_shares"]
+    # The verdict object of a newer analysis wins over the reliability flag.
+    assert lineage.verdict_code({"verdict": {"code": "trust_ranking"},
+                                 "reliability": {"clears_floor": False}}) == "trust_ranking"

@@ -185,6 +185,14 @@ def _seed_settings(
     return settings
 
 
+def _likely_range(pred: Any, half_width: Any) -> dict[str, float] | None:
+    """`{low, high}` = pred -/+ the conformal half-width, or None."""
+    p, q = _finite_number(pred), _finite_number(half_width)
+    if p is None or q is None:
+        return None
+    return {"low": p - q, "high": p + q}
+
+
 def _clip(value: str | None, limit: int = MAX_AUDIT_FIELD_CHARS) -> str | None:
     return None if value is None else str(value)[:limit]
 
@@ -679,6 +687,9 @@ class CampaignStore:
             # round 0 (the uploaded base). Each reanalyze appends a point.
             "history": [{"round": 0, "best": _best_measured(base_rows, target, direction),
                          "n_base": len(base_rows)}],
+            # Every measured run folded in so far (`lineage.recorded_run`), for
+            # `runs_used` on the analyses of this campaign.
+            "recorded_runs": [],
             "updated_at": now,
         }
         with self._txn(write=True) as conn:
@@ -691,7 +702,10 @@ class CampaignStore:
             generation = self._cas_write(conn, tenant, row, state, expected)
             if analysis is not None:
                 # `analysis_id` and `supersedes` (kalos/portal/lineage.py).
-                analysis = lineage.link(analysis, self._stored_analysis(conn, tenant, row.id))
+                analysis = lineage.link(
+                    analysis, self._stored_analysis(conn, tenant, row.id),
+                    runs_used={"n_upload_rows": len(base_rows), "n_recorded": 0, "recorded": []},
+                )
                 blob = self._analysis_blob(analysis, dataset or "uploaded dataset", generation, now)
                 if blob is not None:
                     self._write_analysis(conn, tenant, row.id, blob, dataset, generation, now)
@@ -804,14 +818,6 @@ class CampaignStore:
             return None
         return lineage.with_id(data) if isinstance(data, dict) else None
 
-    @classmethod
-    def _published_provenance(
-        cls, conn: sqlite3.Connection, tenant: str, campaign_id: str
-    ) -> dict[str, Any] | None:
-        from kalos.portal.run_record import provenance_ref
-
-        return provenance_ref(cls._stored_analysis(conn, tenant, campaign_id))
-
     def start(
         self, recipes: list[dict[str, Any]], *, tenant: str, campaign_id: str | None = None
     ) -> list[dict[str, Any]]:
@@ -853,7 +859,13 @@ class CampaignStore:
             # has no analysis or one written before the block existed). The
             # recipe itself is caller input; this says what was published, not
             # that the recipe came from it.
-            analysis_ref = self._published_provenance(conn, tenant, row.id)
+            from kalos.portal.run_record import provenance_ref
+
+            published = self._stored_analysis(conn, tenant, row.id)
+            analysis_ref = provenance_ref(published)
+            # The likely range of the published analysis around this run's
+            # prediction, kept so Learn can say whether the result landed inside.
+            band = (published or {}).get("conformal_q")
             for recipe in recipes:
                 # Validate the recipe mapping HERE, at the point of the bad
                 # input, so a malformed body 400s cleanly at /api/campaign/start
@@ -886,6 +898,7 @@ class CampaignStore:
                     "created_at": now,
                     "measured_at": None,
                     "analysis_provenance": dict(analysis_ref) if analysis_ref else None,
+                    "likely_range_at_start": _likely_range(recipe.get("pred"), band),
                 }
                 state["pending"].append(run)
                 appended.append(run)
@@ -1079,9 +1092,11 @@ class CampaignStore:
             target = state["target"]
             still_pending: list[dict[str, Any]] = []
             n_folded = 0
+            recorded = state.setdefault("recorded_runs", [])
             for run in state["pending"]:
                 if run["result"] is not None:
                     state["base_rows"].append({**run["recipe"], target: run["result"]})
+                    recorded.append(lineage.recorded_run(run))
                     n_folded += 1
                 else:
                     still_pending.append(run)
@@ -1111,7 +1126,17 @@ class CampaignStore:
                 previous = self._stored_analysis(conn, tenant, row.id)
                 label = (dataset or (previous or {}).get("dataset")
                          or f"campaign round {state['round']}")
-                analysis = lineage.link(analysis, previous, n_folded=n_folded)
+                history0 = (state.get("history") or [{}])[0]
+                n_upload = history0.get("n_base")
+                analysis = lineage.link(
+                    analysis, previous, n_folded=n_folded,
+                    runs_used={
+                        "n_upload_rows": n_upload if isinstance(n_upload, int)
+                        else len(state["base_rows"]) - len(recorded),
+                        "n_recorded": len(recorded),
+                        "recorded": [dict(r) for r in recorded],
+                    },
+                )
                 blob = self._analysis_blob(
                     analysis, label, new_generation, now, allow_nan=False
                 )

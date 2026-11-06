@@ -624,6 +624,23 @@ only added; a field never changes meaning or disappears within a version.
   the one it replaced. Each has `code`, `severity`, `message` (plain), and for
   `inputs_changed` the `added` and `removed` input names. Empty when nothing
   changed or there was no earlier analysis.
+- `runs_used`: `{n_upload_rows, n_recorded, recorded}`. `recorded` lists every
+  measured run of the campaign that entered the fit, oldest first:
+  `{run_id, round, measured_value, predicted_at_start, inside_likely_range}`.
+  `inside_likely_range` is true or false when the run's likely range was known
+  at start, else null. On an upload `n_recorded` is 0 and `recorded` is empty.
+- `delta`: what changed since the analysis this one replaced, or null for the
+  first one: `{previous_analysis_id, best: {before, after}, verdict: {before,
+  after}, driver_shares: [{input, before, after}], driver_shares_source,
+  n_runs: {before, after}, inputs_added, inputs_removed, summary}`. The shares
+  are `gp_shapes.features[].relevance` (what the model leans on;
+  `driver_shares_source` is `gp_shapes`); a share is null when the input was not
+  in that fit. `verdict` is the analysis's `verdict` code when it has one, else
+  `reliable` / `not_yet_reliable` from `reliability.clears_floor`. `summary` is
+  one plain line, for example "Your 2 results were added. Best is still 113.65."
+- `pending[].likely_range_at_start` on `/api/campaign` and the runs routes:
+  `{low, high}`, the published analysis's likely range around the run's `pred`
+  when the run was started, or null.
 
 ## Not in this slice
 

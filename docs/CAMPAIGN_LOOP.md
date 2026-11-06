@@ -98,6 +98,9 @@ Per-campaign settings live in one place: `settings` in the campaign state
 - Other keys (for example `allow_beyond`) belong to their own features. A new
   upload keeps them and only replaces `roles`.
 
+`recorded_runs` in the state lists every measured run folded in so far; it is
+the source of `runs_used` on each analysis.
+
 A reanalyze keeps the campaign's name: the stored analysis keeps the label of
 the analysis it replaces (the uploaded file name), not `campaign round <n>`.
 
