@@ -94,7 +94,10 @@ archive.
 The form fields and errors match `POST /api/run`:
 
 - Fields: `file`, `target`, `anonymize`, `roles`, `sheet`. `?sheet=` also
-  works; the form field wins if both are set.
+  works; the form field wins if both are set. `roles.direction`
+  (`maximize`, the default, or `minimize`) sets the optimisation direction
+  (docs/UPLOADS.md, "Direction"); any other value is a `400`
+  `invalid_direction`. The campaign stores it and reanalyze reuses it.
 - Responses: the same `{"error", "code", ...}` error envelope and the same
   codes (`parse_error`, `fit_failed`, `corrupt_excel`, `sheet_not_found`,
   ...). Excel responses include `sheets` and `sheet_used`.
@@ -368,6 +371,8 @@ only added; a field never changes meaning or disappears within a version.
   Upload responses only; reanalyze always fits.
   - `cv_ci95_reason`: why `cv_ci95` is null (string), else null. The interval
     needs at least 3 CV groups. A `cv_ci_unavailable` info finding says the same.
+  - `direction`: `maximize` or `minimize`, what the proposals optimize. `best`
+    is the max or the min accordingly. Also on the campaign summary.
 
 ## Not in this slice
 

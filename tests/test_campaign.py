@@ -601,7 +601,7 @@ def test_stage_advances_through_start_result_reanalyze(client):
 def test_existing_fields_unchanged(store, client):
     store.seed(_tiny_df(), "lipase_titer", ["Methanol", "pH"], tenant="default")
     body = client.get("/api/campaign").json()
-    assert set(body) - {"stage", "next_action"} == {
+    assert set(body) - {"stage", "next_action", "direction"} == {
         "has_campaign", "target", "features", "n_base", "best", "round",
         "history", "pending", "n_awaiting", "n_measured", "analysis_in_sync",
     }

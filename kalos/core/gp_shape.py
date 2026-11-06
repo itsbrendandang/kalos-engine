@@ -243,6 +243,7 @@ def gp_shape_report(
     feature_names: Sequence[str],
     cv_spearman: float | None = None,
     rho_floor: float = 0.20,
+    maximize: bool = True,
 ) -> GPShapeReport:
     """Per-feature ARD relevance and response shape, read off a FITTED surrogate.
 
@@ -317,7 +318,8 @@ def gp_shape_report(
     # The incumbent: the observed row with the best measured target. A real
     # recipe, so every sweep stays near data instead of wandering into a corner
     # of the box nobody ran.
-    incumbent = Xa[int(np.argmax(ya))].astype(float)
+    # `maximize=False` (a minimize target) anchors at the lowest measured row.
+    incumbent = Xa[int(np.argmax(ya) if maximize else np.argmin(ya))].astype(float)
     y_std = float(np.std(ya))
 
     shapes: list[FeatureShape] = []

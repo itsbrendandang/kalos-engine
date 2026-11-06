@@ -24,6 +24,7 @@ def _annotate(
     p_feasible: np.ndarray | None = None,
     constraint: tuple[str, np.ndarray, np.ndarray] | None = None,
     distance: np.ndarray | None = None,
+    maximize: bool = True,
 ) -> list:
     """Attach predicted value, uncertainty, and an explore/exploit rationale to
     each proposed experiment. Explore = high model uncertainty (chosen to learn);
@@ -47,7 +48,10 @@ def _annotate(
     constraint was actually applied.
 
     `distance`, when given, adds `nearest_training_distance` to every row (see
-    `nearest_training_distance`). Omitted when None."""
+    `nearest_training_distance`). Omitted when None.
+
+    `maximize=False` (a minimize target): `best` is the lowest value and
+    "exploit" means predicted LOWER than it. `mean` stays in original units."""
     mean = np.asarray(mean, float).reshape(-1)
     std = np.asarray(std, float).reshape(-1)
     thr = float(np.quantile(std, 2 / 3)) if len(std) > 2 else float(std.max() if len(std) else 0.0)
@@ -55,9 +59,12 @@ def _annotate(
     rows = []
     for i in range(len(batch)):
         m, sd = float(mean[i]), float(std[i])
-        gain = m - best
+        gain = m - best if maximize else best - m
         if gain > eps:
-            mode, reason = "exploit", f"predicted high (+{gain:.3g} vs best)"
+            mode, reason = (
+                ("exploit", f"predicted high (+{gain:.3g} vs best)") if maximize
+                else ("exploit", f"predicted low (-{gain:.3g} vs best)")
+            )
         elif sd >= thr:
             mode, reason = "explore", f"reduce model uncertainty here (±{sd:.3g})"
         else:

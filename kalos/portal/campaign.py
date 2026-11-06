@@ -151,13 +151,23 @@ def _finite_number(value: Any) -> float | None:
     return v if math.isfinite(v) else None
 
 
-def _best_measured(base_rows: list[dict[str, Any]], target: str) -> float | None:
-    """The best (max) MEASURED target value over `base_rows`, or None when no
-    row carries a finite numeric target — never a prediction (docs/CAMPAIGN_LOOP.md,
-    "Honesty constraints"). Because base rows only ever grow, this is
-    non-decreasing round over round, which is what the progress trajectory plots."""
+def _best_measured(
+    base_rows: list[dict[str, Any]], target: str, direction: str | None = None
+) -> float | None:
+    """The best MEASURED target value over `base_rows` (the max, or the min
+    when `direction` is "minimize"), or None when no row carries a finite
+    numeric target — never a prediction (docs/CAMPAIGN_LOOP.md, "Honesty
+    constraints"). Because base rows only ever grow, this only ever improves
+    round over round, which is what the progress trajectory plots."""
     values = [v for row in base_rows if (v := _finite_number(row.get(target))) is not None]
-    return max(values) if values else None
+    if not values:
+        return None
+    return min(values) if direction == "minimize" else max(values)
+
+
+def _direction_of(analysis: dict[str, Any] | None) -> str:
+    """The direction an analysis optimized ("maximize" unless it says "minimize")."""
+    return "minimize" if (analysis or {}).get("direction") == "minimize" else "maximize"
 
 
 def _clip(value: str | None, limit: int = MAX_AUDIT_FIELD_CHARS) -> str | None:
@@ -636,15 +646,20 @@ class CampaignStore:
                 raise TypeError("seed() needs df or base_rows")
             base_rows = _json_safe_records(df)
         now = time.time()
+        # The direction is stored with the campaign so a reanalyze optimizes
+        # the same way as the upload that seeded it.
+        direction = _direction_of(analysis)
         state: dict[str, Any] = {
             "target": target,
             "features": list(features),
+            "direction": direction,
             "base_rows": base_rows,
             "pending": [],
             "round": 0,
             # Progress trajectory: best-so-far at each round, starting at
             # round 0 (the uploaded base). Each reanalyze appends a point.
-            "history": [{"round": 0, "best": _best_measured(base_rows, target), "n_base": len(base_rows)}],
+            "history": [{"round": 0, "best": _best_measured(base_rows, target, direction),
+                         "n_base": len(base_rows)}],
             "updated_at": now,
         }
         with self._txn(write=True) as conn:
@@ -707,7 +722,8 @@ class CampaignStore:
 
         target = state["target"]
         base_rows: list[dict[str, Any]] = state["base_rows"]
-        best = _best_measured(base_rows, target)
+        direction = state.get("direction") or "maximize"
+        best = _best_measured(base_rows, target, direction)
 
         # `round` is absent on runs started before it was stamped: reads null.
         pending = [
@@ -719,6 +735,8 @@ class CampaignStore:
             "has_campaign": True,
             "target": target,
             "features": state["features"],
+            # "maximize" or "minimize" (campaigns seeded before it existed: maximize).
+            "direction": direction,
             "n_base": len(base_rows),
             "best": best,
             "round": state["round"],
@@ -1042,7 +1060,9 @@ class CampaignStore:
             history.append(
                 {
                     "round": state["round"],
-                    "best": _best_measured(state["base_rows"], target),
+                    "best": _best_measured(
+                        state["base_rows"], target, state.get("direction")
+                    ),
                     "n_base": len(state["base_rows"]),
                 }
             )

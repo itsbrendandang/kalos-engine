@@ -94,10 +94,18 @@ def torch_threads_actual() -> int | None:
 
 
 def _roles_and_profile(roles_json: str) -> tuple[Any, Any]:
-    from kalos.domains import BIOPROCESS_PROFILE, GENERIC_PROFILE, ColumnRoles
+    from kalos.domains import (
+        BIOPROCESS_PROFILE,
+        GENERIC_PROFILE,
+        ColumnRoles,
+        InvalidDirection,
+    )
 
     if roles_json.strip():
-        return ColumnRoles.from_dict(json.loads(roles_json)), GENERIC_PROFILE
+        try:
+            return ColumnRoles.from_dict(json.loads(roles_json)), GENERIC_PROFILE
+        except InvalidDirection as exc:
+            raise UploadRejected(str(exc), code=exc.code) from None
     return None, BIOPROCESS_PROFILE
 
 
@@ -214,7 +222,7 @@ ANALYSIS_CACHE = _AnalysisCache()
 def compute_upload_analysis(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
     *, sheet: str | None = None, progress: ProgressFn | None = None,
-    analyze: Callable[..., dict] | None = None,
+    analyze: Callable[..., dict] | None = None, direction: str | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """parse -> `_analyze` -> the response dict. Returns `(df, result)`; writes
     nothing. `analyze` defaults to `kalos.portal.analysis._analyze` (the sync
@@ -230,6 +238,9 @@ def compute_upload_analysis(
     kwargs: dict[str, Any] = {"anonymize": anonymize}
     if progress is not None:
         kwargs["progress"] = progress
+    if direction:
+        # The plain `direction` form field (/api/run). A different roles.direction is refused.
+        kwargs["direction"] = direction
     try:
         roles, profile = _roles_and_profile(roles_json)
         if roles is not None:

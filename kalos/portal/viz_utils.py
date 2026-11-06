@@ -194,6 +194,7 @@ def _response_surface_gp(
     cat_dims: list | None,
     incumbent: float,
     replicate_aware: bool,
+    maximize: bool = True,
 ) -> dict | None:
     """Evaluate a 21x21 surface from the fitted GP.
 
@@ -234,7 +235,8 @@ def _response_surface_gp(
 
         # Build fixed recipe at incumbent: use the recipe (from X_fit) with the
         # best target value, fixing all non-swept dims at their incumbent values
-        incumbent_idx = int(np.argmax(y_fit))
+        # A minimize target (`maximize=False`) is anchored at its lowest row.
+        incumbent_idx = int(np.argmax(y_fit) if maximize else np.argmin(y_fit))
         incumbent_recipe = X_fit[incumbent_idx].copy()
 
         # Determine incumbent basis

@@ -32,6 +32,29 @@ import pandas as pd
 
 DimensionKind = Literal["continuous", "categorical"]
 
+# Optimisation direction of the target. "maximize" is the default everywhere.
+DIRECTIONS: tuple[str, ...] = ("maximize", "minimize")
+
+
+class InvalidDirection(ValueError):
+    """A direction other than "maximize" or "minimize" (HTTP 400 `invalid_direction`)."""
+
+    code = "invalid_direction"
+
+    def __init__(self) -> None:
+        super().__init__('direction must be "maximize" or "minimize"')
+
+
+def parse_direction(value: object) -> str | None:
+    """None for no stated direction, else "maximize"/"minimize". Raises
+    `InvalidDirection` for anything else (case and surrounding spaces are
+    ignored)."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, str) and value.strip().lower() in DIRECTIONS:
+        return value.strip().lower()
+    raise InvalidDirection()
+
 
 @dataclass(frozen=True)
 class DomainProfile:
@@ -49,13 +72,15 @@ class DomainProfile:
     target_pref: Pattern[str]
     id_hint: Pattern[str]
     group_hint: Pattern[str]
+    # Direction used when neither roles nor the request states one.
+    direction: str = "maximize"
 
 
 @dataclass(frozen=True)
 class ColumnRoles:
     """An explicit, caller-declared column schema for the analyze path.
 
-    `target` is the column to maximize (required). `features` are the process
+    `target` is the column to optimize (required). `features` are the process
     inputs to model; empty means "infer the features from the profile as
     usual". `groups` is the optional replicate-grouping column. `ids` are
     columns to ignore. `categoricals` names the feature columns whose values are
@@ -63,6 +88,8 @@ class ColumnRoles:
     `sparse` names continuous feature columns where a BLANK cell means "absent"
     (a component not added, so 0). Only these, and concentration-type columns by
     name, take a blank as 0; every other blank feature cell drops its run.
+    `direction` is "maximize" or "minimize"; None means not stated (the
+    request or the profile decides; default "maximize").
     """
 
     target: str
@@ -71,6 +98,7 @@ class ColumnRoles:
     ids: tuple[str, ...] = ()
     categoricals: tuple[str, ...] = ()
     sparse: tuple[str, ...] = ()
+    direction: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> ColumnRoles:
@@ -102,6 +130,7 @@ class ColumnRoles:
             ids=as_tuple(data.get("ids")),
             categoricals=as_tuple(data.get("categoricals")),
             sparse=as_tuple(data.get("sparse")),
+            direction=parse_direction(data.get("direction")),
         )
 
 

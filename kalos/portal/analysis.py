@@ -35,6 +35,8 @@ from kalos.domains import (
     DesignSpace,
     Dimension,
     DomainProfile,
+    InvalidDirection,
+    parse_direction,
 )
 from kalos.portal.analysis_parts.anonymize import (
     _anonymize_result,
@@ -168,6 +170,22 @@ PROPOSAL_FIT_RESTARTS = 3
 PROPOSAL_BATCH_Q = 5
 
 
+class _SignFlipped:
+    """A fitted surrogate seen through `y -> -y`: `posterior` returns the
+    negated mean (same sd); every other attribute is the wrapped surrogate's.
+    Used on a minimize target so shapes and surfaces are in the original sign."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def posterior(self, X: Any) -> tuple[np.ndarray, np.ndarray]:
+        mean, sd = self._inner.posterior(X)
+        return -np.asarray(mean, float), sd
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
 @contextlib.contextmanager
 def _seeded_analysis(seed: int = ANALYZE_SEED) -> Iterator[None]:
     """Run one analysis with torch and numpy seeded to `seed`, then restore them.
@@ -211,6 +229,7 @@ def _analyze(
     constraint: Mapping[str, Any] | None = None,
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
+    direction: str | None = None,
 ) -> dict:
     """See `_analyze_body`. Every fitting analysis runs inside `_seeded_analysis`,
     so its proposals depend only on its inputs, not on other analyses in flight."""
@@ -218,6 +237,7 @@ def _analyze(
     kwargs: dict[str, Any] = dict(
         anonymize=anonymize, roles=roles, profile=profile, pending=pending,
         constraint=constraint, progress=progress, preflight_only=preflight_only,
+        direction=direction,
     )
     if preflight_only:
         return _analyze_body(df, target, **kwargs)
@@ -236,6 +256,7 @@ def _analyze_body(
     constraint: Mapping[str, Any] | None = None,
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
+    direction: str | None = None,
 ) -> dict:
     """Run the engine on an arbitrary run sheet: pick the target (the value to
     maximize), use the process INPUTS as features (other measured outputs are
@@ -284,7 +305,32 @@ def _analyze_body(
     fit (shape, target, constant target, process inputs, row caps), then
     returns `{}` - without importing torch, seeding any RNG, or fitting. The
     job API uses it to refuse bad input with the sync route's 400 BEFORE
-    queueing; it is the same code, stopped early, so the two cannot drift."""
+    queueing; it is the same code, stopped early, so the two cannot drift.
+
+    `direction` ("maximize"/"minimize") is the plain request field; a direction
+    stated in `roles` takes precedence, and two different stated directions
+    are refused (`direction_conflict`). Neither stated: `profile.direction`
+    (default "maximize"). Minimize fits the proposal surrogate on -y, so the
+    acquisition, incumbent and explore/exploit labels look for LOW values.
+    Everything reported (predictions, `best`, drivers, `gp_shapes`, CV) stays
+    in the original units and sign. Feasibility gating (P(y > 0)) is not
+    applied when minimizing."""
+    try:
+        stated_direction = parse_direction(direction)
+    except InvalidDirection as exc:
+        raise UploadRejected(str(exc), code=exc.code) from None
+    roles_direction = roles.direction if roles is not None else None
+    if stated_direction and roles_direction and stated_direction != roles_direction:
+        raise UploadRejected(
+            "The request states two different directions (roles.direction and direction). "
+            "State one.",
+            code="direction_conflict",
+        )
+    direction = roles_direction or stated_direction or profile.direction
+    minimize = direction == "minimize"
+    # The proposal surrogate is fit on sign * y, so "maximize" in the
+    # acquisition means "minimize y" when sign is -1.
+    sign = -1.0 if minimize else 1.0
     if not preflight_only:
         # Deferred: these transitively import torch/botorch/gpytorch (see the
         # module-level note above). This is the one place in this module that
@@ -900,7 +946,14 @@ def _analyze_body(
             if feas_auc != feas_auc
             else f"feasibility CV AUC too low to trust: auc={feas_auc:.3f} < {_gate_auc_floor}"
         )
-    gated = feas_clf.fitted and n_infeasible >= GATE_MIN_N_INFEASIBLE and _auc_ok
+    if minimize:
+        _gate_fail_reasons.append(
+            "not applied when the direction is minimize: P(feasible) scores y > 0, "
+            "a maximize notion"
+        )
+    gated = (
+        feas_clf.fitted and n_infeasible >= GATE_MIN_N_INFEASIBLE and _auc_ok and not minimize
+    )
     gate_reason = (
         "; ".join(_gate_fail_reasons)
         if _gate_fail_reasons
@@ -1206,7 +1259,7 @@ def _analyze_body(
     # diagnostic only: nothing is transformed here, because silently changing the
     # target's scale would change every number the engine reports.
     het = heteroscedasticity_report(X, y, groups=recipe_key)
-    best_single = float(y.max())
+    best_single = float(y.min()) if minimize else float(y.max())
     best_reproducible: float | None = None
     replicate_aware = False
     incumbent = best_single
@@ -1216,7 +1269,7 @@ def _analyze_body(
     X_fit, y_fit = X, y
     if nr["n_replicated"] >= 1:
         Xf, yf, _yvar_g, n_reps_g = aggregate_replicates(X, y, groups=recipe_key)
-        best_reproducible = float(yf.max())
+        best_reproducible = float(yf.min()) if minimize else float(yf.max())
         sigma2 = nr["noise_var"]
         # Only swap in the reproducible objective when there are enough distinct
         # recipes to fit a meaningful GP and a real, positive noise floor to feed;
@@ -1225,7 +1278,7 @@ def _analyze_body(
             replicate_aware = True
             per_point_var = float(sigma2) / np.maximum(n_reps_g, 1).astype(float)
             s = Surrogate().fit(
-                Xf, yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
+                Xf, sign * yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
                 check_conditioning=True,
                 restarts=proposal_restarts(len(yf), Xf.shape[1], PROPOSAL_FIT_RESTARTS),
                 restart_seed=ANALYZE_SEED,
@@ -1237,7 +1290,7 @@ def _analyze_body(
     _progress("proposing", 0.8)
     if not replicate_aware:
         s = Surrogate().fit(
-            X, y, bounds=bounds, cat_dims=cat_dims, check_conditioning=True,
+            X, sign * y, bounds=bounds, cat_dims=cat_dims, check_conditioning=True,
             restarts=proposal_restarts(len(y), X.shape[1], PROPOSAL_FIT_RESTARTS),
             restart_seed=ANALYZE_SEED,
         )
@@ -1277,6 +1330,9 @@ def _analyze_body(
     for d in drv:
         d.pop("_idx", None)  # internal-only; not part of the returned API surface
     p_mean, p_std = s.posterior(batch)
+    p_mean = sign * np.asarray(p_mean, float)  # back to original units and sign
+    # Shapes and the response surface read the posterior in the original sign.
+    s_report = _SignFlipped(s) if minimize else s
 
     # PART 1 per-proposal P(feasible), read off the SAME classifier that gated
     # (or did not gate) the batch above - `feas_clf` was fit on the full sheet
@@ -1321,12 +1377,13 @@ def _analyze_body(
     # height against would be the raw spread too, assay noise included, which
     # makes a real bump read as flat.
     gp_shapes = gp_shape_report(
-        s,
+        s_report,
         X_fit[:, : len(cont_feats)] if cont_feats else np.empty((len(y_fit), 0)),
         y_fit,
         feature_names=[str(c) for c in cont_feats],
         cv_spearman=None if rho != rho else float(rho),
         rho_floor=RELIABILITY_SPEARMAN_FLOOR,
+        maximize=not minimize,
     ).to_dict()
 
     # VISUALIZATION PAYLOADS: embedding (PCA), correlation (Spearman), and
@@ -1364,9 +1421,9 @@ def _analyze_body(
     # Response surface: evaluate the fitted GP on a 21x21 grid over the top
     # two continuous drivers, fixing all other dims at the incumbent recipe.
     _surf = _response_surface_gp(
-        s, X_fit, y_fit, cont_feats, kept_cats,
+        s_report, X_fit, y_fit, cont_feats, kept_cats,
         cat_dims_map or {}, code_maps, bounds,
-        drv, cat_dims, incumbent, replicate_aware,
+        drv, cat_dims, incumbent, replicate_aware, maximize=not minimize,
     )
     response_surface: dict | None = None
     if _surf is not None:
@@ -1383,7 +1440,7 @@ def _analyze_body(
     # CV folds (the trust verdict) fit with ONE start; the served model may use
     # more. Stated here so the mismatch is visible in the record.
     model_diagnostics = {**s.fit_diagnostics, "cv_fit_restarts": 1}
-    del s
+    del s, s_report
     if constraint_surrogate is not None:
         del constraint_surrogate
     gc.collect()
@@ -1444,6 +1501,9 @@ def _analyze_body(
 
     result = {
         "n": len(y), "d": len(kept_features), "target": str(target), "group_col": gcol,
+        # "maximize" or "minimize": what the proposals optimize. `best` is the
+        # max or the min accordingly.
+        "direction": direction,
         "targets": [str(c) for c in candidate_targets], "features": kept_features,
         "categorical_features": [str(c) for c in kept_cats],
         "n_dropped_incomplete": n_rows_dropped,
@@ -1561,7 +1621,7 @@ def _analyze_body(
         "batch_diversity": proposal.diversity_report(),
         "proposals": _annotate(
             batch, p_mean, p_std, incumbent, cols=show_idx, design=design,
-            p_feasible=p_feasible_arr, constraint=constraint_pred,
+            p_feasible=p_feasible_arr, constraint=constraint_pred, maximize=not minimize,
             distance=nearest_training_distance(batch, X, bounds, cat_dims),
         ),
         # Context for `proposals[].nearest_training_distance` (same metric): the

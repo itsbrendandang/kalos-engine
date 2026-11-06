@@ -298,6 +298,11 @@ async def _reanalyze(
     previous = store.load_analysis(tenant=tenant, campaign_id=campaign_id) or {}
     previous_run = previous.get("run")
     anonymize = bool(isinstance(previous_run, dict) and previous_run.get("anonymize"))
+    # The direction is stored with the campaign at upload (CampaignStore.seed).
+    # Campaigns seeded before it existed fall back to the published analysis,
+    # then to "maximize".
+    state = store.get(tenant=tenant, campaign_id=campaign_id) or {}
+    direction = state.get("direction") or previous.get("direction") or "maximize"
 
     if df.empty:
         log.warning("reanalyze rejected: campaign has no base rows to analyze")
@@ -307,11 +312,13 @@ async def _reanalyze(
         # Same single analysis slot /api/run holds (kalos/portal/busy.py): a
         # reanalyze racing an upload - or another reanalyze - gets an honest
         # 503 instead of contending for the CPU with an unfinished fit.
+        analyze_kwargs: dict[str, Any] = {
+            "profile": BIOPROCESS_PROFILE, "pending": awaiting, "anonymize": anonymize,
+        }
+        if direction != "maximize":
+            analyze_kwargs["direction"] = direction
         result = await run_in_slot(
-            functools.partial(
-                _analyze, df, target, profile=BIOPROCESS_PROFILE, pending=awaiting,
-                anonymize=anonymize,
-            ),
+            functools.partial(_analyze, df, target, **analyze_kwargs),
             tenant=tenant,
         )
     except AnalysisBusy as busy:

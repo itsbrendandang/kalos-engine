@@ -810,6 +810,7 @@ def _run_uploaded_sync(
     raw: bytes, target: str | None, anonymize: bool, filename: str, roles_json: str = "",
     *, tenant: str, sheet: str | None = None, store: CampaignStore | None = None,
     campaign_id: str | None = None, expected_generation: Any = _NO_GUARD,
+    direction: str = "",
 ) -> dict:
     """The CPU-bound body of an upload: parse -> analyze -> persist -> result.
 
@@ -831,6 +832,7 @@ def _run_uploaded_sync(
     validate_tenant_id(tenant)
     df, result = compute_upload_analysis(
         raw, target, anonymize, filename, roles_json, sheet=sheet, analyze=_analyze,
+        direction=direction or None,
     )
     # A fresh upload starts a fresh campaign state (docs/CAMPAIGN_LOOP.md,
     # "Seeding") in THIS tenant's default campaign (or the explicit
@@ -861,6 +863,7 @@ async def run_uploaded(
     sheet: str = Form(default=""),
     sheet_query: str | None = Query(default=None, alias="sheet"),
     replace: bool = Form(default=False),
+    direction: str = Form(default=""),
     _principal: Principal = Depends(require_scope(WRITE)),
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
@@ -878,6 +881,7 @@ async def run_uploaded(
     """
     response = await _run_uploaded(
         file, target, anonymize, roles, sheet, sheet_query, _principal, store, replace=replace,
+        direction=direction,
     )
     _audit(store, _principal, "run.upload", response.status_code)
     return response
@@ -886,7 +890,7 @@ async def run_uploaded(
 async def _run_uploaded(
     file: UploadFile, target: str, anonymize: bool, roles: str, sheet: str,
     sheet_query: str | None, _principal: Principal, store: CampaignStore,
-    *, campaign_id: str | None = None, replace: bool = False,
+    *, campaign_id: str | None = None, replace: bool = False, direction: str = "",
 ) -> JSONResponse:
     tenant = _principal.tenant
     # The publish replaces the campaign's runs: refuse before the upload is read or fitted,
@@ -921,6 +925,7 @@ async def _run_uploaded(
                 _run_uploaded_sync, raw, target or None, anonymize, filename, roles,
                 tenant=tenant, sheet=(sheet or sheet_query or None), store=store,
                 campaign_id=campaign_id, expected_generation=expected_generation,
+                direction=direction,
             ),
             tenant=tenant,
         )
