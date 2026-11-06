@@ -21,6 +21,8 @@ Newest first.
 - Security review B1: the best bet is the highest predicted recipe among the optimizer's answer, every batch row, every training row and a Sobol sample of the box (within the linear constraints), so a local optimum can no longer leave a higher-predicted proposal labelled `learn` (pichia_HSA: 74.9 -> 110.0). `model_optimum.beyond_tried_range` added.
 ### Fixed - desktop-engine-2-secb (security review)
 
+- Campaign rows: an upload row with a blank target is `_kind: no_result`, not `measured`; a sheet column named like a row label (`_origin`, `_kind`, ...) is shown as `<name> (sheet)` and listed in `renamed_columns` instead of being overwritten.
+
 - `roles.allow_beyond` naming a column that is not in the sheet is refused with 400 `invalid_allow_beyond`, naming it, instead of being ignored.
 
 - The audit row of a successful upload names the campaign settings it set, changed or cleared (`settings: allow_beyond 0.1 -> 0.2; features changed`): key names, with old -> new values only for small scalar settings, never column names or file contents.

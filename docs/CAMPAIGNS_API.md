@@ -418,8 +418,14 @@ reanalyze. Fields: `target`, `columns`, `n_rows`, `n_upload`, `n_from_rounds`,
 `round`), `_round` (0 for the upload, 1 for runs started before the first
 reanalyze, ...; null when the campaign was folded before this was recorded),
 `_run_id` (the started run, or null), `_upload_row` (1-based position in the
-uploaded sheet, upload rows only), `_kind` (`measured` for every row today;
+uploaded sheet, upload rows only), `_kind` (`measured`, or `no_result` for an
+upload row whose target cell is blank, which the model does not learn from;
 simulated and synthetic rows are not stored in a campaign) and `_index`.
+A sheet column named `_origin`, `_round`, `_run_id`, `_kind`, `_index` or
+`_upload_row` is shown as `<name> (sheet)` (`(sheet 2)`, ... if that is taken),
+so neither it nor the label hides the other; `renamed_columns` lists
+`[{column, shown_as}]` and `renamed_note` says so in plain words (null when
+nothing was renamed). `columns` uses the shown names.
 
 ### Preflight (additive route)
 
@@ -806,6 +812,8 @@ only added; a field never changes meaning or disappears within a version.
 - 400 `invalid_allow_beyond` also when `roles.allow_beyond` names an input that
   is not a column of the sheet (other than `"*"`); the message names it. Before,
   the name was ignored and that input stayed at its tried range.
+- `GET /api/campaigns/{id}/rows`: `_kind` can be `no_result`; `renamed_columns`
+  and `renamed_note` (see "Campaign rows").
 
 ## Not in this slice
 

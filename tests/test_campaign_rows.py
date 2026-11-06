@@ -92,3 +92,39 @@ def test_old_campaigns_without_recorded_runs_still_list_folded_rows():
     assert [r["_origin"] for r in out["rows"]] == ["upload", "upload", "round"]
     assert out["rows"][2]["_run_id"] is None and out["rows"][2]["_round"] is None
     assert campaign_rows({"base_rows": [{"x": 1}]})["n_upload"] == 1  # no history: all upload
+
+
+def test_upload_rows_without_a_result_are_not_labelled_measured():
+    state = {"target": "y", "base_rows": [{"x": 1, "y": 2.0}, {"x": 2, "y": None},
+                                          {"x": 3, "y": float("nan")}, {"x": 4, "y": " "}],
+             "history": [{"round": 0, "n_base": 4}]}
+    out = campaign_rows(state)
+    assert [r["_kind"] for r in out["rows"]] == ["measured", "no_result", "no_result", "no_result"]
+    assert out["kinds"] == ["measured", "no_result"]
+    assert "no_result" in out["kinds_note"]
+
+
+def test_sheet_columns_named_like_the_metadata_are_renamed_not_overwritten():
+    row = {"_origin": "lab A", "_kind": "fed-batch", "_index": 99, "_round": "R7",
+           "_run_id": "B-12", "_upload_row": 5, "_origin (sheet)": "taken", "y": 1.0}
+    out = campaign_rows({"target": "y", "base_rows": [row], "history": [{"n_base": 1}]})
+    (r,) = out["rows"]
+    # The metadata wins its own names ...
+    assert r["_origin"] == "upload" and r["_kind"] == "measured" and r["_index"] == 0
+    assert r["_round"] == 0 and r["_run_id"] is None and r["_upload_row"] == 1
+    # ... and the sheet's values survive under a new name.
+    assert r["_origin (sheet 2)"] == "lab A" and r["_origin (sheet)"] == "taken"
+    assert r["_kind (sheet)"] == "fed-batch" and r["_index (sheet)"] == 99
+    assert r["_round (sheet)"] == "R7" and r["_run_id (sheet)"] == "B-12"
+    assert r["_upload_row (sheet)"] == 5
+    assert {"column": "_kind", "shown_as": "_kind (sheet)"} in out["renamed_columns"]
+    assert len(out["renamed_columns"]) == 6 and out["renamed_note"]
+    assert "_kind (sheet)" in out["columns"] and "_kind" not in out["columns"]
+
+
+def test_a_target_named_like_metadata_still_reads_its_result():
+    out = campaign_rows({"target": "_kind", "base_rows": [{"x": 1, "_kind": 3.0}, {"x": 2, "_kind": None}]})
+    assert [r["_kind"] for r in out["rows"]] == ["measured", "no_result"]
+    assert [r["_kind (sheet)"] for r in out["rows"]] == [3.0, None]
+    no_target = campaign_rows({"base_rows": [{"x": 1}]})
+    assert no_target["renamed_columns"] == [] and no_target["rows"][0]["_kind"] == "measured"
