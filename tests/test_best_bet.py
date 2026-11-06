@@ -173,3 +173,16 @@ def test_linear_constraints_filter_candidates():
     assert meets_linear(C, ge, None).tolist() == [True, False, False]
     eq = [([0, 1], [1.0, 1.0], 10.0)]
     assert meets_linear(C, None, eq).tolist() == [False, True, True]
+
+
+
+def test_a_below_best_best_bet_never_says_to_learn():
+    """Planted (security review S3): a best bet predicted below the best run has
+    its own wording; 'to learn, not to win' is for the other picks only."""
+    from kalos.portal.analysis_parts.best_bet import predicted_vs_best
+
+    bb = predicted_vs_best(40.0, 50.0, 2.0, maximize=True, target="Titer", is_best_bet=True, mode="exploit")
+    assert bb["relation"] == "worse"
+    assert "to learn" not in bb["plain"] and "not expect any recipe" in bb["plain"]
+    other = predicted_vs_best(40.0, 50.0, 2.0, maximize=True, target="Titer", is_best_bet=False, mode="explore")
+    assert "to learn, not to win" in other["plain"]

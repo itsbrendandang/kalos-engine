@@ -167,6 +167,15 @@ def predicted_vs_best(
             f"Predicted {gain:.3g} {better} your best {target} ({best:.4g}), more than "
             "the likely range."
         )
+    elif is_best_bet:
+        # Security review S3: the best bet is the model's top pick, never a run
+        # "to learn": say plainly that nothing in the box beats the best run.
+        relation = "worse"
+        plain = (
+            f"Predicted {abs(gain):.3g} {worse} your best {target} ({best:.4g}). The model "
+            "does not expect any recipe in the search box to beat your best run; this is "
+            "its highest prediction, and running it checks that."
+        )
     else:
         relation = "worse"
         why = (
