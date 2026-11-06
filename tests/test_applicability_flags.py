@@ -116,6 +116,9 @@ def test_analysis_carries_the_flags():
         assert isinstance(app["at_box_edge"], list)
         for name, (lo, hi) in r["feature_ranges"].items():
             assert lo <= p["recipe"][name] <= hi
+    caveat = r["conformal_caveat"]
+    assert caveat["code"] == "coverage_not_guaranteed"
+    assert "far_from_data" in caveat["message"] and "at_box_edge" in caveat["message"]
     json.dumps(r, allow_nan=False)
 
 

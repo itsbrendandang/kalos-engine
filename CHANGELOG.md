@@ -14,6 +14,10 @@ Newest first.
 - Mixed (categorical) proposals enumerate every combination only while combinations x batch size stays within 64 solves (`MAX_MIXED_SOLVES`); larger cases use the alternating optimizer and report `proposal_optimizer: "mixed_alternating"`. The benchmark's mixed task (12 combinations, q=4) is unchanged. 20 combinations x 5 proposals went from 44 s to 10 s with the same predicted means on the shared proposals.
 - The same upload is not refit: the engine keeps the last 4 analyses in memory (`KALOS_ANALYSIS_CACHE`, 0 = off) keyed on the bytes, file name, sheet, target, roles, anonymize, profile, engine version and every `KALOS_*` setting. A repeat returns the same analysis with `analysis_cache: {"hit": true}`. Off in the test suite by default.
 - Graceful stop in desktop mode: on SIGTERM an in-flight analysis gets 12 s to finish; after that no store write can commit, and the process exits.
+### Added - conformal caveat
+
+- `conformal_caveat` (`code: coverage_not_guaranteed`) says the `conformal_q` band's coverage was measured near the data and is not guaranteed for proposals, especially far-from-data or box-edge ones.
+
 ### Fixed - the GP kernel is pinned, and documented as what it is
 
 - The surrogate uses BoTorch's default kernel: an ARD RBF with a dimension-scaled LogNormal lengthscale prior and no output scale (plus a CategoricalKernel for categorical inputs). Comments and docs said Matern; they now say RBF.

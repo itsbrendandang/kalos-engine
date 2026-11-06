@@ -1608,6 +1608,16 @@ def _analyze_body(
         "conformal_q": conformal_q,
         # The band's ACTUAL coverage, so no consumer has to hardcode it.
         "conformal_coverage": round(1.0 - CONFORMAL_ALPHA, 4),
+        # What `conformal_coverage` does NOT promise. The band is one +/- width
+        # from held-out residuals; no proposal carries its own conformal interval.
+        "conformal_caveat": {
+            "code": "coverage_not_guaranteed",
+            "message": (
+                "The +/- conformal_q band's coverage was measured on held-out rows "
+                "near the data. It is not guaranteed for proposals, especially those "
+                "flagged far_from_data or at_box_edge."
+            ),
+        },
         # How the driver panel was selected and corrected, so the client can see
         # that many features were tested and only the strongest are shown.
         "driver_selection": {

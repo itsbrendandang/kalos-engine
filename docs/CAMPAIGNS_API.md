@@ -416,6 +416,11 @@ only added; a field never changes meaning or disappears within a version.
     needs at least 3 CV groups. A `cv_ci_unavailable` info finding says the same.
   - `direction`: `maximize` or `minimize`, what the proposals optimize. `best`
     is the max or the min accordingly. Also on the campaign summary.
+  - `conformal_caveat`: `{code: "coverage_not_guaranteed", message}`. The
+    `conformal_q` band's coverage (`conformal_coverage`) was measured on
+    held-out rows near the data. It is not guaranteed for proposals, least of
+    all those flagged `far_from_data` or `at_box_edge`. Proposals carry no
+    conformal interval of their own, so there is nothing per proposal to label.
   - `proposals[].applicability`: per-proposal `far_from_data` and `at_box_edge`
     flags (see "Applicability flags").
   - `applicability`: the threshold used, its source and rule.
