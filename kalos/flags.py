@@ -99,7 +99,7 @@ SETTINGS: dict[str, str] = {
     "KALOS_CORS_ORIGINS": "network", "KALOS_HOST": "network", "KALOS_PORT": "network",
     "KALOS_TRUSTED_PROXIES": "network",
     "KALOS_STATE_DIR": "path", "KALOS_DATASET_DIR": "path", "KALOS_INDPENSIM_PATH": "path",
-    "KALOS_MEDIA_DATA": "path", "KALOS_AMII_DATA": "path",
+    "KALOS_MEDIA_DATA": "path", "KALOS_AMII_DATA": "path", "KALOS_DATAHOW_DATA": "path",
     "KALOS_MAX_REQUEST_BYTES": "limit", "KALOS_MAX_UPLOAD_MB": "limit", "KALOS_MAX_FIT_ROWS": "limit",
     "KALOS_UPLOAD_READ_TIMEOUT_S": "limit", "KALOS_DEMO_TIMEOUT_S": "limit",
     "KALOS_AUDIT_RETENTION_DAYS": "limit", "KALOS_APPLICABILITY_DISTANCE": "limit",

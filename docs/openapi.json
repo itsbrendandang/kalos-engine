@@ -1,6 +1,45 @@
 {
   "components": {
     "schemas": {
+      "Body_preflight_api_preflight_post": {
+        "properties": {
+          "anonymize": {
+            "default": false,
+            "title": "Anonymize",
+            "type": "boolean"
+          },
+          "direction": {
+            "default": "",
+            "title": "Direction",
+            "type": "string"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "roles": {
+            "default": "",
+            "title": "Roles",
+            "type": "string"
+          },
+          "sheet": {
+            "default": "",
+            "title": "Sheet",
+            "type": "string"
+          },
+          "target": {
+            "default": "",
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_preflight_api_preflight_post",
+        "type": "object"
+      },
       "Body_run_uploaded_api_run_post": {
         "properties": {
           "anonymize": {
@@ -71,6 +110,11 @@
             "title": "Anonymize",
             "type": "boolean"
           },
+          "direction": {
+            "default": "",
+            "title": "Direction",
+            "type": "string"
+          },
           "file": {
             "contentMediaType": "application/octet-stream",
             "title": "File",
@@ -109,6 +153,11 @@
             "default": false,
             "title": "Anonymize",
             "type": "boolean"
+          },
+          "direction": {
+            "default": "",
+            "title": "Direction",
+            "type": "string"
           },
           "file": {
             "contentMediaType": "application/octet-stream",
@@ -1089,6 +1138,83 @@
         "summary": "Reanalyze"
       }
     },
+    "/api/campaigns/{campaign_id}/rows": {
+      "get": {
+        "description": "Every row this campaign's model learns from: the uploaded sheet and each\nmeasured run folded in by a reanalyze, labelled with `_origin` (`upload` or\n`round`), `_round`, `_run_id`, `_kind` (`measured`) and `_index`\n(kalos/portal/campaign_rows.py). 404 outside the caller's tenant.",
+        "operationId": "campaign_rows_route_api_campaigns__campaign_id__rows_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 2000,
+              "maximum": 10000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Campaign Rows Route"
+      }
+    },
     "/api/campaigns/{campaign_id}/runs": {
       "post": {
         "description": "Start a proposed batch: same body and bounds as `/api/campaign/start`.",
@@ -1574,6 +1700,61 @@
           }
         },
         "summary": "Run Multi"
+      }
+    },
+    "/api/preflight": {
+      "post": {
+        "description": "How Kalos reads a sheet, before any fit: the columns (`columns`,\n`provenance`), the target and inputs it would use, and the sheet check\n(`validation`). Same multipart fields and the same refusals (400 with a\ncode) as `POST /api/run`; nothing is stored, no model is fit, and the\nanalysis slot is not taken (docs/CAMPAIGNS_API.md, \"Preflight\").",
+        "operationId": "preflight_api_preflight_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_preflight_api_preflight_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preflight"
       }
     },
     "/api/providers": {
