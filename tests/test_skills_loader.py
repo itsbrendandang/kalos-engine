@@ -265,3 +265,34 @@ def test_ngram_overlap():
     corpus = {"a b c d e f g h i j"}
     assert ngram_overlap("x a b c d e f g h i j y", corpus) == ["a b c d e f g h i j"]
     assert ngram_overlap("a b c d e f g h i", corpus) == []
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="no symlinks")
+def test_symlinked_skill_folder_is_skipped(tmp_path):
+    outside = tmp_path / "outside"
+    write_skill(outside, "evil-skill")
+    root = tmp_path / "root"
+    write_skill(root, "good-one")
+    (root / "evil-skill").symlink_to(outside / "evil-skill", target_is_directory=True)
+    res = load_dir(root)
+    assert [s.slug for s in res.skills] == ["good-one"]
+    assert any("symlinked or outside" in m for _, m in res.errors)
+    with pytest.raises(SkillFormatError, match="symlink"):
+        parse_skill(root / "evil-skill")
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="no symlinks")
+def test_folder_resolving_outside_root_is_skipped(tmp_path):
+    outside = tmp_path / "outside"
+    write_skill(outside, "evil-skill")
+    root = tmp_path / "root"
+    root.mkdir()
+    # a symlinked PARENT path component: <root>/via -> outside, folder via/evil-skill is real
+    real = tmp_path / "root2"
+    write_skill(real, "good-one")
+    (real / "evil-skill").symlink_to(outside / "evil-skill", target_is_directory=True)
+    link_root = tmp_path / "linkroot"
+    link_root.symlink_to(real, target_is_directory=True)
+    res = load_dir(link_root)  # the root itself may be a link; members must resolve under it
+    assert [s.slug for s in res.skills] == ["good-one"]
+    assert any("evil-skill" in w for w, _ in res.errors)

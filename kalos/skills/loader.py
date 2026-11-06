@@ -136,6 +136,8 @@ def parse_skill(folder: Path, *, source: str = "kalos") -> Skill:
     """Load one skill folder. Raises `SkillFormatError` or pydantic's
     `ValidationError` on any problem."""
     folder = Path(folder)
+    if folder.is_symlink():
+        raise SkillFormatError("a skill folder may not be a symlink")
     entry = folder / SKILL_FILE
     if not entry.is_file() or entry.is_symlink():
         raise SkillFormatError(f"{SKILL_FILE} missing")
@@ -174,7 +176,13 @@ def load_dir(root: Path, *, source: str = "kalos") -> LoadResult:
     if not root.is_dir():
         res.errors.append((str(root), "not a directory"))
         return res
+    real_root = root.resolve()
     for folder in sorted(p.parent for p in root.glob(f"*/{SKILL_FILE}")):
+        # A symlinked folder, or one that resolves outside the root, could pull
+        # arbitrary files into a tenant's or the curated skill set: skip it.
+        if folder.is_symlink() or folder.resolve().parent != real_root:
+            res.errors.append((str(folder), "skipped: symlinked or outside the skills root"))
+            continue
         try:
             res.skills.append(parse_skill(folder, source=source))
         except Exception as exc:  # noqa: BLE001 - collect and report every problem
