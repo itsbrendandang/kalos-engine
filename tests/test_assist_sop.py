@@ -623,3 +623,12 @@ def test_fill_refuses_pipes_and_control_characters(env, bad):
     r = tc.post(f"/api/assist/sop/{d['draft_id']}/fill", json={"values": {"prepared_by": bad}}, headers=H("a-write"))
     assert r.status_code == 400 and r.json()["code"] == "invalid_value"
     assert tc.get(f"/api/assist/sop/{d['draft_id']}", headers=H("a-read")).json()["version"] == 1
+
+
+def test_docx_handles_an_empty_quote_line():
+    """sec-assist nit: a bare '> ' line (e.g. left by a revise) must not crash the export."""
+    pytest.importorskip("docx")
+    from kalos.assist.sop_routes import _to_docx
+
+    data = _to_docx("> \n>\n> Draft line\n# T\n")
+    assert data[:2] == b"PK"

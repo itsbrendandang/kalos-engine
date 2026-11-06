@@ -291,8 +291,10 @@ def _to_docx(markdown: str) -> bytes:
             document.add_heading(line[2:], level=0)
         elif line.startswith("## "):
             document.add_heading(line[3:], level=1)
-        elif line.startswith("> "):
-            document.add_paragraph(line[2:]).runs[0].italic = True
+        elif line.startswith(">"):
+            text = line[1:].strip()
+            if text:
+                document.add_paragraph(text).runs[0].italic = True
         elif line.startswith("- "):
             document.add_paragraph(line[2:], style="List Bullet")
         elif re.match(r"\d+\. ", line):
