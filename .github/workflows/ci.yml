@@ -36,7 +36,9 @@ jobs:
   tests:
     name: pytest (fast)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The suite is CPU-bound GP fits and GitHub runners are small (2-4 cores), so
+    # even parallel + slow-excluded it needs more than 20 min. 35 gives headroom.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
