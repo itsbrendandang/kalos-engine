@@ -848,17 +848,19 @@ def _utc_now_iso() -> str:
 
 
 def _git_sha() -> str:
-    """kalos git SHA for provenance.
+    """kalos build/commit SHA for provenance.
 
-    Fallback order: env `KALOS_GIT_SHA` if set; else `git rev-parse --short
-    HEAD` run in this package's repo directory (a 2 second timeout, every
-    error swallowed - a missing `git` binary, no `.git` directory in a
-    deploy image, or a slow filesystem must never fail a readout); else the
-    literal `"unknown"` - never fabricated.
+    Fallback order: env `KALOS_BUILD_SHA` (what `deploy/engine/Containerfile`
+    sets at image build time, and the same var `portal.run_record.build_sha`
+    reads - so a deployed readout and a run record agree); then the legacy
+    `KALOS_GIT_SHA`; else `git rev-parse --short HEAD` in this package's repo
+    directory (2 second timeout, every error swallowed - a missing `git`
+    binary, no `.git` in a deploy image, or a slow filesystem must never fail
+    a readout); else the literal `"unknown"` - never fabricated.
     """
     import os
 
-    env_sha = os.environ.get("KALOS_GIT_SHA", "").strip()
+    env_sha = os.environ.get("KALOS_BUILD_SHA", "").strip() or os.environ.get("KALOS_GIT_SHA", "").strip()
     if env_sha:
         return env_sha
 
