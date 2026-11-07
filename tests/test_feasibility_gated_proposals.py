@@ -240,6 +240,7 @@ def test_proposal_gating_block_is_json_serializable():
 # --- THE MONEY TEST: gating the production path moves the batch ------------- #
 
 
+@pytest.mark.slow
 def test_gated_production_batch_has_higher_mean_p_feasible_than_ungated(monkeypatch):
     """Mirrors tests/test_feasibility.py's `bo_feas` comparative claim, but
     through the PRODUCTION `_analyze` -> `propose` path this backlog item
@@ -366,6 +367,7 @@ def pool_trials() -> dict:
     }
 
 
+@pytest.mark.slow
 def test_gated_vs_ungated_best_found_so_far_not_worse_on_zero_inflated_pool(pool_trials):
     """Guard: gating must not trade away the optimum. Count the runs whose
     best-found-so-far is near-optimal: within 2 assay-noise SDs (0.1) of the
