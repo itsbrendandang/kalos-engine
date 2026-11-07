@@ -68,6 +68,7 @@ def test_analyze_excludes_outputs_and_reports_honest_cv():
         "n_producers",
         "producer_threshold",
         "calibration",
+        "space_filling_advice",
     }
     assert "scale-up transfer" in rel["unmodeled"]
 
