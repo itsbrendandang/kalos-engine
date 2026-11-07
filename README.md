@@ -1,53 +1,68 @@
 # Kalos engine
 
-> **Status: under development. Not a public SaaS.**
-> Kalos is a scientific optimization platform. It is being built toward a public SaaS.
-> There is no hosted service today. User login and organization management are under development. They are **not** on `main`.
-> The optimizer is **not scientifically validated**. See [Scientific methodology](#scientific-methodology-and-benchmark-limitations).
-> Nothing here claims enterprise readiness, regulatory compliance, or security certification.
+[![CI](https://github.com/itsbrendandang/kalos-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/itsbrendandang/kalos-engine/actions/workflows/ci.yml)
+
+> **Early software. Not a product yet.**
+> There is no hosted service, no login, and no accounts. It runs on your own machine.
+> **The optimizer is not proven to improve real lab results** — see [Scientific methodology](#scientific-methodology-and-benchmark-limitations).
+> Nothing here is certified for regulated, enterprise, or secure use.
+
+## Contents
+
+- [Overview](#overview) · [Related repositories](#related-repositories) · [Who it's for](#who-its-for)
+- [Capabilities](#capabilities) · [Architecture](#architecture)
+- [Local development](#local-development) · [API](#api) · [Security model](#security-model)
+- [Scientific methodology](#scientific-methodology-and-benchmark-limitations) · [Benchmark vs other optimizers](#benchmark-vs-other-optimizers)
+- [Limitations](#current-limitations) · [Roadmap](#roadmap) · [Deploy](#deploy-and-operate)
+- [Data policy](#data-policy) · [Stack & cost](#stack-and-cost) · [Repository layout](#repository-layout) · [Contributing](#contributing)
 
 ## Overview
 
-Kalos proposes the next batch of experiments for a bioprocess campaign. A campaign runs in rounds. Each round has three steps: propose, measure, and re-propose.
+Kalos suggests which experiments to run next in a lab campaign, so you reach a
+better result in fewer runs.
 
-You give Kalos a run sheet of past runs. The run sheet is a CSV, TSV, or Excel file. You also name a target column, such as titer or yield.
+You work in rounds: Kalos **proposes** a batch of recipes, you **run and measure**
+them, and it **proposes** the next batch using what it learned.
 
-Kalos checks the data. Then it runs Bayesian optimization (BO). BO fits a model to past results. It uses that model to choose the next experiments.
+- **You give it:** a spreadsheet of past runs (CSV, TSV, or Excel) and the column
+  you want to improve, such as titer or yield.
+- **It does:** check the data, fit a model to the past results, and pick the next
+  batch. The model is a Gaussian process (via BoTorch); it also says how sure it
+  is about each guess.
+- **You get back:** a batch of recipes to try, plus plain numbers telling you how
+  far to trust them.
 
-That model is a surrogate model. It is a fast statistical approximation of the process. Kalos fits it as a Gaussian process (GP), using BoTorch. BoTorch is a PyTorch library for BO.
+It also has a **scale-up readout** that guesses how a recipe does at a larger
+scale — and says "I can't tell" when the data doesn't back up a guess.
 
-A GP also reports uncertainty. Uncertainty is the model's estimate of how far a prediction may be wrong.
+This repo is the **engine** (a backend service, no screens). The app you click is
+the separate [kalos-web](https://github.com/itsbrendandang/kalos-web) repo.
 
-An acquisition function scores each candidate experiment. Kalos uses these scores to choose the batch.
+## Related repositories
 
-Kalos returns a proposed batch of recipes. It also returns the diagnostics that you need to judge how far to trust the batch.
+Kalos is three repositories with a clear split:
 
-You run the experiments. You log the measured results. Then you ask for the next batch.
+- **kalos-engine** (here) — the optimization engine and its FastAPI service.
+- **[kalos-web](https://github.com/itsbrendandang/kalos-web)** — the scientist-facing workbench. The browser talks to it; its server-side proxy forwards to this engine over HTTP with a short-lived token. The response fields it depends on are guarded here by `tests/test_web_contract.py`.
+- **kalos-workspace** (private) — the project hub: working notes, reviews, research, plans, and the cross-machine handoff. No product code.
 
-The scale-up readout is a separate feature. It predicts performance at a larger scale. It refuses to predict when its backtest does not support the prediction. A backtest checks past predictions against known results.
+## Who it's for
 
-This repository is the engine. The engine is a FastAPI service. It has no built-in user interface (UI).
+Not available to outside users yet. It's built for:
 
-The workbench UI is in the separate [kalos-web](https://github.com/itsbrendandang/kalos-web) repository.
+- **Lab scientists** with a spreadsheet of past runs (media, feeds, pH,
+  temperature) who want a suggested next round and an honest read on what the
+  data can support.
+- **Small teams** running the propose-measure-repeat loop, with a few dozen to a
+  couple thousand runs (the model is capped at 2,000 rows).
+- **Engineers** who want a self-hosted optimization API, with each customer's
+  data kept separate.
 
-## Target users and use cases
+Good for: picking the next batch, tracking a round that's still running, and the
+scale-up readout.
 
-Intended users. The product is not yet available to external users.
-
-- **Bioprocess scientists and process-development teams.** They have a spreadsheet of runs (media, feeds, pH, temperature). They want a suggested next round. They also want a candid assessment of what the data can support.
-- **Small teams that run iterative campaigns** (propose, measure, re-propose). They have a few dozen to a couple of thousand runs. The exact GP is capped at 2,000 fit rows (`KALOS_MAX_FIT_ROWS`).
-- **Platform or machine learning (ML) engineers.** They want a tenant-aware optimization API that they can self-host. A tenant is one data owner.
-
-Use cases:
-
-- Next-batch proposals for media or process optimization.
-- Tracking an in-flight campaign. In-flight runs have started but are not yet measured.
-- A scale-up readout from a multi-scale run sheet.
-
-These are not use cases yet:
-
-- Regulated work under good practice rules (GxP).
-- Work that depends on the optimizer being validated against real wet-lab outcomes.
+Not for (yet): regulated (GxP) work, or anything that needs the optimizer proven
+on real lab results.
 
 ## Capabilities
 
@@ -72,7 +87,7 @@ Latin hypercube sampling (LHS) spreads random points evenly across the design sp
 | Bearer-token authentication (a secret string that grants access) with `read`/`write`/`admin` scopes. Tokens are hashed | IMPLEMENTED | `kalos/portal/auth.py` |
 | Campaign and latest-analysis store, keyed by tenant (SQLite) | IMPLEMENTED | `kalos/portal/campaign.py`, `docs/HARDENING.md` Phase 1b |
 | Upload limits. Loopback-only default (loopback means this machine only). Remote requests are refused when the API is open | IMPLEMENTED | `kalos/portal/uploads.py`, `__main__.py`, `app.py` middleware |
-| Container deploy pack | IMPLEMENTED (limited verification, see runbook; no CI runs today, use `scripts/check.sh`) | `deploy/` |
+| Container deploy pack | IMPLEMENTED (limited verification, see runbook; the deploy image itself is not built in CI, use `scripts/check.sh`) | `deploy/` |
 | Optimizer beats LHS/random on synthetic surfaces | IMPLEMENTED as a benchmark; not validation | `BENCHMARK.md`, `python -m kalos.bench` |
 | Head-to-head against random, LHS, Optuna TPE, Ax, and vanilla GP-EI on synthetic tasks | IMPLEMENTED as a benchmark; not validation | [Benchmark vs other optimizers](#benchmark-vs-other-optimizers), `docs/BENCHMARK.md`, `benchmarks/results/` |
 | Mechanistic (Monod) prior mean | EXPERIMENTAL, opt-in, simulation benchmark only | `kalos/core/mechanistic.py`, `examples/mechanistic_benchmark.py` |
@@ -158,7 +173,8 @@ python -m pytest -q    # 804 tests collected at the time of writing
 
 ## API
 
-Routes are defined in `kalos/portal/app.py`, `campaign_routes.py`, and `scale_routes.py`.
+Routes are defined in `kalos/portal/app.py`, `campaign_routes.py`, `campaigns_api.py`, `jobs_api.py`, and `scale_routes.py`.
+The legacy `/api/campaign*` routes act on one default campaign per tenant. The `/api/campaigns/*` routes are the multi-campaign API (many campaigns per tenant), with background jobs under `/api/campaigns/{id}/jobs` and `/api/jobs/{id}`.
 Scopes come from `kalos/portal/auth.py`.
 Every tenant-scoped route reads the tenant from the authenticated token (`Principal.tenant`). It never reads the tenant from the request.
 In open mode (no tokens configured, loopback only), every caller is an anonymous `default`-tenant principal with `read`+`write`.
@@ -170,10 +186,23 @@ In open mode (no tokens configured, loopback only), every caller is an anonymous
 | GET | `/api/campaign` | read | per tenant (SQLite row) | Current campaign state |
 | POST | `/api/campaign/start` | write | per tenant | Start a batch of proposed runs |
 | POST | `/api/campaign/result` | write | per tenant | Log a measured outcome |
-| POST | `/api/campaign/reanalyze` | write | per tenant | Add results to the dataset and re-propose |
+| POST | `/api/campaign/reanalyze` | write | per tenant | Add results to the dataset and re-propose (legacy single-campaign path) |
+| GET | `/api/campaigns` | read | per tenant | List the tenant's campaigns (multi-campaign API) |
+| POST | `/api/campaigns` | write | per tenant | Create a campaign |
+| GET | `/api/campaigns/{id}` | read | per tenant | One campaign's state |
+| PATCH | `/api/campaigns/{id}` | write | per tenant | Rename or update a campaign |
+| POST | `/api/campaigns/{id}/upload` | write | per tenant | Upload a run sheet to that campaign |
+| GET | `/api/campaigns/{id}/analysis` | read | per tenant | That campaign's latest analysis |
+| POST | `/api/campaigns/{id}/runs` | write | per tenant | Add proposed/measured runs |
+| POST | `/api/campaigns/{id}/runs/{run_id}/result` | write | per tenant | Log a measured outcome for one run |
+| POST | `/api/campaigns/{id}/reanalyze` | write | per tenant | Re-propose for that campaign |
+| POST | `/api/campaigns/{id}/jobs` | write | per tenant | Queue a background analysis job (returns 202) |
+| GET | `/api/campaigns/{id}/jobs` | read | per tenant | Recent jobs for the campaign |
+| GET | `/api/jobs/{id}` | read | per tenant | One job's status, stage, and progress |
+| POST | `/api/jobs/{id}/cancel` | write | per tenant | Cancel a queued or running job |
 | POST | `/api/scale/readout` | write | none stored; request-scoped | Scale-up readout: prediction with interval, or refusal |
-| GET | `/api/single` | read | none (built-in demo surface) | Single-objective demo loop |
-| GET | `/api/multi` | read | none (built-in demo surface) | Multi-objective demo loop |
+| GET | `/api/single` | read | none (demo; **development only**) | Single-objective demo loop. Not registered when `KALOS_ENV=production` |
+| GET | `/api/multi` | read | none (demo; **development only**) | Multi-objective demo loop. Not registered when `KALOS_ENV=production` |
 | GET | `/api/providers` | read | none | Credential status of optional provider slots (not the credentials) |
 | GET | `/healthz` | none | none | Liveness |
 | GET | `/readyz` | none | none | Readiness (store check) |
@@ -181,6 +210,24 @@ In open mode (no tokens configured, loopback only), every caller is an anonymous
 Contracts: [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md), [`docs/SCALE_READOUT.md`](docs/SCALE_READOUT.md), [`docs/UPLOADS.md`](docs/UPLOADS.md).
 FastAPI also serves its generated OpenAPI docs at `/docs` when the service runs.
 On `main`, `/readyz` returns a fixed, generic reason. It never returns exception text (`kalos/portal/app.py`).
+
+### Environment variables
+
+The common operational knobs (see `kalos/portal/config.py`, `jobs.py`, and `__main__.py` for the full set and defaults):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `KALOS_HOST` / `KALOS_PORT` | `127.0.0.1` / `8050` | Bind address and port |
+| `KALOS_ENV` | `development` | `production` hardens the deployment (see Security model) |
+| `KALOS_STATE_DIR` | platform state dir | Where SQLite and caches live |
+| `KALOS_AUTH_TOKENS` / `KALOS_AUTH_TOKENS_FILE` | unset | Bearer tokens; once set, auth is enforced |
+| `KALOS_ALLOW_OPEN_ACCESS` | unset | Serve unauthenticated off loopback (use with care) |
+| `KALOS_TRUSTED_PROXIES` | unset | Proxy IPs allowed to set `X-Forwarded-For` |
+| `KALOS_CORS_ORIGINS` | localhost | Explicit CORS allowlist |
+| `KALOS_MAX_UPLOAD_MB` | `25` | Upload size cap |
+| `KALOS_MAX_FIT_ROWS` | `2000` | Exact-GP fit-row cap |
+| `KALOS_VALIDATION_MODE` | `warn` | `warn` or `strict` validation gate |
+| `KALOS_JOBS_ENABLED` | enabled | Set to `0` to disable background jobs |
 
 ## Security model
 
@@ -190,7 +237,8 @@ These controls exist today (`kalos/portal/auth.py`, `config.py`, `uploads.py`, `
 - Once any token is configured, auth is enforced on every scoped route. There is no half-authenticated state.
 - Campaign and latest-analysis state are keyed by tenant. The latest-analysis cache filename is sanitized against path traversal.
 - Upload caps: `KALOS_MAX_UPLOAD_MB` (default 25), 100,000 CSV rows, 512 columns, 2,000,000 xlsx cells, 2,000 GP fit rows.
-- Loopback guard: `python -m kalos.portal` binds 127.0.0.1. It refuses to serve unauthenticated on another interface. A middleware also refuses non-loopback peers while auth is not enforced. The exception is when `KALOS_ALLOW_OPEN_ACCESS` is set.
+- Loopback guard: `python -m kalos.portal` binds 127.0.0.1. It refuses to serve unauthenticated on another interface. A middleware also refuses non-loopback peers while auth is not enforced. The exception is when `KALOS_ALLOW_OPEN_ACCESS` is set. Forwarded headers (`X-Forwarded-For`) are ignored unless `KALOS_TRUSTED_PROXIES` names the proxy IPs, so a client cannot spoof its peer address.
+- `KALOS_ENV=production` hardens the deployment: it disables the demo routes (`/api/single`, `/api/multi`) and the generated `/docs` / `/redoc` pages, and requires an explicit CORS allowlist.
 - CORS uses an explicit allowlist when `KALOS_CORS_ORIGINS` is set. Otherwise, the default allows localhost only.
 - The anonymizer for uploads is opt-in (`anonymize=true`).
 
