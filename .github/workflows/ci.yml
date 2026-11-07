@@ -15,6 +15,16 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Pin BLAS/OpenMP to one thread everywhere. The suite has determinism tests that
+# compare analysis outputs for exact equality; under parallel xdist, a varying
+# per-worker BLAS thread count perturbs GP fits at the last float digit and makes
+# those comparisons flaky. One thread per process keeps them reproducible (and,
+# with many xdist workers, is also faster - no oversubscription).
+env:
+  OMP_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+
 jobs:
   lint-type:
     name: ruff + mypy
