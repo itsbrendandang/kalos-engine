@@ -34,6 +34,12 @@ one `BEGIN IMMEDIATE` transaction); `down` steps back one version at a time
 (v3 -> v2 renames `jobs` to `jobs_v3_rolledback`, never drops it), or to an
 explicit `--to` version.
 
+Schema v4 is additive too: two triggers on
+`audit_log` that reject UPDATE and DELETE, so the audit trail is append-only at
+the database level. No row changes when the triggers are created. `down` drops
+them (v4 -> v3); a v3 engine runs on the result. Its startup no longer deletes
+audit rows (see docs/HARDENING.md, "Audit retention").
+
 This module is torch-free and FastAPI-free on purpose: the CLI must run on a
 box where the engine itself is stopped.
 """
@@ -57,10 +63,15 @@ from kalos.portal.tenancy import is_valid_tenant_id
 
 log = logging.getLogger("kalos.portal")
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 V2 = 2  # the multi-campaign schema; v1 <-> v2 code below is keyed on it
+V3 = 3  # the background-job queue
+V4 = 4  # the append-only audit log
+V5 = 5  # the append-only result history
 V2_NAME = "multi-campaign storage"
 V3_NAME = "background jobs"
+V4_NAME = "append-only audit log"
+V5_NAME = "append-only result history"
 BUSY_TIMEOUT_MS = 5000
 DB_FILENAME = "portal.db"
 
@@ -70,7 +81,7 @@ CAMPAIGN_ID_PATTERN = re.compile(r"cmp_[0-9a-f]{32}")
 
 # Tables that hold tenant data. Every statement the store issues against these
 # carries `tenant = ?` (tests/test_campaign_schema_v2.py enforces it).
-TENANT_TABLES = ("campaigns", "analyses", "tenant_defaults", "audit_log", "jobs")
+TENANT_TABLES = ("campaigns", "analyses", "tenant_defaults", "audit_log", "jobs", "run_results")
 
 # A job id is `job_` + uuid4().hex (kalos/portal/jobs.py), validated the same way.
 JOB_ID_PATTERN = re.compile(r"job_[0-9a-f]{32}")
@@ -207,6 +218,73 @@ _V3_DDL: tuple[str, ...] = (
 _V3_TABLES = ("jobs",)
 _V3_INDEXES = ("jobs_tenant_campaign_idx", "jobs_state_idx")
 
+# Schema v4: `audit_log` is append-only at the database level. Both triggers
+# RAISE(ABORT), which the engine surfaces as sqlite3.IntegrityError. A statement
+# that would change or remove no row (an UPDATE or DELETE matching nothing) runs
+# without error, as in any SQLite trigger. The engine never issues SQLite's
+# REPLACE conflict resolution on audit_log; with `recursive_triggers` off, a
+# REPLACE removes a row without firing DELETE triggers, so that must not be added.
+_V4_TRIGGERS = ("audit_log_no_update", "audit_log_no_delete")
+
+# Schema v5: every submitted measured value is a row in `run_results`, and no row
+# is ever updated or deleted (the same two-trigger guard as `audit_log`). A
+# campaign's `pending` run keeps its CURRENT value in the state blob, so the fold,
+# the summary and the v4 code read it as before; this table is the history. Version
+# 1 is the first value recorded in THIS table: there is no backfill, so for a run
+# measured before v5 (or before a down+up, which leaves the old history in
+# `run_results_v5_rolledback`) version 1 is a correction and carries the replaced
+# value in `previous_value`. A submission that replaces a value must carry a reason
+# (store rule); a version above 1 without one is refused here by the CHECK too.
+# `previous_value` is NULL only when no value existed.
+_V5_TRIGGERS = ("run_results_no_update", "run_results_no_delete")
+_V5_TABLES = ("run_results",)
+_V5_DDL: tuple[str, ...] = (
+    """
+    CREATE TABLE run_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant TEXT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK (version >= 1),
+        value REAL NOT NULL,
+        previous_value REAL,
+        reason TEXT,
+        actor TEXT,
+        auth_method TEXT,
+        recorded_at REAL NOT NULL,
+        UNIQUE (campaign_id, tenant, run_id, version),
+        CHECK (version = 1 OR (reason IS NOT NULL AND length(trim(reason)) > 0)),
+        FOREIGN KEY (campaign_id, tenant) REFERENCES campaigns (id, tenant)
+    )
+    """,
+    """
+    CREATE TRIGGER run_results_no_update BEFORE UPDATE ON run_results
+    BEGIN
+        SELECT RAISE(ABORT, 'run_results is append-only: UPDATE is rejected');
+    END
+    """,
+    """
+    CREATE TRIGGER run_results_no_delete BEFORE DELETE ON run_results
+    BEGIN
+        SELECT RAISE(ABORT, 'run_results is append-only: DELETE is rejected');
+    END
+    """,
+)
+_V4_DDL: tuple[str, ...] = (
+    """
+    CREATE TRIGGER audit_log_no_update BEFORE UPDATE ON audit_log
+    BEGIN
+        SELECT RAISE(ABORT, 'audit_log is append-only: UPDATE is rejected');
+    END
+    """,
+    """
+    CREATE TRIGGER audit_log_no_delete BEFORE DELETE ON audit_log
+    BEGIN
+        SELECT RAISE(ABORT, 'audit_log is append-only: DELETE is rejected');
+    END
+    """,
+)
+
 
 class MigrationError(RuntimeError):
     """The migration could not run safely and changed nothing (or rolled back)."""
@@ -214,6 +292,12 @@ class MigrationError(RuntimeError):
 
 class SchemaError(RuntimeError):
     """`portal.db` is in a shape this code refuses to run against."""
+
+
+class StuckShapeError(SchemaError):
+    """The recorded version is v2 or later but the live `campaigns` table is not
+    v2-shaped while a `campaigns_backup_N` table holds the v2 shape (a v2 table
+    that an earlier repair renamed away). Never repaired automatically."""
 
 
 # --- connections ------------------------------------------------------------ #
@@ -293,6 +377,28 @@ def current_version(conn: sqlite3.Connection) -> int:
     return int(row[0]) if row and row[0] is not None else (1 if "campaigns" in tables else 0)
 
 
+def _refuse_unversioned(conn: sqlite3.Connection) -> None:
+    """Refuse a database that has v2-era tables but no recorded version.
+
+    `current_version` reads such a database as v1, and the v1 path would rename
+    its `campaigns` table to `campaigns_backup_N` (the repair in
+    `_apply_up_in_txn`), breaking every foreign key that names it. The version
+    row is not trusted over the tables: the operator decides what to do with it.
+    """
+    tables = _tables(conn)
+    if not ({"analyses", "tenant_defaults", "jobs"} & tables):
+        return
+    recorded = 0
+    if "schema_migrations" in tables:
+        recorded = int(conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0])
+    if recorded == 0:
+        raise SchemaError(
+            "portal.db has v2 tables but no schema version row (schema_migrations is "
+            "missing or empty); refusing to guess the version or to repair it. Restore "
+            "a pre-upgrade backup or repair by hand. See docs/MIGRATIONS.md."
+        )
+
+
 def campaigns_table_is_v1_compatible(conn: sqlite3.Connection) -> bool:
     """Whether an existing `campaigns` table has the v1 shape: the v1 columns,
     with `tenant` as the SOLE primary key (the v1 upsert's `ON
@@ -305,19 +411,92 @@ def campaigns_table_is_v1_compatible(conn: sqlite3.Connection) -> bool:
     return names >= _V1_REQUIRED_COLUMNS and pk_columns == [_V1_CONFLICT_COLUMN]
 
 
+_BACKUP_TABLE = re.compile(r"campaigns_backup_\d+")
+
+RECOVERY_TEXT = (
+    "recommended recovery (this tool does not repair it; stop the engine first and "
+    "leave this file as it is):\n"
+    "  1. repair a COPY: copy the file with `sqlite3 <db> \".backup <scratch>/portal.db\"` "
+    "(or copy portal.db with its -wal/-shm files), repair the copy by hand, check it with "
+    "`python -m kalos.portal.migrate status --db <scratch>/portal.db`, and only then put "
+    "it in place with the engine stopped; or\n"
+    "  2. start from a FRESH state directory (set KALOS_STATE_DIR to a new empty "
+    "directory) and import the campaign data into it. There is no import command yet: "
+    "read the rows from the backup table with sqlite3 and re-enter them.\n"
+    "  See docs/MIGRATIONS.md (\"Stuck shape\")."
+)
+
+
+def detect_stuck_shape(conn: sqlite3.Connection, version: int | None = None) -> str | None:
+    """Describe the "stuck" shape, or return None when it is not present.
+
+    Stuck = the recorded version is v2 or later, the live `campaigns` table
+    lacks the v2 columns, and at least one `campaigns_backup_N` table has them
+    (the v2 table was renamed away by a v1-path repair; foreign keys may still
+    name the backup table). Read-only: nothing is changed."""
+    v = current_version(conn) if version is None else version
+    if v < V2:
+        return None
+    tables = _tables(conn)
+    if "campaigns" not in tables:
+        return None
+    cols = {str(r[1]) for r in _columns(conn, "campaigns")}
+    if cols >= _V2_CAMPAIGN_COLUMNS:
+        return None
+    backups = sorted(
+        t for t in tables
+        if _BACKUP_TABLE.fullmatch(t) and {str(r[1]) for r in _columns(conn, t)} >= _V2_CAMPAIGN_COLUMNS
+    )
+    if not backups:
+        return None
+    fk_children = sorted(
+        t for t in tables
+        if any(str(r[2]) in backups for r in conn.execute(f'PRAGMA foreign_key_list("{t}")'))
+    )
+    shape = "v1-shaped" if campaigns_table_is_v1_compatible(conn) else "not v2-shaped"
+    lines = [
+        f"STUCK SHAPE: schema_migrations records v{v}, but the tables do not have the v{v} "
+        f"shape: the live `campaigns` table is "
+        f"{shape} (missing columns: {', '.join(sorted(_V2_CAMPAIGN_COLUMNS - cols))}) and "
+        f"the v2-shaped table is {', '.join(backups)}."
+    ]
+    if fk_children:
+        lines.append(
+            f"Foreign keys in {', '.join(fk_children)} name {', '.join(backups)}, "
+            "not `campaigns`."
+        )
+    lines.append("The engine refuses to start on this database.")
+    lines.append(RECOVERY_TEXT)
+    return "\n".join(lines)
+
+
 def _assert_v2_shape(conn: sqlite3.Connection, version: int | None = None) -> None:
-    """The v2 tables (and, at v3, the `jobs` table) exist. `version` defaults to
-    the recorded one."""
+    """The tables (and, from v3, `jobs`; from v4, the audit triggers) that the
+    recorded version requires exist. `version` defaults to the recorded one.
+    The stuck shape (`detect_stuck_shape`) raises `StuckShapeError`."""
     tables = _tables(conn)
     v = current_version(conn) if version is None else version
-    expected = _V2_TABLES + (_V3_TABLES if v >= 3 else ())
-    missing = [t for t in expected if t not in tables]
+    stuck = detect_stuck_shape(conn, v)
+    if stuck is not None:
+        raise StuckShapeError(stuck)
+    expected = _V2_TABLES + (_V3_TABLES if v >= V3 else ())
+    missing: list[str] = [t for t in expected if t not in tables]
+    if v >= V4:
+        triggers = {
+            str(r[0]) for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+        }
+        missing += [f"trigger {t}" for t in _V4_TRIGGERS if t not in triggers]
+    if v >= V5:
+        missing += [t for t in _V5_TABLES if t not in tables]
+        missing += [f"trigger {t}" for t in _V5_TRIGGERS if t not in triggers]
     cols = {str(r[1]) for r in _columns(conn, "campaigns")}
-    if missing or not cols >= _V2_CAMPAIGN_COLUMNS:
+    missing_cols = sorted(_V2_CAMPAIGN_COLUMNS - cols)
+    if missing or missing_cols:
         raise SchemaError(
             f"portal.db records schema v{v} but its tables do not have the v{v} shape "
-            f"(missing tables: {missing or 'none'}); refusing to start. "
-            "See docs/MIGRATIONS.md (restore the pre-v2 backup or run `down`)."
+            f"(missing tables/triggers: {missing or 'none'}; missing campaigns columns: "
+            f"{missing_cols or 'none'}); refusing to start. "
+            "See docs/MIGRATIONS.md (restore the pre-upgrade backup or run `down`)."
         )
 
 
@@ -431,12 +610,18 @@ class UpPlan:
     def render(self) -> str:
         if not self.needs_migration:
             return f"{self.db_path}: already at schema v{self.from_version}; nothing to do"
-        if self.from_version == V2:
-            return "\n".join([
-                f"{self.db_path}: schema v{V2} -> v{SCHEMA_VERSION}",
-                f"  backup: online copy to {self.db_path.name}.pre-v3-<UTC timestamp>",
-                "  create: jobs table (background jobs, docs/JOBS.md); no v2 table is changed",
-            ])
+        if self.from_version >= V2:
+            lines = [
+                f"{self.db_path}: schema v{self.from_version} -> v{SCHEMA_VERSION}",
+                f"  backup: online copy to {self.db_path.name}.pre-v{self.from_version + 1}-<UTC timestamp>",
+            ]
+            if self.from_version < V3:
+                lines.append("  create: jobs table (background jobs, docs/JOBS.md); no v2 table is changed")
+            if self.from_version < V4:
+                lines.append("  triggers: audit_log rejects UPDATE and DELETE (append-only); no row changes")
+            if self.from_version < V5:
+                lines.append("  create: run_results (append-only result history) with its UPDATE/DELETE triggers")
+            return "\n".join(lines)
         lines = [f"{self.db_path}: schema v{self.from_version} -> v{V2}"]
         if self.from_version > 0:
             lines.append(f"  backup: online copy to {self.db_path.name}.pre-v2-<UTC timestamp>")
@@ -456,7 +641,7 @@ class UpPlan:
         for sk in self.latest_skipped:
             lines.append(f"  skip: latest/{sk.filename} ({sk.reason})")
         lines.append("  latest/ files are left in place")
-        lines.append(f"  then: schema v{V2} -> v{SCHEMA_VERSION} (create the jobs table)")
+        lines.append(f"  then: schema v{V2} -> v{SCHEMA_VERSION} (create the jobs table; add the audit_log triggers; create run_results)")
         return "\n".join(lines)
 
 
@@ -465,7 +650,7 @@ def _plan_up(conn: sqlite3.Connection, db_path: Path, latest_dir: Path | None) -
     if version >= SCHEMA_VERSION:
         return UpPlan(db_path, version, needs_migration=False)
     plan = UpPlan(db_path, version, needs_migration=True)
-    if version == V2:
+    if version >= V2:
         return plan
     tables = _tables(conn)
     if "campaigns" in tables:
@@ -642,6 +827,22 @@ def _apply_v3_in_txn(conn: sqlite3.Connection) -> None:
     _record_version(conn, 3, V3_NAME)
 
 
+def _apply_v4_in_txn(conn: sqlite3.Connection) -> None:
+    """v3 -> v4, inside the caller's BEGIN IMMEDIATE: the append-only triggers on
+    `audit_log`. No row is read or changed."""
+    for ddl in _V4_DDL:
+        conn.execute(ddl)
+    _record_version(conn, V4, V4_NAME)
+
+
+def _apply_v5_in_txn(conn: sqlite3.Connection) -> None:
+    """v4 -> v5, inside the caller's BEGIN IMMEDIATE: create `run_results` and its
+    triggers. Additive; existing campaign state is not rewritten."""
+    for ddl in _V5_DDL:
+        conn.execute(ddl)
+    _record_version(conn, V5, V5_NAME)
+
+
 def _generation_of(state: str | None) -> str | None:
     parsed = _parse_state(state)
     gen = parsed.get("generation") if parsed else None
@@ -732,17 +933,19 @@ def migrate_up(
     latest_dir: Path | str | None = None,
     dry_run: bool = False,
 ) -> MigrationResult:
-    """Bring `db_path` to the current schema (v3). Idempotent: a v3 database is
-    a no-op. v0/v1 go through the v1 -> v2 migration and then v2 -> v3 in the
-    SAME transaction; v2 only gets v2 -> v3 (backup label `pre-v3`).
+    """Bring `db_path` to the current schema (v5). Idempotent: a current database
+    is a no-op. v0/v1 go through the v1 -> v2 migration and then v2 -> v3 -> v4 in
+    the SAME transaction; a v2 or v3 database gets the remaining steps. The backup
+    is labelled for the version it is taken FROM plus one (`pre-v2` from v1,
+    `pre-v3` from v2, `pre-v4` from v3, ...).
 
     Order matters for safety:
-      1. Read the version (no write). v2 -> return. Newer -> refuse.
+      1. Read the version (no write). Newer -> refuse.
       2. If the database has any tables, take a verified online backup. A
          failure raises `MigrationError` with the database untouched.
       3. One `BEGIN IMMEDIATE` transaction: re-check the version (another
-         process may have migrated meanwhile), repair/rename, create v2, import,
-         record the version. Any error rolls the whole thing back.
+         process may have migrated meanwhile), repair/rename, create the tables
+         each step adds, record the versions. Any error rolls the whole thing back.
       4. Only then switch the file to WAL. That pragma rewrites the file header,
          so doing it earlier would modify the database even when step 2 aborts.
 
@@ -759,26 +962,31 @@ def migrate_up(
             return MigrationResult("dry_run", plan.render() + "\n  (database file does not exist yet)")
         ro = _connect_readonly(db)
         try:
+            _refuse_unversioned(ro)
             plan = _plan_up(ro, db, ldir)
+            _refuse_newer(plan.from_version)
+            if plan.from_version >= V2:
+                _assert_v2_shape(ro, plan.from_version)
         finally:
             ro.close()
-        _refuse_newer(plan.from_version)
         return MigrationResult("dry_run", plan.render())
 
     conn = connect(db)
     try:
+        _refuse_unversioned(conn)
         version = current_version(conn)
         _refuse_newer(version)
         if version == SCHEMA_VERSION:
             _assert_v2_shape(conn, version)
             enable_wal(conn)
             return MigrationResult("noop", f"{db}: already at schema v{SCHEMA_VERSION}")
-        if version == V2:
+        if version >= V2:
             _assert_v2_shape(conn, version)
         plan_text = _plan_up(conn, db, ldir).render()
         backup: Path | None = None
         if _tables(conn):
-            backup = take_backup(conn, db, "pre-v3" if version == V2 else "pre-v2")
+            label = f"pre-v{max(version, 1) + 1}"
+            backup = take_backup(conn, db, label)
             log.warning("kalos portal.db: pre-migration backup written to %s", backup)
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -789,7 +997,12 @@ def migrate_up(
                 enable_wal(conn)
                 return MigrationResult("noop", f"{db}: migrated concurrently by another process", backup)
             warnings = _apply_up_in_txn(conn, ldir) if now_version < V2 else []
-            _apply_v3_in_txn(conn)
+            if now_version < V3:
+                _apply_v3_in_txn(conn)
+            if now_version < V4:
+                _apply_v4_in_txn(conn)
+            if now_version < V5:
+                _apply_v5_in_txn(conn)
             conn.execute("COMMIT")
         except BaseException:
             if conn.in_transaction:
@@ -831,11 +1044,10 @@ class DownPlan:
     skipped_tenants: list[str] = field(default_factory=list)
 
     def render(self) -> str:
-        if self.from_version not in (V2, SCHEMA_VERSION):
+        if self.from_version < V2:
             return f"{self.db_path}: at schema v{self.from_version}; nothing to roll back"
         lines = [
             f"{self.db_path}: schema v{V2} -> v1",
-            f"  backup: online copy to {self.db_path.name}.pre-down-<UTC timestamp>",
             "  rename: " + ", ".join(f"{t} -> {t}_v2_rolledback" for t in _V2_TABLES),
             f"  campaigns (v1): {len(self.rows)} tenant row(s)",
         ]
@@ -857,7 +1069,7 @@ def _plan_down(conn: sqlite3.Connection, db_path: Path) -> DownPlan:
     v3 database still has: v3 only adds `jobs`)."""
     version = current_version(conn)
     plan = DownPlan(db_path, version)
-    if version not in (V2, SCHEMA_VERSION):
+    if version < V2:
         return plan
     tenants = [str(r[0]) for r in conn.execute("SELECT DISTINCT tenant FROM campaigns ORDER BY tenant")]
     for tenant in tenants:
@@ -906,8 +1118,7 @@ def _render_down_v3(db_path: Path, conn: sqlite3.Connection) -> str:
             "SELECT COUNT(*) FROM jobs WHERE state IN ('queued', 'running')"
         ).fetchone()[0])
     return "\n".join([
-        f"{db_path}: schema v{SCHEMA_VERSION} -> v{V2}",
-        f"  backup: online copy to {db_path.name}.pre-down-<UTC timestamp>",
+        f"{db_path}: schema v{V3} -> v{V2}",
         "  rename: jobs -> jobs_v3_rolledback (kept, not dropped)",
         f"  unfinished jobs: {n_active} (queued/running; they will not run on v2 code)",
         "  job input files under <state dir>/jobs/ are left on disk",
@@ -925,7 +1136,81 @@ def _down_v3_in_txn(conn: sqlite3.Connection) -> None:
             new = _free_name(tables, f"{table}_v3_rolledback")
             conn.execute(f'ALTER TABLE "{table}" RENAME TO "{new}"')
             tables.add(new)
-    conn.execute("DELETE FROM schema_migrations WHERE version = ?", (SCHEMA_VERSION,))
+    conn.execute("DELETE FROM schema_migrations WHERE version = ?", (V3,))
+
+
+def _down_header(db_path: Path) -> str:
+    return (
+        f"{db_path}: rollback plan\n"
+        f"  backup (taken first): online copy to {db_path.name}.pre-down-<UTC timestamp>"
+    )
+
+
+def _render_down_v4(db_path: Path) -> str:
+    return "\n".join([
+        f"{db_path}: schema v{V4} -> v{V3}",
+        "  drop: audit_log UPDATE/DELETE triggers (the v3 code does not expect them)",
+        "  audit rows: unchanged",
+    ])
+
+
+def _down_v4_in_txn(conn: sqlite3.Connection) -> None:
+    """v4 -> v3 inside the caller's transaction: drop the two triggers. No row is
+    touched. The operator who rolls back past v4 has re-opened the audit log to
+    the v3 code, which is why the step is listed in the plan."""
+    for name in _V4_TRIGGERS:
+        conn.execute(f'DROP TRIGGER IF EXISTS "{name}"')
+    conn.execute("DELETE FROM schema_migrations WHERE version = ?", (V4,))
+
+
+def _down_v5_in_txn(conn: sqlite3.Connection) -> None:
+    """v5 -> v4 inside the caller's transaction: drop the run_results triggers and
+    rename the table aside (`run_results_v5_rolledback`). The history is kept."""
+    tables = _tables(conn)
+    for name in _V5_TRIGGERS:
+        conn.execute(f'DROP TRIGGER IF EXISTS "{name}"')
+    for table in _V5_TABLES:
+        if table in tables:
+            new = _free_name(tables, f"{table}_v5_rolledback")
+            conn.execute(f'ALTER TABLE "{table}" RENAME TO "{new}"')
+            tables.add(new)
+    conn.execute("DELETE FROM schema_migrations WHERE version = ?", (V5,))
+
+
+def _render_down_v5(db_path: Path, conn: sqlite3.Connection) -> str:
+    n = 0
+    if "run_results" in _tables(conn):
+        n = int(conn.execute("SELECT COUNT(*) FROM run_results").fetchone()[0])
+    return "\n".join([
+        f"{db_path}: schema v{V5} -> v{V4}",
+        "  drop: run_results UPDATE/DELETE triggers",
+        f"  rename: run_results -> run_results_v5_rolledback (kept, not dropped; {n} row(s))",
+        "  the campaign state blob keeps each run's current value, so the v4 code still reads it",
+    ])
+
+
+def _down_goal(version: int, target: int | None) -> int | None:
+    """The version a rollback from `version` ends at, or None when there is
+    nothing to roll back (a v0/v1 database). One step by default."""
+    if version < V2:
+        return None
+    goal = version - 1 if target is None else target
+    if not 1 <= goal < version:
+        raise MigrationError(
+            f"cannot roll back from schema v{version} to v{goal}; "
+            f"valid targets are 1..{version - 1}"
+        )
+    return goal
+
+
+def _render_down_step(db_path: Path, conn: sqlite3.Connection, step_from: int) -> str:
+    if step_from == V5:
+        return _render_down_v5(db_path, conn)
+    if step_from == V4:
+        return _render_down_v4(db_path)
+    if step_from == V3:
+        return _render_down_v3(db_path, conn)
+    return _plan_down(conn, db_path).render()
 
 
 def migrate_down(
@@ -935,12 +1220,14 @@ def migrate_down(
     dry_run: bool = False,
     target: int | None = None,
 ) -> MigrationResult:
-    """Roll the database back, ONE version by default (v3 -> v2, or v2 -> v1),
-    or down to `target` (1 or 2).
+    """Roll the database back, ONE version by default, or down to `target`
+    (1 .. current - 1). Each step is listed in the plan:
 
+    v5 -> v4: drops the run_results triggers and renames the table to
+    `run_results_v5_rolledback` (kept). The campaign blobs keep current values.
+    v4 -> v3: drops the two `audit_log` triggers. No row is touched.
     v3 -> v2: renames `jobs` to `jobs_v3_rolledback` and forgets version 3. The
     v2 tables are untouched, so the previous (E4) engine runs on the result.
-
     v2 -> v1: rebuilds `campaigns(tenant PK, state, updated_at)` from each
     tenant's default campaign (or, without a seeded default, its newest seeded
     non-archived campaign), and renames every v2 table to
@@ -957,40 +1244,25 @@ def migrate_down(
     if not db.exists():
         return MigrationResult("noop", f"{db}: does not exist; nothing to roll back")
 
-    def _target_for(version: int) -> int | None:
-        if version not in (V2, SCHEMA_VERSION):
-            return None
-        goal = version - 1 if target is None else target
-        if goal not in (1, V2) or goal >= version:
-            raise MigrationError(
-                f"cannot roll back from schema v{version} to v{goal}; "
-                f"valid targets are 1..{version - 1}"
-            )
-        return goal
-
     if dry_run:
         ro = _connect_readonly(db)
         try:
             version = current_version(ro)
-            goal = _target_for(version)
+            goal = _down_goal(version, target)
             if goal is None:
                 return MigrationResult("dry_run", DownPlan(db, version).render())
-            dry_parts: list[str] = []
-            if version == SCHEMA_VERSION:
-                dry_parts.append(_render_down_v3(db, ro))
-            if goal == 1:
-                dry_parts.append(_plan_down(ro, db).render())
+            dry_parts = [_render_down_step(db, ro, step) for step in range(version, goal, -1)]
         finally:
             ro.close()
-        return MigrationResult("dry_run", "\n".join(dry_parts))
+        return MigrationResult("dry_run", "\n".join([_down_header(db), *dry_parts]))
 
     conn = connect(db)
     try:
         version = current_version(conn)
-        goal = _target_for(version)
+        goal = _down_goal(version, target)
         if goal is None:
             return MigrationResult(
-                "noop", f"{db}: at schema v{version}, not v{V2} or v{SCHEMA_VERSION}; nothing to roll back"
+                "noop", f"{db}: at schema v{version}, not v{V2} or later; nothing to roll back"
             )
         _assert_v2_shape(conn, version)
         backup = take_backup(conn, db, "pre-down")
@@ -999,25 +1271,32 @@ def migrate_down(
         plan: DownPlan | None = None
         conn.execute("BEGIN IMMEDIATE")
         try:
-            if version == SCHEMA_VERSION:
-                parts.append(_render_down_v3(db, conn))
-                _down_v3_in_txn(conn)
-            if goal == 1:
-                plan = _plan_down_from_v2(conn, db)
-                parts.append(plan.render())
-                tables = _tables(conn)
-                for idx in _V2_INDEXES:
-                    conn.execute(f'DROP INDEX IF EXISTS "{idx}"')
-                for table in _V2_TABLES:
-                    new = _free_name(tables, f"{table}_v2_rolledback")
-                    conn.execute(f'ALTER TABLE "{table}" RENAME TO "{new}"')
-                    tables.add(new)
-                    renamed[table] = new
-                conn.execute(V1_CAMPAIGNS_DDL)
-                conn.executemany(
-                    "INSERT INTO campaigns (tenant, state, updated_at) VALUES (?, ?, ?)",
-                    [(t, s, u) for t, _, s, u in plan.rows],
-                )
+            for step in range(version, goal, -1):
+                if step == V5:
+                    parts.append(_render_down_v5(db, conn))
+                    _down_v5_in_txn(conn)
+                elif step == V4:
+                    parts.append(_render_down_v4(db))
+                    _down_v4_in_txn(conn)
+                elif step == V3:
+                    parts.append(_render_down_v3(db, conn))
+                    _down_v3_in_txn(conn)
+                else:  # step == V2: v2 -> v1
+                    plan = _plan_down_from_v2(conn, db)
+                    parts.append(plan.render())
+                    tables = _tables(conn)
+                    for idx in _V2_INDEXES:
+                        conn.execute(f'DROP INDEX IF EXISTS "{idx}"')
+                    for table in _V2_TABLES:
+                        new = _free_name(tables, f"{table}_v2_rolledback")
+                        conn.execute(f'ALTER TABLE "{table}" RENAME TO "{new}"')
+                        tables.add(new)
+                        renamed[table] = new
+                    conn.execute(V1_CAMPAIGNS_DDL)
+                    conn.executemany(
+                        "INSERT INTO campaigns (tenant, state, updated_at) VALUES (?, ?, ?)",
+                        [(t, s, u) for t, _, s, u in plan.rows],
+                    )
             conn.execute("COMMIT")
         except BaseException:
             if conn.in_transaction:
@@ -1030,14 +1309,14 @@ def migrate_down(
         conn.close()
     for w in warnings:
         log.warning("kalos portal.db rollback: %s", w)
-    return MigrationResult("rolled_back", "\n".join(parts), backup, warnings)
+    return MigrationResult("rolled_back", "\n".join([_down_header(db), *parts]), backup, warnings)
 
 
 def _plan_down_from_v2(conn: sqlite3.Connection, db_path: Path) -> DownPlan:
     """`_plan_down` inside a rollback transaction, after the v3 step has already
     removed version 3 (so the recorded version reads 2)."""
     plan = _plan_down(conn, db_path)
-    if plan.from_version not in (V2, SCHEMA_VERSION):  # pragma: no cover - guarded above
+    if plan.from_version < V2:  # pragma: no cover - guarded above
         raise MigrationError("rollback planning saw an unexpected schema version")
     return plan
 
@@ -1075,13 +1354,18 @@ def _export_latest(
 # --- status ----------------------------------------------------------------- #
 
 
-def status(db_path: Path | str, *, latest_dir: Path | str | None = None) -> str:
+def status_report(db_path: Path | str, *, latest_dir: Path | str | None = None) -> tuple[str, bool]:
+    """(report, healthy). Read-only. `healthy` is False when the engine would
+    refuse to start on the database (shape check failed, unversioned v2 tables,
+    or a newer schema); the report then says why and, for the stuck shape, the
+    recommended recovery."""
     db = Path(db_path)
     ldir = Path(latest_dir) if latest_dir is not None else db.parent / "latest"
     lines = [f"database: {db}"]
     if not db.exists():
-        lines.append("  does not exist (a fresh v2 database is created on first start)")
-        return "\n".join(lines)
+        lines.append("  does not exist (a fresh database is created on first start)")
+        return "\n".join(lines), True
+    healthy = True
     ro = _connect_readonly(db)
     try:
         version = current_version(ro)
@@ -1090,15 +1374,33 @@ def status(db_path: Path | str, *, latest_dir: Path | str | None = None) -> str:
         for table in sorted(_tables(ro)):
             n = ro.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]  # noqa: S608 - identifiers are module constants or sqlite_master table names; values are bound parameters
             lines.append(f"  table {table}: {n} row(s)")
-        if version < SCHEMA_VERSION:
+        problem: str | None = None
+        try:
+            _refuse_unversioned(ro)
+            _refuse_newer(version)
+            if version >= V2:
+                _assert_v2_shape(ro, version)
+        except SchemaError as exc:
+            problem = str(exc)
+        if problem is not None:
+            healthy = False
+            lines.append("SHAPE CHECK FAILED: the engine would refuse to start on this database.")
+            lines.extend(f"  {ln}" for ln in problem.splitlines())
+        elif version < SCHEMA_VERSION:
             lines.append("pending migration (dry run):")
             lines.append(_plan_up(ro, db, ldir).render())
+        else:
+            lines.append("  shape check: ok")
     finally:
         ro.close()
     backups = sorted(db.parent.glob(f"{db.name}.pre-*"))
     for b in backups:
         lines.append(f"  backup file: {b.name}")
-    return "\n".join(lines)
+    return "\n".join(lines), healthy
+
+
+def status(db_path: Path | str, *, latest_dir: Path | str | None = None) -> str:
+    return status_report(db_path, latest_dir=latest_dir)[0]
 
 
 # --- CLI ------------------------------------------------------------------ #
@@ -1111,7 +1413,7 @@ def _default_state_dir() -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m kalos.portal.migrate",
-        description="Inspect, apply or roll back the kalos portal.db schema migrations (v1 <-> v2 <-> v3).",
+        description="Inspect, apply or roll back the kalos portal.db schema migrations (v1 .. v5).",
     )
     parser.add_argument("command", choices=["up", "down", "status"])
     parser.add_argument("--dry-run", action="store_true", help="print the plan; change nothing")
@@ -1129,8 +1431,9 @@ def main(argv: list[str] | None = None) -> int:
     db = args.db or state_dir / DB_FILENAME
     try:
         if args.command == "status":
-            print(status(db, latest_dir=args.latest_dir))
-            return 0
+            report, healthy = status_report(db, latest_dir=args.latest_dir)
+            print(report)
+            return 0 if healthy else 2
         if args.command == "up":
             if not args.dry_run and not db.exists():
                 db.parent.mkdir(parents=True, exist_ok=True)

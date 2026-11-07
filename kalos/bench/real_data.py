@@ -330,7 +330,9 @@ def write_report(summary: dict, out_dir: str | Path) -> tuple[Path, Path]:
     out = Path(out_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
     jp, hp = out / "real_data_summary.json", out / "real_data_convergence.html"
-    jp.write_text(json.dumps(summary, indent=2))
+    from kalos.versions import stack_record
+
+    jp.write_text(json.dumps({**summary, "stack": stack_record()}, indent=2))
     hp.write_text(plotly_html(summary))
     return jp, hp
 

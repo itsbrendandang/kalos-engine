@@ -1,0 +1,99 @@
+"""Every code the guide can emit has a why-line (kalos/assist/why.py).
+
+The codes are read from the engine source itself (every `code="..."` an upload
+refusal raises, every `check="..."` a finding carries, every model check), so a
+new code without a why-line fails here instead of reaching the user as a
+fallback sentence.
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from kalos.assist.guide import _GATE_TEXT
+from kalos.assist.why import ENGINE_ONLY, GLOSSARY, MODEL_CHECKS, WHY, why_for
+from kalos.assist.words import banned_in, claims_in
+
+ROOT = Path(__file__).resolve().parents[1] / "kalos"
+# Codes that are HTTP-layer refusals, never a sheet or model problem.
+NOT_GUIDE_CODES = {"unauthenticated"}
+
+
+def _grep(pattern: str, *dirs: str) -> set[str]:
+    found: set[str] = set()
+    for d in dirs:
+        for path in (ROOT / d).rglob("*.py"):
+            found.update(re.findall(pattern, path.read_text(encoding="utf-8")))
+    return found
+
+
+def test_every_refusal_code_has_a_why_line():
+    codes = _grep(r'code="([a-z_]+)"', "portal", "validation") - NOT_GUIDE_CODES
+    codes |= {"fit_failed", "parse_error"}  # set as dict literals in app.py
+    missing = sorted(codes - set(WHY))
+    assert not missing, missing
+
+
+def test_every_finding_check_has_a_why_line():
+    checks = _grep(r'check="([a-z_]+)"', "portal", "validation")
+    missing = sorted(checks - set(WHY))
+    assert not missing, missing
+
+
+def test_every_model_check_has_a_why_line():
+    assert set(_GATE_TEXT) <= set(MODEL_CHECKS)
+
+
+def test_every_guide_code_has_a_why_line():
+    for code in ("run_waiting", "record_partial", "learn_ready", "setup_no_sheet", "plan_ready",
+                 "empty_batch", "not-yet", "insufficient", "unmeasured", "model_check",
+                 "fewer_distinct_candidates"):
+        assert code in WHY, code
+
+
+# Glossary lines that use a claim word ("will", "caused"). Mirrored verbatim,
+# so any is pinned here and sent to the glossary owner; the list stays empty.
+KNOWN_GLOSSARY_CLAIMS: set[str] = set()
+
+
+def test_why_lines_are_plain():
+    for code, line in WHY.items():
+        assert line.endswith("."), code
+        assert banned_in(line) == [], code
+        assert "_" not in line, code
+    for code, line in ENGINE_ONLY.items():
+        assert claims_in(line) == [], code
+    with_claims = {code for code, line in GLOSSARY.items() if claims_in(line)}
+    assert with_claims <= KNOWN_GLOSSARY_CLAIMS, with_claims - KNOWN_GLOSSARY_CLAIMS
+
+
+def test_engine_only_does_not_shadow_the_glossary():
+    assert not set(ENGINE_ONLY) & set(GLOSSARY)
+
+
+def test_unknown_code_falls_back():
+    assert why_for("does_not_exist") == why_for(None) == GLOSSARY["generic"]
+    assert why_for("too_many_fit_rows") == GLOSSARY["too_many_fit_rows"]
+
+
+def test_desktop_engine_codes_have_why_lines():
+    """Codes engine-desktop added (verdict.py, gate_text.py, campaign_findings)."""
+    from kalos.assist.why import VERDICT_STATE_KEYS
+
+    for code in ("no_ordering", "too_few_groups", "model_refused", "category_not_modeled", "headerless_column",
+                 "search_box", "inputs_changed", "coded_column", "near_constant_input", "outcome_like_name",
+                 "stopping_advice_only", "specs_treated_independently", "possibly_measured_after_run"):
+        assert code in WHY, code
+    assert WHY["no_ordering"].startswith("If the model does no better than chance at putting your past runs")
+    assert all(v in GLOSSARY for v in VERDICT_STATE_KEYS.values())
+    assert GLOSSARY["ece"].startswith("If the model's chance that a recipe works does not match how often it does")
+
+
+def test_desktop_engine_why_lines_are_mirrored():
+    """engine-desktop (desktop-engine-2-secb b9a0e62) emits these codes; the
+    shared glossary now holds their lines (words d1c5866)."""
+    for code in ("invalid_linear_constraint", "infeasible_linear_constraints", "linear_constraints_with_categorical",
+                 "invalid_specs", "invalid_allow_beyond", "invalid_exploration_design", "invalid_per_recipe_noise",
+                 "row_number_column", "after_target_in_sheet", "roles_not_applied", "possibly_measured_driver"):
+        assert code in GLOSSARY, code
+    assert GLOSSARY["concentration_before_target"].endswith("or the model looks better than it is.")

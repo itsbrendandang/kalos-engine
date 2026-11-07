@@ -24,7 +24,7 @@ below), which the first legacy upload creates. A campaign made with
 | Body errors | `400 {"error": "invalid request body: <field>: <reason>"}`. The same envelope as `/api/campaign/*`, and the submitted value is never echoed. |
 | Body size | JSON bodies have the default cap (`KALOS_MAX_REQUEST_BYTES`, 1 MiB). `POST /api/campaigns/{id}/upload` and `POST /api/campaigns/{id}/jobs` have the upload cap (`KALOS_MAX_UPLOAD_MB` + multipart allowance); a job also has its tenant limit (`KALOS_JOB_MAX_UPLOAD_BYTES`). Over the cap: `413`. |
 | Heavy work | Upload and reanalyze share the engine's analysis limiter: a global cap and a per-tenant cap (`KALOS_JOB_WORKERS`, `KALOS_JOB_PER_TENANT`, docs/JOBS.md). When it is full for this caller they return `503` with `Retry-After`. Background jobs share the same limiter. |
-| Audit | Create, rename, archive, unarchive, upload, start, result and reanalyze each write an `audit_log` row: tenant, subject, auth method (`bearer`, or `anonymous` in open mode), action, campaign id and outcome (`ok` or `http_<status>`). The row never holds a token, a body, a filename or uploaded data. The campaign id is left empty on a 404. Auditing is best-effort and never fails the request. |
+| Audit | Create, rename, archive, unarchive, upload, start, result and reanalyze each write an `audit_log` row: tenant, subject, auth method (`bearer`, or `anonymous` in open mode), action, campaign id and outcome (`ok` or `http_<status>`). The row never holds a token, a body, a filename or uploaded data. The campaign id is left empty on a 404. Auditing is best-effort and never fails the request, except for a successful `campaign.result`: that row is written in the same transaction as the change, so a result that cannot be audited is not recorded (`500`). Its `detail` is JSON: `run_id`, `version`, `old_value` (null for the first value), `new_value`, `reason` and `actor`. |
 
 ## Campaign object
 
@@ -55,7 +55,7 @@ below), which the first legacy upload creates. A campaign made with
 | POST | `/api/campaigns/{id}/upload` | write | Upload a run sheet into this campaign (multipart; `replace=true` confirms replacing the campaign's runs, see below). Same contract as `/api/run`. |
 | GET | `/api/campaigns/{id}/analysis` | read | This campaign's published analysis, in the `/api/latest` shape (`{"has_data": false}` before the first upload). |
 | POST | `/api/campaigns/{id}/runs` | write | Start runs from a proposed batch. Same body and bounds as `/api/campaign/start`. Returns `{"started": [...]}`. |
-| POST | `/api/campaigns/{id}/runs/{run_id}/result` | write | Body: `{"value": number}`. Records the measured outcome and returns the run. |
+| POST | `/api/campaigns/{id}/runs/{run_id}/result` | write | Body: `{"value": number, "reason"?: str}`. Records a measured outcome and returns the run. A correction needs `reason` (see "Recording results"). |
 | POST | `/api/campaigns/{id}/reanalyze` | write | Fold measured runs, re-run the engine and publish the new analysis. Returns `{"analysis": ..., "campaign": <summary>}`, where `campaign` is this campaign's summary with `stage` and `next_action`. |
 
 ### Stage
@@ -120,6 +120,39 @@ returns `409` and nothing is stored.
 Uploads through this route run synchronously. To queue the same upload as a
 background job (202, polled by id, cancellable, with per-tenant limits), use
 `POST /api/campaigns/{id}/jobs` (see "Background jobs" below and docs/JOBS.md).
+
+### Recording results
+
+Recorded results are append-only (schema v5, docs/MIGRATIONS.md, "Schema v5").
+A result is never overwritten in place.
+
+- Every submission for a run is a new row in `run_results`: the value, the value it
+  replaces (`previous_value`, `null` for the first), the reason, the actor (the
+  caller's subject, `anonymous` in open mode), the auth method and the server time.
+  Rows are numbered by `version`, from 1.
+- The first value needs no `reason`. Any later value for the same run is a
+  correction and needs a non-blank `reason` (at most 256 characters). Without one the
+  response is `400` with `"code": "reason_required"` and nothing is written.
+- The campaign's current value for the run is the latest one. The fold and the
+  summary use it, as before.
+- A successful submission writes a `campaign.result` audit row with the change in its
+  `detail` (see the Audit row in the table above). A refused one writes a row with
+  `outcome` `http_400` and no detail.
+- Each response carries the fields below for this submission. The fields are added
+  to the run object; no existing field changed.
+
+| Field | Meaning |
+|---|---|
+| `result_version` | `1` for the first value, then `2`, `3`, ... |
+| `previous_result` | The value this submission replaced, or `null`. |
+| `result_reason` | The reason as stored (trimmed), or `null`. |
+| `result_actor` | The actor the row records. |
+| `result_recorded_at` | The server time, Unix seconds. This is when the engine recorded the value. |
+
+The `reason` field of a run is still the proposal's reason (why the run was
+proposed). The correction reason is `result_reason`.
+
+The history is not yet exposed over HTTP (the audit and read API is a separate change).
 
 ### Runs and results
 
@@ -211,11 +244,107 @@ identifier-type columns in the analysis body. Full scope, including the raw
 sheet stored at rest in `campaigns.base_rows`: docs/HARDENING.md, "What
 `anonymize=true` covers".
 
-Determinism: the same bytes give the same proposals on the same library stack
-and the same torch thread count (`run.torch_threads`, `run.library_versions`).
-That is the only claim. A different torch or botorch version, or a different
-thread count, may legitimately change the numbers. Compare `run` before
-comparing proposals.
+Determinism: **not guaranteed, even for identical runs.** Measured: an 80-row,
+6-feature subset of the committed synthetic example, analysed four times in one
+process with the same library stack and thread count, gave four different
+proposal batches (at 4 threads and at 1; the same happens before the R2 changes,
+at 23d11df). The fitted posterior agreed to about 1e-16 between runs, but the
+acquisition optimum moved by whole units. Small sheets do repeat
+(`tests/test_golden_determinism.py`); the 80x6 case is a recorded xfail in the
+same file. The cause is not isolated yet (the usual suspect is acquisition
+optimizer RNG or state that `_seeded_analysis` does not reset). A different
+torch or botorch version, or a different thread count, can also change the
+numbers. Compare `run` and `proposal_provenance` before comparing proposals;
+equal provenance does not mean equal proposals.
+
+### Proposal provenance
+
+Every analysis result also carries `proposal_provenance` (additive; built by
+`kalos.portal.run_record.proposal_provenance` on the upload, job and reanalyze
+paths). It is stored inside the analyses JSON blob with the result, and returned
+wherever the analysis is (`/api/run`, `/api/latest`, the campaign upload,
+reanalyze and job results). Analyses written before it existed have no such key.
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | `1`. |
+| `engine_version` | `kalos.__version__` (same as the top-level `engine_version`). |
+| `build_sha` | As `run.build_sha`. |
+| `library_versions` | `torch`, `botorch`, `gpytorch`, `numpy`, `pandas` (`null` if not installed). |
+| `seed` | The fit seed (as `run.seed`). |
+| `input_sha256` | As `run.input_sha256`. |
+| `config_sha256` | SHA-256 of the `run` fields named in `config_fields`, as canonical JSON (sorted keys, no spaces). |
+| `config_fields` | `kind`, `target`, `roles_declared`, `profile`, `anonymize`, `seed`, `torch_threads`, `max_fit_rows`, `validation_mode`, `sheet_index`, `header_row`, `pending_runs`, and `proposal_fit_restarts` (from `model_diagnostics.restarts`). |
+| `model_artifact_stored` | Always `false`: no fitted model, weights or pickle is stored. A refit needs the input, the config, the seed and the same stack. |
+| `provenance_sha256` | SHA-256 over every field above (not `timestamp` / `created_at`). The same input, config, seed, engine and libraries give the same value. It identifies the inputs, config and stack; it is not a guarantee that the proposals repeat (see "Determinism" above), and not a signature. |
+| `timestamp`, `created_at` | When the analysis ran: epoch seconds (the result's `timestamp`) and the same instant as UTC ISO 8601. |
+
+Each run added by `start` (`POST /api/campaign/start`, `POST
+/api/campaigns/{id}/runs`) carries `analysis_provenance`: `provenance_sha256`,
+`input_sha256`, `config_sha256`, `engine_version`, `seed` and `timestamp` of the
+campaign's published analysis at start time, or `null` when there is none (or it
+predates the block). The recipe is caller input: this records which analysis was
+published, not that the recipe came from it. It is stored in the campaign state
+and returned in the run, in `GET /api/campaign` and in `GET /api/campaigns/{id}`
+`pending`. Runs started earlier have no such key.
+
+### Model diagnostics
+
+Every analysis result carries `model_diagnostics` (additive), the numerical
+record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
+
+| Field | Meaning |
+|---|---|
+| `jitter_rung` | The Cholesky jitter rung the hyperparameter fit succeeded under: `1e-8`, `1e-6` or `1e-4` (standardized output units). |
+| `jitter_rung_index` | `0`, `1` or `2`. Above `0` the first rung failed and a larger one was used. |
+| `jitter_added_max` | The largest diagonal addition linear_operator actually made during the fit (`0.0` when no Cholesky needed jitter). |
+| `jitter_additions` | How many times jitter was added during the fit. |
+| `jitter_cap` | `1e-4`. A fit that would need more is refused (`FitError`, HTTP 400). |
+| `condition_number` | 2-norm condition number of the fitted training covariance `K + noise*I` (normalized inputs, standardized outputs), from its eigenvalues. |
+| `condition_warning` | `true` above `condition_warn_above` (`1e8`). The fit proceeds. |
+| `condition_notice` | Plain-language sentence when `condition_warning` is true, else `null`. |
+| `condition_warn_above`, `condition_refuse_above` | `1e8` and `1e12`. Above `1e12` the analysis is refused (HTTP 400) with a plain-language reason. These thresholds are defaults, not validated numbers. Because the noise model keeps a floor on the noise, exact replicates with inferred noise stay well conditioned; the warning needs a tight cluster of rows with a fixed small noise, and the refusal is reached only on very large or very clustered designs. |
+| `restarts`, `restart_seed` | The proposal fit runs from 3 starts (the default initialization and 2 seeded random ones; `restart_seed` = the analysis seed) up to 1,000 fit rows, and from 1 start above that. The count depends only on the row count, never on time, so the same rows get the same number of starts on any host (the fitted values themselves can still differ by host or build). It is part of `proposal_provenance.config_sha256` (`proposal_fit_restarts`). |
+| `restart_mll` | Marginal log likelihood reached from each start (`null` = that start failed numerically). `null` for a one-start fit. |
+| `restart_chosen` | Index of the start kept (best likelihood; a random start must beat the default by more than 1e-6). When it is `0` the model is the one-start model, unchanged. |
+| `cv_fit_restarts` | `1`. The CV folds behind the trust verdict (`reliability`, `promotion`) fit with one start, so the verdict measures the one-start procedure; the served model may use 3. When `restart_chosen` is `0` the two procedures give the same model. |
+| `fit_seconds` | Wall time of the multi-start fit. Measured cost of 3 starts vs 1 (4 threads, loaded M3 Pro): n=80: 1.0 s vs 0.3 s; n=300: 2.4 s vs 0.9 s; n=1000: 9.0 s vs 2.9 s. |
+| `noise_fitted` | Fitted noise variance (standardized units); `null` when the noise was fixed. |
+| `lengthscales` | Fitted lengthscales (normalized inputs: 1.0 = the design box width). |
+| `median_nn_distance` | Median distance from each training row to its nearest neighbour (normalized inputs). |
+| `boundary_flags` | Plain sentences, recorded not refused: noise at its lower bound; lengthscales above 10x the box; lengthscales at their lower bound; lengthscales shorter than `median_nn_distance` (the fit may be following noise; seen on a pure-noise target). |
+
+### Promotion gate changes (additive fields)
+
+- `promotion.not_judged`: list of gates that were neither passed nor failed,
+  with the reason. Two cases today:
+  - `ece: not enough runs to judge calibration (n=<n>, need 20)`: the classifier
+    ECE is judged only from 20 pooled out-of-fold runs (`GatesConfig.min_ece_n`).
+    Below that it is still reported in `feasibility`-side metrics, but does not
+    pass or fail the gate.
+  - `group-mean floor: <reason>`: too few recipes with 2+ rows to form the floor.
+  `promotion.summary` appends `(not judged: ...)` when the list is not empty.
+- Group-mean floor gate: the surrogate must beat the leave-one-row-out recipe
+  mean on the same out-of-fold rows by more than a paired bootstrap's
+  uncertainty (lower bound of the 95% CI of the Spearman difference above 0).
+  A failure reads `surrogate does not beat the group-mean floor: ...`. The raw
+  numbers are in `cv_group_mean_baseline.margin`: `difference`, `ci95`,
+  `surrogate_spearman`, `group_mean_spearman` (both on the paired rows only, so
+  they can differ from the headline CV Spearman), `n_paired`, `n_groups_paired`,
+  `passed`, `evaluable`, `reason`. `cv_group_mean_baseline.spearman` is unchanged.
+- `reliability.calibration` (interval ECE, reported, not gated) gains
+  `judgeable`, `judgement` (`"not enough runs to judge calibration"` when
+  10 <= n < 20, else `null`) and `judge_min_n` (20). It is still shown from 10.
+
+### Distance to data (additive)
+
+- `proposals[].nearest_training_distance`: distance from the proposed recipe to
+  the nearest training row. Each continuous feature is divided by its design-box
+  width (1.0 = the full width of that feature); a categorical feature adds 1
+  when the level differs; Euclidean over all features. `0` = the recipe is a
+  training row. A number only: the engine applies no threshold and no label.
+- `training_nn_distance_median`: the same metric between training rows (median
+  distance from each row to its nearest other row), for scale.
 
 ## Not in this slice
 

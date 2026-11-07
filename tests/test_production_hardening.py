@@ -60,6 +60,12 @@ def test_row_cap_rejects_before_fitting(monkeypatch):
     r = _post(_sheet(40))
     assert r.status_code == 400
     assert r.json()["error"] == _ERR_TOO_MANY_FIT_ROWS
+    # The refusal is coded, and carries the cap and the row count so a client
+    # can branch on `too_many_fit_rows` without parsing the sentence.
+    body = r.json()
+    assert body["code"] == "too_many_fit_rows"
+    assert body["max_fit_rows"] == 20
+    assert body["n_rows"] == 40
 
 
 def test_salt_reads_from_env(monkeypatch):
