@@ -109,6 +109,13 @@ from kalos.portal.uploads import (
 )
 from kalos.portal.validate import column_provenance, provenance_dicts
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
+from kalos.validation.qc import (
+    QCExclusion,
+    detect_qc_column,
+    exclude_qc_failed,
+    qc_findings,
+    qc_not_applied_findings,
+)
 
 # Re-exported: each name below was defined in this module before the split into
 # `kalos.portal.analysis_parts`; callers and tests keep importing it from here.
@@ -184,6 +191,8 @@ def _analyze(
     constraint: Mapping[str, Any] | None = None,
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
+    exclude_flagged_rows: bool = False,
+    qc_column: str | None = None,
 ) -> dict:
     """See `_analyze_body`. Every fitting analysis runs inside `_seeded_analysis`,
     so its proposals depend only on its inputs, not on other analyses in flight."""
@@ -191,6 +200,7 @@ def _analyze(
     kwargs: dict[str, Any] = dict(
         anonymize=anonymize, roles=roles, profile=profile, pending=pending,
         constraint=constraint, progress=progress, preflight_only=preflight_only,
+        exclude_flagged_rows=exclude_flagged_rows, qc_column=qc_column,
     )
     if preflight_only:
         return _analyze_body(df, target, **kwargs)
@@ -209,6 +219,8 @@ def _analyze_body(
     constraint: Mapping[str, Any] | None = None,
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
+    exclude_flagged_rows: bool = False,
+    qc_column: str | None = None,
 ) -> dict:
     """Run the engine on an arbitrary run sheet: pick the target (the value to
     maximize), use the process INPUTS as features (other measured outputs are
@@ -342,6 +354,41 @@ def _analyze_body(
     validation = validate_frame(df, target=target, profile=profile, mode=mode)
     if mode == "strict" and validation.status == "fail":
         raise UploadRejected(_ERR_VALIDATION_FAILED)
+    # QC-flagged runs (a `qc` column saying fail, or `contamination` = yes).
+    # Excluding a customer's row is OPT-IN, never silent: only when the caller
+    # sets `exclude_flagged_rows` (argument, or `roles.exclude_flagged_rows`).
+    # It runs AFTER the validation gate has seen the sheet as uploaded, and is
+    # attributable: `qc_excluded.excluded` lists each excluded row with the
+    # column and cell value that triggered it, the run record carries the same,
+    # and a warning finding is added to `validation`. A flag column is
+    # boolean-like text only (pass/fail, yes/no, true/false, ok/contaminated)
+    # found by name or declared as `roles.qc`; numbers never read as fail.
+    # Without opt-in, a detected flag column is reported as an info finding.
+    qc_col = qc_column if qc_column is not None else (roles.qc if roles is not None else None)
+    want_exclusion = bool(exclude_flagged_rows or (roles is not None and roles.exclude_flagged_rows))
+    if qc_col is not None and qc_col not in df.columns:
+        raise UploadRejected(
+            f"The declared QC flag column {clip_name(qc_col)!r} is not in this sheet. "
+            "Name an existing column in roles.qc, or omit it to detect the flag column by name.",
+            code="qc_column_not_found",
+            context={"qc": str(qc_col)},
+        )
+    if want_exclusion:
+        keep_cols = (
+            {str(roles.target), *map(str, roles.features), *map(str, roles.categoricals)}
+            if roles is not None
+            else ({str(requested_target)} if requested_target is not None else set())
+        )
+        df, qc_exclusion = exclude_qc_failed(df, column=qc_col, keep_columns=keep_cols)
+        qc_extra_findings = qc_findings(qc_exclusion)
+        if qc_exclusion.n_excluded:
+            n_data_rows = len(df.dropna(axis=0, how="all"))
+            if n_data_rows < MIN_FIT_ROWS:
+                raise _too_few_rows(n_data_rows)
+    else:
+        qc_exclusion = QCExclusion(None)
+        qc_extra_findings = qc_not_applied_findings(detect_qc_column(df) if qc_col is None else
+                                                    exclude_qc_failed(df, column=qc_col, drop_column=False)[1])
     # Convert every single-unit column to its base unit before feature
     # selection. This is not merely cosmetic: a temperature column written
     # "34.6 C" fails the >=80% numeric-parse test and is silently DROPPED as
@@ -1357,7 +1404,11 @@ def _analyze_body(
         "categorical_features": [str(c) for c in kept_cats],
         "n_dropped_incomplete": n_rows_dropped,
         "n_censored_excluded": n_censored_rows,
-        "data_drops": _data_drops_block(by_column, n_rows_dropped, n_censored_rows, zero_filled),
+        "data_drops": {
+            **_data_drops_block(by_column, n_rows_dropped, n_censored_rows, zero_filled),
+            "qc_rows_excluded": int(qc_exclusion.n_excluded),
+        },
+        "qc_excluded": {**qc_exclusion.to_dict(), "requested": want_exclusion},
         # Text columns the engine treated as categorical with no declared roles
         # (see `_auto_categorical`); empty when roles were declared.
         "auto_categorical": [str(c) for c in auto_cats if c in kept_cats],
@@ -1482,7 +1533,7 @@ def _analyze_body(
                     by_column, n_rows_dropped, n_censored_rows, zero_filled,
                     auto_cats=[str(c) for c in auto_cats if c in kept_cats],
                     header=header_info,
-                ),
+                ) + qc_extra_findings,
             )
         ),
         # Features whose search range was narrowed because some observed cells

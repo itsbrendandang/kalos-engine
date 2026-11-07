@@ -228,4 +228,11 @@ def drops_summary(result: dict[str, Any]) -> dict[str, Any]:
         ),
         "cells_by_reason": dict(drops.get("cells_by_reason") or {}),
         "auto_categorical_count": len(result.get("auto_categorical") or []),
+        # Runs excluded because the sheet flagged them as QC failures (opt-in,
+        # `exclude_flagged_rows`): each row with the column and cell value that
+        # triggered it. The column is a QC flag name the caller declared or that
+        # matched the fixed QC vocabulary, so it adds no customer naming beyond
+        # `roles_declared`.
+        "qc_rows_excluded": int(drops.get("qc_rows_excluded", 0) or 0),
+        "qc_excluded": list((result.get("qc_excluded") or {}).get("excluded") or []),
     }

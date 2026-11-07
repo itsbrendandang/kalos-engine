@@ -37,6 +37,16 @@ module answers the harder one directly:
       space (Euclidean, excluding the physics scale features), i.e. "find
       the most similar recipe run at another scale and assume it behaves the
       same".
+    - `naive_cf`: "carry forward" - predict each held-out row as the SAME
+      recipe's result at the NEAREST LOWER training scale. With a
+      `recipe_column` the recipe is matched by identity (mean of that recipe's
+      runs at that scale); without one, by the nearest training row at that
+      scale in standardized process-feature space. A held-out scale with no
+      smaller training scale (or a recipe never run at it) predicts `nan`: the
+      baseline does not apply there and is scored only where it does. This is
+      the scientist's default ("it did X at 50 L, so expect X at 500 L"); the
+      idea comes from a carry-forward baseline in a prior prototype
+      (re-implemented here).
 
 HONESTY CLAUSE. This module does not assert that the physics-feature GP beats
 either naive baseline. `beats_naive_mean`/`beats_naive_nn` on the returned
@@ -142,11 +152,39 @@ def _naive_nearest_recipe(
     return preds
 
 
+def _naive_carry_forward(
+    process_train: NDArray[np.float64],
+    y_train: NDArray[np.float64],
+    scale_train: NDArray[np.float64],
+    process_test: NDArray[np.float64],
+    held_out_scale: float,
+    recipe_train: NDArray | None = None,
+    recipe_test: NDArray | None = None,
+) -> NDArray[np.float64]:
+    """Same recipe at the nearest LOWER training scale (see the module
+    docstring's `naive_cf`). `nan` where it does not apply."""
+    preds = np.full(process_test.shape[0], np.nan)
+    lower = scale_train[scale_train < held_out_scale]
+    if lower.size == 0:
+        return preds
+    at = scale_train == lower.max()
+    if recipe_train is not None and recipe_test is not None:
+        rt = np.asarray(recipe_train, dtype=object)[at]
+        ya = y_train[at]
+        for i, r in enumerate(np.asarray(recipe_test, dtype=object)):
+            hit = rt == r
+            if hit.any():
+                preds[i] = float(np.mean(ya[hit]))
+        return preds
+    return _naive_nearest_recipe(process_train[at], y_train[at], process_test)
+
+
 def _bucket_metrics(
     pred: NDArray[np.float64],
     actual: NDArray[np.float64],
     naive_mean: NDArray[np.float64],
     naive_nn: NDArray[np.float64],
+    naive_cf: NDArray[np.float64] | None = None,
 ) -> dict:
     nn_finite = np.isfinite(naive_nn)
     out = {
@@ -166,6 +204,22 @@ def _bucket_metrics(
     out["beats_naive_nn"] = bool(
         np.isfinite(out["mae"]) and np.isfinite(out["naive_nn_mae"]) and out["mae"] < out["naive_nn_mae"]
     )
+    # Carry-forward is scored only on the rows it applies to, model included,
+    # so the two MAEs are over the same rows. Not applicable anywhere ->
+    # `naive_cf_n == 0` and `beats_naive_cf` is True (nothing to beat).
+    cf = np.full(len(actual), np.nan) if naive_cf is None else np.asarray(naive_cf, dtype=float)
+    cf_finite = np.isfinite(cf)
+    out["naive_cf_n"] = int(cf_finite.sum())
+    if cf_finite.any():
+        out["naive_cf_mae"] = float(mean_absolute_error(actual[cf_finite], cf[cf_finite]))
+        out["mae_on_cf_rows"] = float(mean_absolute_error(actual[cf_finite], pred[cf_finite]))
+        out["naive_cf_spearman"] = _spearman(cf[cf_finite], actual[cf_finite])
+        out["beats_naive_cf"] = bool(out["mae_on_cf_rows"] < out["naive_cf_mae"])
+    else:
+        out["naive_cf_mae"] = float("nan")
+        out["mae_on_cf_rows"] = float("nan")
+        out["naive_cf_spearman"] = float("nan")
+        out["beats_naive_cf"] = True
     return out
 
 
@@ -180,9 +234,11 @@ def leave_one_scale_out_report(
     model_label: str = "v0_surrogate",
     include_oof: bool = False,
     held_out_scales: Sequence[float] | None = None,
+    recipe_column: str | None = None,
 ) -> dict:
-    """Leave-one-scale-out evaluation of the physics-feature GP against two
-    naive baselines. See the module docstring for what each field means.
+    """Leave-one-scale-out evaluation of the physics-feature GP against three
+    naive baselines (`naive_mean`, `naive_nn`, `naive_cf`; `recipe_column`
+    optionally names a recipe-identity column for `naive_cf`). See the module docstring for what each field means.
 
     `model_factory` (optional): swaps which model is fit in every fold,
     for comparing v0 (`kalos.core.surrogate.Surrogate`, the default when
@@ -282,10 +338,13 @@ def leave_one_scale_out_report(
     y = df[target_column].to_numpy(dtype=float)
     scale = df[config.scale_column].to_numpy(dtype=float)
     n_process = len(process_columns)
+    recipe = df[recipe_column].to_numpy(dtype=object) if recipe_column is not None else None
 
     finite = np.isfinite(X).all(axis=1) & np.isfinite(y) & np.isfinite(scale)
     n_dropped = int((~finite).sum())
     X, y, scale = X[finite], y[finite], scale[finite]
+    if recipe is not None:
+        recipe = recipe[finite]
     # Group scales by ROUNDED value, matching the replicate-matching convention
     # `kalos.core.replicates.aggregate_replicates` uses (round to 6 places).
     # Exact float equality would split "2000.0" from "1999.9999999998" (a unit
@@ -330,6 +389,7 @@ def leave_one_scale_out_report(
     all_actual: list[float] = []
     all_naive_mean: list[float] = []
     all_naive_nn: list[float] = []
+    all_naive_cf: list[float] = []
     all_direction: list[str] = []
     all_scale_l: list[float] = []
 
@@ -356,14 +416,21 @@ def leave_one_scale_out_report(
         naive_mean_pred = np.full(n_test, naive_mean_val)
         naive_nn_pred = _naive_nearest_recipe(process_only[train_mask], y[train_mask], process_only[test_mask])
 
+        naive_cf_pred = _naive_carry_forward(
+            process_only[train_mask], y[train_mask], scale[train_mask], process_only[test_mask], float(s),
+            recipe[train_mask] if recipe is not None else None,
+            recipe[test_mask] if recipe is not None else None,
+        )
+
         actual = y[test_mask]
-        scale_metrics = _bucket_metrics(mean, actual, naive_mean_pred, naive_nn_pred)
+        scale_metrics = _bucket_metrics(mean, actual, naive_mean_pred, naive_nn_pred, naive_cf_pred)
         per_scale.append({"scale_L": float(s), "direction": direction, **scale_metrics})
 
         all_pred.extend(np.asarray(mean).tolist())
         all_actual.extend(actual.tolist())
         all_naive_mean.extend(naive_mean_pred.tolist())
         all_naive_nn.extend(naive_nn_pred.tolist())
+        all_naive_cf.extend(naive_cf_pred.tolist())
         all_direction.extend([direction] * n_test)
         all_scale_l.extend([float(s)] * n_test)
 
@@ -371,18 +438,21 @@ def leave_one_scale_out_report(
     actual_arr = np.asarray(all_actual)
     naive_mean_arr = np.asarray(all_naive_mean)
     naive_nn_arr = np.asarray(all_naive_nn)
+    naive_cf_arr = np.asarray(all_naive_cf, dtype=float)
     direction_arr = np.asarray(all_direction)
 
     by_direction: dict[str, dict | None] = {}
     for label in ("extrapolate_up", "extrapolate_down", "interpolate"):
         mask = direction_arr == label
         by_direction[label] = (
-            _bucket_metrics(pred_arr[mask], actual_arr[mask], naive_mean_arr[mask], naive_nn_arr[mask])
+            _bucket_metrics(
+                pred_arr[mask], actual_arr[mask], naive_mean_arr[mask], naive_nn_arr[mask], naive_cf_arr[mask]
+            )
             if mask.any()
             else None
         )
 
-    overall = _bucket_metrics(pred_arr, actual_arr, naive_mean_arr, naive_nn_arr)
+    overall = _bucket_metrics(pred_arr, actual_arr, naive_mean_arr, naive_nn_arr, naive_cf_arr)
 
     if held_out_scales is not None:
         # `pooled_logo_skipped` (set above) already explains why: a pooled
@@ -424,6 +494,7 @@ def leave_one_scale_out_report(
             "pred": all_pred,
             "naive_mean_pred": all_naive_mean,
             "naive_nn_pred": all_naive_nn,
+            "naive_cf_pred": all_naive_cf,
             "direction": all_direction,
         }
     return report

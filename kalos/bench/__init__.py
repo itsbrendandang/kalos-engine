@@ -12,18 +12,24 @@ whether the model helps at all on real, noisy assay data.
 """
 from .benchmark import run_benchmark, run_mixed_one, run_one, summarize  # noqa: F401
 from .objectives import (  # noqa: F401
+    OBJECTIVES,
     MixedObjective,
     Objective,
     ackley,
+    cho_fed_batch,
     gaussian_bump,
+    get_objective,
     mixed_bump,
 )
 
 __all__ = [
+    "OBJECTIVES",
     "MixedObjective",
     "Objective",
     "ackley",
+    "cho_fed_batch",
     "gaussian_bump",
+    "get_objective",
     "mixed_bump",
     "run_benchmark",
     "run_mixed_one",

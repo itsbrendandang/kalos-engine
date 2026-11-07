@@ -379,6 +379,10 @@ class RungResult:
     too_few_to_judge: bool
     # held-out scale is within LICENSE_WINDOW_DECADES of the largest trained scale
     in_license_window: bool = True
+    # third baseline: same recipe at the nearest lower scale (evaluation.py
+    # `naive_cf`), scored on the rows it applies to; True when it applies to none
+    naive_cf_mae: float = float("nan")
+    beats_carry_forward: bool = True
 
 
 @dataclass(frozen=True)
@@ -398,6 +402,8 @@ class LadderResult:
     pooled_naive_mean_mae: float
     pooled_naive_nn_mae: float
     pooled_beats_both: bool
+    pooled_naive_cf_mae: float = float("nan")
+    pooled_beats_carry_forward: bool = True
 
 
 def ladder(
@@ -431,6 +437,7 @@ def ladder(
     all_pred: list[float] = []
     all_naive_mean: list[float] = []
     all_naive_nn: list[float] = []
+    all_naive_cf: list[float] = []
 
     for i in range(1, len(scales)):
         k = scales[i]
@@ -471,6 +478,8 @@ def ladder(
                 beats_both=bool(row["beats_naive_mean"] and row["beats_naive_nn"]),
                 too_few_to_judge=row["n"] < MIN_RUNG_N_FOR_LICENSE,
                 in_license_window=in_window,
+                naive_cf_mae=row["naive_cf_mae"],
+                beats_carry_forward=bool(row["beats_naive_cf"]),
             )
         )
         oof = report["oof"]
@@ -478,6 +487,7 @@ def ladder(
         all_pred.extend(oof["pred"])
         all_naive_mean.extend(oof["naive_mean_pred"])
         all_naive_nn.extend(oof["naive_nn_pred"])
+        all_naive_cf.extend(oof["naive_cf_pred"])
 
     actual_arr = np.asarray(all_actual, dtype=float)
     pred_arr = np.asarray(all_pred, dtype=float)
@@ -499,6 +509,14 @@ def ladder(
         and pooled_mae < pooled_naive_nn_mae
     )
 
+    naive_cf_arr = np.asarray(all_naive_cf, dtype=float)
+    cf_finite = np.isfinite(naive_cf_arr)
+    if cf_finite.any():
+        pooled_naive_cf_mae = float(np.mean(np.abs(actual_arr[cf_finite] - naive_cf_arr[cf_finite])))
+        pooled_beats_cf = bool(float(np.mean(residuals[cf_finite])) < pooled_naive_cf_mae)
+    else:
+        pooled_naive_cf_mae, pooled_beats_cf = float("nan"), True
+
     return LadderResult(
         rungs=rungs,
         skipped=skipped,
@@ -507,6 +525,8 @@ def ladder(
         pooled_naive_mean_mae=pooled_naive_mean_mae,
         pooled_naive_nn_mae=pooled_naive_nn_mae,
         pooled_beats_both=pooled_beats_both,
+        pooled_naive_cf_mae=pooled_naive_cf_mae,
+        pooled_beats_carry_forward=pooled_beats_cf,
     )
 
 
@@ -528,8 +548,12 @@ class DecisionResult:
 
 def _can_license(rung: RungResult) -> bool:
     """A rung licenses the reference step ratio only when it beat both
-    baselines, on enough runs, near the scale regime being extrapolated from."""
-    return rung.beats_both and not rung.too_few_to_judge and rung.in_license_window
+    baselines AND the carry-forward baseline (where it applies), on enough
+    runs, near the scale regime being extrapolated from."""
+    return (
+        rung.beats_both and rung.beats_carry_forward
+        and not rung.too_few_to_judge and rung.in_license_window
+    )
 
 
 def decide(
@@ -559,12 +583,18 @@ def decide(
     if reference_ratio is None:
         refusal_reasons.append(
             f"no rung with at least {MIN_RUNG_N_FOR_LICENSE} runs, within {LICENSE_WINDOW_DECADES:g} decade(s) "
-            "of the largest trained scale, beat both naive baselines to license a reference step ratio"
+            "of the largest trained scale, beat both naive baselines (and carry-forward, where it applies) "
+            "to license a reference step ratio"
         )
 
     # the pooled verdict is only a verdict with enough residuals behind it
     if n_residuals >= MIN_RESIDUALS and not ladder_result.pooled_beats_both:
         refusal_reasons.append("pooled ladder MAE does not beat both naive baselines")
+    if n_residuals >= MIN_RESIDUALS and not ladder_result.pooled_beats_carry_forward:
+        refusal_reasons.append(
+            "pooled ladder MAE does not beat the carry-forward baseline "
+            "(same recipe at the nearest lower scale)"
+        )
 
     if reference_ratio is not None and requested_ratio > REFUSE_RATIO_MULT * reference_ratio:
         refusal_reasons.append(
@@ -1031,6 +1061,8 @@ def build_readout(
         "pooled_naive_mean_mae": ladder_result.pooled_naive_mean_mae,
         "pooled_naive_nn_mae": ladder_result.pooled_naive_nn_mae,
         "pooled_beats_both": ladder_result.pooled_beats_both,
+        "pooled_naive_cf_mae": ladder_result.pooled_naive_cf_mae,
+        "pooled_beats_carry_forward": ladder_result.pooled_beats_carry_forward,
         "n_residuals": len(ladder_result.residuals),
     }
 

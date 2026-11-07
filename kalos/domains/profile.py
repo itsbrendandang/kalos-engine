@@ -63,6 +63,10 @@ class ColumnRoles:
     `sparse` names continuous feature columns where a BLANK cell means "absent"
     (a component not added, so 0). Only these, and concentration-type columns by
     name, take a blank as 0; every other blank feature cell drops its run.
+    `exclude_flagged_rows` (default False) opts in to excluding runs a QC flag
+    column marks as failed; `qc` optionally names that column (role=qc_flag)
+    instead of detecting it by name. Off by default: no row is ever excluded
+    unless the caller asks. See `kalos/validation/qc.py`.
     """
 
     target: str
@@ -71,6 +75,8 @@ class ColumnRoles:
     ids: tuple[str, ...] = ()
     categoricals: tuple[str, ...] = ()
     sparse: tuple[str, ...] = ()
+    qc: str | None = None
+    exclude_flagged_rows: bool = False
 
     @classmethod
     def from_dict(cls, data: dict) -> ColumnRoles:
@@ -95,6 +101,12 @@ class ColumnRoles:
         groups = data.get("groups")
         if groups is not None and not isinstance(groups, str):
             raise ValueError("roles.groups must be a column name or null")
+        qc = data.get("qc")
+        if qc is not None and not isinstance(qc, str):
+            raise ValueError("roles.qc must be a column name or null")
+        exclude_flagged = data.get("exclude_flagged_rows", False)
+        if not isinstance(exclude_flagged, bool):
+            raise ValueError("roles.exclude_flagged_rows must be true or false")
         return cls(
             target=target,
             features=as_tuple(data.get("features")),
@@ -102,6 +114,8 @@ class ColumnRoles:
             ids=as_tuple(data.get("ids")),
             categoricals=as_tuple(data.get("categoricals")),
             sparse=as_tuple(data.get("sparse")),
+            qc=(qc or None),
+            exclude_flagged_rows=exclude_flagged,
         )
 
 

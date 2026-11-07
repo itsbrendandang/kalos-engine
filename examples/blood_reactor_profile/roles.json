@@ -1,0 +1,26 @@
+{
+  "target": "leukemic_fold_change",
+  "features": [
+    "SCF_ng_mL",
+    "TPO_ng_mL",
+    "IL6_ng_mL",
+    "IL3_ng_mL",
+    "FLT3L_ng_mL",
+    "GMCSF_ng_mL",
+    "IL9_ng_mL",
+    "IL1b_ng_mL"
+  ],
+  "groups": "replicate_group",
+  "ids": ["run_id"],
+  "categoricals": [],
+  "sparse": [
+    "SCF_ng_mL",
+    "TPO_ng_mL",
+    "IL6_ng_mL",
+    "IL3_ng_mL",
+    "FLT3L_ng_mL",
+    "GMCSF_ng_mL",
+    "IL9_ng_mL",
+    "IL1b_ng_mL"
+  ]
+}
