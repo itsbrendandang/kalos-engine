@@ -18,6 +18,7 @@ import importlib.util
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from scipy.stats import spearmanr
 
 from kalos.scale.candidates import MultiFidelitySurrogate, PhysicsMeanSurrogate
@@ -65,6 +66,7 @@ def test_the_planted_interaction_is_a_genuine_rank_crossing():
     assert r_large > 0.3, r_large
 
 
+@pytest.mark.slow
 def test_all_three_models_recover_the_strong_rank_crossing_at_extrapolate_up():
     """The harder-synthetic counterpart to
     `test_scale_v1_real_data.test_no_candidate_extrapolate_up_spearman_clears_the_noise_floor`:
