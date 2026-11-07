@@ -29,7 +29,10 @@ def grouped_folds(groups: Sequence, n_splits: int = 5) -> Iterator[tuple[np.ndar
     yield from make_splits(np.zeros((n, 1)), np.zeros(n), groups, n_splits=n_splits)
 
 
-def _oof(X, y, groups, n_splits, bounds, cat_dims=None, shuffle: bool = False, random_state: int = 42):
+def _oof(
+    X, y, groups, n_splits, bounds, cat_dims=None, shuffle: bool = False, random_state: int = 42,
+    index_out: list[int] | None = None,
+):
     """Pooled out-of-fold predictions under one fixed normalization box.
     Returns (pred, std, actual, group, n_folds).
 
@@ -76,6 +79,8 @@ def _oof(X, y, groups, n_splits, bounds, cat_dims=None, shuffle: bool = False, r
         sd.extend(np.asarray(std).ravel().tolist())
         actual.extend(y[te].tolist())
         grp.extend(groups[te].tolist())
+        if index_out is not None:
+            index_out.extend(int(i) for i in te)
     return (
         np.asarray(pred),
         np.asarray(sd),
@@ -177,13 +182,16 @@ def grouped_cv_report(
     actuals: list[np.ndarray] = []
     grps: list[np.ndarray] = []
     n_folds0 = 0
+    index0: list[int] = []
     rng = np.random.default_rng(random_state)
     boot: list[float] = []
     for r in range(n_repeats_eff):
         if r == 0:
             # Unshuffled: the exact partition every existing caller already
             # gets, so the point estimate and OOF arrays are unchanged.
-            pred, sd, actual, grp, n_folds = _oof(X_arr, y, groups, n_splits, bounds, cat_dims=cat_dims)
+            pred, sd, actual, grp, n_folds = _oof(
+                X_arr, y, groups, n_splits, bounds, cat_dims=cat_dims, index_out=index0,
+            )
             n_folds0 = n_folds
         else:
             # A distinct deterministic seed per repeat: simple integer offset
@@ -226,6 +234,9 @@ def grouped_cv_report(
         # Held-out posterior sd, so a caller can check whether the model's stated
         # uncertainty is honest (`interval_calibration`) instead of assuming it.
         "oof_std": sds[0].tolist(),
+        # Input row index of each repeat-0 OOF entry, so a caller can pair the
+        # OOF predictions with another per-row prediction (`group_mean_margin`).
+        "oof_index": index0,
         "n_repeats": int(n_repeats_eff),
         # Per-repeat pooled Spearman (repeat 0 first, matching `spearman`), so
         # the spread across partitions is visible on its own, not only folded
@@ -287,6 +298,11 @@ CALIBRATION_LEVELS: tuple[float, ...] = (0.5, 0.8, 0.9, 0.95)
 # 50% but overconfident at 95% cannot hide behind a single number.
 
 MIN_CALIBRATION_N = 10
+# Display threshold. Judging (a pass/fail on the ECE) needs more: at n=10 a
+# perfectly calibrated Gaussian predictor has ECE > 0.15 in ~9% of samples, at
+# n=20 ~1% (compmodel PLAN E5, re-measured). Between the two the ECE is shown
+# with `judgement` = "not enough runs to judge calibration".
+CALIBRATION_JUDGE_MIN_N = 20
 # Below this many held-out points, an empirical coverage rate is not a
 # measurement: at n=6 the achievable rates are 0, 1/6, 2/6, ..., so the nearest
 # attainable value to a nominal 0.90 is 0.833 and the "error" is an artifact of
@@ -374,6 +390,10 @@ def interval_calibration(
         "available": True,
         "reason": None,
         "n": n,
+        # Additive: whether n is enough to judge the ECE against a threshold.
+        "judgeable": n >= CALIBRATION_JUDGE_MIN_N,
+        "judgement": None if n >= CALIBRATION_JUDGE_MIN_N else "not enough runs to judge calibration",
+        "judge_min_n": CALIBRATION_JUDGE_MIN_N,
         "ece": round(float(np.mean(gaps)), 4),
         "z_std": round(float(np.std(z, ddof=1)) if n > 1 else float("nan"), 4),
         "levels": rows,
@@ -578,10 +598,92 @@ def group_mean_baseline_spearman(y, groups) -> dict:
     }
 
 
+GROUP_MEAN_MARGIN_BOOT = 1000
+
+
+def _loo_group_mean(y: np.ndarray, groups: np.ndarray) -> np.ndarray:
+    """Leave-one-row-out group mean per row; NaN for singleton groups."""
+    df = pd.DataFrame({"y": y, "g": groups})
+    counts = df.groupby("g")["y"].transform("count").to_numpy()
+    sums = df.groupby("g")["y"].transform("sum").to_numpy()
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out = (sums - y) / (counts - 1)
+    out[counts < 2] = np.nan
+    return out
+
+
+def group_mean_margin(
+    y, groups, oof_index, oof_pred, *, n_boot: int = GROUP_MEAN_MARGIN_BOOT, seed: int = 0,
+) -> dict:
+    """Does the surrogate beat the group-mean floor by more than the noise?
+
+    Pairs, row by row, the surrogate's out-of-fold prediction with the
+    leave-one-row-out mean of the other rows of the same recipe (the floor
+    `group_mean_baseline_spearman` reports), on the rows where both exist
+    (recipes with 2+ rows). `difference` = Spearman(surrogate, y) -
+    Spearman(group mean, y) on those rows. `ci95` is a paired bootstrap over
+    recipes (whole recipes resampled, both predictions kept together, as the
+    CV CI does). `passed` = the lower CI bound is above 0: the margin the
+    surrogate must clear is the bootstrap's own uncertainty, not a fixed number
+    (compmodel PLAN E13). Never raises; `evaluable=False` with a reason when
+    fewer than 3 recipes or 3 rows can be paired.
+
+    The two Spearmans here are on the paired subset, so `surrogate_spearman`
+    can differ from the headline CV Spearman over every row.
+    """
+    y_arr = np.asarray(y, float).reshape(-1)
+    g_arr = np.asarray(pd.Series(groups).astype(str).values)
+    idx = np.asarray(oof_index, int)
+    pred = np.asarray(oof_pred, float).reshape(-1)
+    base = {"difference": None, "ci95": None, "surrogate_spearman": None,
+            "group_mean_spearman": None, "n_paired": 0, "n_groups_paired": 0,
+            "passed": None, "evaluable": False}
+    if idx.shape != pred.shape or (len(idx) and idx.max() >= len(y_arr)):
+        return {**base, "reason": "OOF index and predictions do not match the data"}
+    gm = _loo_group_mean(y_arr, g_arr)[idx]
+    act = y_arr[idx]
+    grp = g_arr[idx]
+    ok = np.isfinite(gm) & np.isfinite(pred) & np.isfinite(act)
+    act, gm, pr, grp = act[ok], gm[ok], pred[ok], grp[ok]
+    uniq = np.unique(grp)
+    if len(act) < 3 or len(uniq) < 3:
+        return {**base, "n_paired": int(len(act)), "n_groups_paired": int(len(uniq)),
+                "reason": "fewer than 3 recipes with 2+ rows to pair the surrogate with the floor"}
+    s_rho, g_rho = _spearman(pr, act), _spearman(gm, act)
+    if s_rho != s_rho or g_rho != g_rho:
+        return {**base, "n_paired": int(len(act)), "n_groups_paired": int(len(uniq)),
+                "reason": "a Spearman on the paired rows is undefined (no variation)"}
+    rng = np.random.default_rng(seed)
+    pos = {g: np.where(grp == g)[0] for g in uniq}
+    diffs: list[float] = []
+    for _ in range(int(n_boot)):
+        take = rng.choice(uniq, size=len(uniq), replace=True)
+        m = np.concatenate([pos[g] for g in take])
+        a, b = _spearman(pr[m], act[m]), _spearman(gm[m], act[m])
+        if a == a and b == b:
+            diffs.append(a - b)
+    if not diffs:
+        return {**base, "reason": "every bootstrap resample was degenerate"}
+    lo, hi = float(np.percentile(diffs, 2.5)), float(np.percentile(diffs, 97.5))
+    return {
+        "difference": round(s_rho - g_rho, 4),
+        "ci95": [round(lo, 4), round(hi, 4)],
+        "surrogate_spearman": round(s_rho, 4),
+        "group_mean_spearman": round(g_rho, 4),
+        "n_paired": int(len(act)),
+        "n_groups_paired": int(len(uniq)),
+        "passed": bool(lo > 0.0),
+        "evaluable": True,
+        "reason": None,
+    }
+
+
 __all__ = [
+    "CALIBRATION_JUDGE_MIN_N",
     "CALIBRATION_LEVELS",
     "MIN_CALIBRATION_N",
     "group_mean_baseline_spearman",
+    "group_mean_margin",
     "grouped_cv_report",
     "grouped_cv_spearman",
     "grouped_folds",

@@ -35,6 +35,7 @@ from scipy.stats import qmc
 
 from kalos.core.optimize import propose
 from kalos.core.surrogate import Surrogate
+from kalos.versions import stack_record
 
 from .objectives import (
     MixedObjective,
@@ -739,6 +740,8 @@ def environment() -> dict[str, Any]:
         "packages": {p: _pkg_version(p) for p in (
             "torch", "botorch", "gpytorch", "numpy", "scipy", "pandas",
             "optuna", "ax-platform")},
+        # The pins (kalos/versions.py) and any installed-vs-pinned difference.
+        "stack": stack_record(),
     }
 
 

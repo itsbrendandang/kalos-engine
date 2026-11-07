@@ -38,9 +38,11 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 from pydantic import Strict as _Strict
+from starlette.concurrency import run_in_threadpool
 
+from kalos.assist.hooks import after_write as _assist_after_write
 from kalos.portal.auth import ADMIN, READ, WRITE, Principal, require_scope
 from kalos.portal.campaign import (
     CampaignError,
@@ -194,6 +196,8 @@ class _RunResultBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     value: Annotated[float, _Strict()] = Field()
+    # Required when the run already has a value (a correction); see CampaignStore.set_result.
+    reason: Annotated[str, StringConstraints(max_length=256)] | None = None
 
 
 # --- campaign management ------------------------------------------------------- #
@@ -329,6 +333,10 @@ async def upload_to_campaign(
                     campaign_id=campaign_id, replace=replace,
                 )
     _audit(store, principal, "campaign.upload", response.status_code, campaign_id)
+    if _valid_campaign_id(campaign_id):
+        await run_in_threadpool(
+            _assist_after_write, store, principal.tenant, campaign_id, response, kind="upload",
+        )
     return response
 
 
@@ -391,10 +399,15 @@ def log_run_result(
         response = JSONResponse(_RUN_NOT_FOUND_BODY, status_code=404)
     else:
         try:
+            # audit=True: the campaign.result row is written in the change's transaction.
             run = store.set_result(
-                run_id, body.value, tenant=principal.tenant, campaign_id=campaign_id
+                run_id, body.value, tenant=principal.tenant, campaign_id=campaign_id,
+                reason=body.reason, actor=principal.subject,
+                auth_method=_auth_method(principal), audit=True,
             )
             response = JSONResponse(run)
+            _assist_after_write(store, principal.tenant, campaign_id, response, kind="result")
+            return response
         except CampaignError as exc:
             if type(exc) is CampaignError:
                 # Unknown run id / unseeded campaign. The store's message echoes
@@ -419,4 +432,8 @@ async def reanalyze(
     else:
         response = await _reanalyze(store, principal, campaign_id=campaign_id)
     _audit(store, principal, "campaign.reanalyze", response.status_code, campaign_id)
+    if _valid_campaign_id(campaign_id):
+        await run_in_threadpool(
+            _assist_after_write, store, principal.tenant, campaign_id, response, kind="reanalyze",
+        )
     return response

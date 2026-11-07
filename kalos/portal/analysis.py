@@ -77,7 +77,12 @@ from kalos.portal.analysis_parts.policy import (
     RELIABILITY_SPEARMAN_FLOOR,
     validation_mode,
 )
-from kalos.portal.analysis_parts.proposals import _annotate, _encode_pending
+from kalos.portal.analysis_parts.proposals import (
+    _annotate,
+    _encode_pending,
+    nearest_training_distance,
+    training_nn_distance_median,
+)
 from kalos.portal.analysis_parts.ranges import (
     _absent_is_zero_columns,
     _physical_range,
@@ -148,6 +153,13 @@ __all__ = [
 # the proposals depended on which thread got there first (review C3). Every
 # analysis holds this lock for its seeded scope, so the RNG is never shared.
 _RNG_LOCK = threading.RLock()
+
+
+# Hyperparameter starts for the PROPOSAL surrogate only (default start + 2
+# seeded random starts; best marginal likelihood wins), 1 above
+# MULTI_START_MAX_ROWS rows (`proposal_restarts`). CV folds keep one start.
+# Measured cost: see docs/CAMPAIGNS_API.md "Model diagnostics".
+PROPOSAL_FIT_RESTARTS = 3
 
 
 @contextlib.contextmanager
@@ -241,8 +253,10 @@ def _analyze_body(
     raising; see PART 2 below for the policy. Wiring this parameter through
     the portal's HTTP surface is out of scope here.
 
-    Deterministic: seeds torch + numpy up front so the same sheet gives the same
-    proposals. Returns a per-column `provenance` report (what was kept/dropped and
+    Seeded: torch + numpy are seeded up front. That makes small sheets repeat,
+    but identical runs CAN give different proposals (measured on an 80x6 sheet,
+    even in one process; tests/test_golden_determinism.py, docs/CAMPAIGNS_API.md
+    "Determinism"). Returns a per-column `provenance` report (what was kept/dropped and
     why) plus `seed`, `timestamp`, and `engine_version` for audit. When
     `anonymize` is True, identifier-type column names are replaced with stable
     pseudonyms in the response (the owner UI keeps real names when False).
@@ -267,6 +281,7 @@ def _analyze_body(
         # of these names is used.
         from kalos.core.evaluation import (
             group_mean_baseline_spearman,
+            group_mean_margin,
             grouped_cv_report,
             interval_calibration,
             logo_report,
@@ -280,7 +295,7 @@ def _analyze_body(
         )
         from kalos.core.gates import GatesConfig, check_gates
         from kalos.core.optimize import MAX_MIXED_COMBOS, propose_batch
-        from kalos.core.surrogate import FitError, Surrogate
+        from kalos.core.surrogate import FitError, Surrogate, proposal_restarts
         from kalos.portal.viz_utils import (
             _correlation_spearman,
             _embedding_pca,
@@ -499,7 +514,13 @@ def _analyze_body(
     # cap. Reject rather than subsample: silent subsampling would be invisible,
     # non-deterministic data loss and contradict the reproducibility contract.
     if len(fit_pos) > MAX_FIT_ROWS:
-        raise UploadRejected(_ERR_TOO_MANY_FIT_ROWS)
+        # The message text is unchanged (the web matches its sentence); the code
+        # and the two numbers let a client branch without parsing prose.
+        raise UploadRejected(
+            _ERR_TOO_MANY_FIT_ROWS,
+            code="too_many_fit_rows",
+            context={"max_fit_rows": int(MAX_FIT_ROWS), "n_rows": int(len(fit_pos))},
+        )
 
     # Per-column tallies over the rows of the sheet that carry data, by reason.
     by_column: dict[str, dict[str, int]] = {}
@@ -887,10 +908,29 @@ def _analyze_body(
     # width" - so the classifier's `ece` is what belongs here. Naming both in
     # this comment is the whole point: nothing downstream should ever swap
     # them without knowing it changed the question being asked.
+    # GROUP-MEAN FLOOR AS A GATE (compmodel PLAN E13): the surrogate must beat
+    # the leave-one-row-out recipe mean by more than a paired bootstrap's
+    # uncertainty (lower 95% bound of the paired Spearman difference > 0).
+    # Not judged when too few recipes are replicated to form the floor.
+    _n_rep_groups = int((pd.Series(recipe_key).value_counts() >= 2).sum())
+    if _n_rep_groups < GROUP_MEAN_BASELINE_MIN_GROUPS:
+        gm_margin: dict[str, Any] = {
+            "evaluable": False, "passed": None,
+            "reason": (
+                f"only {_n_rep_groups} recipes have 2+ rows; need at least "
+                f"{GROUP_MEAN_BASELINE_MIN_GROUPS} to form a group-mean floor"
+            ),
+        }
+    else:
+        gm_margin = group_mean_margin(y, recipe_key, rep["oof_index"], oof_p)
     gate_stats = {
         "surrogate_spearman": rho,  # the pooled CV rho already computed above
+        "group_mean_margin": gm_margin,
         "feasibility_auc": feas["auc"],
         "ece": feas["ece"],
+        # How many pooled out-of-fold runs the classifier ECE was scored on:
+        # below GatesConfig.min_ece_n (20) the ECE is reported, not judged.
+        "ece_n": feas["n"] if feas.get("evaluable") else None,
         "brier": feas["brier"],
     }
     promotion_result = check_gates(gate_stats)
@@ -902,6 +942,9 @@ def _analyze_body(
         # so this is strict-JSON safe by construction - no NaN can reach here.
         "metrics": promotion_result.metrics,
         "summary": promotion_result.summary,
+        # Gates neither passed nor failed, e.g. "ece: not enough runs to judge
+        # calibration (n=14, need 20)". Additive.
+        "not_judged": promotion_result.not_judged,
         # FAIL-CLOSED IS CORRECT, BUT ILLEGIBLE WITHOUT THIS. On an all-producer
         # sheet (no non-producers to build a feasibility classifier from) or
         # any sheet too small to measure one of the four gates,
@@ -1143,14 +1186,23 @@ def _analyze_body(
         if nr["n_recipes"] >= 6 and np.isfinite(sigma2) and sigma2 > 0:
             replicate_aware = True
             per_point_var = float(sigma2) / np.maximum(n_reps_g, 1).astype(float)
-            s = Surrogate().fit(Xf, yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims)
+            s = Surrogate().fit(
+                Xf, yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
+                check_conditioning=True,
+                restarts=proposal_restarts(len(yf), Xf.shape[1], PROPOSAL_FIT_RESTARTS),
+                restart_seed=ANALYZE_SEED,
+            )
             incumbent = best_reproducible
             X_fit, y_fit = Xf, yf
 
     # proposed next batch, with predicted target + uncertainty + a why per row
     _progress("proposing", 0.8)
     if not replicate_aware:
-        s = Surrogate().fit(X, y, bounds=bounds, cat_dims=cat_dims)
+        s = Surrogate().fit(
+            X, y, bounds=bounds, cat_dims=cat_dims, check_conditioning=True,
+            restarts=proposal_restarts(len(y), X.shape[1], PROPOSAL_FIT_RESTARTS),
+            restart_seed=ANALYZE_SEED,
+        )
     # In-flight recipes, encoded into this design so the acquisition treats them
     # as taken. Encoding can drop rows (a recipe naming an unknown categorical
     # level cannot be placed in the design at all), so the count actually used is
@@ -1290,6 +1342,9 @@ def _analyze_body(
     # break) as soon as their last use is done, rather than waiting on
     # `_analyze` to return. Keeps a long-lived process (the portal, the
     # `--watch` poller) from accumulating fit memory across repeated analyses.
+    # CV folds (the trust verdict) fit with ONE start; the served model may use
+    # more. Stated here so the mismatch is visible in the record.
+    model_diagnostics = {**s.fit_diagnostics, "cv_fit_restarts": 1}
     del s
     if constraint_surrogate is not None:
         del constraint_surrogate
@@ -1435,7 +1490,9 @@ def _analyze_body(
         # rather than silently absent.
         "cv_logo": cv_logo,
         "cv_topk": cv_topk,
-        "cv_group_mean_baseline": cv_group_mean_baseline,
+        # `margin` (additive): the paired surrogate-vs-floor comparison the
+        # promotion gate reads (kalos/core/evaluation.py `group_mean_margin`).
+        "cv_group_mean_baseline": {**cv_group_mean_baseline, "margin": gm_margin},
         "best": round(best_single, 4),
         "noise": _noise_block(nr, best_single, best_reproducible, replicate_aware, het),
         # Explicit, labeled second evaluation pass on the log scale, run only
@@ -1467,7 +1524,11 @@ def _analyze_body(
         "proposals": _annotate(
             batch, p_mean, p_std, incumbent, cols=show_idx, design=design,
             p_feasible=p_feasible_arr, constraint=constraint_pred,
+            distance=nearest_training_distance(batch, X, bounds, cat_dims),
         ),
+        # Context for `proposals[].nearest_training_distance` (same metric): the
+        # median distance from each training row to its nearest other row.
+        "training_nn_distance_median": training_nn_distance_median(X, bounds, cat_dims),
         "oof": [[round(a, 4), round(p, 4)] for a, p in zip(oof_a, oof_p)],
         "provenance": provenance,
         # Orientation pre-pass fact from the upload path (kalos/portal/uploads.py):
@@ -1493,6 +1554,10 @@ def _analyze_body(
         "correlation": correlation,
         "response_surface": response_surface,
         "visualization_reasons": viz_reasons,
+        # Numerical record of the proposal surrogate's fit (kalos/core/surrogate.py
+        # `Surrogate.fit_diagnostics`): the Cholesky jitter rung and the largest
+        # diagonal addition actually made, with the cap.
+        "model_diagnostics": model_diagnostics,
         "seed": ANALYZE_SEED,
         "timestamp": int(time.time()),
         "engine_version": ENGINE_VERSION,
