@@ -74,8 +74,9 @@ SYNONYMS: dict[str, tuple[str, ...]] = {
 
 # --- role guessing (deterministic offline fallback) ------------------------ #
 
-# Mirrored from `kalos.portal.analysis` (`_OUTCOME_HINT`, `_TARGET_PREF`,
-# `_ID_HINT`, `_GROUP_HINT`). Not imported directly: those names are module-private
+# Mirrored from `kalos.portal.analysis_parts.policy` (BIOPROCESS_PROFILE's
+# outcome_hint / target_pref / id_hint / group_hint). Not imported directly: those
+# names are module-private
 # (leading underscore, no `__all__` entry) in a module that transitively pulls
 # in torch on other code paths, and this package must stay import-light (see
 # `kalos/normalize/__init__.py`). Keep these patterns byte-identical to the
