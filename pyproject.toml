@@ -56,7 +56,7 @@ assist-embed = ["sentence-transformers>=3"]
 # without this the two mocked-live tests error out on a fresh CI checkout. Listing
 # it in `dev` keeps that path genuinely covered instead of silently skipped.
 dev = [
-  "pytest>=9.1.1", "ruff>=0.6", "mypy>=1.11", "pandas-stubs", "scipy-stubs",
+  "pytest>=9.1.1", "pytest-xdist>=3.6", "ruff>=0.6", "mypy>=1.11", "pandas-stubs", "scipy-stubs",
   "httpx>=0.27,<1", "anthropic>=1.5.0",
 ]
 
@@ -73,6 +73,12 @@ include = ["kalos*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `slow` marks the GP-heavy tests (full BoTorch fits, pool replays). CI runs the
+# fast set (`-m "not slow"`) in parallel on every push, and the full suite on
+# main / on demand. Registered so a plain run or `--strict-markers` never warns.
+markers = [
+    "slow: a GP-heavy test (full BoTorch fit or pool replay); deselect with -m 'not slow'",
+]
 
 [tool.ruff]
 # Floor matches requires-python (ax-platform needs 3.11). Explicit so ruff does not

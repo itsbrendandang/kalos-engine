@@ -50,7 +50,6 @@ from kalos.portal.auth import (
     get_authenticator,
     require_scope,
 )
-from kalos.portal.auth_errors import JwtConfigError
 from kalos.portal.busy import (
     RETRY_AFTER_SECONDS,
     AnalysisBusy,
@@ -74,7 +73,6 @@ from kalos.portal.config import (
 )
 from kalos.portal.jobs_api import JobUploadAuthPrecheck, JobUploadSizeLimit
 from kalos.portal.jobs_api import router as _jobs_router
-from kalos.portal.jwt_auth import log_config_error_once
 from kalos.portal.limits import (
     MULTIPART_OVERHEAD_BYTES,
     max_request_bytes,
@@ -148,9 +146,8 @@ _PRODUCTION = is_production()
 def _startup_auth_posture() -> bool:
     """Check the auth posture once at import; return whether auth is enforced.
 
-    Production requires a USABLE auth source (a JWT public key or a
-    service-account static token), and any auth config error - including an
-    unreadable or malformed JWT key file - refuses to start.
+    Production requires a USABLE auth source (at least one service-account static
+    token), and any auth config error refuses to start.
     """
     auth = get_authenticator()
     try:
@@ -349,11 +346,7 @@ async def _refuse_open_remote_access(request, call_next):
 
 
 def _auth_config_error_response(exc: AuthConfigError) -> JSONResponse:
-    """Fail closed on a broken auth config: 503 for the JWT key file (the
-    caller can do nothing about it), 500 for a malformed static-token list."""
-    if isinstance(exc, JwtConfigError):
-        log_config_error_once(exc)  # once per change, not per request
-        return JSONResponse({"error": "authentication unavailable", "code": "auth_unavailable"}, status_code=503)
+    """Fail closed on a broken auth config: 500 for a malformed static-token list."""
     log.error("kalos auth: token configuration is invalid: %s", exc)
     return JSONResponse({"error": "authentication is misconfigured", "code": "auth_misconfigured"}, status_code=500)
 

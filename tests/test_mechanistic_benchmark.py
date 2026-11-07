@@ -18,6 +18,7 @@ def test_benchmark_structure_and_requires_five_seeds():
             assert t["q25"] <= t["median"] <= t["q75"]
 
 
+@pytest.mark.slow
 def test_a_correct_prior_never_hurts_and_an_oracle_helps():
     r = benchmark(seeds=range(5), budget=4)
     assert r["hybrid_vs_plain_evals_to_95pct"]["oracle"]["worse"] == 0

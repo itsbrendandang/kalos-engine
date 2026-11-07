@@ -108,6 +108,7 @@ def test_timed_fit_returns_positive_elapsed():
         assert elapsed > 0.0
 
 
+@pytest.mark.slow
 def test_run_sweep_smoke_is_fast_and_seeded():
     """The experiment module's own smoke test: a tiny config that runs well
     under 60s and is fully reproducible (matches the task's requirement for a

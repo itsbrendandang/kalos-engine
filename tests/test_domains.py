@@ -88,6 +88,7 @@ def _mixed_sheet(n=60, seed=0):
     })
 
 
+@pytest.mark.slow
 def test_mixed_surrogate_fit_and_propose_picks_favorable_level():
     pytest.importorskip("botorch")
     import torch
@@ -116,6 +117,7 @@ def test_mixed_surrogate_fit_and_propose_picks_favorable_level():
     assert decoded.count("urethane") >= 2
 
 
+@pytest.mark.slow
 def test_analyze_declared_roles_mixed_end_to_end():
     from kalos.portal.analysis import _analyze
 
@@ -173,6 +175,7 @@ def test_declared_non_numeric_feature_reported_honestly():
     assert prov["resin_type"]["source"] == "declared"
 
 
+@pytest.mark.slow
 def test_analyze_bioprocess_inference_unchanged_by_default():
     # With no declared roles the default (bioprocess) profile picks the titer
     # target and excludes other measured outputs - identical to the legacy path.
@@ -227,6 +230,7 @@ def test_target_cannot_also_be_id_or_categorical():
         _analyze(df, roles=ColumnRoles(target="adhesion", categoricals=("adhesion",)), profile=GENERIC_PROFILE)
 
 
+@pytest.mark.slow
 def test_declared_continuous_feature_that_is_mostly_text_is_reported_non_numeric():
     # A column declared continuous but only ~20% numeric-parseable must NOT be
     # silently zero-filled into the model; it fails the 80% gate and is reported
@@ -247,6 +251,7 @@ def test_declared_continuous_feature_that_is_mostly_text_is_reported_non_numeric
     assert prov["extra"]["source"] == "declared"
 
 
+@pytest.mark.slow
 def test_blank_categorical_cells_are_dropped_never_proposed():
     # Blank categorical cells are unknown, not a level: excluded from the levels,
     # their rows dropped from the fit, and never surfaced as a proposed "" recipe.
@@ -283,6 +288,7 @@ def test_all_categorical_design_space_runs():
     assert rec["resin"] in {"epoxy", "acrylic", "urethane"} and rec["hardener"] in {"fast", "slow"}
 
 
+@pytest.mark.slow
 def test_single_level_categorical_is_dropped():
     # A categorical with only one observed level offers no choice; it is dropped
     # (flagged), not kept as a useless dimension.
@@ -299,6 +305,7 @@ def test_single_level_categorical_is_dropped():
     assert {p["name"]: p["status"] for p in out["provenance"]}["coating"] == "dropped_constant_on_fitted_rows"
 
 
+@pytest.mark.slow
 def test_declared_groups_column_is_used():
     from kalos.portal.analysis import _analyze
 
