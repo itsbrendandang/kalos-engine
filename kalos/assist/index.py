@@ -601,7 +601,7 @@ def _lock_for(path: Path) -> threading.Lock:
 class AssistIndex:
     """One tenant's index. Cheap to construct; reads its file lazily."""
 
-    def __init__(self, store: Any, tenant: str, *, embedder: Embedder | None | bool = True) -> None:
+    def __init__(self, store: Any, tenant: str, *, embedder: Embedder | bool | None = True) -> None:
         self.store = store
         self.tenant = tenant
         self.dir = tenant_dir(store.state_dir, tenant)
