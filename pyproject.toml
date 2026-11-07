@@ -34,6 +34,10 @@ portal = ["fastapi>=0.143.0", "uvicorn[standard]>=0.29", "python-multipart>=0.0.
 # The torch-free deterministic core (units/synonyms/plan/apply) and the
 # offline fallback in llm.py need none of this.
 normalize = ["anthropic>=1.5.0"]
+# The skills framework (`kalos.skills`: typed SKILL.md packages, a tool table,
+# run receipts, read-only routes). pydantic models + YAML frontmatter. Torch-free:
+# importing `kalos.skills` never loads torch (tests/test_skills_builtin.py).
+skills = ["pydantic>=2", "pyyaml>=6"]
 # `httpx` is the transport `starlette.testclient.TestClient` (used across the
 # portal tests) needs. It is not pulled in transitively by fastapi/starlette, so
 # a fresh `pip install -e ".[...,dev]"` (what CI does) leaves it absent and every
@@ -50,6 +54,11 @@ dev = [
   "httpx>=0.27,<1", "anthropic>=1.5.0",
 ]
 
+[project.scripts]
+# `kalos skills validate|list|search|hash|tools` (kalos/skills/cli.py). Needs the
+# `skills` extra. Only the `skills` command group exists today.
+kalos = "kalos.skills.cli:kalos_main"
+
 [tool.setuptools.packages.find]
 include = ["kalos*"]
 
@@ -60,6 +69,7 @@ include = ["kalos*"]
 # Source checkouts never noticed.
 [tool.setuptools.package-data]
 "kalos.portal" = ["templates/*.html"]
+"kalos.skills" = ["builtin/*/SKILL.md", "builtin/*/DATA_SOURCES.md", "builtin/*/references/*", "builtin/*/examples/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
