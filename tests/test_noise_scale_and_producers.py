@@ -230,6 +230,49 @@ def test_clears_floor_is_unchanged_by_this_work():
     assert rel["clears_floor"] == expected
 
 
+def test_space_filling_advice_tracks_clears_floor():
+    """When the model clears the trust floor the advice is null; when it does not,
+    the response says plainly that a space-filling design does about as well.
+    Added after the real-data (Amii cell-media) replay showed model-guided
+    proposals are no better than Latin-hypercube until the floor is cleared."""
+    rel = _analyze(_media_like_sheet(), target="Lipase_g_L")["reliability"]
+    assert "space_filling_advice" in rel
+    if rel["clears_floor"]:
+        assert rel["space_filling_advice"] is None
+    else:
+        assert isinstance(rel["space_filling_advice"], str)
+        assert "space-filling" in rel["space_filling_advice"]
+
+
+def test_space_filling_advice_is_the_exact_inverse_of_clears_floor():
+    """The invariant, checked across several independent noise sheets (a pure-noise
+    target can spuriously clear the floor on a given seed, so assert the
+    relationship, not a specific outcome): advice is null exactly when the model
+    cleared the floor, and a non-empty space-filling sentence exactly when it did
+    not."""
+    seen_not_cleared = False
+    for seed in range(6):
+        rng = np.random.default_rng(seed)
+        rows = [
+            {
+                "Glucose_g_L": float(rng.uniform(5, 30)),
+                "pH": float(rng.uniform(6, 7.5)),
+                "Temp_C": float(rng.uniform(28, 37)),
+                "Lipase_g_L": float(rng.uniform(1, 4)),
+            }
+            for _ in range(30)
+        ]
+        rel = _analyze(pd.DataFrame(rows), target="Lipase_g_L")["reliability"]
+        advice = rel["space_filling_advice"]
+        if rel["clears_floor"]:
+            assert advice is None
+        else:
+            seen_not_cleared = True
+            assert isinstance(advice, str) and "space-filling" in advice
+    # pure noise over 6 seeds should fail the floor at least once
+    assert seen_not_cleared
+
+
 def test_unmodeled_admits_when_producer_ranking_cannot_be_scored():
     """A sheet with almost no producers must say so rather than stay silent."""
     rows = []
