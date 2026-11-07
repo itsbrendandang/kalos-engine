@@ -63,6 +63,13 @@ include = ["kalos*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `slow` marks the GP-heavy tests (full BoTorch fits, pool replays) that dominate
+# wall time. CI runs the fast set (`-m "not slow"`) on every push for quick
+# feedback, and the full suite on demand / on main. Registered so a plain run or
+# `--strict-markers` never warns about an unknown marker.
+markers = [
+    "slow: a GP-heavy test (full BoTorch fit or pool replay); deselect with -m 'not slow'",
+]
 
 [tool.ruff]
 # Floor matches requires-python (ax-platform needs 3.11). Explicit so ruff does not
