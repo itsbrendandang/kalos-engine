@@ -37,7 +37,7 @@ def _run(script: str, tmp_path, **env: str) -> subprocess.CompletedProcess:
     full_env = {k: v for k, v in os.environ.items()
                 if k not in {"KALOS_AUTH_TOKENS", "KALOS_AUTH_TOKENS_FILE",
                              "KALOS_ALLOW_OPEN_ACCESS", "KALOS_ENV",
-                             "KALOS_JWT_PUBLIC_KEYS_FILE", "KALOS_AUTH_DENY_SUBJECTS"}}
+                             "KALOS_AUTH_DENY_SUBJECTS"}}
     full_env.update({"KALOS_STATE_DIR": str(tmp_path)}, **env)
     return subprocess.run(
         [sys.executable, "-c", textwrap.dedent(script)],
