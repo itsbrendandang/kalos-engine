@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AllowInfNan, BaseModel, ConfigDict, Field, StringConstraints
 from pydantic import Strict as _Strict
 
+from kalos.assist.hooks import after_write as _assist_after_write
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
 from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_in_slot
 from kalos.portal.campaign import (
@@ -231,7 +232,9 @@ def log_campaign_result(
         log.warning("campaign result rejected: %s", exc)
         audit(store, principal, "campaign.result", 400)
         return JSONResponse({"error": str(exc), "code": "invalid_request"}, status_code=400)
-    return JSONResponse(run)
+    response = JSONResponse(run)
+    _assist_after_write(store, principal.tenant, None, response, kind="result")
+    return response
 
 
 @router.post("/api/campaign/reanalyze")
@@ -261,6 +264,9 @@ async def reanalyze_campaign(
     """
     response = await _reanalyze(store, principal)
     audit(store, principal, "campaign.reanalyze", response.status_code)
+    from starlette.concurrency import run_in_threadpool
+
+    await run_in_threadpool(_assist_after_write, store, principal.tenant, None, response, kind="reanalyze")
     return response
 
 

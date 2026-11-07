@@ -2,8 +2,6 @@
 
 Two tenants authenticated with STATIC bearer tokens (`KALOS_AUTH_TOKENS`):
 `acme` (admin, write-only and read-only tokens) and `globex` (admin token).
-JWT tenants are not covered here because the E2 verifier is not on this base;
-see tests/test_cross_tenant_isolation_jwt.py (a marked TODO stub).
 
 What this file proves, route by route:
 

@@ -11,11 +11,12 @@ from __future__ import annotations
 from kalos.providers.anthropic_provider import AnthropicProvider
 from kalos.providers.base import Provider
 from kalos.providers.bionemo_provider import BioNemoProvider
+from kalos.providers.ollama_provider import OllamaProvider
 
 
 def all_providers() -> tuple[Provider, ...]:
     """Every provider slot, in a fixed, stable order."""
-    return (AnthropicProvider(), BioNemoProvider())
+    return (AnthropicProvider(), BioNemoProvider(), OllamaProvider())
 
 
 def provider_status() -> list[dict]:

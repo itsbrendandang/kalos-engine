@@ -17,10 +17,6 @@ from .objectives import ackley, gaussian_bump
 from .pending import run_pending_duplication
 
 
-def _fmt(v: float) -> str:
-    return f"{v:+.3f}" if v < 0 else f"{v:.3f}"
-
-
 def _report_pending(quick: bool) -> int:
     """How many recipes of a round a blind mid-round re-proposal repeats."""
     seeds = range(4) if quick else range(10)

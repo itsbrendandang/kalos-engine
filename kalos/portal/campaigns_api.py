@@ -40,7 +40,9 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 from pydantic import Strict as _Strict
+from starlette.concurrency import run_in_threadpool
 
+from kalos.assist.hooks import after_write as _assist_after_write
 from kalos.portal.auth import ADMIN, READ, WRITE, Principal, require_scope
 from kalos.portal.campaign import (
     CampaignError,
@@ -112,7 +114,7 @@ def _valid_campaign_id(campaign_id: str) -> bool:
 
 
 def _auth_method(principal: Principal) -> str:
-    # E2 (JWT) adds `auth_method` to Principal; until then static bearer tokens.
+    # `auth_method` on Principal: 'anonymous' (open mode) or 'static' bearer token.
     method = getattr(principal, "auth_method", None)
     if isinstance(method, str) and method:
         return method
@@ -331,6 +333,10 @@ async def upload_to_campaign(
                     campaign_id=campaign_id, replace=replace,
                 )
     _audit(store, principal, "campaign.upload", response.status_code, campaign_id)
+    if _valid_campaign_id(campaign_id):
+        await run_in_threadpool(
+            _assist_after_write, store, principal.tenant, campaign_id, response, kind="upload",
+        )
     return response
 
 
@@ -399,7 +405,9 @@ def log_run_result(
                 reason=body.reason, actor=principal.subject,
                 auth_method=_auth_method(principal), audit=True,
             )
-            return JSONResponse(run)
+            response = JSONResponse(run)
+            _assist_after_write(store, principal.tenant, campaign_id, response, kind="result")
+            return response
         except CampaignError as exc:
             if type(exc) is CampaignError:
                 # Unknown run id / unseeded campaign. The store's message echoes
@@ -424,4 +432,8 @@ async def reanalyze(
     else:
         response = await _reanalyze(store, principal, campaign_id=campaign_id)
     _audit(store, principal, "campaign.reanalyze", response.status_code, campaign_id)
+    if _valid_campaign_id(campaign_id):
+        await run_in_threadpool(
+            _assist_after_write, store, principal.tenant, campaign_id, response, kind="reanalyze",
+        )
     return response
