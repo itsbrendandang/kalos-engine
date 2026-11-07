@@ -389,6 +389,30 @@ The anonymizer (`anonymize=true` on upload) is opt-in.
 
 The whole stack is free and open source: Python, FastAPI, BoTorch/PyTorch, SQLite, Next.js. Local development needs no paid service. Optional external-provider slots (`/api/providers`) and the optional LLM header-normalization tier (`normalize` extra) use paid APIs only if you supply keys. Neither is required.
 
+### Language models
+
+The engine uses a language model in exactly one place: the optional `normalize`
+tier, which maps a messy run sheet's column names to canonical names and units.
+Everything else (the optimizer, CV, conformal bands, gates) is plain math and
+uses no model. The tier is chosen with `KALOS_LLM_PROVIDER`:
+
+- **`ollama`** - a local, open-source model over HTTP (`KALOS_OLLAMA_URL`,
+  default `http://localhost:11434`; `KALOS_OLLAMA_MODEL`, default `llama3.1`).
+  Nothing leaves the machine. This is the free, local-first path.
+- **`anthropic`** - the hosted Anthropic API (needs `ANTHROPIC_API_KEY`); the
+  screened column payload is sent off the machine.
+- **`none`** - no model; the deterministic offline normalizer is used.
+
+If no provider answers, the tier always falls back to the offline normalizer, so
+an upload never fails because a model is unavailable.
+
+**What we develop with.** Day to day this project is built with a local
+**Qwen3.6-35B** model served through an OpenAI-compatible endpoint (llama.cpp /
+Hermes), so agent and normalization work runs on-device at no API cost. Wiring an
+arbitrary OpenAI-compatible server (so the engine can call Qwen the same way it
+calls Ollama) is part of the assistant work in progress; on `main` today the
+built-in local path is Ollama.
+
 ## Repository layout
 
 - `kalos/core/`: the BoTorch surrogate, acquisition, grouped CV, conformal bands, and gates.

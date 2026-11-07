@@ -9,6 +9,7 @@ feasibility-gated BO should not lose to plain BO under zero-inflation, and
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from kalos.bench.pool import run_pool
 from kalos.core.feasibility import (
@@ -62,6 +63,7 @@ def test_feasible_labels_strict_threshold_boundary():
     assert list(labels2) == [0, 0, 1, 1]
 
 
+@pytest.mark.slow
 def test_zero_inflated_pool_feasibility_gating_does_not_hurt():
     # Build a smooth positive response surface, then zero out ~25% of rows at
     # random to simulate zero-inflated non-producers (independent of the
