@@ -46,9 +46,16 @@ jobs:
   tests:
     name: pytest (fast)
     runs-on: ubuntu-latest
-    # The suite is CPU-bound GP fits and GitHub runners are small (2-4 cores), so
-    # even parallel + slow-excluded it needs more than 20 min. 35 gives headroom.
-    timeout-minutes: 35
+    # The fast suite (slow tests excluded) is still ~35 min of CPU-bound GP fits
+    # on a small runner, so it is SHARDED across parallel jobs: each shard runs a
+    # disjoint ~half via xdist's loadgroup, so wall time stays well under the cap
+    # even as the suite grows. Shards must agree, so the branch is green only when
+    # both pass.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -58,8 +65,10 @@ jobs:
         run: |
           uv venv --python 3.11 .venv
           uv pip install -e ".[ml,portal,bench,dev]"
-      - name: pytest (fast, parallel, skip GP-heavy 'slow' tests)
-        run: uv run python -m pytest -q -m "not slow" -n auto
+      - name: pytest (fast shard ${{ matrix.shard }}/2, parallel, skip slow)
+        run: >
+          uv run python -m pytest -q -m "not slow" -n auto
+          --splits 2 --group ${{ matrix.shard }}
 
   tests-full:
     name: pytest (full, incl. slow)
