@@ -257,8 +257,9 @@ Report vulnerabilities privately. See `SECURITY.md`.
 
 ## Scientific methodology and benchmark limitations
 
-**The optimizer is not scientifically validated.** No claim is made that it improves real wet-lab outcomes.
+**No live wet-lab validation yet.** No claim is made that Kalos improves outcomes in a running lab. There is, however, now a **measured result on real, published data** — see below.
 
+- **Real-data result (retrospective).** On six published cell-culture media datasets (pool replay, 20 seeds, [`VALIDATION.md`](VALIDATION.md)), Kalos reaches the top 5% of formulations in **~4× fewer experiments than Latin-hypercube on the one large, hard dataset** (TF-1 expansion: ~14 vs ~62, 15/20 seeds, Holm-adjusted p = 0.002). It ties on the smaller/smoother pools and **loses to space-filling on one** — a conditional, honest win, not a blanket claim. Retrospective replay, not a live trial.
 - **Method.** GP surrogate model with an expected-improvement-family acquisition function (BoTorch). Expected improvement is one type of acquisition function. The method also uses grouped CV, split-conformal intervals, and fail-closed promotion gates.
 - **Synthetic benchmarks (on `main`).** The `BENCHMARK.md` result below uses synthetic surfaces with known optima. The optimizer is free to exploit them. A noise-free 2-D simulation does not validate anything about real processes.
 - **Hybrid dataset (not shipped).** A Kaggle "Fermentation optimization" dataset is used by `examples/real_data_validation.py` as a smoke test only. The dataset is `dataset_0.csv`: 696 of 715 rows flagged synthetic, 19 real, Real flag unverified. The data is kept private. It is not in this repository. Set `KALOS_DATASET_DIR` to a folder that contains it (see `examples/datasets/README.md`). Tests skip when it is absent. A pool-replay result on it was weak (Spearman rank correlation 0.048). So it is not evidence.
