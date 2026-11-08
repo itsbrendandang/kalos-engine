@@ -226,12 +226,22 @@ def test_block_is_purely_additive():
     finally:
         analysis_mod._alternative_scale_block = original
 
-    # `timestamp` is `int(time.time())`, wall-clock and unrelated to this block;
-    # excluded alongside `alternative_scale` itself.
+    # `timestamp` and `model_diagnostics.fit_seconds` are wall-clock measurements
+    # (seconds since epoch; how long the GP fit took), not analysis output - they
+    # differ by a millisecond between two runs of the same seeded sheet. Exclude
+    # them so this tests whether the block is additive, not the clock.
     skip = {"alternative_scale", "timestamp"}
-    a = {k: v for k, v in with_block.items() if k not in skip}
-    b = {k: v for k, v in without_block.items() if k not in skip}
-    assert a == b, "alternative_scale must be purely additive to the rest of the response"
+
+    def _stable(resp: dict) -> dict:
+        out = {k: v for k, v in resp.items() if k not in skip}
+        diag = out.get("model_diagnostics")
+        if isinstance(diag, dict) and "fit_seconds" in diag:
+            out["model_diagnostics"] = {**diag, "fit_seconds": None}
+        return out
+
+    assert _stable(with_block) == _stable(without_block), (
+        "alternative_scale must be purely additive to the rest of the response"
+    )
 
 
 def test_added_runtime_is_bounded_relative_to_baseline(monkeypatch):
