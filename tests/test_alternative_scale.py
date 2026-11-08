@@ -227,23 +227,22 @@ def test_block_is_purely_additive():
     finally:
         analysis_mod._alternative_scale_block = original
 
-    # The intent: turning the block off changes NOTHING else about the response -
-    # the same keys, the same structure. It is deliberately NOT a bit-for-bit float
-    # comparison of the whole response: GP fits are not bit-reproducible across
-    # BLAS reduction orders (a two-core CI runner can differ from a laptop at the
-    # last digit between two calls in one process), so an exact == on every nested
-    # float measures the hardware, not whether the block is additive. Compare the
-    # top-level KEY SET (the block must add `alternative_scale` and touch nothing
-    # else) and that the load-bearing fields are still present.
+    # `timestamp` and `model_diagnostics.fit_seconds` are wall-clock measurements
+    # (seconds since epoch; how long the GP fit took), not analysis output - they
+    # differ by a millisecond between two runs of the same seeded sheet. Exclude
+    # them so this tests whether the block is additive, not the clock.
     skip = {"alternative_scale", "timestamp"}
-    assert set(with_block) - skip == set(without_block) - skip, (
-        "alternative_scale must not add or remove any other top-level field"
+
+    def _stable(resp: dict) -> dict:
+        out = {k: v for k, v in resp.items() if k not in skip}
+        diag = out.get("model_diagnostics")
+        if isinstance(diag, dict) and "fit_seconds" in diag:
+            out["model_diagnostics"] = {**diag, "fit_seconds": None}
+        return out
+
+    assert _stable(with_block) == _stable(without_block), (
+        "alternative_scale must be purely additive to the rest of the response"
     )
-    # The block is reported only when on, absent/forced-off otherwise.
-    assert "alternative_scale" in with_block
-    # Spot-check that the rest did not collapse: the proposal path still ran.
-    for key in ("proposals", "cv_spearman", "drivers", "reliability"):
-        assert key in with_block and key in without_block
 
 
 def test_added_runtime_is_bounded_relative_to_baseline(monkeypatch):
