@@ -35,6 +35,7 @@ def _stable(result: dict) -> str:
     return json.dumps(trimmed, sort_keys=True, default=str)
 
 
+@pytest.mark.serial
 def test_two_concurrent_analyses_match_sequential_output():
     df = _sheet()
     sequential = [_stable(_analyze(df.copy(), target="titer")) for _ in range(2)]

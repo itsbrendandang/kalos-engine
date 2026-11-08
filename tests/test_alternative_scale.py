@@ -205,6 +205,7 @@ def test_block_is_json_safe():
         assert "NaN" not in encoded
 
 
+@pytest.mark.serial
 def test_block_is_purely_additive():
     """Computing `alternative_scale` must change nothing else in the response -
     not the proposals, not the CV numbers, not the driver panel. Forces the

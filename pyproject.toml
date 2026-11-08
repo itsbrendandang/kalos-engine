@@ -68,6 +68,7 @@ testpaths = ["tests"]
 # main / on demand. Registered so a plain run or `--strict-markers` never warns.
 markers = [
     "slow: a GP-heavy test (full BoTorch fit or pool replay); deselect with -m 'not slow'",
+    "serial: a determinism test that compares analysis output for exact equality; it must not run under parallel xdist (float results vary by worker). Run it in its own serial job.",
 ]
 
 [tool.ruff]

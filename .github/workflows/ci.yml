@@ -65,10 +65,29 @@ jobs:
         run: |
           uv venv --python 3.11 .venv
           uv pip install -e ".[ml,portal,bench,dev]"
-      - name: pytest (fast shard ${{ matrix.shard }}/2, parallel, skip slow)
+      - name: pytest (fast shard ${{ matrix.shard }}/2, parallel, skip slow + serial)
         run: >
-          uv run python -m pytest -q -m "not slow" -n auto
+          uv run python -m pytest -q -m "not slow and not serial" -n auto
           --splits 2 --group ${{ matrix.shard }}
+
+  tests-serial:
+    name: pytest (serial determinism)
+    # Determinism tests compare analysis output for exact equality and must NOT
+    # run under parallel xdist (float results vary per worker even with threads
+    # pinned). A handful of tests, so a quick serial job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Create a 3.11 venv and install (ml, portal, bench, dev)
+        run: |
+          uv venv --python 3.11 .venv
+          uv pip install -e ".[ml,portal,bench,dev]"
+      - name: pytest (serial, no xdist)
+        run: uv run python -m pytest -q -m "serial"
 
   tests-full:
     name: pytest (full, incl. slow)
@@ -84,5 +103,7 @@ jobs:
         run: |
           uv venv --python 3.11 .venv
           uv pip install -e ".[ml,portal,bench,dev]"
-      - name: pytest (full suite, parallel)
-        run: uv run python -m pytest -q -n auto
+      - name: pytest (everything except serial, parallel)
+        run: uv run python -m pytest -q -m "not serial" -n auto
+      - name: pytest (serial determinism, no xdist)
+        run: uv run python -m pytest -q -m "serial"
