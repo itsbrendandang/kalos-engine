@@ -1,5 +1,9 @@
 # Does the optimizer actually beat a space-filling design?
 
+**Pinned numerical stack.** torch 2.13.0, botorch 0.18.1, gpytorch 1.15.2: the `ml` extra in `pyproject.toml` pins these exact versions, they match `uv.lock`, and `tests/test_torch_pin.py` fails if the runtime differs (unless `KALOS_ALLOW_TORCH_DRIFT=1`). Every bench JSON written from this commit on records the installed versions, the pins and any difference (`stack`, `kalos/versions.py`). Not every older section below says which versions it was run on; treat a number without a stated version as unconfirmed on the pin.
+
+**Primary objective (stated in writing; applies to every benchmark run from this commit on).** On data with replicated recipes, the primary objective is the **replicate-averaged** value of the best recipe found (the reproducible titer). The best single measurement is a secondary objective and is always reported next to it. History: the real-data pool section below first scored single measurements; the replicate-averaged objective was chosen after that result was seen, so the replicate-averaged result in that section is **post hoc**. Both results are kept below.
+
 This is the one question a bioprocess-optimization product must answer honestly before it is sold:
 given a fixed experiment budget, does the Bayesian-optimization loop reach a good recipe in **fewer experiments** than just running a Latin Hypercube (LHS) design or sampling at random?
 
@@ -35,7 +39,7 @@ This is not a broken wrapper over a GP; the optimization machinery works.
 
 **2. Observation noise is the decisive factor, not the algorithm.**
 At 15% measurement noise the advantage shrinks (smooth: 2.23 to 0.37 regret units over LHS; rugged: 2.07 to 0.61) but stays positive in these 10-seed runs.
-The BO rows were reproduced on torch 2.13.0 (the version in `uv.lock`); torch 2.14.1 gives different BO regrets on the same seeds, so these numbers depend on the torch build.
+The BO rows were reproduced on torch 2.13.0; torch 2.14.1 gives different BO regrets on the same seeds, so these numbers depend on the torch build.
 Real assay noise is frequently at or above this level, which is exactly why the real media data shows a fragile ~0.37-0.52 held-out signal: the optimizer is fine, the data is noisy relative to the effect being chased.
 
 **3. What this means for the product.**
@@ -65,7 +69,9 @@ Result, mean over 20 seeds (pool max titer 0.111):
 | init + 20 | 0.031 | 0.054 |
 | init + 47 | 0.035 | 0.077 |
 
-**On this dataset, BO does worse than random.**
+(Secondary objective, single measurement. The same pool scored on the primary, replicate-averaged objective is in "Update: the real lever is assay noise" below; read both.)
+
+**On this dataset, scored on single measurements, BO does worse than random.**
 It ends at 0.035 vs random's 0.077, and beats random in only 7 of 20 seeds.
 A client would have found higher-titer media faster by randomly trying untested recipes than by following the model.
 
@@ -111,7 +117,7 @@ The feasibility classifier is correct and worth keeping (it now feeds the `feasi
 The remaining lever is the data: **replicates and higher signal-to-noise** so the producer-titer surface is learnable at all.
 The product must not claim BO superiority on data in this regime, and the next real work is noise/replicate modeling, not a better acquisition function or classifier.
 
-## Update: the real lever is assay noise, and BO wins on the reproducible objective
+## Update: assay noise, and the replicate-averaged objective (post hoc)
 
 We followed the noise/replicate thread and it resolved the whole story.
 
@@ -126,8 +132,8 @@ The best *reproducible* recipe (replicate-averaged) is only **0.0197**, while th
 The single-measurement "best-found" metric therefore pays out for lucky noise draws.
 That is why undirected random search "won" the earlier benchmark: it chases noise blindly and occasionally hits a spike, while BO correctly refuses to over-chase a noisy incumbent and so scores worse on a metric that rewards luck.
 
-**On the objective that actually matters, BO wins.**
-Re-running the pool retrospective on the replicate-averaged recipe objective (27 recipes, 40 seeds) - the reproducible titer a client would actually ship:
+**On the replicate-averaged objective, BO is ahead early (no CI).**
+Re-running the pool retrospective on the replicate-averaged recipe objective (27 recipes, 40 seeds) - the reproducible titer a client would actually ship. This objective was chosen after the single-measurement result above was seen (post hoc). The table is means over seeds; **no CI**: no bootstrap or paired test was computed for it, and the private data set was not available to compute one for this edit. The gap at 5 picks (0.0158 vs 0.0153) may be noise.
 
 | picks | bo | bo_feas_clean | random |
 | --- | --- | --- | --- |
@@ -137,13 +143,13 @@ Re-running the pool retrospective on the replicate-averaged recipe objective (27
 | 14 | **0.0197** | **0.0197** | 0.0182 |
 | 22 | 0.0197 | 0.0197 | 0.0195 |
 
-Speed (area under the best-found curve, normalized): **BO 0.861, bo_feas_clean 0.864, random 0.816**.
-BO leads at every early checkpoint and reaches the best recipe roughly 5-6 experiments sooner.
-The endpoints tie only because the pool is tiny (27 recipes with a generous budget, so random eventually finds the max too); the speed advantage is the real, honest result.
+Speed (area under the best-found curve, normalized): **BO 0.861, bo_feas_clean 0.864, random 0.816** (no CI).
+BO's mean is higher at every early checkpoint and reaches the best recipe roughly 5-6 experiments sooner on average.
+The endpoints tie because the pool is tiny (27 recipes with a generous budget, so random eventually finds the max too).
 
-**Conclusion.**
-"BO loses to random" was an artifact of scoring single noisy measurements.
-On the reproducible objective - replicate-averaged titer, with the measured noise floor fed to the surrogate - BO does exactly what it promises: it finds the best recipe in fewer experiments.
+**Conclusion: both results stand.**
+On single measurements, random search found higher values than BO on this pool (7 of 20 seeds for BO). On the replicate-averaged objective, BO's mean best-found is higher early, without a CI and with the objective chosen after the first result. Single measurements reward lucky noise draws on a data set where about three quarters of the variance is assay noise, which is why the two objectives disagree; that explains the difference, it does not cancel the first result.
+On the reproducible objective - replicate-averaged titer, with the measured noise floor fed to the surrogate - this is a positive but unconfirmed result: a paired bootstrap CI over seeds is needed before it is a claim.
 The two concrete product changes that follow: optimize and benchmark on **replicate-averaged titer** (never single measurements, which reward noise), and report/feed the **assay noise floor** (ICC ~0.26, sigma ~0.008) so the model stops chasing spikes and clients know the honest reproducibility ceiling.
 The highest-leverage laboratory action remains reducing assay noise and collecting replicates.
 
@@ -161,7 +167,7 @@ Reproduce the real-data pool result from committed code:
 KALOS_MEDIA_DATA=/path/to/combined.tsv python examples/benchmark_media_pool.py
 ```
 
-It races BO / feasibility-gated BO / random on both the reproducible objective (where BO leads) and the single-measurement objective (the artifact), printing each strategy's best-found trajectory and normalized speed. No client data is committed; the script takes the sheet by path.
+It races BO / feasibility-gated BO / random on both the replicate-averaged objective (primary) and the single-measurement objective (secondary), printing each strategy's best-found trajectory and normalized speed. No client data is committed; the script takes the sheet by path.
 
 ## Caveats
 

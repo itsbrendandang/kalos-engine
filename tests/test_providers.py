@@ -18,6 +18,8 @@ _ALL_ENV_VARS = (
     "ANTHROPIC_API_KEY",
     "NVIDIA_API_KEY",
     "HF_TOKEN",
+    "KALOS_LLM_PROVIDER",
+    "KALOS_DESKTOP",
 )
 
 
@@ -90,9 +92,9 @@ def test_status_never_leaks_a_credential_value(monkeypatch):
 
 # --- registry ------------------------------------------------------------------- #
 
-def test_all_providers_returns_the_two_known_providers():
+def test_all_providers_returns_the_three_known_providers():
     names = {p.name for p in all_providers()}
-    assert names == {"anthropic", "bionemo"}
+    assert names == {"anthropic", "bionemo", "ollama"}
 
 
 def test_get_returns_provider_by_name_or_none():
@@ -104,11 +106,11 @@ def test_get_returns_provider_by_name_or_none():
 def test_provider_status_is_json_dumps_able():
     payload = provider_status()
     assert isinstance(payload, list)
-    assert len(payload) == 2
+    assert len(payload) == 3
     # must not raise
     text = json.dumps(payload)
     data = json.loads(text)
-    assert {entry["name"] for entry in data} == {"anthropic", "bionemo"}
+    assert {entry["name"] for entry in data} == {"anthropic", "bionemo", "ollama"}
     for entry in data:
         assert set(entry) == {
             "name", "available", "required_env", "missing_env", "capability", "fallback",
@@ -131,7 +133,7 @@ def test_key_set_after_import_is_picked_up(monkeypatch):
 
 # --- GET /api/providers -------------------------------------------------------- #
 
-def test_providers_route_returns_both(monkeypatch):
+def test_providers_route_returns_all(monkeypatch):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
@@ -146,8 +148,87 @@ def test_providers_route_returns_both(monkeypatch):
     body = resp.json()
     assert "providers" in body
     names = {entry["name"] for entry in body["providers"]}
-    assert names == {"anthropic", "bionemo"}
+    assert names == {"anthropic", "bionemo", "ollama"}
     anthropic_entry = next(e for e in body["providers"] if e["name"] == "anthropic")
     assert anthropic_entry["available"] is True
     # a live key must never leak into the response, even though it's set
     assert secret not in resp.text
+
+
+# --- ollama (the assistant's local model) ---------------------------------------- #
+
+def test_ollama_selected_only_by_provider_setting_or_desktop(monkeypatch):
+    from kalos.providers import OllamaProvider
+
+    provider = OllamaProvider()
+    assert provider.available() is False
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "ollama")
+    assert provider.available() is True
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "none")
+    assert provider.available() is False
+    monkeypatch.delenv("KALOS_LLM_PROVIDER")
+    monkeypatch.setenv("KALOS_DESKTOP", "1")
+    assert provider.available() is True
+    status = provider.status()
+    assert status.required_env == () and status.missing_env == ()
+
+
+def test_ollama_local_only_for_a_loopback_url(monkeypatch):
+    from kalos.providers import OllamaProvider
+
+    monkeypatch.delenv("KALOS_OLLAMA_URL", raising=False)
+    assert OllamaProvider().local() is True
+    monkeypatch.setenv("KALOS_OLLAMA_URL", "http://127.0.0.1:11434")
+    assert OllamaProvider().local() is True
+    monkeypatch.setenv("KALOS_OLLAMA_URL", "http://gpu-box.lan:11434")
+    assert OllamaProvider().local() is False
+
+
+def test_ollama_chat_posts_one_turn_and_reads_the_reply(monkeypatch):
+    from kalos.providers import ollama_provider
+    from kalos.providers.ollama_provider import OllamaProvider
+
+    seen = {}
+
+    def fake_open(request, timeout):
+        seen["url"] = request.full_url
+        seen["body"] = json.loads(request.data)
+        return json.dumps({"message": {"role": "assistant", "content": "hello [c1]"}}).encode()
+
+    monkeypatch.setattr(ollama_provider, "_open", fake_open)
+    monkeypatch.setenv("KALOS_OLLAMA_MODEL", "tiny")
+    assert OllamaProvider().chat("sys", "q") == "hello [c1]"
+    assert seen["url"].endswith("/api/chat")
+    assert seen["body"]["model"] == "tiny"
+    assert seen["body"]["stream"] is False
+    assert seen["body"]["options"] == {"temperature": 0}
+
+
+def test_ollama_unreachable_raises_a_fixed_message(monkeypatch):
+    import urllib.error
+
+    from kalos.providers import ollama_provider
+    from kalos.providers.ollama_provider import OllamaProvider, OllamaUnavailable
+
+    def boom(request, timeout):
+        raise urllib.error.URLError("refused")
+
+    monkeypatch.setattr(ollama_provider, "_open", boom)
+    with pytest.raises(OllamaUnavailable, match="did not answer"):
+        OllamaProvider().chat("sys", "secret question text")
+
+
+def test_ollama_calls_ignore_proxy_environment(monkeypatch):
+    """sec-assist (g): with HTTP(S)_PROXY set, the Ollama call still goes direct."""
+    import urllib.request
+
+    from kalos.providers.ollama_provider import _opener
+
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example:3128")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:3128")
+    monkeypatch.setenv("ALL_PROXY", "http://proxy.example:3128")
+    def with_proxies(opener):
+        return [h for h in opener.handlers if isinstance(h, urllib.request.ProxyHandler) and h.proxies]
+
+    assert with_proxies(urllib.request.build_opener())  # the default would use the proxy
+    assert with_proxies(_opener()) == []

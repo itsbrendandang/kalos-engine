@@ -35,6 +35,7 @@ Because the sheet comes from an external client, the upload path is guarded:
   | `too_many_rows` | a CSV/TSV has more than 100,000 data rows (blank lines are not rows; a quoted newline is one row). Refused before the file is parsed. | `max_rows` |
   | `too_many_columns` | more than 512 columns | |
   | `too_many_cells` | an xlsx sheet has more than 2,000,000 cells (rows x columns) | |
+  | `too_many_fit_rows` | more complete runs than the exact-GP fit cap (`KALOS_MAX_FIT_ROWS`, default 2000) after incomplete and censored rows are dropped. Refused, not subsampled. | `max_fit_rows`, `n_rows` |
   | `parse_error` / `fit_failed` | anything else (generic message), or a numerically intractable fit | `sheets`/`sheet_used` for Excel |
 
   CSV/TSV rows are counted by a streaming pass before pandas parses the body, and the header row is decided from that pass, so an over-cap file is refused without the memory cost of a full parse. Measured on a 4.2 M-row, 16 MB body: the refusal raised resident memory by about 230 MB before this change and by none after it (the process high-water mark does not move).

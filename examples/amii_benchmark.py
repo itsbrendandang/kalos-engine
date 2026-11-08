@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from kalos.bench.amii import REGISTRY, benchmark_dataset, load_amii_pool  # noqa: E402
+from kalos.versions import stack_record  # noqa: E402
 
 N_INIT = 10
 
@@ -69,7 +70,7 @@ def main() -> int:
         c["sign_test_p_holm"] = padj
         print(f"{n:18s} q={q} BO vs {arm:6s}: fewer {c['bo_fewer']} more {c['bo_more']} tied {c['tied']} "
               f"p={c['sign_test_p']:.3f} holm={padj:.3f}")
-    out.write_text(json.dumps(results, indent=2))
+    out.write_text(json.dumps({**results, "_stack": stack_record()}, indent=2))
     print(f"wrote {out}")
     return 0 if results else 2
 

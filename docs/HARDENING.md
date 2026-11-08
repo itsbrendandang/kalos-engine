@@ -81,8 +81,8 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 | `KALOS_CORS_ORIGINS` | Comma-separated explicit CORS allowlist (e.g. `https://app.acme.com`). When set, replaces the permissive localhost default. | unset (dev localhost) |
 | `KALOS_ENV` | Accepted values: `production` or `development` (case-insensitive, surrounding whitespace ignored); unset or empty means `development`. Any other value (e.g. `prod`, `staging`) refuses to start with `ProductionConfigError` naming the accepted values: a typo must not silently drop the production guards. See "Production mode" below. | unset (= `development`) |
 | `KALOS_VALIDATION_MODE` | `warn` or `strict` (case-insensitive). `warn` analyzes a sheet with validation errors and returns the findings; `strict` refuses it (docs/UPLOADS.md). Any other value refuses to start (exit 2) and raises `ConfigError` at request time, so a typo such as `stict` cannot select `warn` silently. | `warn` |
-| `KALOS_LLM_PROVIDER` | `anthropic`, `ollama` or `none` (case-insensitive). An unknown value refuses to start, rather than falling back to the live Anthropic path. | `anthropic` |
-| `KALOS_AUDIT_RETENTION_DAYS` | Audit-log rows older than this are pruned at startup and once a day. An integer from 1 to 36500 (a century, the way to ask for "keep everything"); anything else refuses to start. See "Audit retention" below. | `365` |
+| `KALOS_LLM_PROVIDER` | `anthropic`, `ollama` or `none` (case-insensitive). An unknown value refuses to start, rather than falling back to the live Anthropic path. | `anthropic` (the normalize tier). The assistant (docs/ASSISTANT.md) treats unset as `none`, or `ollama` in desktop mode. |
+| `KALOS_AUDIT_RETENTION_DAYS` | Opt-in archive window. Unset keeps every audit row and archives nothing. A number of days (1 to 36500) copies older rows to `<state dir>/audit-archive/` at startup and once a day. Rows are never deleted. Anything else refuses to start. See "Audit retention" below. | unset (keep all) |
 | `KALOS_MAX_REQUEST_BYTES` | Body-size cap, in bytes, for every non-upload route (the JSON `/api/campaign/*` bodies). Upload routes (`/api/run`, `/api/scale/readout`) are capped at `KALOS_MAX_UPLOAD_MB` + 1 MiB multipart allowance instead. Must be a positive integer. | `1048576` (1 MiB) |
 | `KALOS_JOBS_ENABLED` | `0` turns the background-job queue off: `POST /api/campaigns/{id}/jobs` answers 503 and nothing runs. Job status still reads. (docs/JOBS.md) | `1` |
 | `KALOS_JOB_WORKERS` | Analyses running at once in this engine, sync and background together. Must be >= 1. (docs/JOBS.md) | `2` |
@@ -114,6 +114,7 @@ Every refusal the engine sends has the same body: `{"error": "<what went wrong a
 | 403 | `forbidden` | a valid token without the required scope |
 | 404 | `not_found` | unknown route, or a campaign, run or job that does not exist for this tenant |
 | 405 | `method_not_allowed` | wrong method on a known route |
+| 400 | `reason_required` | a correction to a recorded campaign result without a `reason` (docs/CAMPAIGNS_API.md, "Recording results") |
 | 409 | `conflict`, `campaign_archived`, `campaign_has_runs` | state refusal |
 | 413 | `payload_too_large` | body over a size cap |
 | 422 | `validation_error` (other routes), `invalid_target` / gate checks (`/api/scale/readout`) | request does not validate |
@@ -128,7 +129,13 @@ Clients that treated only a 400 body as a "bad upload" must check the status too
 
 ### Audit retention
 
-Every mutating request writes one `audit_log` row (tenant, subject, auth method, action, outcome; never a token, a file or its contents). `KALOS_AUDIT_RETENTION_DAYS` sets how long those rows are kept: default **365**, an integer from 1 to 36500. The portal removes older rows for every tenant once at startup and once a day, and logs the count removed. A failed prune is logged and does not stop the portal. An invalid value refuses to start (`python -m kalos.portal` exits 2). Deleting an audit row is never a request, so no route can do it.
+Every mutating request writes one `audit_log` row (tenant, subject, auth method, action, outcome; never a token, a file or its contents).
+
+- **Append-only (schema v4).** `audit_log` has two database triggers that reject UPDATE and DELETE (`RAISE(ABORT)`, the engine sees `sqlite3.IntegrityError`). No route, and no engine code path, changes or removes an audit row. The row stays as it was written. See docs/MIGRATIONS.md, "Schema v4".
+- **Change rows carry the change.** A successful result submission writes a `campaign.result` row whose `detail` holds the run id, old value, new value, reason and actor (docs/CAMPAIGNS_API.md, "Recording results"). The row is written in the same transaction as the change.
+- **Nothing is deleted, with or without the setting.** The engine used to delete rows older than 365 days. It no longer does.
+- **The archive is opt-in.** `KALOS_AUDIT_RETENTION_DAYS` unset (the default) keeps every row and copies nothing. Set to N days, the portal copies rows older than N days into one append-only JSON-lines file per tenant under `<KALOS_STATE_DIR>/audit-archive/` (`t-<hex of the tenant id>.jsonl`, directory 0700, files 0600). It runs at startup and once a day, copies each row at most once, and logs the count. The copied rows stay in `portal.db`, so the archive is an export, not a space saving. A failed run is logged and does not stop the portal. An invalid value refuses to start (`python -m kalos.portal` exits 2).
+- **Limits.** The engine has no hash chain or signature on audit rows. The triggers stop UPDATE and DELETE through SQL; a person with write access to the database file can still replace it. Only the trigger-level guarantee is stated here.
 
 ### Production mode (`KALOS_ENV=production`)
 
@@ -336,11 +343,12 @@ These are judgement calls for the science owner; the code is unchanged.
 
 - `_analyze` holds `_RNG_LOCK` for its whole run, so two admitted analyses (busy.py
   `KALOS_JOB_WORKERS=2`) run their seeded sections one after the other. The result is
-  deterministic and identical to sequential, but the parallelism between two
+  the same as running them sequentially (which is itself not always repeatable:
+  docs/CAMPAIGNS_API.md "Determinism"), but the parallelism between two
   analyses is lost. A per-call `torch.Generator` through BoTorch would remove the lock;
   that is a larger refactor and is not done.
 - Scale readout (`kalos/scale/readout.py`) uses torch outside `_analyze` and does not
-  take the lock. Its output is not covered by the determinism guarantee.
+  take the lock. It is not covered by the seeding either.
 
 ### Concentration naming gap (C1 follow-on)
 
@@ -412,6 +420,7 @@ These are judgement calls for the science owner; the code is unchanged.
 - Background jobs review (PR #91), round 3, 2: the sync upload routes (`POST /api/run`, `POST /api/campaigns/{id}/upload`) refuse a campaign with awaiting or measured runs (409 `campaign_has_runs`) unless `replace=true`, and the publish is a compare-and-swap on the generation checked before the fit (docs/CAMPAIGNS_API.md, "Uploads").
 - Background jobs review (PR #91), round 3, 6: direct `uvicorn kalos.portal.app:app` with several workers still exits 0 (uvicorn's supervisor reports the failed workers as a clean stop; the app is not imported in the parent, so it cannot fail there). Not fixable in-process; documented (docs/JOBS.md, "Multiple engine processes are refused"). The deployed entrypoint `python -m kalos.portal` exits 2.
 - Background jobs review (PR #91), sync slot leak: a dispatch cancelled before its worker thread starts released no analysis slot, so later requests got 503. Every dispatcher (`/api/run`, the campaign reanalyze, the scale readout, the demo routes) now releases the slot on cancellation at any point (`kalos/portal/busy.py`, `run_in_slot`).
+- Audit log append-only (schema v4): `audit_log` rejects UPDATE and DELETE at the database level; the 365-day delete is replaced by an opt-in archive that copies rows and deletes none (docs/MIGRATIONS.md, "Schema v4"; docs/HARDENING.md, "Audit retention").
 - P2 observability, P4 latest->SQLite, P5 backups: planned, not started (see "Next backbone" above). P4 is done by schema v2; see the entries above.
 - E2 engine-token verification: **merged** to `main` (#88): EdDSA JWTs minted by kalos-web, verified against a JWKS file by `kid` (docs/ENGINE_TOKEN.md); `Principal` gains `auth_method`/`session_id`/`token_id`; deny-list revocation; production restricts static tokens to service accounts.
 - Schema v2 (multi-campaign storage): **merged** (`feat/campaign-schema-v2`) - `portal.db` gains `schema_migrations`, multi-campaign `campaigns` (`cmp_` ids, `UNIQUE(id, tenant)`), `analyses` (replacing `_LATEST` and `latest/*.json`), `tenant_defaults` (the legacy routes act on the tenant default) and `audit_log`; WAL, `foreign_keys`, `busy_timeout`; every store write is `BEGIN IMMEDIATE` + generation compare-and-swap; explicit, backed-up, reversible migration (`python -m kalos.portal.migrate up|down|status`). Runbook: docs/MIGRATIONS.md.

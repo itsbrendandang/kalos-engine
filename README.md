@@ -240,6 +240,7 @@ These controls exist today (`kalos/portal/auth.py`, `config.py`, `uploads.py`, `
 - Loopback guard: `python -m kalos.portal` binds 127.0.0.1. It refuses to serve unauthenticated on another interface. A middleware also refuses non-loopback peers while auth is not enforced. The exception is when `KALOS_ALLOW_OPEN_ACCESS` is set. Forwarded headers (`X-Forwarded-For`) are ignored unless `KALOS_TRUSTED_PROXIES` names the proxy IPs, so a client cannot spoof its peer address.
 - `KALOS_ENV=production` hardens the deployment: it disables the demo routes (`/api/single`, `/api/multi`) and the generated `/docs` / `/redoc` pages, and requires an explicit CORS allowlist.
 - CORS uses an explicit allowlist when `KALOS_CORS_ORIGINS` is set. Otherwise, the default allows localhost only.
+- Assistant (`/api/assist/*`, docs/ASSISTANT.md): questions and SOP revisions need a model, chosen with `KALOS_LLM_PROVIDER`. Unset means `ollama` (local) in desktop mode and `none` (off) everywhere else; `anthropic` sends the question and the matching pieces of your data off the machine and is used only when set explicitly. The next-step guide and SOP drafts use no model.
 - The anonymizer for uploads is opt-in (`anonymize=true`).
 
 These controls are missing or limited:
@@ -247,7 +248,8 @@ These controls are missing or limited:
 - **The web app has no user login, and its proxy is unauthenticated.** Do not expose kalos-web or this engine to the public internet.
 - Tenants are strings in operator-provisioned tokens. There is no user directory, organization membership, or self-service token issuance.
 - The engine verifies EdDSA engine tokens (`kalos/portal/jwt_auth.py`). kalos-web does not issue them yet. The web app still sends one static bearer token.
-- There is no rate limiting, audit log, or encryption at rest. TLS is out of scope. Use a reverse proxy.
+- Audit log: state-changing campaign and job routes write an `audit_log` row in `portal.db` (tenant, subject, auth method, action, outcome; never a token or uploaded data). Since schema v4 the table is append-only at the database level: triggers reject UPDATE and DELETE. Retention deletes nothing; `KALOS_AUDIT_RETENTION_DAYS` (unset by default) only turns on an opt-in archive that copies old rows to `<state dir>/audit-archive/`. Rows have no hash chain or signature, and a person with write access to the database file can still replace it. Only a `campaign.result` audit write is in the same transaction as its change; other audit writes are best-effort. Recorded results are append-only (schema v5). See `docs/HARDENING.md` ("Audit retention") and `docs/MIGRATIONS.md`.
+- There is no per-client request rate limit in the engine. The only throttles are the background-job queue caps (429 `rate_limited` with `Retry-After`) and the one-at-a-time sync analysis guard (503 busy). There is no encryption at rest. TLS is out of scope. Use a reverse proxy.
 - `/api/single`, `/api/multi`, and `/healthz` are not tenant-scoped. They hold no tenant data.
 - The deploy pack has been exercised once end to end. Its runbook still lists unverified items (backup drill).
 - No independent security review or penetration test has been done. No compliance claims are made. HARDENING.md puts 21 CFR Part 11, GAMP 5, SOC 2, and ISO 27001 out of scope for this repo.
@@ -292,7 +294,7 @@ These numbers are not a comparison against other optimizers. See [Benchmark vs o
 - The data validation gate checks units, physical bounds, duplicates, missing values, and more. It runs before any column is used. Proposals stay physically possible: [`docs/UPLOADS.md`](docs/UPLOADS.md), `tests/test_validation_gate.py`.
 - Runs that are started but not yet measured are passed to the acquisition as in-flight points. So a mid-round re-proposal does not repeat them: `tests/test_pending_proposals.py`, `python -m kalos.bench --pending`, [`BENCHMARK.md`](BENCHMARK.md).
 - The scale-up readout refuses to predict. This happens when its backtest on your own scale ladder does not beat two naive baselines: [`docs/SCALE_READOUT.md`](docs/SCALE_READOUT.md), `tests/test_scale_readout.py`.
-- Every analysis response carries `seed` and `engine_version`. The analyze path is seeded. So the same upload gives the same proposals: `tests/test_hardening.py`.
+- Every analysis response carries `seed`, `engine_version` and `proposal_provenance`. The analyze path is seeded, and small uploads give the same proposals when repeated (`tests/test_hardening.py`, `tests/test_golden_determinism.py`). This is not guaranteed: an 80-row, 6-feature sheet gave different proposals on identical runs in one process (recorded xfail; `docs/CAMPAIGNS_API.md`, "Determinism").
 
 ## Benchmark vs other optimizers
 

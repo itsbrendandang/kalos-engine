@@ -71,6 +71,12 @@ DEFAULT_CAMPAIGN_NAME = "Default campaign"
 LEGACY_CREATOR = "legacy-route"
 MAX_CAMPAIGN_NAME_CHARS = 200
 MAX_AUDIT_FIELD_CHARS = 512
+MAX_RESULT_REASON_CHARS = 256
+# A structured (JSON) audit `detail` is never clipped: clipping would leave
+# invalid JSON. It must fit this bound or the write fails (and its transaction
+# rolls back). The campaign.result detail is at most ~2.4k chars even when every
+# reason/actor char is JSON-escaped to \uXXXX (256*6 + 128*6 + ids).
+MAX_AUDIT_DETAIL_JSON_CHARS = 4096
 # `seed(expected_generation=...)` default: no explicit compare-and-swap token
 # (the write still CASes on the generation it read in the same transaction).
 _UNCHECKED: Any = object()
@@ -80,6 +86,7 @@ __all__ = [
     "CampaignConflict",
     "CampaignError",
     "CampaignNotFound",
+    "CampaignReasonRequired",
     "CampaignStore",
     "TenantCampaigns",
     "_campaigns_table_is_compatible",
@@ -109,6 +116,16 @@ class CampaignArchived(CampaignError):
 
     def __init__(self) -> None:
         super().__init__("the campaign is archived; it can be read but not changed")
+
+
+class CampaignReasonRequired(CampaignError):
+    """A correction (a second or later value for a run) was submitted without a
+    reason. Nothing was written."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "a correction to a recorded result needs a reason: say why the value changed"
+        )
 
 
 class CampaignConflict(CampaignError):
@@ -198,6 +215,71 @@ class _Row:
 
 
 _ROW_COLUMNS = "id, name, state, generation, created_by, created_at, updated_at, archived_at"
+_AUDIT_COLUMNS = (
+    "id, ts, tenant, subject, auth_method, action, campaign_id, job_id, outcome, "
+    "request_id, detail"
+)
+AUDIT_ARCHIVE_DIRNAME = "audit-archive"
+
+
+def _archive_path(archive_dir: Path, tenant: str) -> Path:
+    return archive_dir / f"t-{tenant.encode('utf-8').hex()}.jsonl"
+
+
+def _archive_watermark(path: Path) -> int:
+    """The largest audit id already archived to `path` (0 for a new file). The
+    archive is written in id order, so the last COMPLETE line is read. A
+    truncated final line (a crash mid-append) is skipped, not fatal: that row is
+    copied again on the next run (`_append_archive` first ends the partial line)."""
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            window = 65_536
+            while True:
+                fh.seek(max(0, size - window))
+                lines = [ln for ln in fh.read().split(b"\n") if ln.strip()]
+                for raw in reversed(lines):
+                    try:
+                        obj = json.loads(raw)
+                        return int(obj["id"])
+                    except (ValueError, KeyError, TypeError):
+                        continue
+                if window >= size:
+                    return 0
+                window *= 4
+    except FileNotFoundError:
+        return 0
+
+
+def _ends_mid_line(path: Path) -> bool:
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            if fh.tell() == 0:
+                return False
+            fh.seek(-1, os.SEEK_END)
+            return fh.read(1) != b"\n"
+    except FileNotFoundError:
+        return False
+
+
+def _append_archive(path: Path, rows: list[tuple[Any, ...]]) -> None:
+    """Append `rows` (one JSON object per line) and fsync. The directory is
+    private (0700) and the file is 0600: audit rows name subjects."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    names = _AUDIT_COLUMNS.split(", ")
+    payload = "".join(
+        json.dumps(dict(zip(names, row)), sort_keys=True, ensure_ascii=False) + "\n" for row in rows
+    ).encode("utf-8")
+    if _ends_mid_line(path):
+        payload = b"\n" + payload  # end a line truncated by an earlier crash
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.write(fd, payload)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 class CampaignStore:
@@ -651,6 +733,24 @@ class CampaignStore:
             raise CampaignError(missing)
         return row, state
 
+    @staticmethod
+    def _published_provenance(
+        conn: sqlite3.Connection, tenant: str, campaign_id: str
+    ) -> dict[str, Any] | None:
+        from kalos.portal.run_record import provenance_ref
+
+        arow = conn.execute(
+            "SELECT state FROM analyses WHERE campaign_id = ? AND tenant = ?",
+            (campaign_id, tenant),
+        ).fetchone()
+        if arow is None:
+            return None
+        try:
+            data = json.loads(arow[0])
+        except ValueError:
+            return None
+        return provenance_ref(data if isinstance(data, dict) else None)
+
     def start(
         self, recipes: list[dict[str, Any]], *, tenant: str, campaign_id: str | None = None
     ) -> list[dict[str, Any]]:
@@ -687,6 +787,12 @@ class CampaignStore:
             if capacity:
                 raise CampaignError(capacity)
             kinds = column_kinds(state.get("base_rows") or [], allowed)
+            # E5-lite: each run records which published analysis it was started
+            # against (its proposal_provenance reference; None when the campaign
+            # has no analysis or one written before the block existed). The
+            # recipe itself is caller input; this says what was published, not
+            # that the recipe came from it.
+            analysis_ref = self._published_provenance(conn, tenant, row.id)
             for recipe in recipes:
                 # Validate the recipe mapping HERE, at the point of the bad
                 # input, so a malformed body 400s cleanly at /api/campaign/start
@@ -718,6 +824,7 @@ class CampaignStore:
                     "round": state["round"],
                     "created_at": now,
                     "measured_at": None,
+                    "analysis_provenance": dict(analysis_ref) if analysis_ref else None,
                 }
                 state["pending"].append(run)
                 appended.append(run)
@@ -726,14 +833,35 @@ class CampaignStore:
             return appended
 
     def set_result(
-        self, run_id: str, value: float, *, tenant: str, campaign_id: str | None = None
+        self, run_id: str, value: float, *, tenant: str, campaign_id: str | None = None,
+        reason: str | None = None, actor: str | None = None, auth_method: str | None = None,
+        audit: bool = False,
     ) -> dict[str, Any]:
-        """Set the measured outcome on a pending run. Raises `CampaignError`
+        """Record the measured outcome of a pending run. Raises `CampaignError`
         (never silently ignored) if `run_id` is unknown or `value` is not a
         finite number — a NaN/inf result must never be foldable into the
-        base dataset on the next re-analyze."""
+        base dataset on the next re-analyze.
+
+        Append-only (schema v5, docs/CAMPAIGNS_API.md "Recording results"): every
+        call inserts a row in `run_results` with the value, the value it replaces,
+        the reason, the actor, and the server time. Nothing is overwritten. The
+        first value needs no reason; any later value (a correction) needs one,
+        else `CampaignReasonRequired` and nothing is written. The run's current
+        value in the campaign state is the latest. The history row and the state
+        change commit in one transaction.
+
+        With `audit=True` the `campaign.result` audit row is inserted in the SAME
+        transaction, so a change that cannot be audited is not made. Its `detail` is
+        a JSON object with `run_id`, `version`, `old_value` (null for the first value),
+        `new_value`, `reason` (null if none) and `actor`. The route passes `audit=True`
+        on success.
+
+        Returns the run with `result_version`, `previous_result`, `result_reason`,
+        `result_actor` and `result_recorded_at` for THIS submission.
+        """
         if not math.isfinite(value):
             raise CampaignError(f"result value must be a finite number; got {value!r}")
+        reason_text = reason.strip()[:MAX_RESULT_REASON_CHARS] if isinstance(reason, str) else ""
         self._check(tenant, campaign_id)
         with self._txn(write=True) as conn:
             row, state = self._writable_state(
@@ -741,13 +869,65 @@ class CampaignStore:
             )
             for run in state["pending"]:
                 if run["id"] == run_id:
+                    prior = run["result"]
+                    if prior is not None and not reason_text:
+                        raise CampaignReasonRequired()
                     now = time.time()
+                    version = int(conn.execute(
+                        "SELECT COUNT(*) FROM run_results WHERE tenant = ? AND campaign_id = ? "
+                        "AND run_id = ?",
+                        (tenant, row.id, run_id),
+                    ).fetchone()[0]) + 1
+                    conn.execute(
+                        "INSERT INTO run_results (tenant, campaign_id, run_id, version, value, "
+                        "previous_value, reason, actor, auth_method, recorded_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (tenant, row.id, run_id, version, value, prior,
+                         reason_text or None, _clip(actor), _clip(auth_method), now),
+                    )
                     run["result"] = value
                     run["measured_at"] = now
+                    run["result_version"] = version
                     state["updated_at"] = now
                     self._cas_write(conn, tenant, row, state, row.generation)
-                    return dict(run)
+                    if audit:
+                        detail = json.dumps({
+                            "run_id": run_id, "version": version, "old_value": prior,
+                            "new_value": value, "reason": reason_text or None,
+                            "actor": _clip(actor, 128),
+                        }, ensure_ascii=False, sort_keys=True)
+                        self._insert_audit(
+                            conn, tenant=tenant, action="campaign.result", outcome="ok",
+                            subject=actor, auth_method=auth_method, campaign_id=row.id,
+                            detail=detail, now=now, structured_detail=True,
+                        )
+                    return {
+                        **run,
+                        "previous_result": prior,
+                        "result_reason": reason_text or None,
+                        "result_actor": _clip(actor),
+                        "result_recorded_at": now,
+                    }
             raise CampaignError(f"unknown pending run id {run_id!r}")
+
+    def result_history(
+        self, run_id: str, *, tenant: str, campaign_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Every recorded value for one run, oldest first (`run_results`). Not an
+        HTTP route: the audit/read API is a separate change (engine-needs E7)."""
+        self._check(tenant, campaign_id)
+        with self._txn(write=False) as conn:
+            row = self._resolve(conn, tenant, campaign_id, create=False)
+            if row is None:
+                return []
+            cur = conn.execute(
+                "SELECT version, value, previous_value, reason, actor, auth_method, recorded_at "
+                "FROM run_results WHERE tenant = ? AND campaign_id = ? AND run_id = ? "
+                "ORDER BY version",
+                (tenant, row.id, run_id),
+            )
+            names = [d[0] for d in cur.description]
+            return [dict(zip(names, r)) for r in cur.fetchall()]
 
     def plan_fold(
         self, *, tenant: str, campaign_id: str | None = None
@@ -920,39 +1100,79 @@ class CampaignStore:
         never a token, a credential, or uploaded data. Every field is clipped."""
         validate_tenant_id(tenant)
         with self._txn(write=True) as conn:
-            conn.execute(
-                "INSERT INTO audit_log (ts, tenant, subject, auth_method, action, campaign_id, "
-                "job_id, outcome, request_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (time.time(), tenant, _clip(subject), _clip(auth_method), _clip(action, 64),
-                 _clip(campaign_id, 64), _clip(job_id, 64), _clip(outcome, 64),
-                 _clip(request_id, 128), _clip(detail)),
+            self._insert_audit(
+                conn, tenant=tenant, action=action, outcome=outcome, subject=subject,
+                auth_method=auth_method, campaign_id=campaign_id, job_id=job_id,
+                request_id=request_id, detail=detail, now=time.time(),
             )
 
-    def prune_audit_log(self, retention_days: int, *, now: float | None = None) -> int:
-        """Delete audit rows older than `retention_days`, for every tenant. Returns
-        the rows removed. A maintenance pass, run at startup and daily
-        (kalos/portal/app.py, KALOS_AUDIT_RETENTION_DAYS). It goes tenant by
-        tenant so every statement that touches a tenant table names its tenant."""
+    @staticmethod
+    def _insert_audit(
+        conn: sqlite3.Connection, *, tenant: str, action: str, outcome: str,
+        subject: str | None = None, auth_method: str | None = None,
+        campaign_id: str | None = None, job_id: str | None = None,
+        request_id: str | None = None, detail: str | None = None, now: float,
+        structured_detail: bool = False,
+    ) -> None:
+        """One audit row, inside the caller's transaction. A `structured_detail`
+        (JSON) is stored whole, never clipped; longer than
+        MAX_AUDIT_DETAIL_JSON_CHARS raises ValueError, so the caller's change
+        rolls back with it (fail closed)."""
+        if structured_detail and detail is not None:
+            if len(detail) > MAX_AUDIT_DETAIL_JSON_CHARS:
+                raise ValueError("structured audit detail exceeds its bound; not recorded")
+            stored_detail: str | None = detail
+        else:
+            stored_detail = _clip(detail)
+        conn.execute(
+            "INSERT INTO audit_log (ts, tenant, subject, auth_method, action, campaign_id, "
+            "job_id, outcome, request_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (now, tenant, _clip(subject), _clip(auth_method), _clip(action, 64),
+             _clip(campaign_id, 64), _clip(job_id, 64), _clip(outcome, 64),
+             _clip(request_id, 128), stored_detail),
+        )
+
+    def archive_audit_log(self, retention_days: int, *, now: float | None = None) -> int:
+        """Copy audit rows older than `retention_days` into the archive, for every
+        tenant, and return how many rows were copied. NOTHING IS DELETED: the rows
+        stay in `audit_log`, which rejects UPDATE and DELETE at the database level
+        (schema v4, kalos/portal/migrate.py).
+
+        The archive is one append-only JSON-lines file per tenant under
+        `<state_dir>/audit-archive/` (`t-<hex of the tenant id>.jsonl`, the same
+        injective encoding as the legacy `latest/` names). Each run appends the rows
+        whose `id` is above the last id already in that file, so a run that is
+        repeated copies nothing twice. Runs at startup and daily only when
+        `KALOS_AUDIT_RETENTION_DAYS` is set (docs/HARDENING.md, "Audit retention").
+        """
         if retention_days < 1:
             raise ValueError("retention_days must be at least 1")
         cutoff = (time.time() if now is None else now) - retention_days * 86_400.0
-        removed = 0
-        with self._txn(write=True) as conn:
+        archive_dir = self._dir / AUDIT_ARCHIVE_DIRNAME
+        pending: list[tuple[str, list[tuple[Any, ...]]]] = []
+        with self._txn(write=False) as conn:
             tenants = [row[0] for row in conn.execute("SELECT DISTINCT tenant FROM audit_log")]
             for tenant in tenants:
-                cur = conn.execute(
-                    "DELETE FROM audit_log WHERE tenant = ? AND ts < ?", (tenant, cutoff),
-                )
-                removed += int(cur.rowcount or 0)
-        return removed
+                watermark = _archive_watermark(_archive_path(archive_dir, tenant))
+                rows = conn.execute(
+                    f"SELECT {_AUDIT_COLUMNS} FROM audit_log "  # noqa: S608 - column list is a module constant; values are bound parameters
+                    "WHERE tenant = ? AND ts < ? AND id > ? ORDER BY id",
+                    (tenant, cutoff, watermark),
+                ).fetchall()
+                if rows:
+                    pending.append((tenant, rows))
+        archived = 0
+        for tenant, rows in pending:
+            _append_archive(_archive_path(archive_dir, tenant), rows)
+            archived += len(rows)
+        return archived
 
     def audit_entries(self, *, tenant: str, limit: int = 100) -> list[dict[str, Any]]:
         """`tenant`'s most recent audit entries, newest first."""
         validate_tenant_id(tenant)
         with self._txn(write=False) as conn:
             cur = conn.execute(
-                "SELECT id, ts, tenant, subject, auth_method, action, campaign_id, job_id, "
-                "outcome, request_id, detail FROM audit_log WHERE tenant = ? "
+                f"SELECT {_AUDIT_COLUMNS} FROM audit_log WHERE tenant = ? "  # noqa: S608 - column list is a module constant; values are bound parameters
                 "ORDER BY id DESC LIMIT ?",
                 (tenant, max(1, min(int(limit), 1000))),
             )
@@ -964,7 +1184,7 @@ _TENANT_METHODS = frozenset({
     "create_campaign", "campaign_info", "list_campaigns", "default_campaign_id",
     "archive_campaign", "update_campaign", "seed", "get", "summary", "start", "set_result", "plan_fold",
     "awaiting_recipes", "commit_fold", "save_analysis", "load_analysis",
-    "record_audit", "audit_entries",
+    "record_audit", "audit_entries", "result_history",
 })
 
 
