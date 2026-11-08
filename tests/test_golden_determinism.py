@@ -65,6 +65,7 @@ def _fingerprint(result: dict) -> dict:
 
 
 @pytest.mark.parametrize("name", sorted(DATASETS))
+@pytest.mark.serial
 def test_same_rows_same_seed_twice_in_process_gives_identical_proposals(name):
     raw, target = DATASETS[name]()
     _, first = compute_upload_analysis(raw, target, False, "golden.csv")
@@ -88,6 +89,7 @@ print("GOLDEN" + json.dumps(_fingerprint(r), sort_keys=True))
 """
 
 
+@pytest.mark.serial
 def test_a_fresh_process_gives_the_same_proposals():
     """Same machine, same stack, a new interpreter (as a background job runs):
     the RNG state of the parent process must not leak into the result."""
@@ -115,6 +117,7 @@ def _bioprocess_80x6() -> tuple[bytes, str]:
     "the acquisition optimum moves by whole units on differences that small. Cause "
     "not isolated (in-process state that _seeded_analysis does not reset is the lead)."
 ))
+@pytest.mark.serial
 def test_80x6_subset_is_identical_three_times_in_process():
     raw, target = _bioprocess_80x6()
     outs = [json.dumps(compute_upload_analysis(raw, target, False, "g.csv")[1]["proposals"],
