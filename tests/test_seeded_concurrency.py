@@ -30,11 +30,21 @@ def _sheet() -> pd.DataFrame:
 
 
 def _stable(result: dict) -> str:
-    """The result minus the wall-clock timestamp, as a comparable string."""
+    """The result minus wall-clock fields, as a comparable string.
+
+    Drops `timestamp` (seconds since epoch) and `model_diagnostics.fit_seconds`
+    (how long the GP fit took): both are measured durations, not analysis output,
+    so they differ by a millisecond between two runs of the same seeded sheet and
+    would make a determinism comparison test the clock, not the math.
+    """
     trimmed = {k: v for k, v in result.items() if k != "timestamp"}
+    diag = trimmed.get("model_diagnostics")
+    if isinstance(diag, dict) and "fit_seconds" in diag:
+        trimmed["model_diagnostics"] = {**diag, "fit_seconds": None}
     return json.dumps(trimmed, sort_keys=True, default=str)
 
 
+@pytest.mark.serial
 def test_two_concurrent_analyses_match_sequential_output():
     df = _sheet()
     sequential = [_stable(_analyze(df.copy(), target="titer")) for _ in range(2)]

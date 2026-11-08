@@ -46,9 +46,16 @@ jobs:
   tests:
     name: pytest (fast)
     runs-on: ubuntu-latest
-    # The suite is CPU-bound GP fits and GitHub runners are small (2-4 cores), so
-    # even parallel + slow-excluded it needs more than 20 min. 35 gives headroom.
-    timeout-minutes: 35
+    # The fast suite (slow tests excluded) is still ~35 min of CPU-bound GP fits
+    # on a small runner, so it is SHARDED across parallel jobs: each shard runs a
+    # disjoint ~half via xdist's loadgroup, so wall time stays well under the cap
+    # even as the suite grows. Shards must agree, so the branch is green only when
+    # both pass.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -58,8 +65,29 @@ jobs:
         run: |
           uv venv --python 3.11 .venv
           uv pip install -e ".[ml,portal,bench,dev]"
-      - name: pytest (fast, parallel, skip GP-heavy 'slow' tests)
-        run: uv run python -m pytest -q -m "not slow" -n auto
+      - name: pytest (fast shard ${{ matrix.shard }}/2, parallel, skip slow + serial)
+        run: >
+          uv run python -m pytest -q -m "not slow and not serial" -n auto
+          --splits 2 --group ${{ matrix.shard }}
+
+  tests-serial:
+    name: pytest (serial determinism)
+    # Determinism tests compare analysis output for exact equality and must NOT
+    # run under parallel xdist (float results vary per worker even with threads
+    # pinned). A handful of tests, so a quick serial job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Create a 3.11 venv and install (ml, portal, bench, dev)
+        run: |
+          uv venv --python 3.11 .venv
+          uv pip install -e ".[ml,portal,bench,dev]"
+      - name: pytest (serial, no xdist)
+        run: uv run python -m pytest -q -m "serial"
 
   tests-full:
     name: pytest (full, incl. slow)
@@ -75,5 +103,7 @@ jobs:
         run: |
           uv venv --python 3.11 .venv
           uv pip install -e ".[ml,portal,bench,dev]"
-      - name: pytest (full suite, parallel)
-        run: uv run python -m pytest -q -n auto
+      - name: pytest (everything except serial, parallel)
+        run: uv run python -m pytest -q -m "not serial" -n auto
+      - name: pytest (serial determinism, no xdist)
+        run: uv run python -m pytest -q -m "serial"
