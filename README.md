@@ -95,8 +95,8 @@ Latin hypercube sampling (LHS) spreads random points evenly across the design sp
 | Hard linear constraints on proposals | IMPLEMENTED in the core API only (`propose_batch`); the HTTP API and portal do not expose them yet | `kalos/core/optimize.py`, `tests/test_linear_constraints.py` |
 | `feature_ranges` in analysis output. GP-default guardrail | IMPLEMENTED | `kalos/portal/analysis.py`, `tests/test_feature_ranges.py` |
 | Repository hygiene (CODEOWNERS, SECURITY.md, PR template). Loopback-by-default compose bind | IMPLEMENTED | `SECURITY.md`, `.github/CODEOWNERS`, `deploy/compose.yaml` |
-| Engine-side verification of short-lived internal JSON Web Tokens (JWTs) from the web app (EdDSA) | IMPLEMENTED (kalos-web does not issue them yet) | `kalos/portal/jwt_auth.py`, `docs/ENGINE_TOKEN.md`, `tests/test_jwt_auth.py`; PRs [#88](https://github.com/itsbrendandang/kalos-engine/pull/88), [#96](https://github.com/itsbrendandang/kalos-engine/pull/96) |
-| Organizations as tenants, with membership | PLANNED | the engine only reads a `tenant` string (from an operator-provisioned token or an engine JWT claim). No organization model or membership exists in the engine |
+| Grounded assistant: cited chat over the tenant's own data, next-step guide, SOP drafts (`/api/assist/*`) | IMPLEMENTED | `kalos/assist/`, `docs/ASSISTANT.md`, `tests/test_assist_*` |
+| Organizations as tenants, with membership | PLANNED | the engine only reads a `tenant` string from an operator-provisioned token. No organization model or membership exists in the engine |
 | Multiple campaigns per tenant | IMPLEMENTED | `kalos/portal/campaigns_api.py`, `docs/CAMPAIGNS_API.md`, `tests/test_cross_tenant_isolation.py`; PRs [#89](https://github.com/itsbrendandang/kalos-engine/pull/89), [#90](https://github.com/itsbrendandang/kalos-engine/pull/90) |
 | Background analysis jobs with a local worker process (`/api/campaigns/{id}/jobs`) | IMPLEMENTED | `kalos/portal/jobs.py`, `job_runner.py`, `job_worker.py`, `docs/JOBS.md`, `tests/test_jobs.py`, `tests/test_jobs_api.py`; PR [#91](https://github.com/itsbrendandang/kalos-engine/pull/91). The synchronous routes still return 503 busy when the analysis slot is taken |
 | Sparse/variational surrogate model beyond 2,000 rows | PLANNED | `docs/HARDENING.md` Phase 2 |
@@ -113,11 +113,10 @@ flowchart LR
   W -->|"static bearer token (today)"| E["kalos-engine: FastAPI"]
   E --> S[("SQLite: per-tenant campaigns")]
   E --> M["GP surrogate (BoTorch)"]
-  E --> V["EdDSA JWT verification (built; kalos-web does not issue yet)"]
+  E --> AS["grounded assistant (/api/assist)"]
   E --> J["local job workers"]
   B -.->|"planned: login"| A["Better Auth session in web"]
   A -.-> W
-  W -.->|"planned: EdDSA JWT, iss kalos-web, aud kalos-engine, 120s max"| E
   E -.-> O["planned: organisations as tenants, membership"]
   classDef planned stroke-dasharray: 5 5,color:#666;
   class A,O planned;
@@ -128,13 +127,13 @@ The web app has **no user login**. So anyone who can reach the proxy acts as tha
 
 The engine side has these parts, which are built:
 
-- Verification of short-lived EdDSA-signed internal JWTs. The engine checks them on its own. Issuer `kalos-web`, audience `kalos-engine`, lifetime of at most 120 seconds.
+- The grounded assistant (`/api/assist/*`): a next-step guide, cited chat over the tenant's own data, and SOP drafts.
 - Multiple campaigns per tenant.
 - Background analysis jobs, run by local worker processes.
 
 These parts are still planned:
 
-- The Better Auth session and JWT issuance in the web app.
+- User login (Better Auth) in the web app, and a signed short-lived token from the web app to the engine (there is no such verification in the engine today; auth is static bearer tokens).
 - Organizations as tenants, with membership.
 
 Current and planned request flows: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Campaign loop details: [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md).
@@ -247,7 +246,7 @@ These controls are missing or limited:
 
 - **The web app has no user login, and its proxy is unauthenticated.** Do not expose kalos-web or this engine to the public internet.
 - Tenants are strings in operator-provisioned tokens. There is no user directory, organization membership, or self-service token issuance.
-- The engine verifies EdDSA engine tokens (`kalos/portal/jwt_auth.py`). kalos-web does not issue them yet. The web app still sends one static bearer token.
+- Authentication is static bearer tokens only (SHA-256 hashed, scoped). The web app sends one configured token. A signed per-user token from the web app is planned but not built.
 - Audit log: state-changing campaign and job routes write an `audit_log` row in `portal.db` (tenant, subject, auth method, action, outcome; never a token or uploaded data). Since schema v4 the table is append-only at the database level: triggers reject UPDATE and DELETE. Retention deletes nothing; `KALOS_AUDIT_RETENTION_DAYS` (unset by default) only turns on an opt-in archive that copies old rows to `<state dir>/audit-archive/`. Rows have no hash chain or signature, and a person with write access to the database file can still replace it. Only a `campaign.result` audit write is in the same transaction as its change; other audit writes are best-effort. Recorded results are append-only (schema v5). See `docs/HARDENING.md` ("Audit retention") and `docs/MIGRATIONS.md`.
 - There is no per-client request rate limit in the engine. The only throttles are the background-job queue caps (429 `rate_limited` with `Retry-After`) and the one-at-a-time sync analysis guard (503 busy). There is no encryption at rest. TLS is out of scope. Use a reverse proxy.
 - `/api/single`, `/api/multi`, and `/healthz` are not tenant-scoped. They hold no tenant data.
@@ -356,9 +355,9 @@ python -m kalos.bench --vs-baselines --quick   # smoke test, 2 seeds, writes not
 ## Roadmap
 
 - **MVP (toward a public beta, not started unless noted):**
-  - IMPLEMENTED: upload, analysis, campaign loop, scale readout, token auth, tenant-keyed store, multi-campaign API, background jobs, engine-side JWT verification.
+  - IMPLEMENTED: upload, analysis, campaign loop, scale readout, static token auth, tenant-keyed store, multi-campaign API, background jobs, grounded assistant.
   - IN PROGRESS: none open.
-  - PLANNED: web login (Better Auth), web-side JWT issuance, organizations as tenants, a rate limit.
+  - PLANNED: web login (Better Auth), a signed per-user token from the web app to the engine, organizations as tenants, a rate limit.
 - **Later (PLANNED):** sparse or variational surrogate model, metrics and alerting, server-side PDF readouts (`TODOS.md`), independent validation on real data, an external security review.
 - **EXPERIMENTAL:** mechanistic priors, and alternative surrogate models. Alternatives must beat the GP on published datasets first.
 
