@@ -19,11 +19,22 @@ import numpy as np
 import pandas as pd
 
 __all__ = [
+    "ABSOLUTE_CONSTANT_SPAN",
     "MIN_DISTINCT_TARGET_VALUES",
     "TARGET_CONSTANT_RTOL",
     "TargetVariation",
     "assess_target_variation",
+    "numeric_span_is_constant",
+    "numeric_span_is_near_constant",
+    "span_is_float_noise",
 ]
+
+# The feature filter's historical absolute floor (`spread <= 1e-9`). Kept for
+# columns whose own magnitude is below 1, where the relative rule is tighter
+# than this and must not start dropping real small-valued factors. Large-valued
+# factors use `span_is_float_noise` as well: an absolute 1e-9 is far below one
+# ulp of 5000, so float dust on a volume was still being searched.
+ABSOLUTE_CONSTANT_SPAN = 1e-9
 
 TARGET_CONSTANT_RTOL = 1e-9
 # A target is EFFECTIVELY constant when its spread is indistinguishable from
@@ -92,6 +103,59 @@ class TargetVariation:
         }
 
 
+def span_is_float_noise(lo: float, hi: float, scale: float) -> bool:
+    """True when `hi - lo` is float noise at magnitude `scale`.
+
+    The same comparison `assess_target_variation` uses
+    (`range <= TARGET_CONSTANT_RTOL * max |value|`). `scale` is that max, not
+    the mean, so a column centred on zero is not given a near-zero denominator.
+    """
+    return (hi - lo) <= TARGET_CONSTANT_RTOL * scale
+
+
+def _finite_numbers(values) -> np.ndarray:
+    """Finite floats from a column, ignoring blanks and non-numeric cells."""
+    series = values if isinstance(values, pd.Series) else pd.Series(values)
+    numeric = pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)
+    return numeric[np.isfinite(numeric)]
+
+
+def numeric_span_is_constant(values, *, absolute: float = ABSOLUTE_CONSTANT_SPAN) -> bool:
+    """True when a numeric column has nothing a search should vary.
+
+    Exact duplicates and a span at or below `absolute` (the historical feature
+    filter) are constant. So is a span that is only float noise relative to the
+    values' own magnitude (`span_is_float_noise`): a vessel volume of 5000 and
+    5000.000001 differs by far more than 1e-9 absolutely and by far less than
+    any real setting. A span above both bars is a real factor and is kept.
+    """
+    finite = _finite_numbers(values)
+    if finite.size < 2 or int(np.unique(finite).size) < 2:
+        return True
+    lo, hi = float(finite.min()), float(finite.max())
+    span = hi - lo
+    scale = float(np.max(np.abs(finite)))
+    return span <= absolute or span_is_float_noise(lo, hi, scale)
+
+
+def numeric_span_is_near_constant(values, *, absolute: float = ABSOLUTE_CONSTANT_SPAN) -> bool:
+    """The relative-noise case of `numeric_span_is_constant`, and not the absolute one.
+
+    These columns are not a single repeated value (`constant_columns` already
+    reports that). They are the large-magnitude float dust the absolute floor
+    misses, which used to be searched as if it were a factor.
+    """
+    finite = _finite_numbers(values)
+    if finite.size < 2 or int(np.unique(finite).size) < 2:
+        return False
+    lo, hi = float(finite.min()), float(finite.max())
+    span = hi - lo
+    if span <= absolute:
+        return False
+    scale = float(np.max(np.abs(finite)))
+    return span_is_float_noise(lo, hi, scale)
+
+
 def assess_target_variation(values) -> TargetVariation:
     """Classify a target column (any array-like / Series) per `TargetVariation`.
 
@@ -118,7 +182,7 @@ def assess_target_variation(values) -> TargetVariation:
     lo, hi = float(finite.min()), float(finite.max())
     n_distinct = int(np.unique(finite).size)
     scale = float(np.max(np.abs(finite)))
-    constant = n_distinct < MIN_DISTINCT_TARGET_VALUES or (hi - lo) <= TARGET_CONSTANT_RTOL * scale
+    constant = n_distinct < MIN_DISTINCT_TARGET_VALUES or span_is_float_noise(lo, hi, scale)
     return TargetVariation(
         "constant" if constant else "ok", n_nonblank, n_numeric, n_distinct, lo, hi
     )

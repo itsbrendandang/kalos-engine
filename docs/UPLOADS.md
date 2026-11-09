@@ -67,6 +67,12 @@ Because the sheet comes from an external client, the upload path is guarded:
   An **error** is a physics violation (pH 40, a negative titer, one column mixing g/L and mg/mL); a **warning** is possible but operationally suspect.
   Row lists are capped at 20 with the true total in `detail.n_rows_affected`, so a finding never implies its list is complete.
   `KALOS_VALIDATION_MODE=strict` refuses a `fail` upload; the default `warn` analyzes it anyway and returns the findings.
+- **A CV interval that cannot be computed is null, not an error.**
+  With fewer than three cross-validation groups the group bootstrap has nothing to resample, so `cv_ci95` and `reliability.ci95` are null and `cv_ci95_code` is `cv_ci_unavailable`. The Spearman point estimate is still returned. The response is finite JSON; this is not a `parse_error` and not an HTTP 500.
+- **A column of design codes is not a physical measurement.**
+  Values that all sit on a `-1/-0.5/0/0.5/1` lattice with a repeated negative level, or a column whose name says `code`/`coded` and whose values all lie in [-1, 1], are reported as `coded_column` (info) and are not checked against physical limits. The search box keeps the code range. A value outside that code box, including one negative sentinel among real readings, is still a `physical_bounds` error.
+- **A factor that only jitters is held fixed.**
+  A continuous column whose range is float noise relative to its own magnitude (`range <= 1e-9 * max|value|`, the same bar as a constant target) is not searched. It is reported as `near_constant_input` (info) and `dropped_constant` in provenance. An exact constant is still `constant_columns`. A range a measurement could resolve, including a temperature that moves by a few tenths of a degree, is still a factor.
 - **A target that does not vary is refused.**
   If the target column has one value on every row, or values that differ only by floating-point rounding (`range <= 1e-9 * max|value|`, see `kalos/validation/target.py`), no model can learn from it.
   The upload (and a campaign re-analyze) is refused with a 400 before any model is fit, and no proposals are generated: `{"error": "...", "code": "target_constant", "target": "...", "target_summary": {...}, "available_targets": [...]}`, where `available_targets` lists other outcome columns that do vary.

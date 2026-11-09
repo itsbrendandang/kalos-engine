@@ -7,6 +7,8 @@ from collections.abc import Callable
 
 import numpy as np
 
+from kalos.portal.serialization import finite_interval
+
 
 def _num(x: object, nd: int = 4) -> float | None:
     """Round to `nd` places, or None for anything that is not a finite number.
@@ -174,11 +176,7 @@ def _alternative_scale_block(
         X, y_log, groups=groups, n_splits=5, bounds=bounds, cat_dims=cat_dims, n_repeats=1,
     )
     rho_log = rep_log["spearman"]
-    ci95_log = (
-        None
-        if rho_log != rho_log
-        else [round(rep_log["ci95"][0], 3), round(rep_log["ci95"][1], 3)]
-    )
+    ci95_log = None if rho_log != rho_log else finite_interval(rep_log["ci95"])
     calibration_log = interval_calibration(rep_log["oof_actual"], rep_log["oof_pred"], rep_log["oof_std"])
     return {
         "scale": "log1p",
