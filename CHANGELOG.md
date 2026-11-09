@@ -4,6 +4,13 @@ Newest first.
 
 ## Unreleased
 
+### Fixed - replay upload and analysis no longer fail on small or coded sheets
+
+- Two CV groups used to put NaN in `cv_ci95` (the group bootstrap needs three groups). `JSONResponse` refuses NaN, so `POST /api/run` answered `400 parse_error` and a reanalyze answered HTTP 500. The point estimate is unchanged; the interval is null and `cv_ci95_code` is `cv_ci_unavailable`.
+- A standard sheet whose first column is a run label containing a word like "pH" was detected as transposed, collapsed to one row, and refused with `too_few_rows`. A sheet with only one value column is left standard, and a keyword repeated on every row is not treated as a parameter list.
+- A column of design codes (`-1/0/1`, or a header marked `code`/`coded` with values inside [-1, 1]) is not checked against physical limits and is not trimmed out of the search box. A real impossible value (pH 40, a negative feed, a -999 temperature) is still an error. The finding is `coded_column`.
+- A continuous factor whose span is only float noise relative to its magnitude (a volume of 5000 and 5000.000001) is held fixed, reported as `near_constant_input`, and not searched. The absolute `1e-9` floor is unchanged, and a span a lab could resolve is still a factor.
+
 ### Changed - audit trail and recorded results (schema v5, `docs/MIGRATIONS.md`)
 
 - **Recorded results are append-only.** A re-submitted campaign result is a new `run_results` row (value, value replaced, reason, actor, server time). A correction needs a `reason` (`400 reason_required` without one). The run's current value is the latest. Response fields are added (`result_version`, `previous_result`, `result_reason`, `result_actor`, `result_recorded_at`); none is removed.

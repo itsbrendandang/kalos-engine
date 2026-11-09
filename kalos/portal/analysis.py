@@ -105,6 +105,7 @@ from kalos.portal.cells import (
     classify_cells,
     is_null_label,
 )
+from kalos.portal.serialization import finite_interval, is_finite_number, json_safe
 from kalos.portal.uploads import (
     _ERR_TOO_MANY_FIT_ROWS,
     MAX_FIT_ROWS,
@@ -114,6 +115,7 @@ from kalos.portal.uploads import (
 )
 from kalos.portal.validate import column_provenance, provenance_dicts
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
+from kalos.validation.target import numeric_span_is_constant
 
 # Re-exported: each name below was defined in this module before the split into
 # `kalos.portal.analysis_parts`; callers and tests keep importing it from here.
@@ -409,12 +411,13 @@ def _analyze_body(
     _refuse_unusable_target(df, target, num, profile)
 
     # Keep only continuous features that actually vary (a constant column carries
-    # no signal and would collapse its normalization range). Matches the legacy
-    # full-column variance filter.
+    # no signal and would collapse its normalization range). The absolute floor
+    # and the relative float-noise rule live in `numeric_span_is_constant`: a
+    # volume of 5000.000001 used to pass `std > 1e-9` and get searched.
     varying = []
     for c in cont_feats:
         col = pd.to_numeric(df[c], errors="coerce")
-        if col.std(skipna=True) and col.std() > 1e-9:
+        if not numeric_span_is_constant(col):
             varying.append(c)
     cont_feats = varying
     if not cont_feats and not cat_feats:
@@ -480,8 +483,7 @@ def _analyze_body(
     constant_on_fitted: list = []
     if cont_feats and fit1.any():
         block = Xc_all[fit1].fillna(0.0)
-        spread = block.max(axis=0) - block.min(axis=0)
-        constant_on_fitted = [c for c in cont_feats if float(spread[c]) <= 1e-9]
+        constant_on_fitted = [c for c in cont_feats if numeric_span_is_constant(block[c])]
         if constant_on_fitted:
             cont_feats = [c for c in cont_feats if c not in set(constant_on_fitted)]
             Xc_all = Xc_all.drop(columns=constant_on_fitted)
@@ -710,6 +712,12 @@ def _analyze_body(
         X, y, groups=groups, n_splits=5, bounds=bounds, cat_dims=cat_dims, n_repeats=CV_N_REPEATS,
     )
     rho = rep["spearman"]
+    # A finite Spearman with a NaN interval is the two-group case: the bootstrap
+    # needs three groups, so `ci95` is `(nan, nan)`. That must become null plus
+    # `cv_ci_unavailable`, not a NaN the JSON encoder rejects.
+    rho_ok = is_finite_number(rho)
+    ci95 = finite_interval(rep["ci95"]) if rho_ok else None
+    cv_ci_code = "cv_ci_unavailable" if rho_ok and ci95 is None else None
     # Repeat-0-only: the point estimate and the OOF pools below stay anchored to
     # the SAME unshuffled partition `grouped_cv_report` always uses for repeat 0,
     # so calibration/conformal/producer-only ranking all read off one consistent
@@ -728,7 +736,6 @@ def _analyze_body(
     # Honest reliability verdict: only what this path can actually assess. The
     # spearman floor mirrors GatesConfig.min_spearman (kalos/core/gates.py); we do
     # NOT assert the feasibility gate, which is not measured here.
-    ci95 = None if rho != rho else [round(rep["ci95"][0], 3), round(rep["ci95"][1], 3)]
 
     # CALIBRATION. A model can rank held-out runs correctly and still state every
     # uncertainty at half its true width, and the scientist reading "4.2 +/- 0.3"
@@ -1427,6 +1434,10 @@ def _analyze_body(
         "n_pending_dropped": int(n_pending_dropped),
         "cv_spearman": None if rho != rho else round(rho, 3),
         "cv_ci95": ci95,
+        # Null when `cv_ci95` is a real interval. `cv_ci_unavailable` when the
+        # point estimate exists but the group bootstrap cannot (fewer than
+        # three groups): the score is still reported, the interval is not.
+        "cv_ci95_code": cv_ci_code,
         "cv_n_groups": rep["n_groups"],
         # How many partitions actually went into `cv_ci95` above - the requested
         # ceiling (`CV_N_REPEATS`) collapses to 1 when the sheet has too few
@@ -1567,4 +1578,4 @@ def _analyze_body(
             result,
             categorical_levels={str(c): cat_dims_map[c] for c in kept_cats},
         )
-    return result
+    return json_safe(result)

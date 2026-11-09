@@ -22,6 +22,8 @@ from typing import Literal
 
 import pandas as pd
 
+from kalos.validation.target import numeric_span_is_constant
+
 ColumnStatus = Literal[
     "kept_feature",
     "target",
@@ -150,10 +152,10 @@ def column_provenance(
             status = "dropped_sparse"
         else:
             # numeric, not target/feature/id/output -> excluded as constant
-            # (zero variance is the only remaining reason `_analyze` drops it)
+            # (no usable span is the only remaining reason `_analyze` drops it,
+            # including float noise on a large magnitude)
             col_num = pd.to_numeric(df[col], errors="coerce")
-            std = col_num.std(skipna=True)
-            status = "dropped_constant" if (std != std or std <= 1e-9) else "dropped_sparse"
+            status = "dropped_constant" if numeric_span_is_constant(col_num) else "dropped_sparse"
         source: RoleSource = "declared" if name in declared_set else "inferred"
         report.append(
             ColumnProvenance(

@@ -6,7 +6,7 @@ from __future__ import annotations
 import numpy as np
 
 from kalos.domains import ColumnRoles
-from kalos.validation.bounds import DIMENSION_BOUNDS, infer_dimension
+from kalos.validation.bounds import DIMENSION_BOUNDS, infer_dimension, is_coded_factor
 
 
 def _absent_is_zero_columns(cont_feats: list, roles: ColumnRoles | None) -> set[str]:
@@ -54,6 +54,10 @@ def _physical_range(
     """
     lo_obs, hi_obs = float(col.min()), float(col.max())
     lo_obs, hi_obs = _with_absent(lo_obs, hi_obs, absent)
+    # Codes are the search space. Applying a physical hard range here would
+    # drop every -1 level and hand the optimizer [0, 1] for a -1/0/1 factor.
+    if col.size and is_coded_factor(name, col):
+        return lo_obs, hi_obs, 0
     dim = infer_dimension(name)
     if dim is None:
         return lo_obs, hi_obs, 0

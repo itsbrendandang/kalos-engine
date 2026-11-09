@@ -42,8 +42,9 @@ from scipy.stats import spearmanr
 from kalos.core.replicates import noise_report
 from kalos.normalize import units
 
-from .bounds import DIMENSION_BOUNDS, infer_dimension
+from .bounds import DIMENSION_BOUNDS, infer_dimension, is_coded_factor
 from .report import Finding, UnitConversion, cap_rows
+from .target import numeric_span_is_near_constant
 
 __all__ = [
     "check_constant_columns",
@@ -257,6 +258,32 @@ def check_physical_bounds(df: pd.DataFrame) -> list[Finding]:
         series = df[col]
         mask = _nonblank_mask(series)
         if not mask.any():
+            continue
+
+        numeric = pd.to_numeric(series, errors="coerce")
+        finite = numeric[np.isfinite(numeric.to_numpy(dtype=float))]
+        if is_coded_factor(name, finite.to_numpy(dtype=float)):
+            # Design codes (-1/0/1, or a header that says so) are not a pH of
+            # -1 or a negative feed. Skipping the physical check is the whole
+            # point; the info finding says that is what happened. A value
+            # outside the code box never reaches here (`is_coded_factor`).
+            findings.append(
+                Finding(
+                    check="coded_column",
+                    severity="info",
+                    message=(
+                        f"column '{name}' was kept as design codes and not checked "
+                        "against physical limits, because its numbers stand for "
+                        "labels rather than a measurement in physical units"
+                    ),
+                    column=name,
+                    detail={
+                        "min_seen": float(finite.min()),
+                        "max_seen": float(finite.max()),
+                        "n_distinct": int(finite.nunique()),
+                    },
+                )
+            )
             continue
 
         error_rows: list[int] = []
@@ -777,6 +804,27 @@ def check_constant_columns(df: pd.DataFrame) -> list[Finding]:
                     ),
                     column=name,
                     detail={"value": float(valid.iloc[0])},
+                )
+            )
+            continue
+        if numeric_span_is_near_constant(valid):
+            # Not a single repeated value (that is the finding above) and not a
+            # real factor either: the span is float noise relative to the
+            # column's own magnitude, which the absolute 1e-9 floor does not
+            # catch on a large number. Held fixed downstream, and said so here.
+            findings.append(
+                Finding(
+                    check="near_constant_input",
+                    severity="info",
+                    message=(
+                        f"column '{name}' barely changes relative to its magnitude, "
+                        "so it is held fixed and not searched"
+                    ),
+                    column=name,
+                    detail={
+                        "min_seen": float(valid.min()),
+                        "max_seen": float(valid.max()),
+                    },
                 )
             )
     return findings

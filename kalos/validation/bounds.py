@@ -36,6 +36,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+import numpy as np
+
 # --- range definitions ----------------------------------------------------- #
 
 
@@ -233,6 +235,49 @@ _DIMENSION_HINTS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+# A coded factor lives on a small design lattice inside [-1, 1], not in the
+# physical unit its header happens to name. -1/0/1 (and the half-steps of a
+# face-centered design) are the lattices published DoE sheets actually use.
+_CODE_LATTICE = np.array([-1.0, -0.5, 0.0, 0.5, 1.0])
+_CODE_TOL = 1e-6
+# "feed_rate_coded" and "pH_code" are an explicit declaration. "barcode" and
+# "encode" are not: the token has to stand on its own.
+_CODE_NAME = re.compile(r"(?<![a-z])coded?(?![a-z])", re.I)
+
+
+def is_coded_factor(name: str, values: np.ndarray) -> bool:
+    """True when `values` are design codes, not a physical measurement.
+
+    Two ways, both of which keep a real impossible value an error:
+
+    - The header itself says the column is coded (`coded` / `code` as its own
+      token) AND every finite value lies in [-1, 1]. A value outside that box
+      is not a code, so the physical check still runs (a column named
+      `feed_rate_coded` that contains 40 is not given a free pass).
+    - Every finite value sits on the {-1, -0.5, 0, 0.5, 1} lattice AND a
+      negative level occurs at least twice. One negative cell among physical
+      readings is a sentinel, not a level: it is not on this lattice unless
+      every other cell is too, and a single -1 or -0.5 still fails the
+      "at least twice" rule so a one-off typo is still an error. A real pH of
+      7 or a feed of 0.2 is outside the lattice and is still checked.
+
+    Recognized codes are not compared with physical limits. Anything else is.
+    """
+    arr = np.asarray(values, dtype=float).reshape(-1)
+    finite = arr[np.isfinite(arr)]
+    if finite.size < 2:
+        return False
+    lo, hi = float(finite.min()), float(finite.max())
+    if lo < -1.0 - _CODE_TOL or hi > 1.0 + _CODE_TOL:
+        return False
+    if _CODE_NAME.search(str(name)):
+        return True
+    nearest = _CODE_LATTICE[np.abs(finite.reshape(-1, 1) - _CODE_LATTICE).argmin(axis=1)]
+    if float(np.max(np.abs(finite - nearest))) > _CODE_TOL:
+        return False
+    return int(np.sum(finite < -_CODE_TOL)) >= 2
+
+
 def infer_dimension(column_name: str) -> str | None:
     """Guess a column's measurement dimension from its header text alone.
 
@@ -252,4 +297,4 @@ def infer_dimension(column_name: str) -> str | None:
     return None
 
 
-__all__ = ["DIMENSION_BOUNDS", "DimensionBounds", "infer_dimension"]
+__all__ = ["DIMENSION_BOUNDS", "DimensionBounds", "infer_dimension", "is_coded_factor"]

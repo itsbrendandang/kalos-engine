@@ -136,13 +136,14 @@ def _score_signals(df: pd.DataFrame) -> dict[str, float]:
     first_col_values = df.iloc[:, 0].astype(str).str.lower()
 
     # 1. bioprocess-keyword matches in the first column (first N rows) - a
-    #    first column full of parameter names is a transposed-sheet signal.
-    sample = first_col_values.iloc[:_ROW_SAMPLE]
-    bioprocess_matches = sum(
-        any(keyword in val for keyword in _BIOPROCESS_KEYWORDS) for val in sample
-    )
-    if bioprocess_matches:
-        signals["first_column_keywords"] = float(min(bioprocess_matches * 3, 15))
+    #    first column full of DISTINCT parameter names is a transposed-sheet
+    #    signal. The same keyword on every row ("T2 pH 4", "T2 pH 5", ...) is a
+    #    run label, not a parameter list, and must not count: that pattern
+    #    confidently transposed a two-column run sheet and the upload then
+    #    refused it as too few rows.
+    keyword_score = _parameter_keyword_score(first_col_values)
+    if keyword_score:
+        signals["first_column_keywords"] = keyword_score
 
     # 2. "type"-like indicator words anywhere in the first column.
     joined = " ".join(first_col_values.tolist())
@@ -194,6 +195,39 @@ def _score_signals(df: pd.DataFrame) -> dict[str, float]:
         signals["shape_ratio"] = 2.0
 
     return signals
+
+
+def _parameter_keyword_score(first_col_values: pd.Series) -> float:
+    """Score distinct parameter-name keywords, ignoring a token on every row.
+
+    A keyword that appears in every sampled row is one word reused in run
+    labels ("T2 pH 4" through "T2 pH 7"), not a parameter name. A word that
+    misses at least one row can still be a parameter, including when it
+    repeats ("temperature setpoint" twice, then "titer"). Fewer than two such
+    words is not a parameter list, so the score is 0 and cannot by itself
+    carry a transposed verdict.
+    """
+    sample = first_col_values.iloc[:_ROW_SAMPLE]
+    n = int(len(sample))
+    if n == 0:
+        return 0.0
+    counts: dict[str, int] = {}
+    for val in sample:
+        seen: set[str] = set()
+        for keyword in _BIOPROCESS_KEYWORDS:
+            if keyword in val and keyword not in seen:
+                seen.add(keyword)
+                counts[keyword] = counts.get(keyword, 0) + 1
+    # A keyword on every sampled row is one token reused in the run labels
+    # ("T2 pH 4" .. "T2 pH 7"). A parameter list uses different words on
+    # different rows, so a word that misses at least one row still counts.
+    # "More than half" was too strict: two "temperature setpoint" rows plus
+    # one "titer" row is a real transposed sheet, and "temperature" is on
+    # two of the three rows.
+    parameterish = [kw for kw, count in counts.items() if count < n]
+    if len(parameterish) < 2:
+        return 0.0
+    return float(min(len(parameterish) * 3, 15))
 
 
 def _normalize_transposed(df: pd.DataFrame) -> pd.DataFrame | None:
@@ -318,6 +352,17 @@ def detect_orientation(df: pd.DataFrame) -> OrientationReport:
                 orientation="standard",
                 confidence=id_rate,
                 signals={"first_column_id_rate": id_rate},
+            )
+
+        # A transposed sheet needs a name column plus at least two run columns.
+        # One value column transposes to a single row, which cannot be a run
+        # sheet, and doing it anyway turned a standard label + measurement
+        # sheet into a one-row frame that the upload refused (`too_few_rows`).
+        if df.shape[1] < 3:
+            return OrientationReport(
+                orientation="standard",
+                confidence=1.0,
+                signals={"value_columns": float(df.shape[1] - 1)},
             )
 
         signals = _score_signals(df)
