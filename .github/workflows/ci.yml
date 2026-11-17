@@ -5,10 +5,16 @@ name: CI
 # auto). GP-heavy tests are marked `slow`: every push runs the fast set, and the
 # full suite runs on main and on demand.
 
+# Changes only to top-level prose (README, CHANGELOG, ...) skip CI: no code or
+# test reads them. docs/ is NOT skipped: the assistant indexes it and tests read it.
 on:
   push:
     branches: [main]
+    paths-ignore: &docs-only
+      - "*.md"
+      - "LICENSE"
   pull_request:
+    paths-ignore: *docs-only
   workflow_dispatch:
 
 concurrency:
