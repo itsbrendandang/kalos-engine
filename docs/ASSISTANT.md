@@ -64,6 +64,42 @@ If you point `KALOS_OLLAMA_URL` at another computer, your data goes to that comp
 
 If the model does not answer, Ask returns 503 with code `assist_provider_unavailable`. Nothing else is affected.
 
+## Round review
+
+`POST /api/assist/review` accepts `{campaign_id?, question?}` with read scope.
+Without a question it reviews the current campaign round. It returns
+`{claims, report, abstained, ledger, next}`. Each claim has `id`, `text`,
+`sources`, `verdict` and `issues`. This does not change campaign records.
+
+The scout retrieves sources with the existing local index, without a model.
+The planner writes up to five cited claims. Code checks citations, numbers
+and forbidden claims. The critic sees only surviving claims and their cited
+sources, not the planner's question or prompt. Each model role starts fresh.
+
+Code assigns the verdict. A checked claim with critic `ok` or `minor` is
+`supported`. A `major` issue makes it `contested`. A failed check or `blocking`
+issue makes it `rejected`. No usable critic judgement means `unreviewed`.
+These are review labels, not scientific proof.
+
+The reporter sees only supported claims and their sources. Its summary is
+checked too. A failed summary falls back to the supported claim texts.
+With no supported claims, the response abstains to the guide step.
+The append-only response ledger records role events and reasons, not prompts.
+
+`GET /api/assist/review/roles` lists each role's key, model group, model and
+instructions. It needs read scope. No credentials are returned.
+`KALOS_ASSIST_MODEL_PLANNER`, `KALOS_ASSIST_MODEL_CRITIC` and
+`KALOS_ASSIST_MODEL_REPORTER` override model names, using the same provider.
+Unset values use the normal assistant model. Provider `none` disables reviews
+with 404 `assist_disabled`. Rate limits, campaign 404s and provider 503s match Ask.
+
+Reviews may make three model calls. With Anthropic, the question and retrieved
+sources leave the machine. Replies are saved per tenant under
+`$KALOS_STATE_DIR/assist/<tenant key>/swarm/` as JSON. Stable hashes of the role,
+provider, model, instructions and prompt select cached replies. Repeating the
+same inputs reuses them without another call. These files contain lab text;
+protect them like campaign state. Deleting them loses replay protection.
+
 ## The index
 
 To answer a question, the assistant first finds the pieces of your data that match it. It keeps a small search index for that, per tenant, in `$KALOS_STATE_DIR/assist/<tenant>/`.

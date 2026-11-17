@@ -4,6 +4,12 @@ Newest first.
 
 ## Unreleased
 
+### Added - assistant round review
+
+- `POST /api/assist/review` runs a source scout, planner, isolated critic and reporter. Code checks grounding and assigns claim verdicts. No supported claims means abstaining to the guide step.
+- `GET /api/assist/review/roles` lists the team and its model groups. Per-role model names are configurable. Tenant-local reply files prevent repeat model calls on replay.
+- Root `AGENTS.md` describes coding lanes, HTTP contract checks and safe local test servers.
+
 ### Changed - audit trail and recorded results (schema v5, `docs/MIGRATIONS.md`)
 
 - **Recorded results are append-only.** A re-submitted campaign result is a new `run_results` row (value, value replaced, reason, actor, server time). A correction needs a `reason` (`400 reason_required` without one). The run's current value is the latest. Response fields are added (`result_version`, `previous_result`, `result_reason`, `result_actor`, `result_recorded_at`); none is removed.
