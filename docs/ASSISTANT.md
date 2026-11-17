@@ -56,6 +56,7 @@ If you point `KALOS_OLLAMA_URL` at another computer, your data goes to that comp
 | `KALOS_OLLAMA_MODEL` | `llama3.1` | the Ollama model to use |
 | `KALOS_OLLAMA_TIMEOUT_S` | `120` | how long to wait for an answer |
 | `KALOS_ASSIST_ANTHROPIC_MODEL` | `claude-sonnet-5` | the Anthropic model to use |
+| `KALOS_NO_PAID_CALLS` | unset (existing behavior) | `1`, `true`, `yes` or `on` blocks billable model calls. Local Ollama still works. Anthropic answers provider unavailable. |
 | `KALOS_ASSIST_EMBED` | `1` | `0` turns off local embeddings |
 | `KALOS_ASSIST_EMBED_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | local embedding model, used only if already on disk |
 | `KALOS_ASSIST_DOCS_DIR` | the repo's `docs/` | docs to include in the index |

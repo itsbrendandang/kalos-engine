@@ -33,6 +33,9 @@ Never resolve a merge by taking one whole side of a shared file.
 ## Rules
 
 - Never make paid model calls in tests. Use fakes. Do not use real keys for checks.
+- Set `KALOS_NO_PAID_CALLS=1` for agent work. Agents never unset it or turn it
+  off outside a test. Tests may turn it off only with a fake that cannot
+  reach the network. The test suite turns it on for every test.
 - Never send writes to someone's running engine. Do not stop or restart it.
   Start your own server as above. Tests use temporary state directories.
 - Read the tenant from the authenticated principal, never the request body.
