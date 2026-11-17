@@ -148,3 +148,19 @@ def test_model_error_not_cached(tmp_path):
     with pytest.raises(ModelUnavailable):
         run(tmp_path, Broken())
     assert not list(tmp_path.rglob("*.json"))
+
+
+@pytest.mark.parametrize("severity", ["blocking", "major"])
+def test_report_cannot_revive_unsupported_claim_from_shared_source(tmp_path, severity):
+    model = Model(
+        planner="C1: Measured yield is 12 [S1].\nC2: Measured temperature is 30 [S1].",
+        critic=f"C1: ok: matches\nC2: {severity}: unreliable",
+        reporter="Measured temperature is 30 [S1].",
+    )
+    hits = [Hit(Chunk("c", "doc", "d", None, "Readings",
+                      "Measured yield is 12. Measured temperature is 30."), 1.0)]
+    result = run(tmp_path, model, hits)
+    assert result["claims"][0]["verdict"] == "supported"
+    assert result["claims"][1]["verdict"] in {"rejected", "contested"}
+    assert result["report"] == "Measured yield is 12."
+    assert result["ledger"][-1]["kind"] == "fallback"

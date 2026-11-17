@@ -16,6 +16,7 @@ from kalos.assist.chat import (
     abstain,
     build_prompt,
     check_answer,
+    split_sentences,
 )
 from kalos.assist.index import Hit
 from kalos.assist.llm import AnthropicChat, ChatModel, OllamaChat, model_info
@@ -84,6 +85,11 @@ def _sources(texts: list[str], labelled: list[Labelled], guide: dict[str, Any]) 
     return "\n\n".join(blocks)
 
 
+def _claim_sentence(text: str) -> str:
+    bare = re.sub(r"\[(?:S\d+|G)\]", "", text)
+    return " ".join(bare.split()).strip(" .!?").casefold()
+
+
 def review(question: str, hits: list[Hit], guide: dict[str, Any], model: ChatModel,
            state_dir: Path, tenant: str) -> dict[str, Any]:
     claims: list[dict[str, Any]] = []
@@ -146,6 +152,14 @@ def review(question: str, hits: list[Hit], guide: dict[str, Any], model: ChatMod
             checked = check_answer(reply, [s for s in labelled if s.label in labels],
                                    guide if "G" in labels else {})
             valid = bool(checked.answer) and not checked.rejected and not checked.dropped
+            supported_sentences = {
+                _claim_sentence(sentence)
+                for claim in supported for sentence in split_sentences(claim["text"])
+            }
+            if any(_claim_sentence(sentence) not in supported_sentences
+                   for sentence in split_sentences(checked.answer)):
+                valid = False
+                checked.rejected.append("summary sentence is not a supported claim")
             report = checked.answer if valid else " ".join(c["text"] for c in supported)
             event("reporter", "checked" if valid else "fallback", reasons=list(checked.rejected))
     abstained = not any(c["verdict"] == "supported" for c in claims)
