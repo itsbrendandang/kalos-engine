@@ -85,6 +85,32 @@ def test_openai_assistant_and_normalize_startup(monkeypatch):
     check_env_settings()
 
 
+@pytest.mark.parametrize("flag", ["", "0", "false", "1", "true", "YES", "on"])
+def test_openai_remote_opt_in(monkeypatch, flag):
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", "http://192.0.2.1:8080/v1")
+    monkeypatch.setenv("KALOS_OPENAI_MODEL", "qwen")
+    monkeypatch.setenv("KALOS_OPENAI_ALLOW_REMOTE", flag)
+    calls = []
+
+    def respond(request, timeout):
+        calls.append(request.full_url)
+        if request.full_url.endswith("/models"):
+            return b'{"data":[{"id":"qwen"}]}'
+        return b'{"choices":[{"message":{"content":"answer"}}]}'
+
+    monkeypatch.setattr(openai, "_open", respond)
+    provider = openai.OpenAICompatibleProvider()
+    if flag.lower() in {"1", "true", "yes", "on"}:
+        assert provider.chat("system", "prompt") == "answer"
+        assert provider.probe() == {"reachable": True, "model_present": True}
+        assert len(calls) == 2
+    else:
+        with pytest.raises(openai.OpenAICompatUnavailable, match="KALOS_OPENAI_ALLOW_REMOTE"):
+            provider.chat("system", "prompt")
+        assert provider.probe() == {"reachable": False, "model_present": False}
+        assert calls == []
+
+
 def test_chat_cleanup_and_openai_request(monkeypatch):
     monkeypatch.setenv("KALOS_OPENAI_MODEL", "qwen")
     monkeypatch.setenv("KALOS_OPENAI_API_KEY", "test-key")
