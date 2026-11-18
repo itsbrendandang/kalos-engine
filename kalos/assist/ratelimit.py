@@ -39,7 +39,10 @@ def check(tenant: str, subject: str | None, *, now: float | None = None, cost: i
         while seen and t - seen[0] >= WINDOW_S:
             seen.popleft()
         if len(seen) + cost > limit:
-            return max(1, math.ceil(WINDOW_S - (t - seen[0]))) if seen else int(WINDOW_S)
+            if cost > limit:
+                return int(WINDOW_S)
+            release = seen[len(seen) + cost - limit - 1]
+            return max(1, math.ceil(WINDOW_S - (t - release)))
         seen.extend([t] * cost)
         return 0
 

@@ -213,3 +213,19 @@ def test_cache_evicts_oldest_and_reuses_retained_replies(tmp_path, monkeypatch):
     swarm._call(cache, ROLES[1], model, "second")
     assert len(model.prompts) == 3
     assert len(list(cache.iterdir())) == 3  # two replies and one shared lock
+
+
+def test_mixed_traffic_retry_waits_for_all_review_units(monkeypatch):
+    from kalos.assist import ratelimit
+
+    monkeypatch.setenv("KALOS_ASSIST_ASK_PER_MINUTE", "4")
+    ratelimit.reset()
+    try:
+        assert ratelimit.check("tenant", "reader", now=0) == 0
+        assert ratelimit.check("tenant", "reader", now=10) == 0
+        assert ratelimit.check("tenant", "reader", now=20) == 0
+        wait = ratelimit.check("tenant", "reader", now=30, cost=3)
+        assert wait == 40
+        assert ratelimit.check("tenant", "reader", now=30 + wait, cost=3) == 0
+    finally:
+        ratelimit.reset()
