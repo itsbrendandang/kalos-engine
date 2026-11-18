@@ -86,6 +86,7 @@ def test_anthropic_client_has_a_timeout_and_one_retry(monkeypatch):
             self.messages = _Messages()
 
     monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=_Client))
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", "0")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     assert AnthropicChat(model="m").complete("s", "p") == "ok [S1]"
     assert seen == {"timeout": 60.0, "max_retries": 1}

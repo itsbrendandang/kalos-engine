@@ -56,6 +56,7 @@ If you point `KALOS_OLLAMA_URL` at another computer, your data goes to that comp
 | `KALOS_OLLAMA_MODEL` | `llama3.1` | the Ollama model to use |
 | `KALOS_OLLAMA_TIMEOUT_S` | `120` | how long to wait for an answer |
 | `KALOS_ASSIST_ANTHROPIC_MODEL` | `claude-sonnet-5` | the Anthropic model to use |
+| `KALOS_NO_PAID_CALLS` | unset (existing behavior) | `1`, `true`, `yes` or `on` blocks billable model calls. Local Ollama still works. Anthropic answers provider unavailable. |
 | `KALOS_ASSIST_EMBED` | `1` | `0` turns off local embeddings |
 | `KALOS_ASSIST_EMBED_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | local embedding model, used only if already on disk |
 | `KALOS_ASSIST_DOCS_DIR` | the repo's `docs/` | docs to include in the index |
@@ -63,6 +64,49 @@ If you point `KALOS_OLLAMA_URL` at another computer, your data goes to that comp
 | `KALOS_ASSIST_INDEX_ON_WRITE` | `1` | `0` stops the index refresh after uploads and results |
 
 If the model does not answer, Ask returns 503 with code `assist_provider_unavailable`. Nothing else is affected.
+
+## Round review
+
+`POST /api/assist/review` accepts `{campaign_id?, question?}` with read scope.
+Without a question it reviews the current campaign round. It returns
+`{claims, report, abstained, ledger, next}`. Each claim has `id`, `text`,
+`sources`, `verdict` and `issues`. This does not change campaign records.
+
+The scout retrieves sources with the existing local index, without a model.
+The planner writes up to five cited claims. Code checks citations, numbers
+and forbidden claims. The critic sees only surviving claims and their cited
+sources, not the planner's question or prompt. Each model role starts fresh.
+
+Code assigns the verdict. A checked claim with critic `ok` or `minor` is
+`supported`. A `major` issue makes it `contested`. A failed check or `blocking`
+issue makes it `rejected`. No usable critic judgement means `unreviewed`.
+These are review labels, not scientific proof.
+
+The reporter sees only supported claims and their sources. Its summary is
+checked too. A failed summary falls back to the supported claim texts.
+With no supported claims, the response abstains to the guide step.
+The append-only response ledger records role events and reasons, not prompts.
+
+`GET /api/assist/review/roles` lists each role's `key`, `model_group` and short
+public `description`. It needs read scope. No prompts, model names or
+credentials are returned.
+`KALOS_ASSIST_MODEL_PLANNER`, `KALOS_ASSIST_MODEL_CRITIC` and
+`KALOS_ASSIST_MODEL_REPORTER` override model names, using the same provider.
+Unset values use the normal assistant model. Provider `none` disables reviews
+with 404 `assist_disabled`. Rate limits, campaign 404s and provider 503s match Ask.
+Each review reserves three units of the shared Ask rate limit, even when
+replies are cached or no model is called.
+
+Reviews may make three model calls. With Anthropic, the question and retrieved
+sources leave the machine. Replies are saved per tenant under
+`$KALOS_STATE_DIR/assist/<tenant key>/swarm/` as JSON. Stable hashes of the role,
+provider, model, instructions and prompt select cached replies. Repeating the
+same inputs reuses them without another call. These files contain lab text;
+protect them like campaign state. Deleting them loses replay protection.
+The cache keeps at most 128 replies per tenant, removing the oldest replies
+first. The swarm folder is safe to delete while the engine is stopped; no
+campaign records are stored there. Evicted or deleted replies must be generated
+again on the next review, which can make new paid calls.
 
 ## The index
 

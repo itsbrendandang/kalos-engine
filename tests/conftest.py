@@ -14,6 +14,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _isolated_kalos_state(tmp_path_factory, monkeypatch):
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", "1")
     state = tmp_path_factory.mktemp("kalos-state")
     monkeypatch.setenv("KALOS_STATE_DIR", str(state))
     try:

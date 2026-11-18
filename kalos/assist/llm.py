@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from kalos.envconfig import env_enum
+from kalos.paid import PaidCallsOff, refuse_paid
 from kalos.providers.ollama_provider import (
     OllamaProvider,
     OllamaUnavailable,
@@ -86,6 +87,10 @@ class AnthropicChat:
     local: bool = False
 
     def complete(self, system: str, prompt: str) -> str:
+        try:
+            refuse_paid("Anthropic assistant")
+        except PaidCallsOff as exc:
+            raise ModelUnavailable(str(exc)) from exc
         from kalos.normalize import credentials_available
 
         if not credentials_available():
@@ -96,6 +101,7 @@ class AnthropicChat:
             raise ModelUnavailable("the anthropic package is not installed") from exc
         try:
             client = anthropic.Anthropic(timeout=60.0, max_retries=1)
+            refuse_paid("Anthropic assistant")
             reply = client.messages.create(
                 model=self.model, max_tokens=1200, system=system,
                 messages=[{"role": "user", "content": prompt}],
