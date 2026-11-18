@@ -87,8 +87,9 @@ checked too. A failed summary falls back to the supported claim texts.
 With no supported claims, the response abstains to the guide step.
 The append-only response ledger records role events and reasons, not prompts.
 
-`GET /api/assist/review/roles` lists each role's key, model group, model and
-instructions. It needs read scope. No credentials are returned.
+`GET /api/assist/review/roles` lists each role's `key`, `model_group` and short
+public `description`. It needs read scope. No prompts, model names or
+credentials are returned.
 `KALOS_ASSIST_MODEL_PLANNER`, `KALOS_ASSIST_MODEL_CRITIC` and
 `KALOS_ASSIST_MODEL_REPORTER` override model names, using the same provider.
 Unset values use the normal assistant model. Provider `none` disables reviews

@@ -16,7 +16,7 @@ def test_review_contract(env, monkeypatch):  # noqa: F811 - imported pytest fixt
                for e in body["ledger"])
     roles = client.get("/api/assist/review/roles", headers=H("a-read"))
     assert roles.status_code == 200
-    assert all(set(role) == {"key", "model_group", "model", "instructions"}
+    assert all(set(role) == {"key", "model_group", "description"}
                for role in roles.json())
     assert client.get("/api/assist/review/roles").status_code == 401
     assert client.post("/api/assist/review", json={}).status_code == 401

@@ -92,6 +92,8 @@ def test_routes(env, monkeypatch):  # noqa: F811 - imported pytest fixture
     roles = client.get("/api/assist/review/roles", headers=H("a-read"))
     assert roles.status_code == 200
     assert [r["key"] for r in roles.json()] == [r.key for r in ROLES]
+    assert all(set(r) == {"key", "model_group", "description"} for r in roles.json())
+    assert all(r.instructions not in roles.text for r in ROLES)
     def reply(prompt):
         if "Question:" in prompt:
             return "C1: Record a result for every started run [S1]."
