@@ -20,32 +20,10 @@ if [[ $# -gt 0 && ${1:-} != up ]]; then
 fi
 if [[ ${1:-} == up ]]; then shift; fi
 if [[ ! -e deploy/.env ]]; then
-    mkdir -p deploy/secrets
-    docker run --rm -i -v "$ROOT/deploy:/deploy" node:22-alpine node <<'NODE'
-const fs = require('fs');
-const crypto = require('crypto');
-const secret = () => crypto.randomBytes(32).toString('hex');
-const token = secret();
-const kid = `local-${crypto.randomBytes(8).toString('hex')}`;
-const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
-fs.writeFileSync('/deploy/secrets/engine-private.pem', privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o400 });
-fs.chownSync('/deploy/secrets/engine-private.pem', 10001, 10001);
-fs.writeFileSync('/deploy/secrets/engine-public.jwks', JSON.stringify({ keys: [{ ...publicKey.export({ format: 'jwk' }), kid, use: 'sig', alg: 'EdDSA' }] }));
-fs.writeFileSync('/deploy/secrets/tenants.json', '{}', { mode: 0o600 });
-fs.chownSync('/deploy/secrets/tenants.json', 10001, 10001);
-const env = {
-  KALOS_ENGINE_TOKEN: token,
-  KALOS_AUTH_TOKENS: JSON.stringify([{ token_sha256: crypto.createHash('sha256').update(token).digest('hex'), subject: 'local-ops', tenant: 'local', scopes: ['read', 'write'], service_account: true }]),
-  KALOS_ANON_SALT: secret(), BETTER_AUTH_SECRET: secret(),
-  BETTER_AUTH_URL: 'http://localhost:3000', KALOS_PUBLIC_URL: 'http://localhost:3000',
-  KALOS_CORS_ORIGINS: 'http://localhost:3000', KALOS_ENGINE_JWT_KID: kid,
-  GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '',
-  AUTH_TRUSTED_PROXIES: 'none', AUTH_ACCEPT_NO_PROXY: '1',
-  KALOS_TORCH_THREADS: '0', KALOS_ENGINE_CPUS: '0'
-};
-fs.writeFileSync('/deploy/.env', Object.entries(env).map(([k,v]) => `${k}='${v}'`).join('\n') + '\n', { flag: 'wx', mode: 0o600 });
-NODE
+    docker run --rm -v "$ROOT/deploy:/deploy" node:22-alpine node -e 'require("fs").closeSync(require("fs").openSync("/deploy/.env", "wx", 0o600))'
 fi
+"${compose[@]}" config --environment | docker run --rm -i -v "$ROOT/deploy:/deploy" \
+    -v "$ROOT/scripts/kalos-bootstrap.cjs:/bootstrap.cjs:ro" node:22-alpine node /bootstrap.cjs
 # Also repairs ownership if an interrupted first run created the file as root.
 docker run --rm -v "$ROOT/deploy:/deploy" node:22-alpine chown "$(id -u):$(id -g)" /deploy/.env
 mkdir -p deploy/backups

@@ -12,6 +12,7 @@ for a real parse by Compose itself, not just PyYAML; it skips cleanly where
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -23,6 +24,54 @@ import yaml
 DEPLOY_DIR = Path(__file__).resolve().parent.parent / "deploy"
 COMPOSE_PATH = DEPLOY_DIR / "compose.yaml"
 ENV_EXAMPLE_PATH = DEPLOY_DIR / ".env.example"
+
+
+def _bootstrap(tmp_path, environment=""):
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    return subprocess.run(
+        ["node", str(DEPLOY_DIR.parent / "scripts/kalos-bootstrap.cjs"), str(tmp_path)],
+        input=environment, capture_output=True, text=True, timeout=30,
+    )
+
+
+def test_bootstrap_repairs_legacy_env_without_changing_values(tmp_path):
+    env = tmp_path / ".env"
+    original = "# existing settings\nKALOS_ENGINE_TOKEN='old-token'\nBETTER_AUTH_URL='http://localhost:3000'\nGOOGLE_CLIENT_SECRET=''"
+    env.write_text(original)
+    result = _bootstrap(tmp_path, "KALOS_ENGINE_TOKEN=old-token\n")
+    assert result.returncode == 0, result.stderr
+    assert env.read_text().startswith(original + "\n")
+    assert env.read_text().count("GOOGLE_CLIENT_SECRET=") == 1
+    assert "BETTER_AUTH_SECRET=" in env.read_text()
+    assert "KALOS_ENGINE_JWT_KID=" in env.read_text()
+    secrets = tmp_path / "secrets"
+    assert (secrets / "engine-private.pem").is_file()
+    assert json.loads((secrets / "tenants.json").read_text()) == {}
+    snapshots = {p: p.read_bytes() for p in (env, *secrets.iterdir())}
+    result = _bootstrap(tmp_path, "KALOS_ENGINE_TOKEN=old-token\n")
+    assert result.returncode == 0, result.stderr
+    assert all(p.read_bytes() == data for p, data in snapshots.items())
+    (secrets / "tenants.json").unlink()
+    (secrets / "engine-public.jwks").unlink()
+    result = _bootstrap(tmp_path, "KALOS_ENGINE_JWT_KID=existing-kid\n")
+    assert result.returncode == 0, result.stderr
+    assert (secrets / "engine-private.pem").read_bytes() == snapshots[secrets / "engine-private.pem"]
+    assert json.loads((secrets / "engine-public.jwks").read_text())["keys"][0]["kid"] == "existing-kid"
+
+
+def test_bootstrap_handles_empty_env_and_refuses_lost_private_key(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("")
+    result = _bootstrap(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "KALOS_AUTH_TOKENS=" in env.read_text()
+    original = env.read_bytes()
+    (tmp_path / "secrets/engine-private.pem").unlink()
+    result = _bootstrap(tmp_path)
+    assert result.returncode != 0
+    assert "restore the matching private key" in result.stderr
+    assert env.read_bytes() == original
 
 # Every env var this deploy pack treats as REQUIRED - i.e. the stack starts
 # wrong (or, for the security three, refuses to start at all per

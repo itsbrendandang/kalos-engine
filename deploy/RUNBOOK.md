@@ -8,7 +8,8 @@ be cloned. Set `KALOS_WEB_DIR` for a different checkout location.
 
 First run generates `deploy/.env` (0600), a signing keypair and empty tenant
 map in gitignored `deploy/secrets/`, and a backup directory owned by container
-uid 10001 (0700). Existing `.env` is never replaced. Keep these files together;
+uid 10001 (0700). Existing `.env` values are never replaced: missing keys are
+appended and missing key/tenant files are generated individually. Keep these files together;
 do not delete them to rotate a single credential. Private keys are readable
 only by container uid 10001. Docker manages a persistent web-auth volume.
 
