@@ -41,7 +41,7 @@ const env = {
   KALOS_CORS_ORIGINS: 'http://localhost:3000', KALOS_ENGINE_JWT_KID: kid,
   GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '',
   AUTH_TRUSTED_PROXIES: 'none', AUTH_ACCEPT_NO_PROXY: '1',
-  KALOS_TORCH_THREADS: '1', KALOS_ENGINE_CPUS: '0'
+  KALOS_TORCH_THREADS: '0', KALOS_ENGINE_CPUS: '0'
 };
 fs.writeFileSync('/deploy/.env', Object.entries(env).map(([k,v]) => `${k}='${v}'`).join('\n') + '\n', { flag: 'wx', mode: 0o600 });
 NODE
@@ -64,7 +64,7 @@ process.exit(e.GOOGLE_CLIENT_ID?.trim() && e.GOOGLE_CLIENT_SECRET?.trim() ? 0 : 
 fi
 services=()
 if "$engine_only"; then services=(engine backup); fi
-"${compose[@]}" up --build -d --wait --wait-timeout 180 "$@" "${services[@]}"
+"${compose[@]}" up --build -d --wait --wait-timeout 180 "$@" ${services[@]+"${services[@]}"}
 if "$engine_only"; then
     echo 'Engine healthy (Compose network only).'
 else

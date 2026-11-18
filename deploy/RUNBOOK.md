@@ -34,8 +34,8 @@ local setup; do not expose it publicly unchanged. The engine is network-internal
 The public key is retained in `deploy/secrets/engine-public.jwks` for a future
 compatible engine, not mounted into today's static-token-only engine.
 
-`KALOS_TORCH_THREADS` defaults to 1 to reduce host-dependent oversubscription;
-set 0 to leave torch unpinned. Optional `KALOS_ENGINE_CPUS` limits engine CPU
+`KALOS_TORCH_THREADS` defaults to 0 (unpinned): 47s unpinned versus 600s+
+pinned on the reference deployment. Optional `KALOS_ENGINE_CPUS` limits engine CPU
 usage (0, the default, means unlimited). These do not guarantee equal runtimes
 across hardware. Rebuilds of Next 16 may need one retry after SecurityFatalError.
 
