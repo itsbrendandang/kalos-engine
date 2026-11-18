@@ -37,6 +37,7 @@ The **next step** and **SOP drafts** use no model, so they work on any engine.
 | Setting | What happens |
 |---|---|
 | `ollama` | A model on this machine, through [Ollama](https://ollama.com). With the default address (`http://localhost:11434`) nothing leaves the machine. This is the default in the desktop app. |
+| `openai` | A model behind any OpenAI-compatible `/v1/chat/completions` server on this machine or your own host (llama.cpp's server, LM Studio, vLLM, and similar). With a loopback address nothing leaves the machine; the status route reports `local: false` if you point it elsewhere. Set `KALOS_OPENAI_BASE_URL` and `KALOS_OPENAI_MODEL` (and `KALOS_OPENAI_API_KEY` if the server needs one). |
 | `anthropic` | The Anthropic API. For a question, the question and the retrieved pieces of your data are **sent off the machine** to Anthropic. For an SOP revise, the **whole draft** (every setting, value and filled-in blank in it) and your instruction are sent. Needs `ANTHROPIC_API_KEY`. |
 | `none` | No model. Ask and revise answer 404 with code `assist_disabled`. The next step, the index and SOP drafts keep working. |
 
@@ -51,9 +52,13 @@ If you point `KALOS_OLLAMA_URL` at another computer, your data goes to that comp
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `KALOS_LLM_PROVIDER` | `ollama` in desktop mode, else `none` | `ollama`, `anthropic` or `none` |
+| `KALOS_LLM_PROVIDER` | `ollama` in desktop mode, else `none` | `ollama`, `openai`, `anthropic` or `none` |
+| `KALOS_OPENAI_BASE_URL` | `http://localhost:8080/v1` | OpenAI-compatible server base URL (used when provider is `openai`) |
+| `KALOS_OPENAI_MODEL` | unset | the model id the OpenAI-compatible server exposes; must be set to select a model |
+| `KALOS_OPENAI_API_KEY` | unset | optional bearer key for the OpenAI-compatible server |
+| `KALOS_OPENAI_TIMEOUT_S` | `120` | how long to wait for an answer |
 | `KALOS_OLLAMA_URL` | `http://localhost:11434` | where Ollama listens |
-| `KALOS_OLLAMA_MODEL` | `llama3.1` | the Ollama model to use |
+| `KALOS_OLLAMA_MODEL` | `qwen2.5:7b-instruct` | the Ollama model to use |
 | `KALOS_OLLAMA_TIMEOUT_S` | `120` | how long to wait for an answer |
 | `KALOS_ASSIST_ANTHROPIC_MODEL` | `claude-sonnet-5` | the Anthropic model to use |
 | `KALOS_ASSIST_EMBED` | `1` | `0` turns off local embeddings |
@@ -63,6 +68,32 @@ If you point `KALOS_OLLAMA_URL` at another computer, your data goes to that comp
 | `KALOS_ASSIST_INDEX_ON_WRITE` | `1` | `0` stops the index refresh after uploads and results |
 
 If the model does not answer, Ask returns 503 with code `assist_provider_unavailable`. Nothing else is affected.
+
+## Run a local Qwen model
+
+Install [Ollama](https://ollama.com) and start its server. Then:
+
+```sh
+ollama pull qwen2.5:7b-instruct
+export KALOS_LLM_PROVIDER=ollama
+python -m kalos.providers.check
+```
+
+The assistant and normalization share this default. You can pull another model
+and set `KALOS_OLLAMA_MODEL=qwen3:8b`, for example. Thinking blocks are removed
+from local replies before showing text or reading normalization JSON.
+
+The check prints provider, URL, model, local, reachable and model pulled. It
+suggests `ollama pull` if the server answers but the model is missing.
+`GET /api/assist/index/status` includes `reachable` and `model_present` for local
+providers; the probe has a two-second timeout and runs only on request, never
+at import. Provider slot status (`/api/providers`) does not probe.
+
+For LM Studio or llama.cpp, start its OpenAI-compatible server, set
+`KALOS_LLM_PROVIDER=openai`, `KALOS_OPENAI_BASE_URL=http://localhost:8080/v1`
+(adjust the port), and `KALOS_OPENAI_MODEL` to the served model id. Set
+`KALOS_OPENAI_API_KEY` only if needed. This is an assistant-only path;
+normalization uses the offline mapper with `openai` selected.
 
 ## The index
 

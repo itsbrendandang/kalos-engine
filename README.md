@@ -393,14 +393,16 @@ The whole stack is free and open source: Python, FastAPI, BoTorch/PyTorch, SQLit
 
 ### Language models
 
-The engine uses a language model in exactly one place: the optional `normalize`
-tier, which maps a messy run sheet's column names to canonical names and units.
+The engine uses a language model for assistant questions and SOP revisions, and
+the optional `normalize` tier maps messy column names to canonical names and units.
 Everything else (the optimizer, CV, conformal bands, gates) is plain math and
 uses no model. The tier is chosen with `KALOS_LLM_PROVIDER`:
 
 - **`ollama`** - a local, open-source model over HTTP (`KALOS_OLLAMA_URL`,
-  default `http://localhost:11434`; `KALOS_OLLAMA_MODEL`, default `llama3.1`).
-  Nothing leaves the machine. This is the free, local-first path.
+  default `http://localhost:11434`; `KALOS_OLLAMA_MODEL`, default `qwen2.5:7b-instruct`).
+  Nothing leaves the machine with a loopback URL. This is the free, local-first path.
+- **`openai`** - an OpenAI-compatible server for the assistant; normalization
+  uses its offline mapper with this setting.
 - **`anthropic`** - the hosted Anthropic API (needs `ANTHROPIC_API_KEY`); the
   screened column payload is sent off the machine.
 - **`none`** - no model; the deterministic offline normalizer is used.
@@ -408,12 +410,26 @@ uses no model. The tier is chosen with `KALOS_LLM_PROVIDER`:
 If no provider answers, the tier always falls back to the offline normalizer, so
 an upload never fails because a model is unavailable.
 
-**What we develop with.** Day to day this project is built with a local
-**Qwen3.6-35B** model served through an OpenAI-compatible endpoint (llama.cpp /
-Hermes), so agent and normalization work runs on-device at no API cost. Wiring an
-arbitrary OpenAI-compatible server (so the engine can call Qwen the same way it
-calls Ollama) is part of the assistant work in progress; on `main` today the
-built-in local path is Ollama.
+#### Run a local Qwen model
+
+Install [Ollama](https://ollama.com), start it, then run:
+
+```sh
+ollama pull qwen2.5:7b-instruct
+export KALOS_LLM_PROVIDER=ollama
+python -m kalos.providers.check
+```
+
+This works for both the assistant and normalization. To use another model,
+pull it first and set `KALOS_OLLAMA_MODEL`, for example `qwen3:8b`.
+The check prints the server address, model, reachability and whether the model
+is pulled. Assistant status checks the server only when requested.
+
+For LM Studio or llama.cpp, start its OpenAI-compatible server and set
+`KALOS_LLM_PROVIDER=openai`, `KALOS_OPENAI_BASE_URL=http://localhost:8080/v1`
+(use your server's port), and `KALOS_OPENAI_MODEL` to its model id. This path
+supports assistant chat; normalization stays offline. A remote URL sends your
+prompts to that host. See [assistant settings](docs/ASSISTANT.md).
 
 ## Repository layout
 
