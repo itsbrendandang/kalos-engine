@@ -27,7 +27,7 @@ def per_minute() -> int:
     return max(0, min(value, 10_000))
 
 
-def check(tenant: str, subject: str | None, *, now: float | None = None) -> int:
+def check(tenant: str, subject: str | None, *, now: float | None = None, cost: int = 1) -> int:
     """0 when the call may go ahead (and counts it), else the seconds to wait."""
     limit = per_minute()
     if limit == 0:
@@ -38,9 +38,9 @@ def check(tenant: str, subject: str | None, *, now: float | None = None) -> int:
         seen = _SEEN.setdefault(key, deque())
         while seen and t - seen[0] >= WINDOW_S:
             seen.popleft()
-        if len(seen) >= limit:
-            return max(1, math.ceil(WINDOW_S - (t - seen[0])))
-        seen.append(t)
+        if len(seen) + cost > limit:
+            return max(1, math.ceil(WINDOW_S - (t - seen[0]))) if seen else int(WINDOW_S)
+        seen.extend([t] * cost)
         return 0
 
 

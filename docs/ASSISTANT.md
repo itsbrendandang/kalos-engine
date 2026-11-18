@@ -93,6 +93,8 @@ instructions. It needs read scope. No credentials are returned.
 `KALOS_ASSIST_MODEL_REPORTER` override model names, using the same provider.
 Unset values use the normal assistant model. Provider `none` disables reviews
 with 404 `assist_disabled`. Rate limits, campaign 404s and provider 503s match Ask.
+Each review reserves three units of the shared Ask rate limit, even when
+replies are cached or no model is called.
 
 Reviews may make three model calls. With Anthropic, the question and retrieved
 sources leave the machine. Replies are saved per tenant under

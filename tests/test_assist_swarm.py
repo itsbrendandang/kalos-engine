@@ -116,13 +116,31 @@ def test_routes(env, monkeypatch):  # noqa: F811 - imported pytest fixture
     assert response.status_code == 404
     assert response.json()["code"] == "assist_disabled"
     monkeypatch.setenv("KALOS_LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("KALOS_ASSIST_ASK_PER_MINUTE", "1")
+    monkeypatch.setenv("KALOS_ASSIST_ASK_PER_MINUTE", "3")
     ratelimit.reset()
     assert client.post("/api/assist/review", headers=H("a-read"),
                        json={"campaign_id": "bad"}).status_code == 404
     limited = client.post("/api/assist/review", headers=H("a-read"), json={})
     assert limited.status_code == 429 and "Retry-After" in limited.headers
     ratelimit.reset()
+
+
+def test_review_reserves_three_rate_limit_units(env, monkeypatch):  # noqa: F811
+    from kalos.assist import ratelimit
+
+    client, _, _ = env
+    monkeypatch.setenv("KALOS_ASSIST_ASK_PER_MINUTE", "4")
+    monkeypatch.setattr("kalos.assist.routes.AssistIndex.search", lambda *a, **kw: [])
+    ratelimit.reset()
+    try:
+        assert client.post("/api/assist/review", headers=H("a-read"), json={}).status_code == 200
+        assert client.post("/api/assist/ask", headers=H("a-read"),
+                           json={"question": "anything"}).status_code == 200
+        assert client.post("/api/assist/review", headers=H("a-read"), json={}).status_code == 429
+        assert client.post("/api/assist/ask", headers=H("a-read"),
+                           json={"question": "anything"}).status_code == 429
+    finally:
+        ratelimit.reset()
 
 
 def test_only_surviving_sources_reach_critic_and_reporter(tmp_path):

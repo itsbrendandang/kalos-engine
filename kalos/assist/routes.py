@@ -69,7 +69,7 @@ def assist_review(
 ) -> JSONResponse:
     if model is None or assist_disabled():
         return assist_disabled_response()
-    wait = ratelimit.check(principal.tenant, principal.subject)
+    wait = ratelimit.check(principal.tenant, principal.subject, cost=3)
     if wait:
         return JSONResponse({"error": "too many questions in a short time; try again shortly",
                              "code": "rate_limited"}, status_code=429,
