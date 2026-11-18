@@ -166,7 +166,7 @@ def _parse_header(token: str) -> dict[str, Any] | None:
     """
     try:
         obj = json.loads(_b64url_decode(token.split(".", 1)[0]))
-    except ValueError:  # includes binascii.Error and UnicodeDecodeError
+    except (ValueError, RecursionError):  # includes binascii.Error and UnicodeDecodeError
         return None
     return obj if isinstance(obj, dict) else None
 

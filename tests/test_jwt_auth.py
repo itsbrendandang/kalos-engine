@@ -18,6 +18,7 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -31,6 +32,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: E402
 )
 from fastapi import HTTPException  # noqa: E402
 
+from kalos.portal import jwt_auth  # noqa: E402
 from kalos.portal.auth import (  # noqa: E402
     ADMIN,
     READ,
@@ -850,6 +852,37 @@ def test_parseable_jws_with_a_bad_header_is_classified_and_never_falls_back(
         {"token_sha256": _sha(token), "subject": "s", "tenant": "acme", "scopes": [READ]},
     ]))
     assert _reason(keys.auth, token, caplog) == reason
+
+
+@pytest.mark.parametrize("header", [
+    b"", b"{", b"[" * 1100 + b"0" + b"]" * 1100,
+    b'{"nested":' + b"[" * 1100 + b"0" + b"]" * 1100 + b"}",
+], ids=["empty", "invalid_json", "nested_array", "nested_object"])
+def test_malformed_or_deep_header_returns_generic_401(keys, caplog, header):
+    from fastapi.testclient import TestClient
+
+    from kalos.portal.app import app
+    from kalos.portal.auth import get_authenticator
+
+    token = _b64url(header) + ".e30.c2ln"
+    assert len(token) < 8192
+    app.dependency_overrides[get_authenticator] = lambda: keys.auth
+    try:
+        _reason(keys.auth, token, caplog)
+        response = TestClient(app).get("/api/latest", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 401
+        assert response.json() == {"error": "invalid or expired token", "code": "unauthenticated"}
+        assert response.headers["www-authenticate"] == "Bearer"
+    finally:
+        app.dependency_overrides.pop(get_authenticator, None)
+
+
+def test_header_parser_handles_json_recursion_error(monkeypatch):
+    def too_deep(_value):
+        raise RecursionError("JSON header is too deeply nested")
+
+    monkeypatch.setattr(jwt_auth, "json", SimpleNamespace(loads=too_deep))
+    assert jwt_auth._parse_header("e30.e30.c2ln") is None
 
 
 def test_open_mode_unaffected_in_dev(clean_env):
