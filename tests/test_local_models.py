@@ -1,5 +1,7 @@
 """Local transport, diagnostics, and reply cleanup regressions."""
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
@@ -9,6 +11,37 @@ from kalos.normalize.llm import _extract_json_object
 from kalos.providers import ollama_provider as ollama
 from kalos.providers import openai_compatible_provider as openai
 from kalos.providers.check import main
+
+
+def test_openai_does_not_follow_redirects(monkeypatch):
+    paths = []
+
+    class Redirect(BaseHTTPRequestHandler):
+        def do_GET(self):
+            paths.append(self.path)
+            self.send_response(302)
+            self.send_header("Location", "/redirected")
+            self.end_headers()
+
+        do_POST = do_GET
+
+        def log_message(self, *args):
+            pass
+
+    with HTTPServer(("127.0.0.1", 0), Redirect) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        monkeypatch.setenv("KALOS_OPENAI_BASE_URL", f"http://127.0.0.1:{server.server_port}/v1")
+        monkeypatch.setenv("KALOS_OPENAI_MODEL", "qwen")
+        monkeypatch.setenv("KALOS_OPENAI_API_KEY", "test-key")
+        try:
+            with pytest.raises(openai.OpenAICompatUnavailable):
+                openai.OpenAICompatibleProvider().chat("system", "prompt")
+            assert openai.OpenAICompatibleProvider().probe() == {"reachable": False, "model_present": False}
+            assert paths == ["/v1/chat/completions", "/v1/models"]
+        finally:
+            server.shutdown()
+            thread.join()
 
 
 @pytest.mark.parametrize("module,cls,setting,listing", [
