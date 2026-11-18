@@ -87,6 +87,7 @@ def test_openai_assistant_and_normalize_startup(monkeypatch):
 
 @pytest.mark.parametrize("flag", ["", "0", "false", "1", "true", "YES", "on"])
 def test_openai_remote_opt_in(monkeypatch, flag):
+    monkeypatch.delenv("KALOS_NO_PAID_CALLS", raising=False)
     monkeypatch.setenv("KALOS_OPENAI_BASE_URL", "http://192.0.2.1:8080/v1")
     monkeypatch.setenv("KALOS_OPENAI_MODEL", "qwen")
     monkeypatch.setenv("KALOS_OPENAI_ALLOW_REMOTE", flag)
@@ -109,6 +110,32 @@ def test_openai_remote_opt_in(monkeypatch, flag):
             provider.chat("system", "prompt")
         assert provider.probe() == {"reachable": False, "model_present": False}
         assert calls == []
+
+
+@pytest.mark.parametrize("flag", ["1", "true", "YES", "on", "false", "0", ""])
+@pytest.mark.parametrize("host", ["192.0.2.1", "127.0.0.1"])
+def test_openai_no_paid_calls(monkeypatch, flag, host):
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", f"http://{host}:8080/v1")
+    monkeypatch.setenv("KALOS_OPENAI_MODEL", "qwen")
+    monkeypatch.setenv("KALOS_OPENAI_ALLOW_REMOTE", "true")
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", flag)
+    calls = []
+
+    def respond(request, timeout):
+        calls.append(request.full_url)
+        return b'{"choices":[{"message":{"content":"answer"}}],"data":[{"id":"qwen"}]}'
+
+    monkeypatch.setattr(openai, "_open", respond)
+    provider = openai.OpenAICompatibleProvider()
+    if host != "127.0.0.1" and flag.lower() in {"1", "true", "yes", "on"}:
+        with pytest.raises(openai.OpenAICompatUnavailable, match="KALOS_NO_PAID_CALLS"):
+            provider.chat("system", "prompt")
+        assert provider.probe() == {"reachable": False, "model_present": False}
+        assert calls == []
+    else:
+        assert provider.chat("system", "prompt") == "answer"
+        assert provider.probe() == {"reachable": True, "model_present": True}
+        assert len(calls) == 2
 
 
 def test_chat_cleanup_and_openai_request(monkeypatch):

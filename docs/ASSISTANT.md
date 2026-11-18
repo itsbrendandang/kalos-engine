@@ -57,6 +57,7 @@ If you point `KALOS_OLLAMA_URL` at another computer, your data goes to that comp
 | `KALOS_OPENAI_MODEL` | unset | the model id the OpenAI-compatible server exposes; must be set to select a model |
 | `KALOS_OPENAI_API_KEY` | unset | optional bearer key for the OpenAI-compatible server |
 | `KALOS_OPENAI_ALLOW_REMOTE` | unset (off) | set to `1`, `true`, `yes` or `on` to allow a non-loopback OpenAI server; prompts and any bearer key go to that host |
+| `KALOS_NO_PAID_CALLS` | unset (off) | `1`, `true`, `yes` or `on` blocks remote OpenAI chat and probes even with remote access enabled; loopback servers still work |
 | `KALOS_OPENAI_TIMEOUT_S` | `120` | how long to wait for an answer |
 | `KALOS_OLLAMA_URL` | `http://localhost:11434` | where Ollama listens |
 | `KALOS_OLLAMA_MODEL` | `qwen2.5:7b-instruct` | the Ollama model to use |
