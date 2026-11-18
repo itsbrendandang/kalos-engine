@@ -79,9 +79,6 @@ def test_latest_reflects_last_upload(tmp_path, monkeypatch):
     from kalos.portal.auth import READ, Principal
 
     princ = Principal(subject="anon", tenant="default", scopes=frozenset({READ}))
-
-    monkeypatch.setattr(portal, "_STATE_DIR", tmp_path)
-    monkeypatch.setattr(portal, "_LATEST_DIR", tmp_path / "latest")
     # Since schema v2 the analysis lives in portal.db (the tenant's default
     # campaign); `latest` takes the store as a dependency.
     from kalos.portal.campaign import CampaignStore

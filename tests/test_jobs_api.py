@@ -92,8 +92,6 @@ def env(tmp_path, monkeypatch):
     store = CampaignStore(tmp_path)
     monkeypatch.setenv("KALOS_AUTH_TOKENS", json.dumps(TOKENS))
     monkeypatch.delenv("KALOS_AUTH_TOKENS_FILE", raising=False)
-    monkeypatch.setattr(portal_module, "_STATE_DIR", tmp_path)
-    monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
     monkeypatch.setattr(campaign_module, "_STORE", store)
     app.dependency_overrides[get_campaign_store] = lambda: store
     try:

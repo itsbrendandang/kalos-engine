@@ -118,8 +118,6 @@ def test_invalid_tenant_config_is_a_500_over_http_never_a_login(monkeypatch):
 
 @pytest.fixture
 def latest_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(portal, "_STATE_DIR", tmp_path)
-    monkeypatch.setattr(portal, "_LATEST_DIR", tmp_path / "latest")
     # Since schema v2 the analysis lives in portal.db, not in latest/ files.
     monkeypatch.setattr(campaign_module, "_STORE", CampaignStore(tmp_path))
     return tmp_path / "latest"
@@ -133,7 +131,9 @@ def _reopen_store(latest_dir):
 
 def test_latest_path_is_injective_over_ids_the_old_sanitiser_merged(latest_dir):
     # Under the old scheme all of these collapsed onto `acme_bio.json`.
-    names = {portal._latest_path(t).name for t in ["acme_bio", "acme-bio", "Acme_bio", "ACME_BIO"]}
+    from kalos.portal.migrate import legacy_latest_filename
+
+    names = {legacy_latest_filename(t) for t in ["acme_bio", "acme-bio", "Acme_bio", "ACME_BIO"]}
     assert len(names) == 4
     # case-insensitive filesystems (macOS default) must not merge them either
     assert len({n.lower() for n in names}) == 4
@@ -149,8 +149,6 @@ def test_latest_helpers_reject_ids_the_old_sanitiser_would_have_collided(latest_
         portal._save_latest({"target": "y"}, "evil.csv", tenant="acme/bio")
     with pytest.raises(ValueError):
         portal._load_latest("acme/bio")
-    with pytest.raises(ValueError):
-        portal._latest_path("acme/bio")
     _reopen_store(latest_dir)  # force a reload from disk
     assert portal._load_latest("acme_bio")["dataset"] == "acme_bio.csv"
 

@@ -163,14 +163,11 @@ def test_runs_in_flight_are_capped_per_campaign(store):
 def _upload_then_start(tmp_path, df) -> tuple[int, dict]:
     from fastapi.testclient import TestClient
 
-    from kalos.portal import app as portal
     from kalos.portal import campaign as campaign_module
     from kalos.portal.app import app, get_campaign_store
 
     s = CampaignStore(tmp_path)
     mp = pytest.MonkeyPatch()
-    mp.setattr(portal, "_STATE_DIR", tmp_path)
-    mp.setattr(portal, "_LATEST_DIR", tmp_path / "latest")
     mp.setattr(campaign_module, "_STORE", s)
     app.dependency_overrides[get_campaign_store] = lambda: s
     try:

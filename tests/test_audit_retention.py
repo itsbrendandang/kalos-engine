@@ -127,7 +127,6 @@ def test_unset_setting_does_not_archive_at_startup(store, monkeypatch):
     monkeypatch.setenv("KALOS_JOBS_ENABLED", "0")
     monkeypatch.delenv("KALOS_AUDIT_RETENTION_DAYS", raising=False)
     monkeypatch.setattr(campaign_module, "_STORE", store)
-    monkeypatch.setattr(portal, "_STATE_DIR", store.state_dir)
     store.record_audit(tenant="acme", action="stale", outcome="200")
     _age(store, "stale", 4000)
 
@@ -145,7 +144,6 @@ def test_startup_archives_when_the_setting_is_set(store, monkeypatch):
     monkeypatch.setenv("KALOS_JOBS_ENABLED", "0")
     monkeypatch.setenv("KALOS_AUDIT_RETENTION_DAYS", "30")
     monkeypatch.setattr(campaign_module, "_STORE", store)
-    monkeypatch.setattr(portal, "_STATE_DIR", store.state_dir)
     store.record_audit(tenant="acme", action="stale", outcome="200")
     _age(store, "stale", 45)
     store.record_audit(tenant="acme", action="fresh", outcome="200")
@@ -164,7 +162,6 @@ def test_a_failing_archive_does_not_stop_the_boot(store, monkeypatch, caplog):
     monkeypatch.setenv("KALOS_JOBS_ENABLED", "0")
     monkeypatch.setenv("KALOS_AUDIT_RETENTION_DAYS", "30")
     monkeypatch.setattr(campaign_module, "_STORE", store)
-    monkeypatch.setattr(portal, "_STATE_DIR", store.state_dir)
 
     def boom(*_a, **_k):
         raise RuntimeError("disk on fire")
