@@ -54,6 +54,7 @@ services:
       context: ..
       dockerfile: deploy/engine/Containerfile
     image: kalos-engine:${KALOS_IMAGE_TAG:-local}
+    cpus: ${KALOS_ENGINE_CPUS:-0}
     restart: unless-stopped
     environment:
       # 0.0.0.0, not the image's loopback default - see the SECURITY note
@@ -95,11 +96,8 @@ services:
       # Sizing knobs, all with working defaults - only takes effect if set.
       - KALOS_MAX_UPLOAD_MB=${KALOS_MAX_UPLOAD_MB:-}
       - KALOS_MAX_FIT_ROWS=${KALOS_MAX_FIT_ROWS:-}
-      # 0 = do not pin torch's thread count. The bare-metal default (pin 4)
-      # is PATHOLOGICAL on this image's linux-aarch64 torch/OpenBLAS build:
-      # measured 47s (unpinned) vs 600s+ (pinned 4) for the same analyze on
-      # the reference deployment, 2026-09-10. The container already bounds CPU.
-      - KALOS_TORCH_THREADS=${KALOS_TORCH_THREADS:-0}
+      # One thread avoids oversubscription across hosts; 0 leaves torch unpinned.
+      - KALOS_TORCH_THREADS=${KALOS_TORCH_THREADS:-1}
     volumes:
       # Named volume: survives container recreation (rebuild, image update).
       # Mounted at the engine's actual $HOME/.kalos - see deploy/engine/Containerfile.
@@ -117,7 +115,7 @@ services:
 
   web:
     build:
-      context: ../../kalos-web
+      context: ${KALOS_WEB_DIR:-../../kalos-web}
       dockerfile: Dockerfile
       args:
         # ESCAPE HATCH ONLY (wave-2): leave unset for the default posture,
@@ -132,15 +130,29 @@ services:
     environment:
       # Read server-side, at request time, by app/api/engine/[...path]/route.ts
       # - never baked into the client bundle, unlike the build args above.
-      # KALOS_ENGINE_TOKEN is the plaintext counterpart of one
-      # KALOS_AUTH_TOKENS entry; see RUNBOOK.md "Auth between web and engine".
+      # Web signs EdDSA JWTs; today's engine only accepts static tokens.
+      # See RUNBOOK.md for the compatibility limitation.
       - KALOS_ENGINE_URL=http://engine:8050
-      - KALOS_ENGINE_TOKEN=${KALOS_ENGINE_TOKEN}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:3000}
+      - KALOS_PUBLIC_URL=${KALOS_PUBLIC_URL:-http://localhost:3000}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - AUTH_TRUSTED_PROXIES=${AUTH_TRUSTED_PROXIES:-none}
+      - AUTH_ACCEPT_NO_PROXY=${AUTH_ACCEPT_NO_PROXY:-1}
+      - AUTH_MIGRATE=1
+      - KALOS_ENGINE_JWT_PRIVATE_KEY_FILE=/run/secrets/engine-private.pem
+      - KALOS_ENGINE_JWT_KID=${KALOS_ENGINE_JWT_KID:-}
+      - KALOS_TENANT_MAP_FILE=/data/tenants.json
       # Proxy timeout for engine calls, ms. Default (unset/empty) is 120s -
       # sized for a COLD containerized GP fit, measured on the first real
       # compose run where the original 30s guess 502'd mid-analysis. The
       # route's parser treats empty as unset, so this :-} passthrough is safe.
       - KALOS_ENGINE_TIMEOUT_MS=${KALOS_ENGINE_TIMEOUT_MS:-}
+    volumes:
+      - web-auth:/data
+      - ./secrets/engine-private.pem:/run/secrets/engine-private.pem:ro
+      - ./secrets/tenants.json:/data/tenants.json
     depends_on:
       engine:
         # Orders startup AND matters functionally now: every browser call is
@@ -187,3 +199,4 @@ services:
 
 volumes:
   kalos-state:
+  web-auth:

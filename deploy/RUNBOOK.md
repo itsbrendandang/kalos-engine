@@ -1,5 +1,47 @@
 # kalos deployment runbook
 
+## Run locally with Docker
+
+From the engine checkout: `./scripts/kalos-up.sh`. Requires Docker with the
+Compose plugin (v2 or newer) and Git if the sibling kalos-web checkout must
+be cloned. Set `KALOS_WEB_DIR` for a different checkout location.
+
+First run generates `deploy/.env` (0600), a signing keypair and empty tenant
+map in gitignored `deploy/secrets/`, and a backup directory owned by container
+uid 10001 (0700). Existing `.env` is never replaced. Keep these files together;
+do not delete them to rotate a single credential. Private keys are readable
+only by container uid 10001. Docker manages a persistent web-auth volume.
+
+Fill in GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in `deploy/.env`, registering
+`http://localhost:3000/api/auth/callback/google` as the Google redirect URI,
+then rerun. Without credentials the script stops with instructions;
+`./scripts/kalos-up.sh --engine-only` starts engine and backups without them.
+`./scripts/kalos-up.sh logs` and `./scripts/kalos-up.sh down` pass through to
+Compose. Startup waits for health, then prints http://localhost:3000.
+
+**Current compatibility limitation:** engine health, web `/api/health` and
+`/sign-in` work. Google sign-in requires your own valid OAuth credentials.
+Authenticated web-to-engine data calls do **not** work: engine #138 removed
+EdDSA JWT verification while web still signs per-user EdDSA tokens. The generated
+key/kid lets web boot, but does not restore engine verification. The engine's
+generated static ops token remains valid for direct API clients; web does not
+use it. No JWT verification is enabled by this Docker change. Organization
+onboarding and tenant mappings also need operator configuration (web docs/AUTH.md).
+
+Only loopback port 3000 is published. `AUTH_TRUSTED_PROXIES=none` together with
+`AUTH_ACCEPT_NO_PROXY=1` explicitly accepts a shared rate-limit bucket for this
+local setup; do not expose it publicly unchanged. The engine is network-internal.
+The public key is retained in `deploy/secrets/engine-public.jwks` for a future
+compatible engine, not mounted into today's static-token-only engine.
+
+`KALOS_TORCH_THREADS` defaults to 1 to reduce host-dependent oversubscription;
+set 0 to leave torch unpinned. Optional `KALOS_ENGINE_CPUS` limits engine CPU
+usage (0, the default, means unlimited). These do not guarantee equal runtimes
+across hardware. Rebuilds of Next 16 may need one retry after SecurityFatalError.
+
+The historical deployment notes below describe earlier revisions; this section
+supersedes their authentication, first-start, and thread-default instructions.
+
 Covers the stack in `deploy/compose.yaml`: the kalos engine
 (FastAPI/uvicorn, `python -m kalos.portal`), kalos-web (Next.js), and a
 SQLite backup sidecar.

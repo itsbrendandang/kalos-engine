@@ -68,13 +68,21 @@ def test_compose_publishes_only_the_web_front_door():
 
 
 def test_compose_web_carries_the_proxy_env():
-    """The proxy needs both server-side vars; a compose without them ships a
-    web container whose every engine call 401s or 502s."""
+    """Web startup needs its session, OAuth and per-user JWT configuration."""
     doc = _load_compose()
     env = doc["services"]["web"].get("environment", [])
     joined = " ".join(env) if isinstance(env, list) else " ".join(f"{k}={v}" for k, v in env.items())
     assert "KALOS_ENGINE_URL" in joined
-    assert "KALOS_ENGINE_TOKEN" in joined
+    assert "KALOS_ENGINE_TOKEN" not in joined
+    for key in (
+        "BETTER_AUTH_SECRET", "BETTER_AUTH_URL", "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET", "KALOS_ENGINE_JWT_PRIVATE_KEY_FILE",
+        "KALOS_ENGINE_JWT_KID", "KALOS_TENANT_MAP_FILE", "AUTH_MIGRATE=1",
+    ):
+        assert key in joined
+    volumes = doc["services"]["web"]["volumes"]
+    assert "web-auth:/data" in volumes
+    assert "./secrets/engine-private.pem:/run/secrets/engine-private.pem:ro" in volumes
 
 
 def test_compose_engine_has_no_replicas_override():
