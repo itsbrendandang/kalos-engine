@@ -6,7 +6,7 @@ Newest first.
 
 ### Added - ESMC protein embeddings and an open-source catalog
 
-- `kalos.features.ESMCEmbedder` embeds a protein sequence with ESMC (ESM Cambrian), the current ESM model from Biohub (MIT). The default is `biohub/ESMC-300M` (960 dimensions), pinned to commit `96a2d8d6`, loaded with transformers' native `esmc` model, not remote code. `ESM2Embedder` is unchanged.
+- `kalos.features.ESMCEmbedder` embeds a protein sequence with ESMC (ESM Cambrian), the current ESM model from Biohub (MIT). The default is `biohub/ESMC-300M` (960 dimensions), pinned to commit `96a2d8d6`, loaded with transformers' native `esmc` model. Both embedders now load with `trust_remote_code=False` and `use_safetensors=True`, so a checkpoint can neither run its own Python nor load pickled weights. `ESM2Embedder` is unchanged.
 - The `protein` extra now installs torch (the same pin as `ml`), so `pip install -e ".[protein]"` alone runs the embedders, and needs `transformers>=5.16`, the first release with ESMC; the lockfile resolves 5.23.0.
 - `docs/OPEN_SOURCE.md` lists the open-source models, libraries and public data sources Kalos uses or can use, with licenses and what each would add.
 

@@ -126,8 +126,18 @@ class _HFProteinEmbedder:
         # Recorded so a run's provenance can state exactly which weights produced
         # its features, not merely which model name was requested.
         self.revision = revision
-        self.tokenizer = AutoTokenizer.from_pretrained(model, revision=revision)
-        self.model = AutoModel.from_pretrained(model, revision=revision).to(device).eval()
+        # Never run Python shipped with a checkpoint, and never unpickle weights:
+        # both would execute code from the model repo on this machine.
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model, revision=revision, trust_remote_code=False
+        )
+        self.model = (
+            AutoModel.from_pretrained(
+                model, revision=revision, trust_remote_code=False, use_safetensors=True
+            )
+            .to(device)
+            .eval()
+        )
         self.dim = int(self.model.config.hidden_size)
 
     def embed(self, sequence: str) -> np.ndarray:
