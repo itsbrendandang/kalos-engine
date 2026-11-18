@@ -77,10 +77,15 @@ def _timeout() -> float:
     return max(1.0, min(value, 900.0))
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
 def _opener() -> urllib.request.OpenerDirector:
     """An opener that ignores HTTP(S)_PROXY: a prompt for a local model must
     never be routed through a proxy (which would send it off the machine)."""
-    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 
 
 def _open(request: urllib.request.Request, timeout: float) -> bytes:
