@@ -123,9 +123,10 @@ from local replies before showing text or reading normalization JSON.
 
 The check prints provider, URL, model, local, reachable and model pulled. It
 suggests `ollama pull` if the server answers but the model is missing.
-`GET /api/assist/index/status` includes `reachable` and `model_present` for local
-providers; the probe has a two-second timeout and runs only on request, never
-at import. Provider slot status (`/api/providers`) does not probe.
+`GET /api/assist/index/status?probe=true` includes `reachable` and `model_present`
+for local providers. The probe has a two-second timeout and runs only with this
+query parameter, never at import. Ordinary status requests and provider slot
+status (`/api/providers`) do not probe. The check CLI always probes.
 
 For LM Studio or llama.cpp, start its OpenAI-compatible server, set
 `KALOS_LLM_PROVIDER=openai`, `KALOS_OPENAI_BASE_URL=http://localhost:8080/v1`
