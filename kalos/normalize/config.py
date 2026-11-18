@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from kalos.envconfig import env_enum
+from kalos.providers.ollama_provider import DEFAULT_MODEL as _DEFAULT_OLLAMA_MODEL
 
 _MODEL_ENV_VAR = "KALOS_NORMALIZE_MODEL"
 _MAX_SAMPLE_ENV_VAR = "KALOS_NORMALIZE_MAX_SAMPLE"
@@ -45,11 +46,6 @@ Provider = Literal["anthropic", "ollama", "none"]
 _PROVIDERS: tuple[Provider, ...] = ("anthropic", "ollama", "none")
 _DEFAULT_PROVIDER: Provider = "anthropic"
 _DEFAULT_OLLAMA_URL = "http://localhost:11434"
-# llama3.1 is a widely-available general-purpose Ollama model (a single
-# `ollama pull llama3.1` away) reasonable at following a schema-constrained
-# JSON instruction - a sensible default for self-hosters who have not pulled
-# anything task-specific, not a claim that it is the best available model.
-_DEFAULT_OLLAMA_MODEL = "llama3.1"
 
 
 @dataclass(frozen=True)
@@ -89,7 +85,8 @@ def credentials_available() -> bool:
 
 def provider_setting() -> Provider:
     """`KALOS_LLM_PROVIDER` as a `Provider`; unknown values raise `ConfigError`."""
-    return env_enum(_PROVIDER_ENV_VAR, _PROVIDERS, _DEFAULT_PROVIDER)  # type: ignore[return-value]
+    value = env_enum(_PROVIDER_ENV_VAR, (*_PROVIDERS, "openai"), _DEFAULT_PROVIDER)
+    return "none" if value == "openai" else value  # type: ignore[return-value]
 
 
 def load_config() -> NormalizeConfig:
@@ -107,7 +104,7 @@ def load_config() -> NormalizeConfig:
       must not reach a live API). The startup check refuses it first.
     - `ollama_url` / `ollama_model`: `KALOS_OLLAMA_URL` (default
       `"http://localhost:11434"`) / `KALOS_OLLAMA_MODEL` (default
-      `"llama3.1"`) - only consulted when `provider == "ollama"`.
+      `"qwen2.5:7b-instruct"`) - only consulted when `provider == "ollama"`.
     - `enabled_live`: see `NormalizeConfig`'s docstring for the per-provider
       rule. The Anthropic key value itself is never read into this object.
     """

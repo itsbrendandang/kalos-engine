@@ -261,17 +261,31 @@ def test_ask_never_sees_another_tenants_data(env):
 # --- index routes ------------------------------------------------------------------ #
 
 
-def test_index_status_and_rebuild(env):
+def test_index_status_and_rebuild(env, monkeypatch):
+    from kalos.providers.ollama_provider import OllamaProvider
+
+    probes = []
+
+    def probe(self):
+        probes.append(True)
+        return {"reachable": True, "model_present": False}
+
+    monkeypatch.setattr(OllamaProvider, "probe", probe)
     tc, store, _fake = env
     _seed(store, "acme", A_SECRET)
     status = tc.get("/api/assist/index/status", headers=H("a-read")).json()
     assert set(status) == {"provider", "model", "local", "chunks", "built_at", "building", "retriever"}
+    assert probes == []
+    checked = tc.get("/api/assist/index/status?probe=true", headers=H("a-read")).json()
+    assert checked["reachable"] is True and checked["model_present"] is False
+    assert probes == [True]
     assert status["provider"] == "ollama" and status["local"] is True
     assert status["chunks"] > 0 and status["built_at"]  # built on first look
     assert tc.post("/api/assist/index/rebuild", headers=H("a-read")).status_code == 403
     r = tc.post("/api/assist/index/rebuild", headers=H("a-write"))
     assert r.status_code == 200
     assert r.json()["chunks"] > 0 and r.json()["built_at"]
+    assert probes == [True]
     actions = [e["action"] for e in store.audit_entries(tenant="acme")]
     assert "assist.index.rebuild" in actions
     assert "assist.index.rebuild" not in [e["action"] for e in store.audit_entries(tenant="globex")]

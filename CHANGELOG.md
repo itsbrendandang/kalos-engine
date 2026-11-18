@@ -15,6 +15,15 @@ Newest first.
 - Restore EdDSA JWT verification, trusted-key rotation, deny-list checks and tenant-scoped principals for kalos-web's signed engine requests. Static service-account tokens remain supported; production still refuses unusable authentication configuration and published test keys.
 - Restore JWT and cross-tenant HTTP tests using kalos-web's shared token vectors. Document the proxy's route-specific scopes and signing contract in `docs/ENGINE_TOKEN.md` and correct the README's static-only authentication description.
 
+### Added - local Qwen setup
+
+- Ollama now defaults to `qwen2.5:7b-instruct` for assistant chat and normalization;
+  `KALOS_OLLAMA_MODEL` still overrides it. Local replies discard thinking blocks.
+- The assistant supports OpenAI-compatible servers with `KALOS_LLM_PROVIDER=openai`.
+  Normalization stays offline with this setting.
+- Assistant status reports server reachability and model presence on request.
+  `python -m kalos.providers.check` checks setup and suggests missing Ollama pulls.
+
 ### Changed - audit trail and recorded results (schema v5, `docs/MIGRATIONS.md`)
 
 - **Recorded results are append-only.** A re-submitted campaign result is a new `run_results` row (value, value replaced, reason, actor, server time). A correction needs a `reason` (`400 reason_required` without one). The run's current value is the latest. Response fields are added (`result_version`, `previous_result`, `result_reason`, `result_actor`, `result_recorded_at`); none is removed.

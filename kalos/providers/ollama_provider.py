@@ -12,7 +12,7 @@ prompts leave the machine, and the status says so.
 The HTTP client is stdlib `urllib` (no extra dependency), same as
 `kalos.normalize.llm`'s Ollama path, and shares its env vars:
 `KALOS_OLLAMA_URL` (default http://localhost:11434) and `KALOS_OLLAMA_MODEL`
-(default llama3.1).
+(default qwen2.5:7b-instruct).
 """
 from __future__ import annotations
 
@@ -23,12 +23,13 @@ import urllib.request
 from urllib.parse import urlparse
 
 from kalos.providers.base import ProviderStatus
+from kalos.providers.text import strip_thinking
 
 _URL_ENV = "KALOS_OLLAMA_URL"
 _MODEL_ENV = "KALOS_OLLAMA_MODEL"
 _TIMEOUT_ENV = "KALOS_OLLAMA_TIMEOUT_S"
 DEFAULT_URL = "http://localhost:11434"
-DEFAULT_MODEL = "llama3.1"
+DEFAULT_MODEL = "qwen2.5:7b-instruct"
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
 _CAPABILITY = (
@@ -52,6 +53,10 @@ def ollama_url() -> str:
 
 def ollama_model() -> str:
     return (os.environ.get(_MODEL_ENV) or DEFAULT_MODEL).strip()
+
+
+def _tagged_model(model: str) -> str:
+    return model if ":" in model.rsplit("/", 1)[-1] else f"{model}:latest"
 
 
 def _timeout() -> float:
@@ -131,10 +136,32 @@ class OllamaProvider:
             data = json.loads(_open(request, _timeout()).decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             raise OllamaUnavailable("the Ollama server did not answer") from exc
-        content = (data.get("message") or {}).get("content") if isinstance(data, dict) else None
+        message = data.get("message") if isinstance(data, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, str):
             raise OllamaUnavailable("the Ollama server gave no answer text")
+        content = strip_thinking(content)
+        if not content:
+            raise OllamaUnavailable("the Ollama server gave no answer text")
         return content
+
+    def probe(self) -> dict[str, bool]:
+        """Check the server and selected model, only when explicitly called."""
+        url = ollama_url()
+        if urlparse(url).scheme not in {"http", "https"}:
+            return {"reachable": False, "model_present": False}
+        request = urllib.request.Request(f"{url}/api/tags")  # noqa: S310
+        try:
+            data = json.loads(_open(request, 2.0))
+            models = data.get("models", []) if isinstance(data, dict) else []
+            present = any(
+                isinstance(item, dict) and isinstance(item.get("name"), str)
+                and _tagged_model(item["name"]) == _tagged_model(ollama_model())
+                for item in models
+            )
+            return {"reachable": True, "model_present": present}
+        except (OSError, ValueError, TypeError):
+            return {"reachable": False, "model_present": False}
 
 
 __all__ = [
