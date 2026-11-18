@@ -105,9 +105,13 @@ def selected() -> bool:
 
 
 def _remote_allowed(url: str) -> bool:
-    return is_loopback_url(url) or os.environ.get("KALOS_OPENAI_ALLOW_REMOTE", "").strip().lower() in {
-        "1", "true", "yes", "on",
-    }
+    if is_loopback_url(url):
+        return True
+    truthy = {"1", "true", "yes", "on"}
+    return (
+        os.environ.get("KALOS_NO_PAID_CALLS", "").strip().lower() not in truthy
+        and os.environ.get("KALOS_OPENAI_ALLOW_REMOTE", "").strip().lower() in truthy
+    )
 
 
 class OpenAICompatibleProvider:
@@ -138,7 +142,9 @@ class OpenAICompatibleProvider:
         if urlparse(url).scheme not in {"http", "https"}:
             raise OpenAICompatUnavailable("the OpenAI base URL must be http or https")
         if not _remote_allowed(url):
-            raise OpenAICompatUnavailable("remote OpenAI URLs require KALOS_OPENAI_ALLOW_REMOTE=true")
+            raise OpenAICompatUnavailable(
+                "remote OpenAI URLs require KALOS_OPENAI_ALLOW_REMOTE=true and KALOS_NO_PAID_CALLS off"
+            )
         chosen = model or openai_model()
         if not chosen:
             raise OpenAICompatUnavailable("no model is set (KALOS_OPENAI_MODEL)")
