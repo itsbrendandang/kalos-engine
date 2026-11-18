@@ -56,7 +56,13 @@ Other claims are ignored.
 | `campaigns:write` | `write` | Mutating routes (`/api/run`, `/api/campaign/*`, ...) |
 | `org:admin` | `admin` | Reserved. No engine route requires it today. Like every engine scope, it is **tenant-scoped**: it applies only within the token's `tenant` and never grants cross-tenant access. |
 
-Scopes **do not imply each other**. The engine's `require_scope` is a plain membership check, and static tokens have always listed `read` and `write` separately. So `campaigns:write` alone does not grant `read`, and `org:admin` alone grants neither. The web mints `["campaigns:read", "campaigns:write"]` for members, and all three scopes for admins.
+Scopes **do not imply each other**. The engine's `require_scope` is a plain membership check, and static tokens have always listed `read` and `write` separately. So `campaigns:write` alone does not grant `read`, and `org:admin` alone grants neither. The web authorizes the user's role against the route and mints only that route's required scopes, not every scope the role holds (`lib/server/engine-proxy.ts`).
+
+### What kalos-web mints
+
+`lib/server/engine-token.ts` sets `alg=EdDSA`, `typ=JWT`, `iss=kalos-web`, `aud=kalos-engine`, and a `kid` matching `^[A-Za-z0-9._-]{1,64}$`. It generates a UUID `jti`, integer `iat`, `nbf=iat`, and `exp=iat+ttl`. The proxy requests 60 seconds; the signer clamps TTL to 1-120 seconds, optionally lowered by `KALOS_ENGINE_JWT_MAX_TTL_S` on the web. Keep the engine's maximum at least as large as the web's effective TTL.
+
+The verifier retains its configurable 1-300 second TTL ceiling and accepts nonempty identifiers up to 256 characters for `kid` and `jti`; the web emits a stricter subset. It also accepts an absent `typ` and finite fractional NumericDates, although the web always emits `typ=JWT` and integer dates. These verifier allowances do not change what the web signs. The copied web vectors test both valid tokens and generic rejection of invalid tokens, including expiry, issuer, audience, signature, tenant and scopes.
 
 ## Configuration
 

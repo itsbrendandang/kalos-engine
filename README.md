@@ -3,7 +3,7 @@
 [![CI](https://github.com/itsbrendandang/kalos-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/itsbrendandang/kalos-engine/actions/workflows/ci.yml)
 
 > **Early software. Not a product yet.**
-> There is no hosted service, no login, and no accounts. It runs on your own machine.
+> There is no hosted service. The engine runs on your own machine; user login lives in kalos-web.
 > **The optimizer is not proven to improve real lab results** — see [Scientific methodology](#scientific-methodology-and-benchmark-limitations).
 > Nothing here is certified for regulated, enterprise, or secure use.
 
@@ -84,7 +84,7 @@ Latin hypercube sampling (LHS) spreads random points evenly across the design sp
 | Data validation gate. It checks units, bounds, duplicates, and missing values | IMPLEMENTED | `kalos/validation/`, `tests/test_validation_gate.py` |
 | Campaign loop (propose, measure, re-propose) with in-flight points | IMPLEMENTED | `kalos/portal/campaign_routes.py`, `docs/CAMPAIGN_LOOP.md`, `tests/test_pending_proposals.py` |
 | Scale-up readout. It refuses when its backtest fails | IMPLEMENTED (synthetic evidence only) | `kalos/portal/scale_routes.py`, `docs/SCALE_READOUT.md`, `docs/SCALE_EVIDENCE.md` |
-| Bearer-token authentication (a secret string that grants access) with `read`/`write`/`admin` scopes. Tokens are hashed | IMPLEMENTED | `kalos/portal/auth.py` |
+| EdDSA JWT authentication for kalos-web users; hashed static tokens for service accounts. Tenant-scoped `read`/`write`/`admin` permissions | IMPLEMENTED | `kalos/portal/auth.py`, `docs/ENGINE_TOKEN.md` |
 | Campaign and latest-analysis store, keyed by tenant (SQLite) | IMPLEMENTED | `kalos/portal/campaign.py`, `docs/HARDENING.md` Phase 1b |
 | Upload limits. Loopback-only default (loopback means this machine only). Remote requests are refused when the API is open | IMPLEMENTED | `kalos/portal/uploads.py`, `__main__.py`, `app.py` middleware |
 | Container deploy pack | IMPLEMENTED (limited verification, see runbook; the deploy image itself is not built in CI, use `scripts/check.sh`) | `deploy/` |
@@ -97,7 +97,7 @@ Latin hypercube sampling (LHS) spreads random points evenly across the design sp
 | `feature_ranges` in analysis output. GP-default guardrail | IMPLEMENTED | `kalos/portal/analysis.py`, `tests/test_feature_ranges.py` |
 | Repository hygiene (CODEOWNERS, SECURITY.md, PR template). Loopback-by-default compose bind | IMPLEMENTED | `SECURITY.md`, `.github/CODEOWNERS`, `deploy/compose.yaml` |
 | Grounded assistant: cited chat over the tenant's own data, next-step guide, SOP drafts (`/api/assist/*`) | IMPLEMENTED | `kalos/assist/`, `docs/ASSISTANT.md`, `tests/test_assist_*` |
-| Organizations as tenants, with membership | PLANNED | the engine only reads a `tenant` string from an operator-provisioned token. No organization model or membership exists in the engine |
+| Organization management inside the engine | PLANNED | the engine trusts the signed `tenant` claim; membership is enforced by kalos-web, not by an engine organization model |
 | Multiple campaigns per tenant | IMPLEMENTED | `kalos/portal/campaigns_api.py`, `docs/CAMPAIGNS_API.md`, `tests/test_cross_tenant_isolation.py`; PRs [#89](https://github.com/itsbrendandang/kalos-engine/pull/89), [#90](https://github.com/itsbrendandang/kalos-engine/pull/90) |
 | Background analysis jobs with a local worker process (`/api/campaigns/{id}/jobs`) | IMPLEMENTED | `kalos/portal/jobs.py`, `job_runner.py`, `job_worker.py`, `docs/JOBS.md`, `tests/test_jobs.py`, `tests/test_jobs_api.py`; PR [#91](https://github.com/itsbrendandang/kalos-engine/pull/91). The synchronous routes still return 503 busy when the analysis slot is taken |
 | Sparse/variational surrogate model beyond 2,000 rows | PLANNED | `docs/HARDENING.md` Phase 2 |
@@ -111,20 +111,19 @@ Solid arrows and boxes exist on `main`. Dashed arrows and boxes are planned. The
 ```mermaid
 flowchart LR
   B[Browser] --> W["kalos-web: Next.js UI + server-side proxy"]
-  W -->|"static bearer token (today)"| E["kalos-engine: FastAPI"]
+  W -->|"per-user EdDSA engine token"| E["kalos-engine: FastAPI"]
   E --> S[("SQLite: per-tenant campaigns")]
   E --> M["GP surrogate (BoTorch)"]
   E --> AS["grounded assistant (/api/assist)"]
   E --> J["local job workers"]
-  B -.->|"planned: login"| A["Better Auth session in web"]
-  A -.-> W
+  B -->|"login"| A["Better Auth session in web"]
+  A --> W
   E -.-> O["planned: organisations as tenants, membership"]
   classDef planned stroke-dasharray: 5 5,color:#666;
-  class A,O planned;
+  class O planned;
 ```
 
-Today, the browser talks to the Next.js app. The app's server-side proxy forwards requests to this engine. It uses one configured bearer token.
-The web app has **no user login**. So anyone who can reach the proxy acts as that token's tenant.
+The browser talks to the Next.js app. After validating the user's session and membership, its server-side proxy signs a short-lived EdDSA JWT for each engine request. The engine verifies it against an operator-configured public-key JWKS and takes the user, session, tenant and permissions from the signed claims. See [`docs/ENGINE_TOKEN.md`](docs/ENGINE_TOKEN.md).
 
 The engine side has these parts, which are built:
 
@@ -134,8 +133,7 @@ The engine side has these parts, which are built:
 
 These parts are still planned:
 
-- User login (Better Auth) in the web app, and a signed short-lived token from the web app to the engine (there is no such verification in the engine today; auth is static bearer tokens).
-- Organizations as tenants, with membership.
+- Organization and membership management inside the engine (kalos-web owns membership today).
 
 Current and planned request flows: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Campaign loop details: [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md).
 
@@ -221,6 +219,7 @@ The common operational knobs (see `kalos/portal/config.py`, `jobs.py`, and `__ma
 | `KALOS_ENV` | `development` | `production` hardens the deployment (see Security model) |
 | `KALOS_STATE_DIR` | platform state dir | Where SQLite and caches live |
 | `KALOS_AUTH_TOKENS` / `KALOS_AUTH_TOKENS_FILE` | unset | Bearer tokens; once set, auth is enforced |
+| `KALOS_JWT_PUBLIC_KEYS_FILE` | unset | Trusted Ed25519 public-key JWKS; enables per-user JWT authentication and disables open mode |
 | `KALOS_ALLOW_OPEN_ACCESS` | unset | Serve unauthenticated off loopback (use with care) |
 | `KALOS_TRUSTED_PROXIES` | unset | Proxy IPs allowed to set `X-Forwarded-For` |
 | `KALOS_CORS_ORIGINS` | localhost | Explicit CORS allowlist |
@@ -233,8 +232,9 @@ The common operational knobs (see `kalos/portal/config.py`, `jobs.py`, and `__ma
 
 These controls exist today (`kalos/portal/auth.py`, `config.py`, `uploads.py`, `app.py`):
 
-- Bearer tokens are stored as SHA-256 hashes. They are compared in constant time. They are read on each request, so they can be rotated without a restart. Scopes: `read`, `write`, `admin`.
-- Once any token is configured, auth is enforced on every scoped route. There is no half-authenticated state.
+- User engine tokens are EdDSA JWTs verified by `kid` against trusted Ed25519 public keys. Issuer, audience, short lifetime, identity, tenant and scopes are checked; token failures return a generic 401. See [`docs/ENGINE_TOKEN.md`](docs/ENGINE_TOKEN.md).
+- Static bearer tokens are stored as SHA-256 hashes and compared in constant time. In production they are restricted to service accounts with one tenant and no `admin` scope. Token records and JWT keys can be rotated without a restart.
+- Once usable static tokens or a JWT keys file are configured, auth is enforced on every scoped route. A broken JWKS fails closed; production requires at least one usable authentication source.
 - Campaign and latest-analysis state are keyed by tenant. The latest-analysis cache filename is sanitized against path traversal.
 - Upload caps: `KALOS_MAX_UPLOAD_MB` (default 25), 100,000 CSV rows, 512 columns, 2,000,000 xlsx cells, 2,000 GP fit rows.
 - Loopback guard: `python -m kalos.portal` binds 127.0.0.1. It refuses to serve unauthenticated on another interface. A middleware also refuses non-loopback peers while auth is not enforced. The exception is when `KALOS_ALLOW_OPEN_ACCESS` is set. Forwarded headers (`X-Forwarded-For`) are ignored unless `KALOS_TRUSTED_PROXIES` names the proxy IPs, so a client cannot spoof its peer address.
@@ -245,9 +245,8 @@ These controls exist today (`kalos/portal/auth.py`, `config.py`, `uploads.py`, `
 
 These controls are missing or limited:
 
-- **The web app has no user login, and its proxy is unauthenticated.** Do not expose kalos-web or this engine to the public internet.
-- Tenants are strings in operator-provisioned tokens. There is no user directory, organization membership, or self-service token issuance.
-- Authentication is static bearer tokens only (SHA-256 hashed, scoped). The web app sends one configured token. A signed per-user token from the web app is planned but not built.
+- The engine has no user directory or organization-membership database. It trusts kalos-web to authenticate users and authorize their tenant and scopes before signing engine tokens.
+- Engine tokens can be replayed until expiry plus clock leeway; there is no replay cache. Use TLS and protect signing keys. Published test-vector keys are refused in production.
 - Audit log: state-changing campaign and job routes write an `audit_log` row in `portal.db` (tenant, subject, auth method, action, outcome; never a token or uploaded data). Since schema v4 the table is append-only at the database level: triggers reject UPDATE and DELETE. Retention deletes nothing; `KALOS_AUDIT_RETENTION_DAYS` (unset by default) only turns on an opt-in archive that copies old rows to `<state dir>/audit-archive/`. Rows have no hash chain or signature, and a person with write access to the database file can still replace it. Only a `campaign.result` audit write is in the same transaction as its change; other audit writes are best-effort. Recorded results are append-only (schema v5). See `docs/HARDENING.md` ("Audit retention") and `docs/MIGRATIONS.md`.
 - There is no per-client request rate limit in the engine. The only throttles are the background-job queue caps (429 `rate_limited` with `Retry-After`) and the one-at-a-time sync analysis guard (503 busy). There is no encryption at rest. TLS is out of scope. Use a reverse proxy.
 - `/api/single`, `/api/multi`, and `/healthz` are not tenant-scoped. They hold no tenant data.
@@ -357,9 +356,9 @@ python -m kalos.bench --vs-baselines --quick   # smoke test, 2 seeds, writes not
 ## Roadmap
 
 - **MVP (toward a public beta, not started unless noted):**
-  - IMPLEMENTED: upload, analysis, campaign loop, scale readout, static token auth, tenant-keyed store, multi-campaign API, background jobs, grounded assistant.
+  - IMPLEMENTED: upload, analysis, campaign loop, scale readout, per-user EdDSA JWT and static service-account auth, tenant-keyed store, multi-campaign API, background jobs, grounded assistant.
   - IN PROGRESS: none open.
-  - PLANNED: web login (Better Auth), a signed per-user token from the web app to the engine, organizations as tenants, a rate limit.
+  - PLANNED: engine-side organization management and rate limiting.
 - **Later (PLANNED):** sparse or variational surrogate model, metrics and alerting, server-side PDF readouts (`TODOS.md`), independent validation on real data, an external security review.
 - **EXPERIMENTAL:** mechanistic priors, and alternative surrogate models. Alternatives must beat the GP on published datasets first.
 
@@ -367,11 +366,11 @@ python -m kalos.bench --vs-baselines --quick   # smoke test, 2 seeds, writes not
 
 The deploy pack in `deploy/` has a container image for each service, a `compose.yaml` file, and a SQLite backup sidecar.
 By default, the engine binds to loopback. It refuses to serve unauthenticated on any other interface.
-Auth uses bearer tokens. Set them with `KALOS_AUTH_TOKENS`. Copy `deploy/.env.example` and fill it in.
+Auth uses per-user EdDSA engine tokens (`KALOS_JWT_PUBLIC_KEYS_FILE`) and/or static service-account tokens (`KALOS_AUTH_TOKENS`). See `docs/ENGINE_TOKEN.md`. Copy `deploy/.env.example` and fill it in.
 The runbook says what is and is not verified. A first deployment on 2026-09-10 ran the stack end to end. However, the runbook's own "NOT verified" list still says that no image was built and no container was run. The backup drill was not exercised.
 TLS is out of scope. Put a reverse proxy in front. Full steps are in [`deploy/RUNBOOK.md`](deploy/RUNBOOK.md).
 
-**Warning:** the web UI has no login. Treat any deployment as private-network only.
+**Warning:** configure authentication, TLS, trusted proxies and the CORS allowlist before exposing a deployment beyond loopback.
 The web port is published on loopback (`127.0.0.1`) by default in the compose file.
 
 ## Extending to other domains
