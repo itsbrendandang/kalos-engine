@@ -6,7 +6,8 @@ Run `./scripts/kalos-up.sh` with Docker running. On first run it generates
 local secrets and stops so you can fill in Google OAuth credentials in
 `deploy/.env`; rerun to build and start the stack. See
 [the Docker runbook](deploy/RUNBOOK.md#run-locally-with-docker) for limitations
-and engine-only operation. Web data calls currently fail engine authentication.
+and engine-only operation. Onboard an organization with the documented CLI
+to populate its tenant mapping before accessing engine data.
 
 [![CI](https://github.com/itsbrendandang/kalos-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/itsbrendandang/kalos-engine/actions/workflows/ci.yml)
 
@@ -373,7 +374,7 @@ python -m kalos.bench --vs-baselines --quick   # smoke test, 2 seeds, writes not
 
 The deploy pack in `deploy/` has a container image for each service, a `compose.yaml` file, and a SQLite backup sidecar.
 By default, the engine binds to loopback. It refuses to serve unauthenticated on any other interface.
-Auth uses per-user EdDSA engine tokens (`KALOS_JWT_PUBLIC_KEYS_FILE`) and/or static service-account tokens (`KALOS_AUTH_TOKENS`). See `docs/ENGINE_TOKEN.md`. Copy `deploy/.env.example` and fill it in.
+Auth uses per-user EdDSA engine tokens (`KALOS_JWT_PUBLIC_KEYS_FILE`) and/or static service-account tokens (`KALOS_AUTH_TOKENS`). See `docs/ENGINE_TOKEN.md`. The [environment template](deploy/.env.example) exists for reference; use `./scripts/kalos-up.sh` to generate the local configuration and key files.
 The runbook says what is and is not verified. A first deployment on 2026-09-10 ran the stack end to end. However, the runbook's own "NOT verified" list still says that no image was built and no container was run. The backup drill was not exercised.
 TLS is out of scope. Put a reverse proxy in front. Full steps are in [`deploy/RUNBOOK.md`](deploy/RUNBOOK.md).
 

@@ -30,20 +30,22 @@ then rerun. Without credentials the script stops with instructions;
 `./scripts/kalos-up.sh logs` and `./scripts/kalos-up.sh down` pass through to
 Compose. Startup waits for health, then prints http://localhost:3000.
 
-**Current compatibility limitation:** engine health, web `/api/health` and
-`/sign-in` work. Google sign-in requires your own valid OAuth credentials.
-Authenticated web-to-engine data calls do **not** work: engine #138 removed
-EdDSA JWT verification while web still signs per-user EdDSA tokens. The generated
-key/kid lets web boot, but does not restore engine verification. The engine's
-generated static ops token remains valid for direct API clients; web does not
-use it. No JWT verification is enabled by this Docker change. Organization
-onboarding and tenant mappings also need operator configuration (web docs/AUTH.md).
+Engine health, web `/api/health` and `/sign-in` work. The engine verifies web's
+per-user EdDSA tokens using the generated public JWKS, issuer `kalos-web` and
+audience `kalos-engine`; static ops tokens remain valid for direct API clients.
+Google sign-in requires your own valid OAuth credentials. Organization onboarding
+is also required: run the `create-org.mjs` command above with your owner's email,
+then accept its invitation and enroll MFA (web docs/AUTH.md). It writes the actual
+organization ID to tenant mapping as `{ "<organization id>": "local-lab" }`.
+The map intentionally starts empty rather than guessing an organization ID;
+an organization without an entry receives 403 before reaching the engine.
 
 Only loopback port 3000 is published. `AUTH_TRUSTED_PROXIES=none` together with
 `AUTH_ACCEPT_NO_PROXY=1` explicitly accepts a shared rate-limit bucket for this
 local setup; do not expose it publicly unchanged. The engine is network-internal.
-The public key is retained in `deploy/secrets/engine-public.jwks` for a future
-compatible engine, not mounted into today's static-token-only engine.
+The engine mounts `deploy/secrets/engine-public.jwks` read-only. Web alone mounts
+the private key; the engine selects the matching public key by the JWT's `kid`.
+Bootstrap backfills a missing JWKS from the existing private key and stored KID.
 
 `KALOS_TORCH_THREADS` defaults to 0 (unpinned): 47s unpinned versus 600s+
 pinned on the reference deployment. Optional `KALOS_ENGINE_CPUS` limits engine CPU

@@ -52,5 +52,4 @@ if "$engine_only"; then
     echo 'Engine healthy (Compose network only).'
 else
     echo 'Open http://localhost:3000 (Google OAuth credentials required for sign-in).'
-    echo 'Known limitation: web data calls fail engine auth; see deploy/RUNBOOK.md.'
 fi

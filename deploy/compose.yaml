@@ -67,6 +67,9 @@ services:
       # Inline JSON array of provisioned bearer tokens - see .env.example for
       # the exact shape and how to generate a token_sha256.
       - KALOS_AUTH_TOKENS=${KALOS_AUTH_TOKENS}
+      - KALOS_JWT_PUBLIC_KEYS_FILE=/run/secrets/engine-public.jwks
+      - KALOS_JWT_ISSUER=kalos-web
+      - KALOS_JWT_AUDIENCE=kalos-engine
       # REQUIRED for a non-loopback bind to start at all (assert_safe_exposure).
       # Seeds identity-pseudonymization (kalos/data/anonymizer.py); unset it
       # falls back to a published, dictionary-attackable dev salt.
@@ -105,6 +108,7 @@ services:
       # Named volume: survives container recreation (rebuild, image update).
       # Mounted at the engine's actual $HOME/.kalos - see deploy/engine/Containerfile.
       - kalos-state:/home/kalos/.kalos
+      - ./secrets/engine-public.jwks:/run/secrets/engine-public.jwks:ro
     # No published port (wave-2 change): the browser no longer calls the
     # engine directly. kalos-web's server-side proxy
     # (app/api/engine/[...path]/route.ts) reaches it over the compose-internal
@@ -133,8 +137,7 @@ services:
     environment:
       # Read server-side, at request time, by app/api/engine/[...path]/route.ts
       # - never baked into the client bundle, unlike the build args above.
-      # Web signs EdDSA JWTs; today's engine only accepts static tokens.
-      # See RUNBOOK.md for the compatibility limitation.
+      # Web signs per-user EdDSA JWTs verified against the engine's public JWKS.
       - KALOS_ENGINE_URL=http://engine:8050
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-}
       - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:3000}

@@ -154,6 +154,14 @@ def test_compose_web_carries_the_proxy_env():
     assert "AUTH_ACCEPT_NO_PROXY=${AUTH_ACCEPT_NO_PROXY:-}" in env
 
 
+def test_compose_engine_verifies_web_jwts():
+    engine = _load_compose()["services"]["engine"]
+    assert "KALOS_JWT_PUBLIC_KEYS_FILE=/run/secrets/engine-public.jwks" in engine["environment"]
+    assert "KALOS_JWT_ISSUER=kalos-web" in engine["environment"]
+    assert "KALOS_JWT_AUDIENCE=kalos-engine" in engine["environment"]
+    assert "./secrets/engine-public.jwks:/run/secrets/engine-public.jwks:ro" in engine["volumes"]
+
+
 def test_compose_engine_has_no_replicas_override():
     """kalos/store/sqlite_store.py and kalos/runner/singleton.py assume a
     single writer; this compose file must not silently scale the engine."""
