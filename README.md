@@ -43,7 +43,7 @@ the separate [kalos-web](https://github.com/itsbrendandang/kalos-web) repo.
 Kalos is three repositories with a clear split:
 
 - **kalos-engine** (here) — the optimization engine and its FastAPI service.
-- **[kalos-web](https://github.com/itsbrendandang/kalos-web)** — the scientist-facing workbench. The browser talks to it; its server-side proxy forwards to this engine over HTTP with a short-lived token. The response fields it depends on are guarded here by `tests/test_web_contract.py`.
+- **[kalos-web](https://github.com/itsbrendandang/kalos-web)** — the scientist-facing workbench. The browser talks to it; its server-side proxy forwards to this engine over HTTP with a short-lived, per-user EdDSA JWT for each request. The engine verifies it against kalos-web's Ed25519 public keys, which the operator must configure with `KALOS_JWT_PUBLIC_KEYS_FILE` (see [`docs/ENGINE_TOKEN.md`](docs/ENGINE_TOKEN.md)). The response fields it depends on are guarded here by `tests/test_web_contract.py`.
 - **kalos-workspace** (private) — the project hub: working notes, reviews, research, plans, and the cross-machine handoff. No product code.
 
 ## Who it's for
@@ -156,7 +156,7 @@ curl -F file=@examples/synthetic_bioprocess/synthetic_bioprocess.csv http://127.
 curl http://127.0.0.1:8050/api/latest
 ```
 
-Both commands were run on a fresh install of this branch's code. `/healthz` returned ok. The upload returned a 10-feature analysis for 160 rows.
+Both commands were run on a fresh install of this branch's code. `/healthz` returned ok. The upload returned an 11-feature analysis (10 continuous, 1 categorical) for 160 rows.
 State is written to `~/.kalos`. Set `KALOS_STATE_DIR` to change the location.
 With no tokens configured, the API is open on loopback only. See Security model.
 
@@ -166,7 +166,7 @@ Run these checks. They are the same as CI:
 python -m pip install -e ".[ml,portal,bench,dev]"
 ruff check kalos/ tests/ examples/
 mypy
-python -m pytest -q    # 804 tests collected at the time of writing
+python -m pytest -q
 ```
 
 ## API
