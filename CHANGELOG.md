@@ -4,6 +4,12 @@ Newest first.
 
 ## Unreleased
 
+### Added - ESMC protein embeddings and an open-source catalog
+
+- `kalos.features.ESMCEmbedder` embeds a protein sequence with ESMC (ESM Cambrian), the current ESM model from Biohub (MIT). The default is `biohub/ESMC-300M` (960 dimensions), pinned to commit `96a2d8d6`, loaded with transformers' native `esmc` model, not remote code. `ESM2Embedder` is unchanged.
+- The `protein` extra now needs `transformers>=5.16`, the first release with ESMC; the lockfile resolves 5.23.0.
+- `docs/OPEN_SOURCE.md` lists the open-source models, libraries and public data sources Kalos uses or can use, with licenses and what each would add.
+
 ### Changed - audit trail and recorded results (schema v5, `docs/MIGRATIONS.md`)
 
 - **Recorded results are append-only.** A re-submitted campaign result is a new `run_results` row (value, value replaced, reason, actor, server time). A correction needs a `reason` (`400 reason_required` without one). The run's current value is the latest. Response fields are added (`result_version`, `previous_result`, `result_reason`, `result_actor`, `result_recorded_at`); none is removed.

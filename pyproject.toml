@@ -27,7 +27,7 @@ ml = ["torch==2.13.0", "botorch==0.18.1", "gpytorch==1.15.2"]
 # Not needed by the engine. Versions are the ones the committed results were run with.
 bench = ["optuna>=5.0,<6", "ax-platform>=1.3.1,<1.4"]
 # Real ESM-2 / BioNeMo protein embeddings. The lean KmerEmbedder needs none of this.
-protein = ["transformers>=4.40"]
+protein = ["transformers>=5.16"]
 # The web portal (FastAPI viewer over the live engine). The portal drives the
 # live GP surrogate, so it needs `ml` too - install as `kalos[ml,portal]`.
 portal = ["fastapi>=0.143.0", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9", "openpyxl>=3.1.5", "PyJWT[crypto]>=2.10.1"]

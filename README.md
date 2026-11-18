@@ -93,6 +93,7 @@ Latin hypercube sampling (LHS) spreads random points evenly across the design sp
 | Mechanistic (Monod) prior mean | EXPERIMENTAL, opt-in, simulation benchmark only | `kalos/core/mechanistic.py`, `examples/mechanistic_benchmark.py` |
 | Pool-replay benchmark (the optimizer picks from a fixed pool of measured rows) on published media datasets | EXPERIMENTAL; datasets are private and not in the repo | `kalos/bench/amii.py`, `examples/amii_benchmark.py` |
 | Hard linear constraints on proposals | IMPLEMENTED in the core API only (`propose_batch`); the HTTP API and portal do not expose them yet | `kalos/core/optimize.py`, `tests/test_linear_constraints.py` |
+| Protein sequence features (ESMC and ESM-2 embeddings, hashed k-mers) | IMPLEMENTED in the Python API only; the HTTP API does not use them yet | `kalos/features/protein.py`, `examples/run_protein_embed.py`, [`docs/OPEN_SOURCE.md`](docs/OPEN_SOURCE.md) |
 | `feature_ranges` in analysis output. GP-default guardrail | IMPLEMENTED | `kalos/portal/analysis.py`, `tests/test_feature_ranges.py` |
 | Repository hygiene (CODEOWNERS, SECURITY.md, PR template). Loopback-by-default compose bind | IMPLEMENTED | `SECURITY.md`, `.github/CODEOWNERS`, `deploy/compose.yaml` |
 | Grounded assistant: cited chat over the tenant's own data, next-step guide, SOP drafts (`/api/assist/*`) | IMPLEMENTED | `kalos/assist/`, `docs/ASSISTANT.md`, `tests/test_assist_*` |
