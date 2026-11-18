@@ -6,15 +6,19 @@ cd "$ROOT"
 command -v docker >/dev/null || { echo 'Docker is required.' >&2; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo 'Docker Compose v2 or newer is required.' >&2; exit 1; }
 docker info >/dev/null
-export KALOS_WEB_DIR=${KALOS_WEB_DIR:-"$(dirname "$ROOT")/kalos-web"}
-if [[ ! -d "$KALOS_WEB_DIR" ]]; then
-    git clone https://github.com/itsbrendandang/kalos-web "$KALOS_WEB_DIR"
-fi
-KALOS_WEB_DIR=$(CDPATH='' cd -- "$KALOS_WEB_DIR" && pwd)
-export KALOS_WEB_DIR
-compose=(docker compose --env-file "$ROOT/deploy/.env" -f "$ROOT/deploy/compose.yaml")
 engine_only=false
 if [[ ${1:-} == --engine-only ]]; then engine_only=true; shift; fi
+export KALOS_WEB_DIR=${KALOS_WEB_DIR:-"$(dirname "$ROOT")/kalos-web"}
+if ! "$engine_only" && [[ ! -d "$KALOS_WEB_DIR" ]]; then
+    git clone https://github.com/itsbrendandang/kalos-web "$KALOS_WEB_DIR"
+fi
+if [[ -d "$KALOS_WEB_DIR" ]]; then
+    KALOS_WEB_DIR=$(CDPATH='' cd -- "$KALOS_WEB_DIR" && pwd)
+elif [[ "$KALOS_WEB_DIR" != /* ]]; then
+    KALOS_WEB_DIR="$ROOT/$KALOS_WEB_DIR"
+fi
+export KALOS_WEB_DIR
+compose=(docker compose --env-file "$ROOT/deploy/.env" -f "$ROOT/deploy/compose.yaml")
 if [[ $# -gt 0 && ${1:-} != up ]]; then
     exec "${compose[@]}" "$@"
 fi
