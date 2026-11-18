@@ -1,12 +1,12 @@
-# Run locally with Docker
+# Kalos engine
+
+## Run locally with Docker
 
 Run `./scripts/kalos-up.sh` with Docker running. On first run it generates
 local secrets and stops so you can fill in Google OAuth credentials in
 `deploy/.env`; rerun to build and start the stack. See
 [the Docker runbook](deploy/RUNBOOK.md#run-locally-with-docker) for limitations
 and engine-only operation. Web data calls currently fail engine authentication.
-
-# Kalos engine
 
 [![CI](https://github.com/itsbrendandang/kalos-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/itsbrendandang/kalos-engine/actions/workflows/ci.yml)
 

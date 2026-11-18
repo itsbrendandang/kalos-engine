@@ -11,6 +11,7 @@ if [[ ${1:-} == --engine-only ]]; then engine_only=true; shift; fi
 export KALOS_WEB_DIR=${KALOS_WEB_DIR:-"$(dirname "$ROOT")/kalos-web"}
 if ! "$engine_only" && [[ ! -d "$KALOS_WEB_DIR" ]]; then
     git clone https://github.com/itsbrendandang/kalos-web "$KALOS_WEB_DIR"
+    git -C "$KALOS_WEB_DIR" checkout --detach "${KALOS_WEB_REF:-dee60fb70adf843e0780a50cdef11c0edddbd923}"
 fi
 if [[ -d "$KALOS_WEB_DIR" ]]; then
     KALOS_WEB_DIR=$(CDPATH='' cd -- "$KALOS_WEB_DIR" && pwd)
@@ -26,10 +27,10 @@ if [[ ${1:-} == up ]]; then shift; fi
 if [[ ! -e deploy/.env ]]; then
     docker run --rm -v "$ROOT/deploy:/deploy" node:22-alpine node -e 'require("fs").closeSync(require("fs").openSync("/deploy/.env", "wx", 0o600))'
 fi
-"${compose[@]}" config --environment | docker run --rm -i -v "$ROOT/deploy:/deploy" \
-    -v "$ROOT/scripts/kalos-bootstrap.cjs:/bootstrap.cjs:ro" node:22-alpine node /bootstrap.cjs
 # Also repairs ownership if an interrupted first run created the file as root.
 docker run --rm -v "$ROOT/deploy:/deploy" node:22-alpine chown "$(id -u):$(id -g)" /deploy/.env
+"${compose[@]}" config --environment | docker run --rm -i -v "$ROOT/deploy:/deploy" \
+    -v "$ROOT/scripts/kalos-bootstrap.cjs:/bootstrap.cjs:ro" node:22-alpine node /bootstrap.cjs
 mkdir -p deploy/backups
 docker run --rm -v "$ROOT/deploy/backups:/backups" node:22-alpine sh -c 'chown 10001:10001 /backups && chmod 700 /backups'
 if ! "$engine_only"; then

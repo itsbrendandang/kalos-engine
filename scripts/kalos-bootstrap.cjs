@@ -17,8 +17,9 @@ process.stdin.on('end', () => {
   const token = effective.KALOS_ENGINE_TOKEN || secret();
   const privatePath = `${directory}/secrets/engine-private.pem`;
   const publicPath = `${directory}/secrets/engine-public.jwks`;
-  const existingKid = fs.existsSync(publicPath) ? JSON.parse(fs.readFileSync(publicPath, 'utf8')).keys[0]?.kid : undefined;
-  const kid = effective.KALOS_ENGINE_JWT_KID || existingKid || `local-${crypto.randomBytes(8).toString('hex')}`;
+  const kidPath = `${directory}/secrets/engine-kid`;
+  const existingKid = fs.existsSync(kidPath) ? fs.readFileSync(kidPath, 'utf8').trim()
+    : fs.existsSync(publicPath) ? JSON.parse(fs.readFileSync(publicPath, 'utf8')).keys[0]?.kid : undefined;
   fs.mkdirSync(`${directory}/secrets`, { recursive: true });
   if (!fs.existsSync(privatePath)) {
     if (fs.existsSync(publicPath)) throw new Error('Private key missing but public key exists; restore the matching private key from backup.');
@@ -26,13 +27,21 @@ process.stdin.on('end', () => {
     fs.writeFileSync(privatePath, privateKey.export({ type: 'pkcs8', format: 'pem' }), { flag: 'wx', mode: 0o400 });
     own(privatePath);
   }
+  const publicKey = crypto.createPublicKey(fs.readFileSync(privatePath));
+  const derivedKid = `local-${crypto.createHash('sha256').update(publicKey.export({ type: 'spki', format: 'der' })).digest('hex').slice(0, 16)}`;
+  const kid = effective.KALOS_ENGINE_JWT_KID || existingKid || derivedKid;
+  if (existingKid && kid !== existingKid) throw new Error('Configured KID differs from stored signing identity; restore the matching configuration.');
+  if (!fs.existsSync(kidPath)) fs.writeFileSync(kidPath, kid + '\n', { flag: 'wx' });
   if (!fs.existsSync(publicPath)) {
-    const publicKey = crypto.createPublicKey(fs.readFileSync(privatePath));
     fs.writeFileSync(publicPath, JSON.stringify({ keys: [{ ...publicKey.export({ format: 'jwk' }), kid, use: 'sig', alg: 'EdDSA' }] }), { flag: 'wx' });
   }
-  const tenantsPath = `${directory}/secrets/tenants.json`;
+  const tenantsDirectory = `${directory}/secrets/tenants`;
+  fs.mkdirSync(tenantsDirectory, { recursive: true, mode: 0o700 });
+  own(tenantsDirectory);
+  const tenantsPath = `${tenantsDirectory}/tenants.json`;
   if (!fs.existsSync(tenantsPath)) {
-    fs.writeFileSync(tenantsPath, '{}', { flag: 'wx', mode: 0o600 });
+    const legacyPath = `${directory}/secrets/tenants.json`;
+    fs.writeFileSync(tenantsPath, fs.existsSync(legacyPath) ? fs.readFileSync(legacyPath) : '{}', { flag: 'wx', mode: 0o600 });
     own(tenantsPath);
   }
   const defaults = {

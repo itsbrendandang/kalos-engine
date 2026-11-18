@@ -47,17 +47,34 @@ def test_bootstrap_repairs_legacy_env_without_changing_values(tmp_path):
     assert "KALOS_ENGINE_JWT_KID=" in env.read_text()
     secrets = tmp_path / "secrets"
     assert (secrets / "engine-private.pem").is_file()
-    assert json.loads((secrets / "tenants.json").read_text()) == {}
-    snapshots = {p: p.read_bytes() for p in (env, *secrets.iterdir())}
+    tenant_map = secrets / "tenants/tenants.json"
+    assert json.loads(tenant_map.read_text()) == {}
+    snapshots = {p: p.read_bytes() for p in (env, *secrets.rglob("*")) if p.is_file()}
     result = _bootstrap(tmp_path, "KALOS_ENGINE_TOKEN=old-token\n")
     assert result.returncode == 0, result.stderr
     assert all(p.read_bytes() == data for p, data in snapshots.items())
-    (secrets / "tenants.json").unlink()
+    tenant_map.unlink()
     (secrets / "engine-public.jwks").unlink()
-    result = _bootstrap(tmp_path, "KALOS_ENGINE_JWT_KID=existing-kid\n")
+    result = _bootstrap(tmp_path)
     assert result.returncode == 0, result.stderr
     assert (secrets / "engine-private.pem").read_bytes() == snapshots[secrets / "engine-private.pem"]
-    assert json.loads((secrets / "engine-public.jwks").read_text())["keys"][0]["kid"] == "existing-kid"
+    assert json.loads((secrets / "engine-public.jwks").read_text())["keys"][0]["kid"] == (secrets / "engine-kid").read_text().strip()
+
+
+def test_bootstrap_env_recovery_preserves_keys_and_tenant_map(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("")
+    result = _bootstrap(tmp_path)
+    assert result.returncode == 0, result.stderr
+    tenant_map = tmp_path / "secrets/tenants/tenants.json"
+    tenant_map.write_text('{"existing-org":"existing-tenant"}')
+    snapshots = {p: p.read_bytes() for p in (tmp_path / "secrets").rglob("*") if p.is_file()}
+    env.write_text("")
+    result = _bootstrap(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert all(p.read_bytes() == data for p, data in snapshots.items())
+    kid = (tmp_path / "secrets/engine-kid").read_text().strip()
+    assert f"KALOS_ENGINE_JWT_KID='{kid}'" in env.read_text()
 
 
 def test_bootstrap_handles_empty_env_and_refuses_lost_private_key(tmp_path):
@@ -132,6 +149,9 @@ def test_compose_web_carries_the_proxy_env():
     volumes = doc["services"]["web"]["volumes"]
     assert "web-auth:/data" in volumes
     assert "./secrets/engine-private.pem:/run/secrets/engine-private.pem:ro" in volumes
+    assert "./secrets/tenants:/config" in volumes
+    assert "AUTH_TRUSTED_PROXIES=${AUTH_TRUSTED_PROXIES:-}" in env
+    assert "AUTH_ACCEPT_NO_PROXY=${AUTH_ACCEPT_NO_PROXY:-}" in env
 
 
 def test_compose_engine_has_no_replicas_override():

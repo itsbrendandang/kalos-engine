@@ -5,6 +5,8 @@
 From the engine checkout: `./scripts/kalos-up.sh`. Requires Docker with the
 Compose plugin (v2 or newer) and Git if the sibling kalos-web checkout must
 be cloned. Set `KALOS_WEB_DIR` for a different checkout location.
+New clones check out `dee60fb70adf843e0780a50cdef11c0edddbd923` by default;
+set `KALOS_WEB_REF` to override. Existing checkouts are left untouched.
 
 First run generates `deploy/.env` (0600), a signing keypair and empty tenant
 map in gitignored `deploy/secrets/`, and a backup directory owned by container
@@ -12,6 +14,14 @@ uid 10001 (0700). Existing `.env` values are never replaced: missing keys are
 appended and missing key/tenant files are generated individually. Keep these files together;
 do not delete them to rotate a single credential. Private keys are readable
 only by container uid 10001. Docker manages a persistent web-auth volume.
+The tenant map lives in `deploy/secrets/tenants/tenants.json`, with its
+directory writable by uid 10001 so onboarding can atomically replace it.
+Use `docker compose -f deploy/compose.yaml exec web node scripts/create-org.mjs
+--name "Local Lab" --slug local-lab --owner-email owner@example.com --tenant local-lab`
+to edit via the container (host users should not edit the 0600 map directly).
+Existing legacy `deploy/secrets/tenants.json` is copied to the new directory
+only when the new map is missing. Missing `.env` never replaces existing keys
+or maps; `secrets/engine-kid` preserves the signing identity across recovery.
 
 Fill in GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in `deploy/.env`, registering
 `http://localhost:3000/api/auth/callback/google` as the Google redirect URI,

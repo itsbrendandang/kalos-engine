@@ -141,12 +141,12 @@ services:
       - KALOS_PUBLIC_URL=${KALOS_PUBLIC_URL:-http://localhost:3000}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
-      - AUTH_TRUSTED_PROXIES=${AUTH_TRUSTED_PROXIES:-none}
-      - AUTH_ACCEPT_NO_PROXY=${AUTH_ACCEPT_NO_PROXY:-1}
+      - AUTH_TRUSTED_PROXIES=${AUTH_TRUSTED_PROXIES:-}
+      - AUTH_ACCEPT_NO_PROXY=${AUTH_ACCEPT_NO_PROXY:-}
       - AUTH_MIGRATE=1
       - KALOS_ENGINE_JWT_PRIVATE_KEY_FILE=/run/secrets/engine-private.pem
       - KALOS_ENGINE_JWT_KID=${KALOS_ENGINE_JWT_KID:-}
-      - KALOS_TENANT_MAP_FILE=/data/tenants.json
+      - KALOS_TENANT_MAP_FILE=/config/tenants.json
       # Proxy timeout for engine calls, ms. Default (unset/empty) is 120s -
       # sized for a COLD containerized GP fit, measured on the first real
       # compose run where the original 30s guess 502'd mid-analysis. The
@@ -155,7 +155,7 @@ services:
     volumes:
       - web-auth:/data
       - ./secrets/engine-private.pem:/run/secrets/engine-private.pem:ro
-      - ./secrets/tenants.json:/data/tenants.json
+      - ./secrets/tenants:/config
     depends_on:
       engine:
         # Orders startup AND matters functionally now: every browser call is
