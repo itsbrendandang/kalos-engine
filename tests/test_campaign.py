@@ -603,7 +603,7 @@ def test_existing_fields_unchanged(store, client):
     body = client.get("/api/campaign").json()
     assert set(body) - {"stage", "next_action"} == {
         "has_campaign", "target", "features", "n_base", "best", "round",
-        "history", "pending", "n_awaiting", "n_measured", "analysis_in_sync",
+        "history", "pending", "n_awaiting", "n_measured", "analysis_in_sync", "scorecard",
     }
 
 

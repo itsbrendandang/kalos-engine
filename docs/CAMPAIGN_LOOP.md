@@ -74,9 +74,11 @@ stateDiagram-v2
       "pred": 1.58, "std": 0.33, "mode": "explore", "reason": "diversifies the batch",
       "result": null,
       "created_at": 1690000000.0,
-      "measured_at": null
+      "measured_at": null,
+      "band_half_width": 0.6, "band_coverage": 0.9, "best_at_start": 4.6
     }
   ],
+  "scored_runs": [],
   "round": 2,
   "updated_at": 1690000000.0,
   "generation": "3f9a1c8b..."
@@ -143,6 +145,31 @@ They are also present on the `{"has_campaign": false}` response (stage `setup`),
 `stage.started` is the number of pending runs.
 While any run awaits a result the round stays in `run` and `next_action` is `record`.
 `pending[].round` is the 0-based round a run was started in, and null for runs started before it was stamped.
+
+### Prediction scorecard
+
+`scorecard` checks the model's picks against what the lab measured (`kalos/portal/scorecard.py`).
+When a run is started it keeps, next to `pred` and `std`, the published analysis's prediction band (`band_half_width` = `conformal_q`, `band_coverage` = `conformal_coverage`; both null when no analysis was published) and `best_at_start`, the best measured value so far (base rows and measured runs not yet folded).
+The fold drops measured runs from `pending`, so it first copies them to `scored_runs` in the state; the scorecard covers those plus measured runs not folded yet.
+A new upload starts a new campaign and an empty scorecard.
+
+```json
+"scorecard": {
+  "n_scored": 12, "n_banded": 12, "band_hits": 9,
+  "band_coverage_observed": 0.75, "band_coverage_stated": 0.9,
+  "mean_abs_error": 0.41, "spearman": 0.52,
+  "n_beat_best": 3, "n_with_best": 12,
+  "judgeable": true,
+  "judgement": "band too narrow: measured proposals fell outside it more often than stated",
+  "runs": [{ "id": "...", "round": 0, "mode": "exploit", "pred": 5.1, "std": 0.3,
+             "band_half_width": 0.6, "band_coverage": 0.9, "result": 5.9, "error": 0.8,
+             "in_band": false, "best_at_start": 5.4, "beat_best": true }]
+}
+```
+
+`in_band` is `|result - pred| <= band_half_width` (null without a band); `beat_best` is `result > best_at_start` (null without one).
+Below 10 banded runs `judgeable` is false and `judgement` says there are not enough measured proposals to judge the band.
+The band is measured on held-out past runs, and proposals sit where the model knows least, so this is the only check of the band where it is used.
 
 ## Analysis/campaign coherence
 
@@ -230,6 +257,7 @@ An upload that lands after the commit simply publishes a newer campaign and anal
 ## Honesty constraints (do not regress)
 
 - `best` is measured, never predicted.
+- The scorecard compares each run with the prediction and band saved when it was started, never with a later model.
 - A run is only foldable once it has a real measured `result`; an awaiting run never silently becomes a data point. It informs the *acquisition* (as a point already taken), never the *fit*.
 - Re-analyze routes through the same leakage-controlled `_analyze`, so grouped-CV reliability, conformal bands, and the "not modeled" callouts stay first-class each round.
 - A campaign never claims the analysis on `/api/latest` describes its dataset unless it provably does (`analysis_in_sync`); unverifiable reads as out of sync.

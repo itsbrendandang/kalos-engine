@@ -63,6 +63,7 @@ from kalos.portal.migrate import (
 from kalos.portal.migrate import (
     campaigns_table_is_v1_compatible as _campaigns_table_is_compatible,
 )
+from kalos.portal.scorecard import prediction_scorecard, scored_record
 from kalos.portal.tenancy import validate_tenant_id
 
 log = logging.getLogger("kalos.portal")
@@ -720,6 +721,12 @@ class CampaignStore:
                 analysis_generation is not None
                 and analysis_generation == state.get("generation")
             ),
+            # Saved prediction and band vs measured result, for every measured
+            # proposal: folded ones (kept in `scored_runs`) and ones not folded yet.
+            "scorecard": prediction_scorecard(
+                [*(state.get("scored_runs") or []),
+                 *(run for run in state["pending"] if run["result"] is not None)]
+            ),
         }
 
     def _writable_state(
@@ -734,11 +741,9 @@ class CampaignStore:
         return row, state
 
     @staticmethod
-    def _published_provenance(
+    def _published_analysis(
         conn: sqlite3.Connection, tenant: str, campaign_id: str
     ) -> dict[str, Any] | None:
-        from kalos.portal.run_record import provenance_ref
-
         arow = conn.execute(
             "SELECT state FROM analyses WHERE campaign_id = ? AND tenant = ?",
             (campaign_id, tenant),
@@ -749,7 +754,7 @@ class CampaignStore:
             data = json.loads(arow[0])
         except ValueError:
             return None
-        return provenance_ref(data if isinstance(data, dict) else None)
+        return data if isinstance(data, dict) else None
 
     def start(
         self, recipes: list[dict[str, Any]], *, tenant: str, campaign_id: str | None = None
@@ -792,7 +797,27 @@ class CampaignStore:
             # has no analysis or one written before the block existed). The
             # recipe itself is caller input; this says what was published, not
             # that the recipe came from it.
-            analysis_ref = self._published_provenance(conn, tenant, row.id)
+            from kalos.portal.run_record import provenance_ref
+
+            published = self._published_analysis(conn, tenant, row.id)
+            analysis_ref = provenance_ref(published)
+            # The prediction band the published analysis shows (conformal
+            # half-width and the coverage it states) and the best value measured
+            # so far, kept on the run so the prediction scorecard can later check
+            # the band and the gain against the measured result.
+            band_half_width = _finite_number((published or {}).get("conformal_q"))
+            band_coverage = (
+                _finite_number((published or {}).get("conformal_coverage"))
+                if band_half_width is not None else None
+            )
+            measured_so_far = [
+                v for v in (_finite_number(r.get("result")) for r in state["pending"])
+                if v is not None
+            ]
+            best_base = _best_measured(state.get("base_rows") or [], target)
+            best_at_start = max(
+                [v for v in (best_base, *measured_so_far) if v is not None], default=None
+            )
             for recipe in recipes:
                 # Validate the recipe mapping HERE, at the point of the bad
                 # input, so a malformed body 400s cleanly at /api/campaign/start
@@ -825,6 +850,9 @@ class CampaignStore:
                     "created_at": now,
                     "measured_at": None,
                     "analysis_provenance": dict(analysis_ref) if analysis_ref else None,
+                    "band_half_width": band_half_width,
+                    "band_coverage": band_coverage,
+                    "best_at_start": best_at_start,
                 }
                 state["pending"].append(run)
                 appended.append(run)
@@ -1016,9 +1044,11 @@ class CampaignStore:
                 raise CampaignConflict(changed)
             target = state["target"]
             still_pending: list[dict[str, Any]] = []
+            scored = state.setdefault("scored_runs", [])
             for run in state["pending"]:
                 if run["result"] is not None:
                     state["base_rows"].append({**run["recipe"], target: run["result"]})
+                    scored.append(scored_record(run))
                 else:
                     still_pending.append(run)
             state["pending"] = still_pending
