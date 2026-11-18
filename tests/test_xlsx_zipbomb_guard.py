@@ -88,3 +88,29 @@ def test_honest_small_xlsx_accepted():
     # An honestly-small sheet passes and the guard reports the zip parts it saw.
     part_sizes = uploads._reject_oversized_xlsx(_xlsx())
     assert isinstance(part_sizes, dict) and part_sizes
+
+
+def _zip(entries: dict[str, str]) -> bytes:
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as z:
+        for name, data in entries.items():
+            z.writestr(name, data)
+    return out.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("entries", "hint"),
+    [
+        ({"word/document.xml": "<x/>"}, "Word document"),
+        ({"ppt/presentation.xml": "<x/>"}, "PowerPoint file"),
+        ({"notes.txt": "hi"}, "zip archive"),
+    ],
+)
+def test_non_xlsx_zip_named_not_called_corrupt(entries, hint):
+    # A well-formed zip that is not an Excel workbook (a .docx/.pptx mis-named
+    # .xlsx, or a plain archive) is reported as unsupported with a human hint
+    # about what it actually is - not as a generic "corrupt" error.
+    with pytest.raises(UploadRejected) as exc:
+        uploads._reject_oversized_xlsx(_zip(entries))
+    assert exc.value.code == "unsupported_file_type"
+    assert hint in str(exc.value)
