@@ -103,13 +103,6 @@ class Problem:
         d2 = (Xa - self.centers) ** 2 / (2.0 * self.widths ** 2)
         return (self.weights * np.exp(-d2)).sum(axis=1)
 
-    def optimum_point(self) -> np.ndarray:
-        """A full-d point at the surface's global optimum (inactive dims at 0.5,
-        since they do not affect `f` and 0.5 is the box center)."""
-        x = np.full(self.d, 0.5)
-        x[self.active_dims] = self.centers
-        return x
-
 
 def make_problem(d: int, seed: int, n_active: int = 4) -> Problem:
     rng = np.random.default_rng(seed)
