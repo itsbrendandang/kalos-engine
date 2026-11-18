@@ -1331,6 +1331,7 @@ portal = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 protein = [
+    { name = "torch" },
     { name = "transformers" },
 ]
 
@@ -1362,6 +1363,7 @@ requires-dist = [
     { name = "scipy-stubs", marker = "extra == 'dev'" },
     { name = "sentence-transformers", marker = "extra == 'assist-embed'", specifier = ">=3" },
     { name = "torch", marker = "extra == 'ml'", specifier = "==2.13.0" },
+    { name = "torch", marker = "extra == 'protein'", specifier = "==2.13.0" },
     { name = "transformers", marker = "extra == 'protein'", specifier = ">=5.16" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'portal'", specifier = ">=0.29" },
 ]
