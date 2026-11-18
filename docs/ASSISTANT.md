@@ -100,6 +100,10 @@ sources leave the machine. Replies are saved per tenant under
 provider, model, instructions and prompt select cached replies. Repeating the
 same inputs reuses them without another call. These files contain lab text;
 protect them like campaign state. Deleting them loses replay protection.
+The cache keeps at most 128 replies per tenant, removing the oldest replies
+first. The swarm folder is safe to delete while the engine is stopped; no
+campaign records are stored there. Evicted or deleted replies must be generated
+again on the next review, which can make new paid calls.
 
 ## The index
 

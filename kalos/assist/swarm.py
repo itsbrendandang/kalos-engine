@@ -22,6 +22,8 @@ from kalos.assist.index import Hit
 from kalos.assist.llm import AnthropicChat, ChatModel, OllamaChat, model_info
 from kalos.assist.paths import tenant_dir
 
+MAX_CACHED_REPLIES = 128
+
 
 @dataclass(frozen=True)
 class Role:
@@ -61,14 +63,17 @@ def _call(path: Path, role: Role, model: ChatModel, prompt: str) -> str:
         ensure_ascii=False, separators=(",", ":"),
     ).encode()).hexdigest()
     path.mkdir(parents=True, exist_ok=True)
-    with (path / f"{key}.lock").open("a") as lock:
+    with (path / "cache.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         target = path / f"{key}.json"
         if target.exists():
             reply: str = json.loads(target.read_text())["reply"]
             return reply
         reply = model.complete(role.instructions, prompt)
-        staging = path / f"{key}.pending"
+        cached = sorted(path.glob("*.json"), key=lambda file: (file.stat().st_mtime_ns, file.name))
+        for old in cached[:max(0, len(cached) - MAX_CACHED_REPLIES + 1)]:
+            old.unlink()
+        staging = path / "reply.pending"
         with staging.open("w") as out:
             json.dump({"reply": reply}, out)
             out.flush()

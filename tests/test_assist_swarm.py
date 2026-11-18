@@ -173,3 +173,23 @@ def test_blocked_claim_text_is_hidden(tmp_path):
     claim = result["claims"][0]
     assert claim["id"] == "C1" and claim["verdict"] == "rejected"
     assert claim["text"] == "" and claim["issues"] == ["unreliable"]
+
+
+def test_cache_evicts_oldest_and_reuses_retained_replies(tmp_path, monkeypatch):
+    import os
+
+    from kalos.assist import swarm
+
+    monkeypatch.setattr(swarm, "MAX_CACHED_REPLIES", 2)
+    model = Model()
+    cache = tmp_path / "cache"
+    swarm._call(cache, ROLES[1], model, "first")
+    first = next(cache.glob("*.json"))
+    os.utime(first, ns=(1, 1))
+    swarm._call(cache, ROLES[1], model, "second")
+    swarm._call(cache, ROLES[1], model, "third")
+    assert not first.exists()
+    assert len(list(cache.glob("*.json"))) == 2
+    swarm._call(cache, ROLES[1], model, "second")
+    assert len(model.prompts) == 3
+    assert len(list(cache.iterdir())) == 3  # two replies and one shared lock
