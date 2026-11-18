@@ -121,6 +121,18 @@ def test_shared_default(monkeypatch):
     assert load_config().ollama_model == ollama.DEFAULT_MODEL == "qwen2.5:7b-instruct"
 
 
+@pytest.mark.parametrize("selected,listed,present", [
+    ("llama3.1", "llama3.1:latest", True),
+    ("llama3.1:latest", "llama3.1", True),
+    ("llama3.1", "llama3.1:8b", False),
+    ("host:5000/library/llama3.1", "host:5000/library/llama3.1:latest", True),
+])
+def test_ollama_probe_default_tag(monkeypatch, selected, listed, present):
+    monkeypatch.setenv("KALOS_OLLAMA_MODEL", selected)
+    monkeypatch.setattr(ollama, "_open", lambda *a: json.dumps({"models": [{"name": listed}]}).encode())
+    assert ollama.OllamaProvider().probe() == {"reachable": True, "model_present": present}
+
+
 def test_cli_and_status_probe_only_on_request(monkeypatch, capsys):
     monkeypatch.setenv("KALOS_LLM_PROVIDER", "ollama")
     monkeypatch.setenv("KALOS_OLLAMA_MODEL", "qwen")

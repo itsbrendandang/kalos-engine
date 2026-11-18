@@ -55,6 +55,10 @@ def ollama_model() -> str:
     return (os.environ.get(_MODEL_ENV) or DEFAULT_MODEL).strip()
 
 
+def _tagged_model(model: str) -> str:
+    return model if ":" in model.rsplit("/", 1)[-1] else f"{model}:latest"
+
+
 def _timeout() -> float:
     raw = (os.environ.get(_TIMEOUT_ENV) or "").strip()
     try:
@@ -151,7 +155,8 @@ class OllamaProvider:
             data = json.loads(_open(request, 2.0))
             models = data.get("models", []) if isinstance(data, dict) else []
             present = any(
-                isinstance(item, dict) and item.get("name") == ollama_model()
+                isinstance(item, dict) and isinstance(item.get("name"), str)
+                and _tagged_model(item["name"]) == _tagged_model(ollama_model())
                 for item in models
             )
             return {"reachable": True, "model_present": present}
