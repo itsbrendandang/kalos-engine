@@ -46,6 +46,11 @@ def test_rows_score_error_band_and_gain():
     assert card["n_beat_best"] == 2 and card["n_with_best"] == 3
 
 
+def test_a_result_on_the_band_edge_is_inside():
+    card = prediction_scorecard([_run(5.1, 5.7, half=0.6), _run(5.1, 4.5, half=0.6)])
+    assert [r["in_band"] for r in card["runs"]] == [True, True]
+
+
 def test_unmeasured_and_unpredicted_runs_are_skipped():
     card = prediction_scorecard([_run(5.0, None), _run(None, 3.0), _run(float("nan"), 3.0)])
     assert card["n_scored"] == 0

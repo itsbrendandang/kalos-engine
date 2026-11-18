@@ -59,7 +59,7 @@ def _row(run: Mapping[str, Any]) -> dict[str, Any] | None:
         "band_coverage": _num(run.get("band_coverage")),
         "result": result,
         "error": round(error, 6),
-        "in_band": None if half is None else bool(abs(error) <= half),
+        "in_band": None if half is None else bool(abs(error) <= half + 1e-9 * max(1.0, half)),
         "best_at_start": best,
         "beat_best": None if best is None else bool(result > best),
     }
