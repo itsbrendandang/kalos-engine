@@ -114,7 +114,7 @@ def _valid_campaign_id(campaign_id: str) -> bool:
 
 
 def _auth_method(principal: Principal) -> str:
-    # `auth_method` on Principal: 'anonymous' (open mode) or 'static' bearer token.
+    # `auth_method` on Principal: 'anonymous', 'static', or 'jwt'.
     method = getattr(principal, "auth_method", None)
     if isinstance(method, str) and method:
         return method
