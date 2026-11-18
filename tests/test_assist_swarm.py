@@ -60,6 +60,8 @@ def test_rejected(tmp_path, text):
     result = run(tmp_path, model)
     assert result["claims"][0]["verdict"] == "rejected"
     assert result["claims"][0]["issues"]
+    assert result["claims"][0]["text"] == ""
+    assert text not in result["report"]
     assert len(model.prompts) == 1
 
 
@@ -164,3 +166,10 @@ def test_report_cannot_revive_unsupported_claim_from_shared_source(tmp_path, sev
     assert result["claims"][1]["verdict"] in {"rejected", "contested"}
     assert result["report"] == "Measured yield is 12."
     assert result["ledger"][-1]["kind"] == "fallback"
+
+
+def test_blocked_claim_text_is_hidden(tmp_path):
+    result = run(tmp_path, Model(critic="C1: blocking: unreliable"))
+    claim = result["claims"][0]
+    assert claim["id"] == "C1" and claim["verdict"] == "rejected"
+    assert claim["text"] == "" and claim["issues"] == ["unreliable"]

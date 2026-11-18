@@ -120,7 +120,7 @@ def review(question: str, hits: list[Hit], guide: dict[str, Any], model: ChatMod
             if not checked.answer and not issues:
                 issues.append("empty claim")
             verdict = "rejected" if issues else "unreviewed"
-            claims.append({"id": cid, "text": checked.answer or text,
+            claims.append({"id": cid, "text": "" if issues else checked.answer,
                            "sources": checked.sources, "verdict": verdict, "issues": issues})
             event("planner", "checked", cid, verdict, list(issues))
         surviving = [c for c in claims if c["verdict"] != "rejected"]
@@ -141,6 +141,8 @@ def review(question: str, hits: list[Hit], guide: dict[str, Any], model: ChatMod
                     claim["verdict"] = {"ok": "supported", "minor": "supported",
                                         "major": "contested", "blocking": "rejected"}[severity]
                     claim["issues"].append(reason)
+                    if claim["verdict"] == "rejected":
+                        claim["text"] = ""
                 event("critic", "judged", claim["id"], claim["verdict"], list(claim["issues"]))
         supported = [c for c in claims if c["verdict"] == "supported"]
         if supported:
