@@ -204,7 +204,7 @@ def _status(store: CampaignStore, tenant: str, *, build: bool = False) -> dict[s
     index = AssistIndex(store, tenant)
     if build and not index.path.exists():
         index.refresh()  # first look: build it, so the count is real (cheap with BM25)
-    return {**model_info(), **index.status()}
+    return {**model_info(probe=True), **index.status()}
 
 
 @router.get("/api/assist/index/status")

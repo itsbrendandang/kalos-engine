@@ -1,0 +1,108 @@
+"""Local transport, diagnostics, and reply cleanup regressions."""
+import json
+
+import pytest
+
+from kalos.assist.llm import OpenAICompatChat, get_chat_model, model_info
+from kalos.normalize.config import load_config
+from kalos.normalize.llm import _extract_json_object
+from kalos.providers import ollama_provider as ollama
+from kalos.providers import openai_compatible_provider as openai
+from kalos.providers.check import main
+
+
+@pytest.mark.parametrize("module,cls,setting,listing", [
+    (ollama, ollama.OllamaProvider, "KALOS_OLLAMA_MODEL", {"models": [{"name": "qwen"}]}),
+    (openai, openai.OpenAICompatibleProvider, "KALOS_OPENAI_MODEL", {"data": [{"id": "qwen"}]}),
+])
+def test_probe(monkeypatch, module, cls, setting, listing):
+    monkeypatch.setenv(setting, "qwen")
+    calls = []
+
+    def respond(request, timeout):
+        calls.append((request.full_url, timeout))
+        return json.dumps(listing).encode()
+
+    monkeypatch.setattr(module, "_open", respond)
+    assert cls().probe() == {"reachable": True, "model_present": True}
+    assert calls[0][1] == 2.0
+    monkeypatch.setenv(setting, "missing")
+    assert cls().probe() == {"reachable": True, "model_present": False}
+    monkeypatch.setattr(module, "_open", lambda *a: b"{}")
+    assert cls().probe() == {"reachable": True, "model_present": False}
+    monkeypatch.setattr(module, "_open", lambda *a: b"invalid")
+    assert cls().probe() == {"reachable": False, "model_present": False}
+
+    def fail(*args):
+        raise OSError("offline")
+
+    monkeypatch.setattr(module, "_open", fail)
+    assert cls().probe() == {"reachable": False, "model_present": False}
+
+
+def test_openai_assistant_and_normalize_startup(monkeypatch):
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("KALOS_OPENAI_MODEL", "qwen")
+    model = get_chat_model()
+    assert isinstance(model, OpenAICompatChat)
+    assert model_info() == {"provider": "openai", "model": "qwen", "local": True}
+    assert load_config().enabled_live is False
+    from kalos.portal.config import check_env_settings
+
+    check_env_settings()
+
+
+def test_chat_cleanup_and_openai_request(monkeypatch):
+    monkeypatch.setenv("KALOS_OPENAI_MODEL", "qwen")
+    monkeypatch.setenv("KALOS_OPENAI_API_KEY", "test-key")
+
+    def respond(request, timeout):
+        assert request.get_header("Authorization") == "Bearer test-key"
+        assert json.loads(request.data)["model"] == "qwen"
+        return b'{"choices":[{"message":{"content":"<think>secret</think>answer","reasoning_content":"hidden"}}]}'
+
+    monkeypatch.setattr(openai, "_open", respond)
+    assert openai.OpenAICompatibleProvider().chat("system", "prompt") == "answer"
+    monkeypatch.setattr(ollama, "_open", lambda *a: b'{"message":{"content":"<think>secret</think>answer"}}')
+    assert ollama.OllamaProvider().chat("system", "prompt") == "answer"
+
+
+@pytest.mark.parametrize("reply", [b"{}", b"invalid", b'{"choices":[]}', b'{"choices":[{"message":{"content":""}}]}'])
+def test_openai_bad_reply(monkeypatch, reply):
+    monkeypatch.setenv("KALOS_OPENAI_MODEL", "qwen")
+    monkeypatch.setattr(openai, "_open", lambda *a: reply)
+    with pytest.raises(openai.OpenAICompatUnavailable):
+        openai.OpenAICompatibleProvider().chat("system", "prompt")
+
+
+@pytest.mark.parametrize("text,expected", [
+    ('<think>{"wrong":true}</think>\n{"columns":[]}', {"columns": []}),
+    ("<think>unfinished", None), ("", None), ("not JSON", None),
+])
+def test_normalize_thinking(text, expected):
+    assert _extract_json_object(text) == expected
+
+
+def test_shared_default(monkeypatch):
+    monkeypatch.delenv("KALOS_OLLAMA_MODEL", raising=False)
+    assert load_config().ollama_model == ollama.DEFAULT_MODEL == "qwen2.5:7b-instruct"
+
+
+def test_cli_and_status_probe_only_on_request(monkeypatch, capsys):
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("KALOS_OLLAMA_MODEL", "qwen")
+    calls = []
+
+    def probe(self):
+        calls.append(True)
+        return {"reachable": True, "model_present": False}
+
+    monkeypatch.setattr(ollama.OllamaProvider, "probe", probe)
+    model_info()
+    assert calls == []
+    assert model_info(probe=True)["reachable"] is True
+    main()
+    output = capsys.readouterr().out
+    assert "Provider: ollama" in output
+    assert "Model pulled: False" in output
+    assert "ollama pull qwen" in output

@@ -26,13 +26,14 @@ import urllib.request
 from urllib.parse import urlparse
 
 from kalos.providers.base import ProviderStatus
+from kalos.providers.text import strip_thinking
 
 _URL_ENV = "KALOS_OLLAMA_URL"
 _TIMEOUT_ENV = "KALOS_OLLAMA_TIMEOUT_S"
 DEFAULT_URL = "http://localhost:11434"
 # The quality model is the default for a single-model call (benchmarks/llm:
 # the measured winner). Apache-2.0. See kalos.providers.cascade for both tiers.
-DEFAULT_MODEL = "qwen2.5:7b"
+DEFAULT_MODEL = "qwen2.5:7b-instruct"
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
 _CAPABILITY = (
@@ -145,8 +146,12 @@ class OllamaProvider:
             data = json.loads(_open(request, _timeout()).decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             raise OllamaUnavailable("the Ollama server did not answer") from exc
-        content = (data.get("message") or {}).get("content") if isinstance(data, dict) else None
+        message = data.get("message") if isinstance(data, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, str):
+            raise OllamaUnavailable("the Ollama server gave no answer text")
+        content = strip_thinking(content)
+        if not content:
             raise OllamaUnavailable("the Ollama server gave no answer text")
         return content
 
@@ -173,6 +178,23 @@ class OllamaProvider:
         ):
             raise OllamaUnavailable("the Ollama server gave no embeddings")
         return [[float(x) for x in v] for v in vectors]
+
+    def probe(self) -> dict[str, bool]:
+        """Check the server and selected model, only when explicitly called."""
+        url = ollama_url()
+        if urlparse(url).scheme not in {"http", "https"}:
+            return {"reachable": False, "model_present": False}
+        request = urllib.request.Request(f"{url}/api/tags")  # noqa: S310
+        try:
+            data = json.loads(_open(request, 2.0))
+            models = data.get("models", []) if isinstance(data, dict) else []
+            present = any(
+                isinstance(item, dict) and item.get("name") == ollama_model()
+                for item in models
+            )
+            return {"reachable": True, "model_present": present}
+        except (OSError, ValueError, TypeError):
+            return {"reachable": False, "model_present": False}
 
 
 __all__ = [
