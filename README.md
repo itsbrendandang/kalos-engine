@@ -43,7 +43,7 @@ the separate [kalos-web](https://github.com/itsbrendandang/kalos-web) repo.
 Kalos is three repositories with a clear split:
 
 - **kalos-engine** (here) — the optimization engine and its FastAPI service.
-- **[kalos-web](https://github.com/itsbrendandang/kalos-web)** — the scientist-facing workbench. The browser talks to it; its server-side proxy forwards to this engine over HTTP with one configured static bearer token. The response fields it depends on are guarded here by `tests/test_web_contract.py`.
+- **[kalos-web](https://github.com/itsbrendandang/kalos-web)** — the scientist-facing workbench. The browser talks to it; its server-side proxy forwards to this engine over HTTP with a bearer token (see [Security model](#security-model) for which tokens the engine accepts). The response fields it depends on are guarded here by `tests/test_web_contract.py`.
 - **kalos-workspace** (private) — the project hub: working notes, reviews, research, plans, and the cross-machine handoff. No product code.
 
 ## Who it's for
