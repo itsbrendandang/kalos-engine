@@ -604,6 +604,8 @@ def test_existing_fields_unchanged(store, client):
     assert set(body) - {"stage", "next_action"} == {
         "has_campaign", "target", "features", "n_base", "best", "round",
         "history", "pending", "n_awaiting", "n_measured", "analysis_in_sync",
+        # additive: which way `best` points (the campaign setup's goal)
+        "goal",
     }
 
 

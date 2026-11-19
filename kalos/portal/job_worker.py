@@ -46,6 +46,7 @@ from kalos.portal.campaign import (
 )
 from kalos.portal.migrate import JOB_ID_PATTERN
 from kalos.portal.pipeline import compute_upload_analysis, publish_upload_analysis
+from kalos.portal.setup_settings import with_campaign_setup
 from kalos.portal.uploads import UploadRejected
 
 log = logging.getLogger("kalos.portal")
@@ -140,7 +141,8 @@ def run_job(
         df, result = compute_upload_analysis(
             raw, params.get("target") or None, bool(params.get("anonymize")),
             filename, str(params.get("roles") or ""),
-            sheet=params.get("sheet"), progress=progress, analyze=analyze,
+            sheet=params.get("sheet"), progress=progress,
+            analyze=with_campaign_setup(analyze, store, tenant=tenant, campaign_id=campaign_id),
         )
         progress("publishing", 0.95)
         publish_upload_analysis(

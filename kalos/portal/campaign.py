@@ -150,13 +150,34 @@ def _finite_number(value: Any) -> float | None:
     return v if math.isfinite(v) else None
 
 
-def _best_measured(base_rows: list[dict[str, Any]], target: str) -> float | None:
-    """The best (max) MEASURED target value over `base_rows`, or None when no
-    row carries a finite numeric target — never a prediction (docs/CAMPAIGN_LOOP.md,
-    "Honesty constraints"). Because base rows only ever grow, this is
-    non-decreasing round over round, which is what the progress trajectory plots."""
+def _best_measured(
+    base_rows: list[dict[str, Any]], target: str, *, minimize: bool = False
+) -> float | None:
+    """The best MEASURED target value over `base_rows` (the max; the min when the
+    campaign's setup goal is minimize), or None when no row carries a finite
+    numeric target — never a prediction (docs/CAMPAIGN_LOOP.md, "Honesty
+    constraints"). Because base rows only ever grow, this only ever improves
+    round over round, which is what the progress trajectory plots."""
     values = [v for row in base_rows if (v := _finite_number(row.get(target))) is not None]
-    return max(values) if values else None
+    if not values:
+        return None
+    return min(values) if minimize else max(values)
+
+
+def _goal_minimize(store: CampaignStore, tenant: str, campaign_id: str | None) -> bool:
+    """True when the campaign's stored setup (`campaign_settings` kind `setup`)
+    says goal=minimize. No setup, or no campaign, is the default maximize."""
+    from kalos.portal.campaign_settings import get_setting
+
+    cid = campaign_id or store.default_campaign_id(tenant=tenant)
+    if cid is None:
+        return False
+    try:
+        row = get_setting(store, tenant=tenant, campaign_id=cid, kind="setup")
+    except CampaignNotFound:
+        return False
+    value = row.get("value") if row else None
+    return isinstance(value, dict) and value.get("goal") == "minimize"
 
 
 def _clip(value: str | None, limit: int = MAX_AUDIT_FIELD_CHARS) -> str | None:
@@ -677,7 +698,8 @@ class CampaignStore:
         any upload has ever seeded a campaign, else the full summary
         (docs/CAMPAIGN_LOOP.md, "GET /api/campaign response").
 
-        `best` is `max(target over base_rows)` — the best MEASURED value so
+        `best` is `max(target over base_rows)` (`min` when the campaign setup's
+        goal is minimize; `goal` says which) — the best MEASURED value so
         far, never a prediction (see "Honesty constraints" in the design
         doc) — and is None when there is no base data yet or the target
         column carries no finite numeric value.
@@ -694,7 +716,17 @@ class CampaignStore:
 
         target = state["target"]
         base_rows: list[dict[str, Any]] = state["base_rows"]
-        best = _best_measured(base_rows, target)
+        minimize = _goal_minimize(self, tenant, campaign_id)
+        best = _best_measured(base_rows, target, minimize=minimize)
+        history = state.get("history")
+        if minimize and history:
+            # Stored points were recorded as maxima. base_rows only grow, so the
+            # best at each point is recomputed over the first `n_base` rows.
+            history = [
+                {**p, "best": _best_measured(base_rows[: p["n_base"]], target, minimize=True)}
+                if isinstance(p.get("n_base"), int) else p
+                for p in history
+            ]
 
         # `round` is absent on runs started before it was stamped: reads null.
         pending = [
@@ -708,10 +740,12 @@ class CampaignStore:
             "features": state["features"],
             "n_base": len(base_rows),
             "best": best,
+            # What `best` means: the campaign setup's goal (default maximize).
+            "goal": "minimize" if minimize else "maximize",
             "round": state["round"],
             # Older campaigns (seeded before history existed) fall back to a
             # single current point so the frontend always has something to plot.
-            "history": state.get("history")
+            "history": history
             or [{"round": state["round"], "best": best, "n_base": len(base_rows)}],
             "pending": pending,
             "n_awaiting": n_awaiting,
