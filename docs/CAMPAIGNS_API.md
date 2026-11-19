@@ -74,7 +74,9 @@ started before the field existed).
 `GET /api/campaigns?summary=true` (scope `read`) returns one page of the tenant's
 campaigns, newest-updated first, each a superset of the campaign object:
 
-`has_data` (base rows > 0), `target`, `n_base`, `round`, `n_awaiting`, `n_measured`,
+`has_data` (base rows > 0), `target`, `target_unit` (`{unit, source: user|header|none,
+header, note}`, the "Target unit" rule below applied to the raw `target` and the setup's
+`target_unit`; a display label, nothing is converted), `n_base`, `round`, `n_awaiting`, `n_measured`,
 `goal` `{direction: maximize|minimize, source: setup|default}` (from settings kind
 `setup`, `value.goal`; anything else is `maximize` with `source: default`),
 `best_measured` `{value, basis: "measured", direction: max|min, reason?}` (best MEASURED
