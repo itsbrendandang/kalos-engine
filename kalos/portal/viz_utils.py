@@ -16,6 +16,8 @@ import logging
 import numpy as np
 from scipy.stats import spearmanr
 
+from kalos.portal.analysis_parts.slices import reference_point
+
 logger = logging.getLogger(__name__)
 
 
@@ -232,22 +234,11 @@ def _response_surface_gp(
 
         n = len(y_fit)
 
-        # Build fixed recipe at incumbent: use the recipe (from X_fit) with the
-        # best target value, fixing all non-swept dims at their incumbent values
-        incumbent_idx = int(np.argmax(y_fit))
-        incumbent_recipe = X_fit[incumbent_idx].copy()
-
-        # Determine incumbent basis
-        incumbent_basis: str = "recipe_mean" if replicate_aware else "single"
-
-        # Decode categorical values for the fixed_recipe dict
-        fixed_recipe: dict = {}
-        for j, c in enumerate(cont_feats):
-            fixed_recipe[str(c)] = round(float(incumbent_recipe[j]), 4)
-        for j, c in enumerate(kept_cats):
-            if c in cat_dims_map:
-                lvl_idx = int(incumbent_recipe[len(cont_feats) + j])
-                fixed_recipe[str(c)] = cat_dims_map[c][lvl_idx]
+        # Fixed recipe at the incumbent (best row of the fit data). Shared with
+        # the 1D slices (analysis_parts/slices.py) so both use the same point.
+        incumbent_recipe, fixed_recipe, incumbent_basis = reference_point(
+            X_fit, y_fit, cont_feats, kept_cats, cat_dims_map, replicate_aware
+        )
 
         # Evaluate surface
         z = np.zeros((21, 21))
@@ -273,7 +264,12 @@ def _response_surface_gp(
             "x_vals": [round(float(v), 4) for v in x_vals],
             "y_vals": [round(float(v), 4) for v in y_vals],
             "z": [[round(float(z[i, j]), 4) for j in range(21)] for i in range(21)],
+            # R3: GP posterior SD of the LATENT mean (observation_noise=False),
+            # same grid/shape as z. Model-based, not held-out calibrated.
             "std": [[round(float(std[i, j]), 4) for j in range(21)] for i in range(21)],
+            "std_kind": "gp_posterior_sd",
+            "std_basis": "latent_mean",
+            "z_basis": "predicted",
             "runs": runs,
             "swept_at": "incumbent",
             "fixed_recipe": fixed_recipe,
