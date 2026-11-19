@@ -91,6 +91,7 @@ def test_passage_is_fitted_but_never_proposed(text_result):
         assert p["held"]["passage"] == {"value": held, "basis": "median of the fitted runs",
                                        "proposed": False}
     assert "passage" not in r["proposal_features"]
+    assert all(d.get("role") == "covariate" for d in r["drivers"] if d["name"] == "passage")
     prov = {row["name"]: row for row in r["provenance"]}
     assert prov["passage"]["role"] == "covariate" and prov["clone"]["role"] == "strain"
 

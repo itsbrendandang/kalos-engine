@@ -1742,6 +1742,11 @@ def _analyze_body(
     # Clone / strain and covariates (docs/CLONES.md). Additive keys: a sheet with
     # no clone column gets `strain_summary.available: false` and empty blocks.
     if strain.active:
+        # A fitted covariate can rank as a driver; it is labeled, never a setpoint.
+        result["drivers"] = [
+            {**d, "role": "covariate"} if d["name"] in strain.held_covariates else d
+            for d in result["drivers"]
+        ]
         result["proposals"] = strain.annotate_proposals(
             result["proposals"], batch, X, bounds, cat_dims, nearest_training_distance,
         )
