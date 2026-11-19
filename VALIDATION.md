@@ -140,15 +140,23 @@ results in `benchmarks/results/trust_leaks_*.json`. Batch scenarios: 6 batches x
 runs clustered in space (as campaign rounds are), batch offset sd 1.0, noise sd 0.2.
 Jitter: 15 recipes x 4 replicates recorded as run, recipe effect sd 1.0.
 
-| Scenario (20 seeds) | `clears_floor` before | after F05 (leak-free CV) | batch proposed as a setpoint before -> after |
-|---|---|---|---|
-| text `batch` column | 1.00 | 0.10 | 1.00 -> 0.00 |
-| numeric `batch` column | 1.00 | 0.10 | 1.00 -> 0.00 |
-| campaign rounds (fold history) | 0.95 | 0.10 | - |
-| no batch column (structure invisible) | 0.95 | 0.95 | - |
-| as-run replicates, 0.2% jitter | 1.00 | 0.15 | - |
-| as-run replicates, 1% jitter | 1.00 | 0.15 | - |
-| pure noise, n=12 / 20 / 40 | 0.30 / 0.10 / 0.05 | 0.30 / 0.10 / 0.10 | - |
+| Scenario (20 seeds) | `clears_floor` before | after F05 (leak-free CV) | after F04 (gates) | verdict `reliable` after F04 | proposals withheld after F04 | batch proposed as a setpoint before -> after |
+|---|---|---|---|---|---|---|
+| text `batch` column | 1.00 | 0.10 | 0.05 | 0.00 | 0.15 | 1.00 -> 0.00 |
+| numeric `batch` column | 1.00 | 0.10 | 0.05 | 0.00 | 0.15 | 1.00 -> 0.00 |
+| campaign rounds (fold history) | 0.95 | 0.10 | 0.05 | 0.00 | 0.15 | - |
+| no batch column (structure invisible) | 0.95 | 0.95 | 0.80 | 0.80 | 0.00 | - |
+| as-run replicates, 0.2% jitter | 1.00 | 0.15 | 0.00 | 0.00 | 0.00 | - |
+| as-run replicates, 1% jitter | 1.00 | 0.15 | 0.00 | 0.00 | 0.10 | - |
+| pure noise, n=12 | 0.30 | 0.30 | 0.05 | 0.00 | 0.10 | - |
+| pure noise, n=20 | 0.10 | 0.10 | 0.00 | 0.00 | 0.10 | - |
+| pure noise, n=40 | 0.05 | 0.10 | 0.05 | 0.05 | 0.10 | - |
+
+F04 makes the verdict act: `refused` withholds the batch, `not_yet` labels every
+proposal `exploration_untrusted`. The price is power: the audit measured that
+requiring the interval above 0 drops `clears_floor` on a real 6-D bump at n=20
+from 70% to about 30% (f2); small, learnable sheets now read `not_yet` more often
+and their proposals are labelled exploration, not withheld.
 
 When the batch structure is not on the sheet at all, no grouping can see it: record
 the batch, plate, lot or date column, or run the campaign through the fold (rounds are

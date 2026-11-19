@@ -113,6 +113,8 @@ from kalos.portal.analysis_parts.refusals import (
     _validate_constraint,
 )
 from kalos.portal.analysis_parts.setup_apply import _propose_with_setup, withheld_batch
+from kalos.portal.analysis_parts.trust_gate import clears_floor as trust_clears_floor
+from kalos.portal.analysis_parts.trust_gate import label_proposals, proposal_trust
 from kalos.portal.analysis_parts.units import target_unit_block
 from kalos.portal.cells import (
     BLANK,
@@ -135,6 +137,7 @@ from kalos.portal.uploads import (
     clip_name,
 )
 from kalos.portal.validate import column_provenance, provenance_dicts
+from kalos.portal.verdict import model_verdict, refusal_for, refusal_notice
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
 
 # Re-exported: each name below was defined in this module before the split into
@@ -328,7 +331,12 @@ def _analyze_body(
             feasibility_cv_report,
             feasible_labels,
         )
-        from kalos.core.gates import GatesConfig, check_gates
+        from kalos.core.gates import (
+            NOT_APPLICABLE_FEW_NON_PRODUCERS,
+            NOT_APPLICABLE_WHEN_MINIMIZING,
+            GatesConfig,
+            check_gates,
+        )
         from kalos.core.optimize import MAX_MIXED_COMBOS, propose_batch
         from kalos.core.surrogate import FitError, Surrogate, proposal_restarts
         from kalos.portal.viz_utils import (
@@ -819,7 +827,14 @@ def _analyze_body(
     # Honest reliability verdict: only what this path can actually assess. The
     # spearman floor mirrors GatesConfig.min_spearman (kalos/core/gates.py); we do
     # NOT assert the feasibility gate, which is not measured here.
-    ci95 = None if rho != rho else [round(rep["ci95"][0], 3), round(rep["ci95"][1], 3)]
+    # Null (not [NaN, NaN]) when the group bootstrap could not run (< 3 CV
+    # groups): the interval does not exist, and NaN is not JSON (arch-safe-now
+    # 08db682 made the same fix on the reanalyze path).
+    _ci_lo, _ci_hi = rep["ci95"]
+    ci95 = (
+        None if (rho != rho or _ci_lo != _ci_lo or _ci_hi != _ci_hi)
+        else [round(_ci_lo, 3), round(_ci_hi, 3)]
+    )
 
     # CALIBRATION. A model can rank held-out runs correctly and still state every
     # uncertainty at half its true width, and the scientist reading "4.2 +/- 0.3"
@@ -849,11 +864,19 @@ def _analyze_body(
     # The assay LOD is the correct value - below it a reading is censored rather
     # than zero - and is not available until an SOP supplies it.
     prod = producer_only_spearman(oof_a, oof_p)
+    # F04: the floor needs the interval, not only the point estimate, and is not
+    # judged on a sheet too small to judge (kalos/portal/analysis_parts/trust_gate.py).
+    floor_check = trust_clears_floor(
+        rho=rho, ci95=ci95, floor=RELIABILITY_SPEARMAN_FLOOR, n_runs=len(y), n_groups=int(rep["n_groups"]),
+    )
     reliability = {
         "spearman": None if rho != rho else round(rho, 3),
         "ci95": ci95,
         "spearman_floor": RELIABILITY_SPEARMAN_FLOOR,
-        "clears_floor": bool(rho == rho and rho >= RELIABILITY_SPEARMAN_FLOOR),
+        "clears_floor": floor_check["clears_floor"],
+        "clears_floor_rule": floor_check["rule"],
+        "judged": floor_check["judged"],
+        "not_judged_reason": floor_check["not_judged_reason"],
         # Reported alongside, not folded into `clears_floor`: making the gate
         # stricter changes which uploads the API accepts, which is a product
         # decision rather than a bug fix. Surfaced so the divergence is visible
@@ -899,7 +922,8 @@ def _analyze_body(
         if reliability["clears_floor"]
         else (
             "The model has not yet shown it can rank unseen runs (CV Spearman "
-            f"below the {RELIABILITY_SPEARMAN_FLOOR} floor), so this batch explores "
+            f"below the {RELIABILITY_SPEARMAN_FLOOR} floor, its 95% interval reaching 0, "
+            "or too few runs to judge), so this batch explores "
             "rather than exploits. On data like this a space-filling design (e.g. "
             "Latin hypercube) is expected to do about as well; the model's "
             "advantage appears once it clears the floor."
@@ -1027,6 +1051,19 @@ def _analyze_body(
         "ece_n": feas["n"] if feas.get("evaluable") else None,
         "brier": feas["brier"],
     }
+    if _minimize:
+        # P(feasible) scores y > 0, a maximize notion: its AUC/ECE/Brier gates are
+        # reported as not judged rather than passing or failing a minimize run
+        # (cherry-picked from arch-safe-now e2257ac).
+        gate_stats["feasibility_not_applicable"] = NOT_APPLICABLE_WHEN_MINIMIZING
+    elif n_infeasible < GATE_MIN_N_INFEASIBLE:
+        # F04 / audit B3: with fewer than GATE_MIN_N_INFEASIBLE non-producing runs
+        # feasibility is not a question this sheet asks, and its AUC/ECE/Brier are
+        # unmeasurable. Failing closed on them made promotion impossible on any
+        # ordinary target (0/280 in the audit); they are now "not applicable".
+        gate_stats["feasibility_not_applicable"] = (
+            f"{NOT_APPLICABLE_FEW_NON_PRODUCERS} ({n_infeasible} non-producing runs, need {GATE_MIN_N_INFEASIBLE})"
+        )
     promotion_result = check_gates(gate_stats)
     promotion = {
         "passed": promotion_result.passed,
@@ -1039,6 +1076,11 @@ def _analyze_body(
         # Gates neither passed nor failed, e.g. "ece: not enough runs to judge
         # calibration (n=14, need 20)". Additive.
         "not_judged": promotion_result.not_judged,
+        # Additive: `passed`, `failed` (a measured gate missed), or
+        # `not_measurable` (every blocking gate was unmeasured, e.g. no
+        # non-producers to score feasibility). Same verdict as `passed`.
+        "status": promotion_result.status,
+        "unmeasured": list(promotion_result.unmeasured),
         # FAIL-CLOSED IS CORRECT, BUT ILLEGIBLE WITHOUT THIS. On an all-producer
         # sheet (no non-producers to build a feasibility classifier from) or
         # any sheet too small to measure one of the four gates,
@@ -1056,6 +1098,15 @@ def _analyze_body(
             "score feasibility against). It is not a rejection of the analysis."
         ),
     }
+
+    # ONE VERDICT (kalos/portal/verdict.py): reliable / not_yet / refused, from
+    # the numbers above. Stored on the analysis; every route returns this object.
+    # `refused` means no proposals (applied where `result` is assembled below).
+    verdict = model_verdict(
+        n_runs=len(y), n_groups=int(rep["n_groups"]), spearman=None if rho != rho else float(rho),
+        ci95=ci95, floor=RELIABILITY_SPEARMAN_FLOOR, calibration=calibration,
+    )
+    refusal = refusal_for(verdict)
 
     # LEAVE-ONE-GROUP-OUT. Grouped K-fold above tests generalization to a FEW
     # unseen groups among many familiar ones; LOGO is the harder question -
@@ -1107,8 +1158,13 @@ def _analyze_body(
     # advance", not "how well-ranked is the whole held-out set" - Spearman can
     # look fine while the model gets exactly the recipes that matter out of
     # order (see `top_k_overlap`'s docstring). Computed on the same repeat-0
-    # pooled OOF everything else in this function reads off.
-    topk = top_k_overlap(oof_a, oof_p, CV_TOPK_K)
+    # pooled OOF everything else in this function reads off. Under minimize the
+    # recipes that matter are the LOWEST k, so both sides are ranked on sign * y.
+    # (cherry-picked from arch-safe-now 3935dfa; F04 / audit S4.)
+    _rank_sign = -1.0 if _minimize else 1.0
+    topk = top_k_overlap(
+        _rank_sign * np.asarray(oof_a, float), _rank_sign * np.asarray(oof_p, float), CV_TOPK_K,
+    )
     cv_topk: dict[str, Any] = {
         "overlap": None if not topk["evaluable"] else round(float(topk["overlap"]), 3),
         "k": topk["k"],
@@ -1592,6 +1648,10 @@ def _analyze_body(
         # above where `promotion` is assembled for why this must never change
         # what the API accepts).
         "promotion": promotion,
+        # The one verdict (kalos/portal/verdict.py, docs/CAMPAIGNS_API.md "Verdict")
+        # and, when it is `refused`, why there are no proposals.
+        "verdict": verdict,
+        "refusal": refusal,
         # PART 1: whether/why the proposal acquisition was gated by P(feasible)
         # (see the GATE POLICY block above `promotion` is assembled near, for
         # the full three-condition reasoning). `threshold` is the label
@@ -1702,6 +1762,13 @@ def _analyze_body(
     }
     if setup_plan is not None:
         result.update(setup_plan.result_fields())  # `goal` + the `setup` block
+    if refusal is not None:  # verdict `refused`: no recipes, and the notice says why
+        result["proposals"] = []
+        result["proposal_notice"] = refusal_notice(refusal, 5)
+    # F04: the verdict acts on the batch. Withheld above when refused; otherwise
+    # every proposal says whether it is model-guided (trusted) or exploration.
+    result["proposal_trust"] = proposal_trust(verdict, n_returned=len(result["proposals"]), n_requested=5)
+    result["proposals"] = label_proposals(result["proposals"], result["proposal_trust"])
     if anonymize:
         result = _anonymize_result(
             result,

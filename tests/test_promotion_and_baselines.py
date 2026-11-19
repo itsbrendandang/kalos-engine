@@ -294,7 +294,10 @@ def _replicated_sheet_many_groups(n_groups: int = 20, reps: int = 3, seed: int =
 def test_promotion_block_appears_with_the_documented_shape():
     out = _analyze(_strong_signal_with_producers())
     promo = out["promotion"]
-    assert set(promo) == {"passed", "failures", "metrics", "summary", "meaning", "not_judged"}
+    assert set(promo) == {
+        "passed", "failures", "metrics", "summary", "meaning", "not_judged", "status",
+        "unmeasured",
+    }
     assert isinstance(promo["passed"], bool)
     assert isinstance(promo["failures"], list)
     assert isinstance(promo["metrics"], dict)
@@ -326,20 +329,18 @@ def test_promotion_passes_on_an_engineered_strong_signal_sheet_or_states_why_not
             assert ("< min" in f) or ("> max" in f) or ("unmeasured" in f)
 
 
-def test_promotion_fails_closed_with_unmeasured_wording_on_all_producer_sheet():
+def test_promotion_does_not_judge_feasibility_on_all_producer_sheet():
+    """F04 (ML audit B3): with zero non-producers the feasibility AUC/ECE/Brier
+    are unmeasurable because feasibility is not a question this sheet asks.
+    They used to fail closed, so promotion could never pass on an ordinary
+    target (0/280 in the audit); they are now `not_judged` with the reason."""
     out = _analyze(_all_producer_sheet())
     promo = out["promotion"]
-    assert promo["passed"] is False
-    # feasibility_auc/ece/brier are unmeasurable with zero non-producers;
-    # surrogate_spearman is not affected by producer/non-producer status.
-    unmeasured = {f for f in promo["failures"] if "unmeasured" in f}
-    assert {"feasibility_auc missing/NaN (unmeasured)",
-            "ece missing/NaN (unmeasured)",
-            "brier missing/NaN (unmeasured)"} == unmeasured
-    assert "feasibility_auc" not in promo["metrics"]
-    assert "ece" not in promo["metrics"]
-    assert "brier" not in promo["metrics"]
-    assert "GATES FAILED" in promo["summary"]
+    assert not any("unmeasured" in f for f in promo["failures"])
+    for key in ("feasibility_auc", "ece", "brier"):
+        assert any(s.startswith(f"{key}: not applicable: too few non-producing runs") for s in promo["not_judged"])
+        assert key not in promo["metrics"]
+    assert promo["passed"] == (not promo["failures"])
 
 
 def test_analyze_output_is_json_dumps_serializable():

@@ -10,7 +10,8 @@
  "reasons": [
   "baseline: feat/web-redesign-apis @ 0fc05c3 before the trust-layer changes",
   "F02: interval labels (coverage_basis, caveat with coverage_at_proposals_estimate, conformal_caveat); additive, no number changes",
-  "F05: leak-free CV grouping (replicate clusters, batch/round/scale candidates, lowest score binds); batch columns not fitted"
+  "F05: leak-free CV grouping (replicate clusters, batch/round/scale candidates, lowest score binds); batch columns not fitted",
+  "F04: gates that gate (verdict withholds/labels proposals; floor needs CI>0 and n>=12; feasibility gates not applicable below 5 non-producers; cv_topk under minimize)"
  ],
  "sheets": {
   "batch_text": {
@@ -1006,7 +1007,9 @@
      "group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor"
     ],
     "passed": false,
-    "summary": "GATES FAILED: surrogate_spearman=-0.094 < min 0.2; feasibility_auc=0.613 < min 0.65; ece=0.335 > max 0.15; brier=0.316 > max 0.25 (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)"
+    "status": "failed",
+    "summary": "GATES FAILED: surrogate_spearman=-0.094 < min 0.2; feasibility_auc=0.613 < min 0.65; ece=0.335 > max 0.15; brier=0.316 > max 0.25 (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)",
+    "unmeasured": []
    },
    "proposal_features": [
     "feed_a",
@@ -1022,6 +1025,20 @@
    },
    "proposal_notice": null,
    "proposal_optimizer": "continuous",
+   "proposal_trust": {
+    "gated": true,
+    "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+    "n_requested": 5,
+    "n_returned": 5,
+    "reasons": [
+     "surrogate_spearman",
+     "too_few_groups"
+    ],
+    "rule": "refused -> proposals withheld; not_yet -> exploration_untrusted; reliable -> trusted",
+    "status": "exploration_untrusted",
+    "verdict": "not_yet",
+    "withheld": false
+   },
    "proposals": [
     {
      "expected_improvement": {
@@ -1155,6 +1172,11 @@
       "temp_offset": 0.636
      },
      "std": 0.42,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.122,
       0.636,
@@ -1293,6 +1315,11 @@
       "temp_offset": 0.36
      },
      "std": 0.412,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.389,
       0.36,
@@ -1431,6 +1458,11 @@
       "temp_offset": 0.311
      },
      "std": 0.43,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.337,
       0.311,
@@ -1569,6 +1601,11 @@
       "temp_offset": 0.351
      },
      "std": 0.452,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.43,
       0.351,
@@ -1707,6 +1744,11 @@
       "temp_offset": 0.233
      },
      "std": 0.495,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.638,
       0.233,
@@ -1751,6 +1793,7 @@
      "status": "target"
     }
    ],
+   "refusal": null,
    "reliability": {
     "calibration": {
      "available": true,
@@ -1786,11 +1829,14 @@
     ],
     "ci_excludes_zero": false,
     "clears_floor": false,
+    "clears_floor_rule": "held-out Spearman >= 0.2 AND the lower end of its 95% interval > 0, judged only with at least 12 runs and 3 CV groups",
+    "judged": true,
     "n_producers": 28,
+    "not_judged_reason": null,
     "producer_clears_floor": false,
     "producer_spearman": -0.108,
     "producer_threshold": 0.0,
-    "space_filling_advice": "The model has not yet shown it can rank unseen runs (CV Spearman below the 0.2 floor), so this batch explores rather than exploits. On data like this a space-filling design (e.g. Latin hypercube) is expected to do about as well; the model's advantage appears once it clears the floor.",
+    "space_filling_advice": "The model has not yet shown it can rank unseen runs (CV Spearman below the 0.2 floor, its 95% interval reaching 0, or too few runs to judge), so this batch explores rather than exploits. On data like this a space-filling design (e.g. Latin hypercube) is expected to do about as well; the model's advantage appears once it clears the floor.",
     "spearman": -0.094,
     "spearman_floor": 0.2,
     "unmodeled": [
@@ -3948,6 +3994,35 @@
     "schema_version": 1,
     "status": "fail"
    },
+   "verdict": {
+    "code": "not-yet",
+    "headline": "Kalos cannot yet show that it puts your past runs in the right order, so its suggestions are closer to guesses.",
+    "min_groups": 8,
+    "min_runs": 20,
+    "n_groups": 5,
+    "n_runs": 48,
+    "ordering": {
+     "plain": "The model put past runs it had not seen in the right order too rarely.",
+     "state": "weak"
+    },
+    "range_width": {
+     "code": "bands_narrow",
+     "plain": "The likely range is too narrow: fewer results land inside it than it promises.",
+     "state": "too_narrow"
+    },
+    "reasons": [
+     {
+      "code": "surrogate_spearman",
+      "plain": "The model put past runs it had not seen in the right order too rarely."
+     },
+     {
+      "code": "too_few_groups",
+      "plain": "The sheet has 5 groups of runs; Kalos needs at least 8 before it calls the model reliable."
+     }
+    ],
+    "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else.",
+    "state": "not_yet"
+   },
    "visualization_reasons": {
     "correlation": null,
     "embedding": null,
@@ -4799,7 +4874,9 @@
      "group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor"
     ],
     "passed": false,
-    "summary": "GATES FAILED: feasibility_auc=0.379 < min 0.65; ece=0.248 > max 0.15; brier=0.306 > max 0.25 (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)"
+    "status": "failed",
+    "summary": "GATES FAILED: feasibility_auc=0.379 < min 0.65; ece=0.248 > max 0.15; brier=0.306 > max 0.25 (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)",
+    "unmeasured": []
    },
    "proposal_features": [
     "temperature_C",
@@ -4815,6 +4892,19 @@
    },
    "proposal_notice": null,
    "proposal_optimizer": "continuous",
+   "proposal_trust": {
+    "gated": true,
+    "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+    "n_requested": 5,
+    "n_returned": 5,
+    "reasons": [
+     "surrogate_spearman"
+    ],
+    "rule": "refused -> proposals withheld; not_yet -> exploration_untrusted; reliable -> trusted",
+    "status": "exploration_untrusted",
+    "verdict": "not_yet",
+    "withheld": false
+   },
    "proposals": [
     {
      "expected_improvement": {
@@ -4948,6 +5038,11 @@
       "temperature_C": 34.849
      },
      "std": 0.105,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       34.849,
       7.222,
@@ -5086,6 +5181,11 @@
       "temperature_C": 38.737
      },
      "std": 0.075,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       38.737,
       6.739,
@@ -5224,6 +5324,11 @@
       "temperature_C": 37.075
      },
      "std": 0.095,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       37.075,
       7.102,
@@ -5362,6 +5467,11 @@
       "temperature_C": 37.308
      },
      "std": 0.101,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       37.308,
       6.884,
@@ -5500,6 +5610,11 @@
       "temperature_C": 38.071
      },
      "std": 0.105,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       38.071,
       6.997,
@@ -5537,6 +5652,7 @@
      "status": "target"
     }
    ],
+   "refusal": null,
    "reliability": {
     "calibration": {
      "available": true,
@@ -5571,12 +5687,15 @@
      0.563
     ],
     "ci_excludes_zero": false,
-    "clears_floor": true,
+    "clears_floor": false,
+    "clears_floor_rule": "held-out Spearman >= 0.2 AND the lower end of its 95% interval > 0, judged only with at least 12 runs and 3 CV groups",
+    "judged": true,
     "n_producers": 16,
+    "not_judged_reason": null,
     "producer_clears_floor": true,
     "producer_spearman": 0.374,
     "producer_threshold": 0.0,
-    "space_filling_advice": null,
+    "space_filling_advice": "The model has not yet shown it can rank unseen runs (CV Spearman below the 0.2 floor, its 95% interval reaching 0, or too few runs to judge), so this batch explores rather than exploits. On data like this a space-filling design (e.g. Latin hypercube) is expected to do about as well; the model's advantage appears once it clears the floor.",
     "spearman": 0.268,
     "spearman_floor": 0.2,
     "unmodeled": [
@@ -7588,6 +7707,31 @@
     "schema_version": 1,
     "status": "pass_with_warnings"
    },
+   "verdict": {
+    "code": "not-yet",
+    "headline": "Kalos cannot yet show that it puts your past runs in the right order, so its suggestions are closer to guesses.",
+    "min_groups": 8,
+    "min_runs": 20,
+    "n_groups": 30,
+    "n_runs": 30,
+    "ordering": {
+     "plain": "The model put past runs in roughly the right order, but Kalos is not sure that is better than chance.",
+     "state": "unsure"
+    },
+    "range_width": {
+     "code": "bands_narrow",
+     "plain": "The likely range is too narrow: fewer results land inside it than it promises.",
+     "state": "too_narrow"
+    },
+    "reasons": [
+     {
+      "code": "surrogate_spearman",
+      "plain": "The model put past runs in roughly the right order, but Kalos is not sure that is better than chance."
+     }
+    ],
+    "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else.",
+    "state": "not_yet"
+   },
    "visualization_reasons": {
     "correlation": null,
     "embedding": null,
@@ -8453,20 +8597,21 @@
    ],
    "orientation": null,
    "promotion": {
-    "failures": [
-     "feasibility_auc missing/NaN (unmeasured)",
-     "ece missing/NaN (unmeasured)",
-     "brier missing/NaN (unmeasured)"
-    ],
+    "failures": [],
     "meaning": "passed=false means \"not yet shown fit to promote\", which includes the case where a required metric is unmeasurable on this data (e.g. an all-producer sheet with no non-producers to score feasibility against). It is not a rejection of the analysis.",
     "metrics": {
      "surrogate_spearman": 0.5487394957983194
     },
     "not_judged": [
+     "feasibility_auc: not applicable: too few non-producing runs (1 non-producing runs, need 5)",
+     "ece: not applicable: too few non-producing runs (1 non-producing runs, need 5)",
+     "brier: not applicable: too few non-producing runs (1 non-producing runs, need 5)",
      "group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor"
     ],
-    "passed": false,
-    "summary": "GATES FAILED: feasibility_auc missing/NaN (unmeasured); ece missing/NaN (unmeasured); brier missing/NaN (unmeasured) (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)"
+    "passed": true,
+    "status": "passed",
+    "summary": "ALL GATES PASSED (not judged: feasibility_auc: not applicable: too few non-producing runs (1 non-producing runs, need 5); ece: not applicable: too few non-producing runs (1 non-producing runs, need 5); brier: not applicable: too few non-producing runs (1 non-producing runs, need 5); group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)",
+    "unmeasured": []
    },
    "proposal_features": [
     "feed_a",
@@ -8481,6 +8626,19 @@
    },
    "proposal_notice": null,
    "proposal_optimizer": "continuous",
+   "proposal_trust": {
+    "gated": true,
+    "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+    "n_requested": 5,
+    "n_returned": 5,
+    "reasons": [
+     "too_few_groups"
+    ],
+    "rule": "refused -> proposals withheld; not_yet -> exploration_untrusted; reliable -> trusted",
+    "status": "exploration_untrusted",
+    "verdict": "not_yet",
+    "withheld": false
+   },
    "proposals": [
     {
      "expected_improvement": {
@@ -8613,6 +8771,11 @@
       "feed_b": 0.48
      },
      "std": 0.091,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.758,
       0.48
@@ -8749,6 +8912,11 @@
       "feed_b": 0.661
      },
      "std": 0.075,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.652,
       0.661
@@ -8885,6 +9053,11 @@
       "feed_b": 0.884
      },
      "std": 0.146,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.495,
       0.884
@@ -9021,6 +9194,11 @@
       "feed_b": 0.708
      },
      "std": 0.163,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.49,
       0.708
@@ -9157,6 +9335,11 @@
       "feed_b": 0.685
      },
      "std": 0.099,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.593,
       0.685
@@ -9186,6 +9369,7 @@
      "status": "target"
     }
    ],
+   "refusal": null,
    "reliability": {
     "calibration": {
      "available": true,
@@ -9221,7 +9405,10 @@
     ],
     "ci_excludes_zero": true,
     "clears_floor": true,
+    "clears_floor_rule": "held-out Spearman >= 0.2 AND the lower end of its 95% interval > 0, judged only with at least 12 runs and 3 CV groups",
+    "judged": true,
     "n_producers": 34,
+    "not_judged_reason": null,
     "producer_clears_floor": true,
     "producer_spearman": 0.555,
     "producer_threshold": 0.0,
@@ -11013,6 +11200,31 @@
     "schema_version": 1,
     "status": "fail"
    },
+   "verdict": {
+    "code": "not-yet",
+    "headline": "The model put your past runs in the right order, but 35 runs in 4 groups are too few to be sure, so treat its suggestions as ideas to test.",
+    "min_groups": 8,
+    "min_runs": 20,
+    "n_groups": 4,
+    "n_runs": 35,
+    "ordering": {
+     "plain": "The model put past runs it had not seen in the right order most of the time.",
+     "state": "ok"
+    },
+    "range_width": {
+     "code": "bands_narrow",
+     "plain": "The likely range is too narrow: fewer results land inside it than it promises.",
+     "state": "too_narrow"
+    },
+    "reasons": [
+     {
+      "code": "too_few_groups",
+      "plain": "The sheet has 4 groups of runs; Kalos needs at least 8 before it calls the model reliable."
+     }
+    ],
+    "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else.",
+    "state": "not_yet"
+   },
    "visualization_reasons": {
     "correlation": null,
     "embedding": null,
@@ -12113,7 +12325,9 @@
      "group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor"
     ],
     "passed": false,
-    "summary": "GATES FAILED: surrogate_spearman=-0.337 < min 0.2; feasibility_auc=0.448 < min 0.65; ece=0.393 > max 0.15; brier=0.318 > max 0.25 (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)"
+    "status": "failed",
+    "summary": "GATES FAILED: surrogate_spearman=-0.337 < min 0.2; feasibility_auc=0.448 < min 0.65; ece=0.393 > max 0.15; brier=0.318 > max 0.25 (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)",
+    "unmeasured": []
    },
    "proposal_features": [
     "feed_b",
@@ -12129,6 +12343,19 @@
    },
    "proposal_notice": null,
    "proposal_optimizer": "continuous",
+   "proposal_trust": {
+    "gated": true,
+    "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+    "n_requested": 5,
+    "n_returned": 5,
+    "reasons": [
+     "surrogate_spearman"
+    ],
+    "rule": "refused -> proposals withheld; not_yet -> exploration_untrusted; reliable -> trusted",
+    "status": "exploration_untrusted",
+    "verdict": "not_yet",
+    "withheld": false
+   },
    "proposals": [
     {
      "expected_improvement": {
@@ -12262,6 +12489,11 @@
       "temp_offset": 0.757
      },
      "std": 0.859,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.936,
       0.757,
@@ -12400,6 +12632,11 @@
       "temp_offset": 0.927
      },
      "std": 0.63,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.846,
       0.927,
@@ -12538,6 +12775,11 @@
       "temp_offset": 0.693
      },
      "std": 0.856,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.754,
       0.693,
@@ -12676,6 +12918,11 @@
       "temp_offset": 0.903
      },
      "std": 0.692,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.575,
       0.903,
@@ -12814,6 +13061,11 @@
       "temp_offset": 0.927
      },
      "std": 0.651,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.948,
       0.927,
@@ -12851,6 +13103,7 @@
      "status": "target"
     }
    ],
+   "refusal": null,
    "reliability": {
     "calibration": {
      "available": true,
@@ -12886,11 +13139,14 @@
     ],
     "ci_excludes_zero": false,
     "clears_floor": false,
+    "clears_floor_rule": "held-out Spearman >= 0.2 AND the lower end of its 95% interval > 0, judged only with at least 12 runs and 3 CV groups",
+    "judged": true,
     "n_producers": 42,
+    "not_judged_reason": null,
     "producer_clears_floor": false,
     "producer_spearman": -0.452,
     "producer_threshold": 0.0,
-    "space_filling_advice": "The model has not yet shown it can rank unseen runs (CV Spearman below the 0.2 floor), so this batch explores rather than exploits. On data like this a space-filling design (e.g. Latin hypercube) is expected to do about as well; the model's advantage appears once it clears the floor.",
+    "space_filling_advice": "The model has not yet shown it can rank unseen runs (CV Spearman below the 0.2 floor, its 95% interval reaching 0, or too few runs to judge), so this batch explores rather than exploits. On data like this a space-filling design (e.g. Latin hypercube) is expected to do about as well; the model's advantage appears once it clears the floor.",
     "spearman": -0.337,
     "spearman_floor": 0.2,
     "unmodeled": [
@@ -15118,6 +15374,31 @@
     "schema_version": 1,
     "status": "fail"
    },
+   "verdict": {
+    "code": "not-yet",
+    "headline": "Kalos cannot yet show that it puts your past runs in the right order, so its suggestions are closer to guesses.",
+    "min_groups": 8,
+    "min_runs": 20,
+    "n_groups": 15,
+    "n_runs": 60,
+    "ordering": {
+     "plain": "The model put past runs it had not seen in the right order too rarely.",
+     "state": "weak"
+    },
+    "range_width": {
+     "code": "bands_narrow",
+     "plain": "The likely range is too narrow: fewer results land inside it than it promises.",
+     "state": "too_narrow"
+    },
+    "reasons": [
+     {
+      "code": "surrogate_spearman",
+      "plain": "The model put past runs it had not seen in the right order too rarely."
+     }
+    ],
+    "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else.",
+    "state": "not_yet"
+   },
    "visualization_reasons": {
     "correlation": null,
     "embedding": null,
@@ -15283,7 +15564,7 @@
     "evaluable": true,
     "k": 5,
     "n": 24,
-    "overlap": 0.8,
+    "overlap": 0.6,
     "reason": null
    },
    "d": 2,
@@ -15866,20 +16147,21 @@
    ],
    "orientation": null,
    "promotion": {
-    "failures": [
-     "feasibility_auc missing/NaN (unmeasured)",
-     "ece missing/NaN (unmeasured)",
-     "brier missing/NaN (unmeasured)"
-    ],
+    "failures": [],
     "meaning": "passed=false means \"not yet shown fit to promote\", which includes the case where a required metric is unmeasurable on this data (e.g. an all-producer sheet with no non-producers to score feasibility against). It is not a rejection of the analysis.",
     "metrics": {
      "surrogate_spearman": 0.9678260869565216
     },
     "not_judged": [
+     "feasibility_auc: not applicable when minimizing",
+     "ece: not applicable when minimizing",
+     "brier: not applicable when minimizing",
      "group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor"
     ],
-    "passed": false,
-    "summary": "GATES FAILED: feasibility_auc missing/NaN (unmeasured); ece missing/NaN (unmeasured); brier missing/NaN (unmeasured) (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)"
+    "passed": true,
+    "status": "passed",
+    "summary": "ALL GATES PASSED (not judged: feasibility_auc: not applicable when minimizing; ece: not applicable when minimizing; brier: not applicable when minimizing; group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)",
+    "unmeasured": []
    },
    "proposal_features": [
     "feed_a",
@@ -15894,6 +16176,17 @@
    },
    "proposal_notice": null,
    "proposal_optimizer": "continuous",
+   "proposal_trust": {
+    "gated": false,
+    "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+    "n_requested": 5,
+    "n_returned": 5,
+    "reasons": [],
+    "rule": "refused -> proposals withheld; not_yet -> exploration_untrusted; reliable -> trusted",
+    "status": "trusted",
+    "verdict": "reliable",
+    "withheld": false
+   },
    "proposals": [
     {
      "expected_improvement": {
@@ -16026,6 +16319,11 @@
       "temp_C": 34.739
      },
      "std": 0.08,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       2.522,
       34.739
@@ -16162,6 +16460,11 @@
       "temp_C": 30.348
      },
      "std": 0.259,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       3.858,
       30.348
@@ -16298,6 +16601,11 @@
       "temp_C": 34.164
      },
      "std": 0.147,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       2.006,
       34.164
@@ -16434,6 +16742,11 @@
       "temp_C": 33.858
      },
      "std": 0.199,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       1.746,
       33.858
@@ -16570,6 +16883,11 @@
       "temp_C": 34.385
      },
      "std": 0.162,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       1.758,
       34.385
@@ -16599,6 +16917,7 @@
      "status": "target"
     }
    ],
+   "refusal": null,
    "reliability": {
     "calibration": {
      "available": true,
@@ -16634,7 +16953,10 @@
     ],
     "ci_excludes_zero": true,
     "clears_floor": true,
+    "clears_floor_rule": "held-out Spearman >= 0.2 AND the lower end of its 95% interval > 0, judged only with at least 12 runs and 3 CV groups",
+    "judged": true,
     "n_producers": 24,
+    "not_judged_reason": null,
     "producer_clears_floor": true,
     "producer_spearman": 0.968,
     "producer_threshold": 0.0,
@@ -18383,6 +18705,26 @@
     "schema_version": 1,
     "status": "pass_with_warnings"
    },
+   "verdict": {
+    "code": "reliable",
+    "headline": "Kalos put your past runs in the right order, with enough runs to check the ranking, so its suggestions are worth running.",
+    "min_groups": 8,
+    "min_runs": 20,
+    "n_groups": 20,
+    "n_runs": 24,
+    "ordering": {
+     "plain": "The model put past runs it had not seen in the right order most of the time.",
+     "state": "ok"
+    },
+    "range_width": {
+     "code": "bands_narrow",
+     "plain": "The likely range is too narrow: fewer results land inside it than it promises.",
+     "state": "too_narrow"
+    },
+    "reasons": [],
+    "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else.",
+    "state": "reliable"
+   },
    "visualization_reasons": {
     "correlation": null,
     "embedding": null,
@@ -19114,20 +19456,21 @@
    ],
    "orientation": null,
    "promotion": {
-    "failures": [
-     "feasibility_auc missing/NaN (unmeasured)",
-     "ece missing/NaN (unmeasured)",
-     "brier missing/NaN (unmeasured)"
-    ],
+    "failures": [],
     "meaning": "passed=false means \"not yet shown fit to promote\", which includes the case where a required metric is unmeasurable on this data (e.g. an all-producer sheet with no non-producers to score feasibility against). It is not a rejection of the analysis.",
     "metrics": {
      "surrogate_spearman": 0.9426086956521739
     },
     "not_judged": [
+     "feasibility_auc: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
+     "ece: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
+     "brier: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
      "group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor"
     ],
-    "passed": false,
-    "summary": "GATES FAILED: feasibility_auc missing/NaN (unmeasured); ece missing/NaN (unmeasured); brier missing/NaN (unmeasured) (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)"
+    "passed": true,
+    "status": "passed",
+    "summary": "ALL GATES PASSED (not judged: feasibility_auc: not applicable: too few non-producing runs (0 non-producing runs, need 5); ece: not applicable: too few non-producing runs (0 non-producing runs, need 5); brier: not applicable: too few non-producing runs (0 non-producing runs, need 5); group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)",
+    "unmeasured": []
    },
    "proposal_features": [
     "temp_C",
@@ -19142,6 +19485,17 @@
    },
    "proposal_notice": null,
    "proposal_optimizer": "mixed_exact",
+   "proposal_trust": {
+    "gated": false,
+    "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+    "n_requested": 5,
+    "n_returned": 5,
+    "reasons": [],
+    "rule": "refused -> proposals withheld; not_yet -> exploration_untrusted; reliable -> trusted",
+    "status": "trusted",
+    "verdict": "reliable",
+    "withheld": false
+   },
    "proposals": [
     {
      "expected_improvement": {
@@ -19275,6 +19629,11 @@
       "temp_C": 36.88
      },
      "std": 0.111,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       36.88,
       6.811
@@ -19412,6 +19771,11 @@
       "temp_C": 33.16
      },
      "std": 0.094,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       33.16,
       7.181
@@ -19549,6 +19913,11 @@
       "temp_C": 33.16
      },
      "std": 0.113,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       33.16,
       6.811
@@ -19686,6 +20055,11 @@
       "temp_C": 33.16
      },
      "std": 0.076,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       33.16,
       6.874
@@ -19823,6 +20197,11 @@
       "temp_C": 36.88
      },
      "std": 0.075,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       36.88,
       6.864
@@ -19859,6 +20238,7 @@
      "status": "target"
     }
    ],
+   "refusal": null,
    "reliability": {
     "calibration": {
      "available": true,
@@ -19894,7 +20274,10 @@
     ],
     "ci_excludes_zero": true,
     "clears_floor": true,
+    "clears_floor_rule": "held-out Spearman >= 0.2 AND the lower end of its 95% interval > 0, judged only with at least 12 runs and 3 CV groups",
+    "judged": true,
     "n_producers": 24,
+    "not_judged_reason": null,
     "producer_clears_floor": true,
     "producer_spearman": 0.943,
     "producer_threshold": 0.0,
@@ -21629,6 +22012,26 @@
     "schema_version": 1,
     "status": "pass_with_warnings"
    },
+   "verdict": {
+    "code": "reliable",
+    "headline": "Kalos put your past runs in the right order, with enough runs to check the ranking, so its suggestions are worth running.",
+    "min_groups": 8,
+    "min_runs": 20,
+    "n_groups": 24,
+    "n_runs": 24,
+    "ordering": {
+     "plain": "The model put past runs it had not seen in the right order most of the time.",
+     "state": "ok"
+    },
+    "range_width": {
+     "code": "bands_narrow",
+     "plain": "The likely range is too narrow: fewer results land inside it than it promises.",
+     "state": "too_narrow"
+    },
+    "reasons": [],
+    "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else.",
+    "state": "reliable"
+   },
    "visualization_reasons": {
     "correlation": null,
     "embedding": null,
@@ -22343,20 +22746,22 @@
    "orientation": null,
    "promotion": {
     "failures": [
-     "surrogate_spearman=-0.248 < min 0.2",
-     "feasibility_auc missing/NaN (unmeasured)",
-     "ece missing/NaN (unmeasured)",
-     "brier missing/NaN (unmeasured)"
+     "surrogate_spearman=-0.248 < min 0.2"
     ],
     "meaning": "passed=false means \"not yet shown fit to promote\", which includes the case where a required metric is unmeasurable on this data (e.g. an all-producer sheet with no non-producers to score feasibility against). It is not a rejection of the analysis.",
     "metrics": {
      "surrogate_spearman": -0.24812030075187969
     },
     "not_judged": [
+     "feasibility_auc: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
+     "ece: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
+     "brier: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
      "group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor"
     ],
     "passed": false,
-    "summary": "GATES FAILED: surrogate_spearman=-0.248 < min 0.2; feasibility_auc missing/NaN (unmeasured); ece missing/NaN (unmeasured); brier missing/NaN (unmeasured) (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)"
+    "status": "failed",
+    "summary": "GATES FAILED: surrogate_spearman=-0.248 < min 0.2 (not judged: feasibility_auc: not applicable: too few non-producing runs (0 non-producing runs, need 5); ece: not applicable: too few non-producing runs (0 non-producing runs, need 5); brier: not applicable: too few non-producing runs (0 non-producing runs, need 5); group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)",
+    "unmeasured": []
    },
    "proposal_features": [
     "temp_offset",
@@ -22372,6 +22777,19 @@
    },
    "proposal_notice": null,
    "proposal_optimizer": "continuous",
+   "proposal_trust": {
+    "gated": true,
+    "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+    "n_requested": 5,
+    "n_returned": 5,
+    "reasons": [
+     "surrogate_spearman"
+    ],
+    "rule": "refused -> proposals withheld; not_yet -> exploration_untrusted; reliable -> trusted",
+    "status": "exploration_untrusted",
+    "verdict": "not_yet",
+    "withheld": false
+   },
    "proposals": [
     {
      "expected_improvement": {
@@ -22505,6 +22923,11 @@
       "temp_offset": 0.802
      },
      "std": 1.012,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.802,
       0.641,
@@ -22643,6 +23066,11 @@
       "temp_offset": 0.002
      },
      "std": 0.541,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.002,
       0.523,
@@ -22781,6 +23209,11 @@
       "temp_offset": 0.679
      },
      "std": 0.912,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.679,
       0.005,
@@ -22919,6 +23352,11 @@
       "temp_offset": 0.002
      },
      "std": 1.029,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.002,
       0.003,
@@ -23057,6 +23495,11 @@
       "temp_offset": 0.713
      },
      "std": 0.96,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       0.713,
       0.749,
@@ -23094,6 +23537,7 @@
      "status": "target"
     }
    ],
+   "refusal": null,
    "reliability": {
     "calibration": {
      "available": true,
@@ -23129,11 +23573,14 @@
     ],
     "ci_excludes_zero": false,
     "clears_floor": false,
+    "clears_floor_rule": "held-out Spearman >= 0.2 AND the lower end of its 95% interval > 0, judged only with at least 12 runs and 3 CV groups",
+    "judged": true,
     "n_producers": 20,
+    "not_judged_reason": null,
     "producer_clears_floor": false,
     "producer_spearman": -0.248,
     "producer_threshold": 0.0,
-    "space_filling_advice": "The model has not yet shown it can rank unseen runs (CV Spearman below the 0.2 floor), so this batch explores rather than exploits. On data like this a space-filling design (e.g. Latin hypercube) is expected to do about as well; the model's advantage appears once it clears the floor.",
+    "space_filling_advice": "The model has not yet shown it can rank unseen runs (CV Spearman below the 0.2 floor, its 95% interval reaching 0, or too few runs to judge), so this batch explores rather than exploits. On data like this a space-filling design (e.g. Latin hypercube) is expected to do about as well; the model's advantage appears once it clears the floor.",
     "spearman": -0.248,
     "spearman_floor": 0.2,
     "unmodeled": [
@@ -25121,6 +25568,31 @@
     "schema_version": 1,
     "status": "pass_with_warnings"
    },
+   "verdict": {
+    "code": "not-yet",
+    "headline": "Kalos cannot yet show that it puts your past runs in the right order, so its suggestions are closer to guesses.",
+    "min_groups": 8,
+    "min_runs": 20,
+    "n_groups": 20,
+    "n_runs": 20,
+    "ordering": {
+     "plain": "The model put past runs it had not seen in the right order too rarely.",
+     "state": "weak"
+    },
+    "range_width": {
+     "code": "bands_narrow",
+     "plain": "The likely range is too narrow: fewer results land inside it than it promises.",
+     "state": "too_narrow"
+    },
+    "reasons": [
+     {
+      "code": "surrogate_spearman",
+      "plain": "The model put past runs it had not seen in the right order too rarely."
+     }
+    ],
+    "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else.",
+    "state": "not_yet"
+   },
    "visualization_reasons": {
     "correlation": null,
     "embedding": null,
@@ -25868,21 +26340,21 @@
    ],
    "orientation": null,
    "promotion": {
-    "failures": [
-     "feasibility_auc=0.550 < min 0.65"
-    ],
+    "failures": [],
     "meaning": "passed=false means \"not yet shown fit to promote\", which includes the case where a required metric is unmeasurable on this data (e.g. an all-producer sheet with no non-producers to score feasibility against). It is not a rejection of the analysis.",
     "metrics": {
-     "brier": 0.17125042341574934,
-     "feasibility_auc": 0.55,
      "surrogate_spearman": 0.9913043478260868
     },
     "not_judged": [
-     "ece: not enough runs to judge calibration (n=19, need 20)",
+     "feasibility_auc: not applicable: too few non-producing runs (4 non-producing runs, need 5)",
+     "ece: not applicable: too few non-producing runs (4 non-producing runs, need 5)",
+     "brier: not applicable: too few non-producing runs (4 non-producing runs, need 5)",
      "group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor"
     ],
-    "passed": false,
-    "summary": "GATES FAILED: feasibility_auc=0.550 < min 0.65 (not judged: ece: not enough runs to judge calibration (n=19, need 20); group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)"
+    "passed": true,
+    "status": "passed",
+    "summary": "ALL GATES PASSED (not judged: feasibility_auc: not applicable: too few non-producing runs (4 non-producing runs, need 5); ece: not applicable: too few non-producing runs (4 non-producing runs, need 5); brier: not applicable: too few non-producing runs (4 non-producing runs, need 5); group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)",
+    "unmeasured": []
    },
    "proposal_features": [
     "Methanol",
@@ -25897,6 +26369,17 @@
    },
    "proposal_notice": null,
    "proposal_optimizer": "continuous",
+   "proposal_trust": {
+    "gated": false,
+    "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+    "n_requested": 5,
+    "n_returned": 5,
+    "reasons": [],
+    "rule": "refused -> proposals withheld; not_yet -> exploration_untrusted; reliable -> trusted",
+    "status": "trusted",
+    "verdict": "reliable",
+    "withheld": false
+   },
    "proposals": [
     {
      "expected_improvement": {
@@ -26029,6 +26512,11 @@
       "pH": 6.237
      },
      "std": 0.068,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       3.74,
       6.237
@@ -26165,6 +26653,11 @@
       "pH": 5.771
      },
      "std": 0.056,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       0.426,
       5.771
@@ -26301,6 +26794,11 @@
       "pH": 6.044
      },
      "std": 0.088,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       3.74,
       6.044
@@ -26437,6 +26935,11 @@
       "pH": 5.666
      },
      "std": 0.053,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       1.952,
       5.666
@@ -26573,6 +27076,11 @@
       "pH": 6.57
      },
      "std": 0.073,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       0.523,
       6.57
@@ -26602,6 +27110,7 @@
      "status": "target"
     }
    ],
+   "refusal": null,
    "reliability": {
     "calibration": {
      "available": true,
@@ -26637,7 +27146,10 @@
     ],
     "ci_excludes_zero": true,
     "clears_floor": true,
+    "clears_floor_rule": "held-out Spearman >= 0.2 AND the lower end of its 95% interval > 0, judged only with at least 12 runs and 3 CV groups",
+    "judged": true,
     "n_producers": 20,
+    "not_judged_reason": null,
     "producer_clears_floor": true,
     "producer_spearman": 0.988,
     "producer_threshold": 0.0,
@@ -28393,6 +28905,26 @@
     "n_rows": 24,
     "schema_version": 1,
     "status": "fail"
+   },
+   "verdict": {
+    "code": "reliable",
+    "headline": "Kalos put your past runs in the right order, with enough runs to check the ranking, so its suggestions are worth running.",
+    "min_groups": 8,
+    "min_runs": 20,
+    "n_groups": 21,
+    "n_runs": 24,
+    "ordering": {
+     "plain": "The model put past runs it had not seen in the right order most of the time.",
+     "state": "ok"
+    },
+    "range_width": {
+     "code": "bands_ok",
+     "plain": "The likely range is about the right width.",
+     "state": "ok"
+    },
+    "reasons": [],
+    "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else.",
+    "state": "reliable"
    },
    "visualization_reasons": {
     "correlation": null,
