@@ -987,6 +987,7 @@ class CampaignStore:
     def commit_fold(
         self, generation: str | None, *, tenant: str, campaign_id: str | None = None,
         analysis: dict[str, Any] | None = None, dataset: str | None = None,
+        on_commit: Callable[[sqlite3.Connection, str], None] | None = None,
     ) -> dict[str, Any]:
         """Make the fold planned by `plan_fold` durable, but ONLY if the
         campaign has not changed since: the UPDATE is a compare-and-swap on
@@ -1002,6 +1003,10 @@ class CampaignStore:
 
         Raises `CampaignError` if the campaign was reseeded or otherwise
         written underneath the in-flight re-analysis; nothing is written then.
+
+        `on_commit(conn, new_generation)` (background reanalyze jobs, as in
+        `seed`) runs inside the SAME transaction after the write; if it raises,
+        nothing is written.
         """
         self._check(tenant, campaign_id)
         changed = (
@@ -1044,6 +1049,8 @@ class CampaignStore:
                 blob = self._analysis_blob(analysis, label, new_generation, now)
                 if blob is not None:
                     self._write_analysis(conn, tenant, row.id, blob, label, new_generation, now)
+            if on_commit is not None:
+                on_commit(conn, new_generation)
             return state
 
     # --- analyses (what /api/latest serves) ---------------------------------- #
