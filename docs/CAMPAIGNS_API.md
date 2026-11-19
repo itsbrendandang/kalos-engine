@@ -389,6 +389,57 @@ only; values are never converted. With `anonymize=True` and a pseudonymized targ
 `header` is the alias and a header-derived unit is dropped (`source: "none"`). Older
 stored analyses lack the field.
 
+### Per-proposal intervals, quantiles, EI (additive; analyses computed after this change)
+
+Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
+(`normalized_scores`, `normalized_conformal_quantile`), levels in
+`analysis_parts/policy.py` `INTERVAL_LEVELS = (0.9, 0.95)`. The legacy
+`conformal_q` / `conformal_coverage` (one global 90% half-width) are unchanged.
+
+- `interval_levels`: `[0.9, 0.95]`.
+- `interval_method`: how `proposals[].intervals` were built. `method`
+  `"conformal_normalized"`, `calibrated_on` `"grouped_cv_oof"` (the same
+  repeat-0 out-of-fold set as `oof` and `conformal_q`), `score`
+  `abs(y - mu_oof) / sigma_oof`, `quantile` (k-th smallest score,
+  `k = ceil((n+1) * coverage)`, an order statistic), `sigma_source`,
+  `n_calibration`, `coverage_guarantee` (approximate: OOF scores come from fold
+  models), and `levels[]` with per level `coverage`, `available`; when
+  available `q_norm`, `rank`, `n_calibration`, `empirical_oof_coverage`,
+  `n_inside`, `coverage_by_sigma_half{low_sigma,high_sigma:{n,coverage}}`; when
+  refused `code`, `reason`, `what_would_fix_it` (plus `rank`, `min_n` for
+  `too_few_calibration_points`). `empirical_oof_coverage` is in-sample (the
+  same scores set `q_norm`, so it is >= rank/n by construction); the sigma-half
+  split is the informative part.
+- Refusal codes (per level): `too_few_calibration_points` (rank > n: 0.90 needs
+  9 held-out points, 0.95 needs 19), `degenerate_sigma` (an OOF sd is
+  non-finite, <= 0, or < 1e-6 x the median sd; points are never dropped),
+  `no_calibration_points`, `nonfinite_oof`. Per proposal also
+  `degenerate_proposal_sigma`.
+- Which posterior: `sigma_oof` is the fold GP's PREDICTIVE sd (latent +
+  fitted observation noise). The proposal's `predictive_std` matches it: the
+  surrogate's `observation_noise=True` sd (`sigma_source:
+  "surrogate_fitted_noise"`), or, when the replicate-aware surrogate (fixed
+  noise per recipe mean) proposed, `sqrt(latent_sd^2 + noise.noise_sd^2)` for one
+  new single measurement (`"latent_plus_assay_noise_floor"`). `proposals[].std`
+  stays the LATENT sd, unchanged.
+- `proposals[].intervals[]`: `{coverage, method: "conformal_normalized",
+  calibrated_on: "grouped_cv_oof", n_calibration, available, lo, hi, q_norm,
+  empirical_oof_coverage}`; `lo = pred - q_norm * predictive_std`. Refused: `lo`
+  / `hi` null plus `code`, `reason`, `what_would_fix_it`.
+- `proposals[].gp_intervals[]` (always): `{coverage, method: "gp_posterior",
+  posterior: "observation", note: "model-based, not held-out calibrated",
+  available, lo, hi}`, Gaussian `pred +/- z * predictive_std`.
+- `proposals[].quantiles`: `{basis: "gp_posterior", posterior: "observation",
+  note, p05, p25, p50, p75, p95}` of the same Gaussian.
+- `proposals[].expected_improvement` / `p_improve`: `{value, incumbent,
+  incumbent_basis, maximize, basis: "model", method, posterior: "latent", note}`.
+  Analytic EI / P(f > incumbent) of the LATENT posterior (`pred`, `std`).
+  `incumbent` is the value the proposal annotation compares against:
+  `best_measured_single` (`best`) or `best_reproducible_mean`
+  (`noise.best_reproducible`, replicate-aware path). The batch itself is
+  chosen by qLogNEI, not by this EI. `maximize` is false when the campaign
+  setup goal is minimize (then EI / p_improve are for going BELOW the incumbent).
+
 ## Not in this slice
 
 - Background jobs for reanalyze (it still runs synchronously; upload has a job route).

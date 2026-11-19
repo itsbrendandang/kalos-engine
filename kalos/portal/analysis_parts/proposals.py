@@ -25,6 +25,7 @@ def _annotate(
     constraint: tuple[str, np.ndarray, np.ndarray] | None = None,
     distance: np.ndarray | None = None,
     minimize: bool = False,
+    interval_fields: Sequence[Mapping[str, Any]] | None = None,
 ) -> list:
     """Attach predicted value, uncertainty, and an explore/exploit rationale to
     each proposed experiment. Explore = high model uncertainty (chosen to learn);
@@ -51,7 +52,12 @@ def _annotate(
     `nearest_training_distance`). Omitted when None.
 
     `minimize=True` (campaign goal minimize): `best` is the LOWEST measured value
-    and "exploit" means predicted below it; `pred` stays in the target's units."""
+    and "exploit" means predicted below it; `pred` stays in the target's units.
+
+    `interval_fields`, when given, is one dict per proposal (from
+    `analysis_parts.intervals.proposal_interval_fields`) merged into the row:
+    `predictive_std`, `intervals`, `gp_intervals`, `quantiles`,
+    `expected_improvement`, `p_improve`. Omitted when None."""
     mean = np.asarray(mean, float).reshape(-1)
     std = np.asarray(std, float).reshape(-1)
     thr = float(np.quantile(std, 2 / 3)) if len(std) > 2 else float(std.max() if len(std) else 0.0)
@@ -85,6 +91,8 @@ def _annotate(
             }
         if distance is not None:
             row["nearest_training_distance"] = round(float(distance[i]), 4)
+        if interval_fields is not None:
+            row.update(interval_fields[i])
         rows.append(row)
     return rows
 

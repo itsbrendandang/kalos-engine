@@ -68,6 +68,13 @@ CONFORMAL_ALPHA = 0.1
 # "90%" on another; a stated coverage that is wrong on screen is an overclaim,
 # not a hedge, so the engine now ships the number it actually computed.
 
+INTERVAL_LEVELS: tuple[float, ...] = (0.9, 0.95)
+# Nominal coverages for the PER-PROPOSAL intervals (`proposals[].intervals`,
+# `gp_intervals`; see analysis_parts/intervals.py). Separate from
+# CONFORMAL_ALPHA, which keeps the legacy global `conformal_q` band at 90%
+# unchanged. Each level is refused on its own when the out-of-fold set is too
+# small for its finite-sample quantile (0.90 needs n >= 9, 0.95 needs n >= 19).
+
 CV_N_REPEATS = 2
 # How many partitions `grouped_cv_report` draws for the reliability CI. On a
 # continuous target the grouped CV takes the unshuffled GroupKFold branch, so
