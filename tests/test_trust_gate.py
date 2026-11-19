@@ -27,9 +27,9 @@ from kalos.portal.analysis_parts.trust_gate import (
         ({}, True, True),
         ({"ci95": [-0.05, 0.8]}, False, True),       # point estimate alone no longer clears
         ({"rho": 0.15, "ci95": [0.01, 0.3]}, False, True),
-        ({"n_runs": MIN_ROWS_TO_JUDGE - 1}, False, False),
-        ({"n_groups": 2, "ci95": None}, False, False),
-        ({"rho": float("nan"), "ci95": None}, False, False),
+        ({"n_runs": MIN_ROWS_TO_JUDGE - 1}, None, False),
+        ({"n_groups": 2, "ci95": None}, None, False),
+        ({"rho": float("nan"), "ci95": None}, None, False),
     ],
 )
 def test_clears_floor_needs_the_interval_and_enough_runs(kw, ok, judged):
@@ -38,6 +38,7 @@ def test_clears_floor_needs_the_interval_and_enough_runs(kw, ok, judged):
     out = clears_floor(**base)
     assert out["clears_floor"] is ok and out["judged"] is judged
     assert (out["not_judged_reason"] is None) == judged
+    assert out["verdict"] == ("not_judged" if not judged else ("clears_floor" if ok else "below_floor"))
 
 
 @pytest.mark.parametrize(("state", "status"), [("reliable", "trusted"), ("not_yet", "exploration_untrusted"),
@@ -103,8 +104,12 @@ def test_small_sheet_is_not_judged():
 
     r = _analyze(_smooth(10, seed=3), target="titer")
     rel = r["reliability"]
-    assert rel["clears_floor"] is False and rel["judged"] is False and "10 runs" in rel["not_judged_reason"]
-    assert r["verdict"]["state"] != "reliable"
+    assert rel["clears_floor"] is None and rel["judged"] is False and "10 runs" in rel["not_judged_reason"]
+    assert rel["verdict"] == "not_judged"
+    assert r["verdict"]["state"] == "not_yet"
+    assert "too_few_rows_to_judge" in [x["code"] for x in r["verdict"]["reasons"]]
+    assert all(p["trust"]["status"] == "exploration_untrusted" for p in r["proposals"])
+    assert rel["space_filling_advice"]
 
 
 def test_cv_topk_scores_the_lowest_runs_when_minimizing():

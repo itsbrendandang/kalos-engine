@@ -876,6 +876,8 @@ def _analyze_body(
         "clears_floor": floor_check["clears_floor"],
         "clears_floor_rule": floor_check["rule"],
         "judged": floor_check["judged"],
+        # "clears_floor" | "below_floor" | "not_judged" (F04; clears_floor null when not judged).
+        "verdict": floor_check["verdict"],
         "not_judged_reason": floor_check["not_judged_reason"],
         # Reported alongside, not folded into `clears_floor`: making the gate
         # stricter changes which uploads the API accepts, which is a product

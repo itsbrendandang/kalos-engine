@@ -13,8 +13,10 @@ n = 6-40). Now the verdict from the leak-free CV (F05) acts on the proposals:
 
 `clears_floor` itself now needs the lower end of the held-out score's 95%
 interval above 0 (not only the point estimate), at least `MIN_ROWS_TO_JUDGE`
-runs and at least 3 CV groups; below 12 runs it is `false` with
-`judged: false` and a reason (audit N3).
+runs and at least 3 CV groups; below that it is `null` (not judged, not
+failed) with `judged: false`, `verdict: "not_judged"` and a reason (audit N3).
+The model verdict then reads `not_yet` with reason `too_few_rows_to_judge` and
+the proposals are labelled exploration.
 """
 from __future__ import annotations
 
@@ -40,20 +42,25 @@ MESSAGES = {
 def clears_floor(
     *, rho: float, ci95: Sequence[float] | None, floor: float, n_runs: int, n_groups: int,
 ) -> dict[str, Any]:
-    """`{clears_floor, judged, not_judged_reason, rule}` for `reliability`."""
+    """`{clears_floor, judged, verdict, not_judged_reason, rule}` for `reliability`.
+
+    Not judged (too few runs or CV groups): `clears_floor` is None, not False -
+    the floor was not failed, it could not be asked - and `verdict` is
+    `"not_judged"`. Judged: `verdict` is `"clears_floor"` or `"below_floor"`."""
     rule = (
         f"held-out Spearman >= {floor} AND the lower end of its 95% interval > 0, "
         f"judged only with at least {MIN_ROWS_TO_JUDGE} runs and {MIN_GROUPS_TO_JUDGE} CV groups"
     )
     if n_runs < MIN_ROWS_TO_JUDGE:
-        return {"clears_floor": False, "judged": False, "rule": rule,
+        return {"clears_floor": None, "judged": False, "verdict": "not_judged", "rule": rule,
                 "not_judged_reason": f"{n_runs} runs; the trust floor is judged from {MIN_ROWS_TO_JUDGE}"}
     if n_groups < MIN_GROUPS_TO_JUDGE or ci95 is None or rho != rho:
-        return {"clears_floor": False, "judged": False, "rule": rule,
+        return {"clears_floor": None, "judged": False, "verdict": "not_judged", "rule": rule,
                 "not_judged_reason": (f"{n_groups} CV group(s): no held-out score with an interval "
                                       f"(needs {MIN_GROUPS_TO_JUDGE})")}
     ok = bool(rho >= floor and float(ci95[0]) > 0)
-    return {"clears_floor": ok, "judged": True, "rule": rule, "not_judged_reason": None}
+    return {"clears_floor": ok, "judged": True, "verdict": "clears_floor" if ok else "below_floor",
+            "rule": rule, "not_judged_reason": None}
 
 
 def proposal_trust(verdict: Mapping[str, Any], *, n_returned: int, n_requested: int) -> dict[str, Any]:
