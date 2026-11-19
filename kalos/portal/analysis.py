@@ -93,6 +93,7 @@ from kalos.portal.analysis_parts.refusals import (
     _too_few_rows,
     _validate_constraint,
 )
+from kalos.portal.analysis_parts.setup_apply import _propose_with_setup, withheld_batch
 from kalos.portal.cells import (
     BLANK,
     CENSORED,
@@ -105,6 +106,7 @@ from kalos.portal.cells import (
     classify_cells,
     is_null_label,
 )
+from kalos.portal.setup_settings import plan_setup
 from kalos.portal.uploads import (
     _ERR_TOO_MANY_FIT_ROWS,
     MAX_FIT_ROWS,
@@ -196,6 +198,7 @@ def _analyze(
     constraint: Mapping[str, Any] | None = None,
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
+    setup: Mapping[str, Any] | None = None,
 ) -> dict:
     """See `_analyze_body`. Every fitting analysis runs inside `_seeded_analysis`,
     so its proposals depend only on its inputs, not on other analyses in flight."""
@@ -204,6 +207,8 @@ def _analyze(
         anonymize=anonymize, roles=roles, profile=profile, pending=pending,
         constraint=constraint, progress=progress, preflight_only=preflight_only,
     )
+    if setup is not None:
+        kwargs["setup"] = setup
     if preflight_only:
         return _analyze_body(df, target, **kwargs)
     with _seeded_analysis(ANALYZE_SEED):
@@ -221,6 +226,7 @@ def _analyze_body(
     constraint: Mapping[str, Any] | None = None,
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
+    setup: Mapping[str, Any] | None = None,
 ) -> dict:
     """Run the engine on an arbitrary run sheet: pick the target (the value to
     maximize), use the process INPUTS as features (other measured outputs are
@@ -269,7 +275,13 @@ def _analyze_body(
     fit (shape, target, constant target, process inputs, row caps), then
     returns `{}` - without importing torch, seeding any RNG, or fitting. The
     job API uses it to refuse bad input with the sync route's 400 BEFORE
-    queueing; it is the same code, stopped early, so the two cannot drift."""
+    queueing; it is the same code, stopped early, so the two cannot drift.
+
+    `setup` is the campaign setup (`kalos.portal.setup_settings.analysis_setup`:
+    goal, user bounds, linear constraints, user target unit, hash). None (the
+    default) is today's behavior, byte-identical. Given, proposals honor it
+    (`setup_settings.plan_setup`), `best`/the incumbent follow the goal, and the
+    result gains `goal` and a `setup` block."""
     if not preflight_only:
         # Deferred: these transitively import torch/botorch/gpytorch (see the
         # module-level note above). This is the one place in this module that
@@ -603,6 +615,12 @@ def _analyze_body(
     bounds = design.bounds()
     cat_dims = design.cat_dims or None
     cat_cardinalities = design.cat_cardinalities or None
+    # Campaign setup (goal, user bounds, linear constraints): None = today's path.
+    setup_plan = None if setup is None else plan_setup(
+        setup, names=design.names, categorical=[str(c) for c in kept_cats], bounds=bounds,
+        target=str(target), converted=[str(c.column) for c in validation.conversions],
+    )
+    _minimize = setup_plan is not None and setup_plan.minimize
 
     # PART 2: constrained single-objective proposals. Fit a SECOND `Surrogate`
     # over the constraint column, on the SAME design/bounds/cat_dims the target
@@ -882,6 +900,9 @@ def _analyze_body(
             else f"feasibility CV AUC too low to trust: auc={feas_auc:.3f} < {_gate_auc_floor}"
         )
     gated = feas_clf.fitted and n_infeasible >= GATE_MIN_N_INFEASIBLE and _auc_ok
+    if _minimize:  # the gate treats zero as failure: the wrong direction for a minimized target
+        _gate_fail_reasons.append("not applied: goal is minimize (the gate favors non-zero targets)")
+        gated = False
     gate_reason = (
         "; ".join(_gate_fail_reasons)
         if _gate_fail_reasons
@@ -1168,7 +1189,7 @@ def _analyze_body(
     # diagnostic only: nothing is transformed here, because silently changing the
     # target's scale would change every number the engine reports.
     het = heteroscedasticity_report(X, y, groups=recipe_key)
-    best_single = float(y.max())
+    best_single = float(y.min() if _minimize else y.max())
     best_reproducible: float | None = None
     replicate_aware = False
     incumbent = best_single
@@ -1178,7 +1199,7 @@ def _analyze_body(
     X_fit, y_fit = X, y
     if nr["n_replicated"] >= 1:
         Xf, yf, _yvar_g, n_reps_g = aggregate_replicates(X, y, groups=recipe_key)
-        best_reproducible = float(yf.max())
+        best_reproducible = float(yf.min() if _minimize else yf.max())
         sigma2 = nr["noise_var"]
         # Only swap in the reproducible objective when there are enough distinct
         # recipes to fit a meaningful GP and a real, positive noise floor to feed;
@@ -1215,9 +1236,12 @@ def _analyze_body(
     # `propose_batch` never returns two near-duplicate recipes (see its
     # docstring); on a design space with fewer than q distinct candidates the
     # batch comes back SHORT, and `proposal_notice` below says so.
-    proposal = propose_batch(
-        s,
-        bounds,
+    if setup_plan is not None and setup_plan.refused:
+        proposal = withheld_batch(setup_plan, q=5, d=X.shape[1])
+    else:
+        proposal = _propose_with_setup(propose_batch, setup_plan, dict(
+        surrogate=s,
+        bounds=bounds,
         q=5,
         cat_dims=cat_dims,
         cat_cardinalities=cat_cardinalities,
@@ -1232,13 +1256,13 @@ def _analyze_body(
         # PART 2: only ever passed when the constraint model actually fit.
         constraint_surrogate=constraint_surrogate if constraint_applied else None,
         constraint_floor=constraint_floor_val if constraint_applied else None,
-    )
-    batch = proposal.X
+    ), d=X.shape[1])
+    batch = proposal.X if setup_plan is None else setup_plan.post_check(proposal.X)
     show = [d["name"] for d in drv[:4]]
     show_idx = [d["_idx"] for d in drv[:4]]  # carry the feature index, not a name lookup
     for d in drv:
         d.pop("_idx", None)  # internal-only; not part of the returned API surface
-    p_mean, p_std = s.posterior(batch)
+    p_mean, p_std = s.posterior(batch) if len(batch) else (np.empty(0), np.empty(0))
 
     # PART 1 per-proposal P(feasible), read off the SAME classifier that gated
     # (or did not gate) the batch above - `feas_clf` was fit on the full sheet
@@ -1246,14 +1270,16 @@ def _analyze_body(
     # was actually active (see `_annotate`'s docstring for why the ungated case
     # is `nan` here rather than a value nobody asked to trust).
     p_feasible_arr = (
-        feas_clf.predict_proba(batch) if gated else np.full(len(batch), np.nan)
+        feas_clf.predict_proba(batch) if gated and len(batch) else np.full(len(batch), np.nan)
     )
     # PART 2 predicted constraint value +/- sd for each proposed recipe, read
     # off the constraint surrogate before it is released below - `None` (both
     # here and in `_annotate`) unless the constraint was actually applied.
     constraint_pred: tuple[str, np.ndarray, np.ndarray] | None = None
     if constraint_applied and constraint_surrogate is not None:
-        c_mean, c_std = constraint_surrogate.posterior(batch)
+        c_mean, c_std = (
+            constraint_surrogate.posterior(batch) if len(batch) else (np.empty(0), np.empty(0))
+        )
         assert constraint_col is not None  # constraint_applied implies this was set
         constraint_pred = (constraint_col, c_mean, c_std)
 
@@ -1523,7 +1549,7 @@ def _analyze_body(
         "batch_diversity": proposal.diversity_report(),
         "proposals": _annotate(
             batch, p_mean, p_std, incumbent, cols=show_idx, design=design,
-            p_feasible=p_feasible_arr, constraint=constraint_pred,
+            p_feasible=p_feasible_arr, constraint=constraint_pred, minimize=_minimize,
             distance=nearest_training_distance(batch, X, bounds, cat_dims),
         ),
         # Context for `proposals[].nearest_training_distance` (same metric): the
@@ -1562,6 +1588,8 @@ def _analyze_body(
         "timestamp": int(time.time()),
         "engine_version": ENGINE_VERSION,
     }
+    if setup_plan is not None:
+        result.update(setup_plan.result_fields())  # `goal` + the `setup` block
     if anonymize:
         result = _anonymize_result(
             result,

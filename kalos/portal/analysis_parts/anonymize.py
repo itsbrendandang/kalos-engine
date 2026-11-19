@@ -112,6 +112,10 @@ def _anonymize_result(
     out["design_box_exclusions"] = [
         _alias_named_row(e, alias) for e in out.get("design_box_exclusions", [])
     ]
+    if isinstance(out.get("setup"), dict):
+        from kalos.portal.setup_settings import anonymize_setup_block
+
+        out["setup"] = anonymize_setup_block(out["setup"], alias)
     if isinstance(out.get("auto_categorical"), list):
         out["auto_categorical"] = [alias(str(c)) for c in out["auto_categorical"]]
     drops = out.get("data_drops")
