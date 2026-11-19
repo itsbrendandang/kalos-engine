@@ -183,6 +183,14 @@
   },
   {
     "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/gates/{gate}/history",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
     "path": "/api/campaigns/{campaign_id}/jobs",
     "scopes": [
       "read"
