@@ -4,6 +4,13 @@ Newest first.
 
 ## Unreleased
 
+### Changed - honest interval labels (F02, ML audit B1)
+
+- Every band carries `coverage_basis`: `held_out_past_runs` for the conformal bands, `model_based` for the GP's own bands and quantiles.
+- Each proposal interval carries `caveat` (`code: coverage_lower_at_proposals`, a plain message and `coverage_at_proposals_estimate` with its source): the band is calibrated on held-out runs similar to past runs, and at proposals it was measured lower in simulation (90%: 60-81%, 95%: 76-86%; `python -m kalos.bench.coverage_at_proposals`, VALIDATION.md).
+- `conformal_caveat` (cherry-picked from `arch-safe-now` 47143f3) labels the global `conformal_q` band the same way (measured 68-83% at proposals).
+- No number changes; the fields are additive.
+
 ### Added - ESMC protein embeddings and an open-source catalog
 
 - `kalos.features.ESMCEmbedder` embeds a protein sequence with ESMC (ESM Cambrian), the current ESM model from Biohub (MIT). The default is `biohub/ESMC-300M` (960 dimensions), pinned to commit `96a2d8d6`, loaded with transformers' native `esmc` model. Both embedders now load with `trust_remote_code=False` and `use_safetensors=True`, so a checkpoint can neither run its own Python nor load pickled weights.

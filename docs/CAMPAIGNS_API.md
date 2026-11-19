@@ -426,6 +426,35 @@ Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
   calibrated_on: "grouped_cv_oof", n_calibration, available, lo, hi, q_norm,
   empirical_oof_coverage}`; `lo = pred - q_norm * predictive_std`. Refused: `lo`
   / `hi` null plus `code`, `reason`, `what_would_fix_it`.
+- **Coverage basis and the proposal caveat (F02, additive).** Every band says
+  what its coverage claim rests on, and the proposal bands carry what was
+  measured where the user acts:
+  - `proposals[].intervals[].coverage_basis`: `"held_out_past_runs"` (grouped
+    CV out-of-fold runs, i.e. runs like past runs). `gp_intervals[]` and
+    `quantiles` carry `coverage_basis: "model_based"`.
+  - `proposals[].intervals[].caveat`: `{code: "coverage_lower_at_proposals",
+    message, coverage_at_proposals_estimate}`. `message` is plain words for
+    display ("This 90% range is calibrated on held-out runs similar to past
+    runs. Proposals are chosen for high predicted values, so coverage at
+    proposals is lower: in simulation it contained the measured result for only
+    60-81% of proposals.").
+  - `coverage_at_proposals_estimate` (per proposal, compact): `{nominal,
+    measured_min, measured_max, basis: "simulation", source, benchmark}`, the
+    coverage MEASURED at proposals by `python -m kalos.bench.coverage_at_proposals`
+    (VALIDATION.md, "Interval coverage at proposals"); `source` points at the
+    full object below. The same compact estimate is on `gp_intervals[]`.
+    Evidence from synthetic simulators, not a guarantee.
+  - `interval_method.coverage_basis`, `interval_method.coverage_at_proposals`
+    (`{"0.9": caveat, "0.95": caveat}`) and
+    `interval_method.gp_coverage_at_proposals` (`{"0.9": estimate, ...}`): once
+    per analysis, with the full estimate `{nominal, measured_min, measured_max,
+    by_scenario{...}, basis, source{kind, benchmark, results, doc, scenarios,
+    seeds_per_scenario, proposals_per_seed, measurement}}`.
+  - `conformal_caveat` (top level, for `conformal_q`): `{code:
+    "coverage_not_guaranteed", coverage_basis, message, caveat_code,
+    coverage_at_proposals_estimate}`.
+  - Client rule: never write "calibrated" next to a proposal without the
+    caveat; show `measured_min`-`measured_max` next to the nominal level.
 - `proposals[].gp_intervals[]` (always): `{coverage, method: "gp_posterior",
   posterior: "observation", note: "model-based, not held-out calibrated",
   available, lo, hi}`, Gaussian `pred +/- z * predictive_std`.

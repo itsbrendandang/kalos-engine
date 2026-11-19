@@ -60,6 +60,7 @@ from kalos.portal.analysis_parts.identifiers import (
 )
 from kalos.portal.analysis_parts.intervals import (
     calibrate_normalized,
+    conformal_band_caveat,
     interval_method_summary,
     proposal_interval_fields,
     proposal_predictive_std,
@@ -1501,6 +1502,10 @@ def _analyze_body(
         "conformal_coverage": round(1.0 - CONFORMAL_ALPHA, 4),
         "interval_levels": [float(c) for c in INTERVAL_LEVELS],
         "interval_method": interval_method_summary(interval_cal, sigma_source),
+        # What `conformal_coverage` does NOT promise (cherry-picked from
+        # arch-safe-now 47143f3, F02): the band is one +/- width from held-out
+        # residuals of past runs; at proposals its measured coverage is lower.
+        "conformal_caveat": conformal_band_caveat(CONFORMAL_ALPHA),
         # How the driver panel was selected and corrected, so the client can see
         # that many features were tested and only the strongest are shown.
         "driver_selection": {
