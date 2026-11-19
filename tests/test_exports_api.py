@@ -467,7 +467,7 @@ def test_operating_ranges_threshold_missing_no_data_no_analysis_stale_goal(env):
     tc, store = env
     cid = _ranges_campaign(store)
     assert _ranges(tc, cid, {}).json()["reason_code"] == "threshold_missing"
-    assert tc.get(f"/api/campaigns/{cid}/operating-ranges", headers=H("a-read")).json()[
+    assert tc.get(f"/api/campaigns/{cid}/operating-ranges", headers=H("a-writeonly")).json()[
         "reason_code"] == "threshold_missing"
     empty = store.create_campaign(tenant="acme", name="e")["id"]
     assert _ranges(tc, empty).json()["reason_code"] == "no_data"
@@ -528,7 +528,8 @@ def test_operating_ranges_computed_on_a_learnable_sheet(env):
     assert up.status_code == 200, up.text
     rel = up.json()["reliability"]
     assert rel["clears_floor"] and rel["ci_excludes_zero"]
-    r = tc.get(f"/api/campaigns/{cid}/operating-ranges?threshold=18&probability=0.9", headers=H("a-read"))
+    r = tc.get(f"/api/campaigns/{cid}/operating-ranges?threshold=18&probability=0.9",
+               headers=H("a-writeonly"))
     body = r.json()
     assert body["status"] == "computed", body
     assert body["method"] == "gp_posterior_box" and body["model_based"] is True
@@ -753,8 +754,9 @@ ROUTES = [
     ("GET", "/api/campaigns/{cid}/export/rows", {}, "read"),
     ("GET", "/api/campaigns/{cid}/export/rows?format=csv", {}, "read"),
     ("GET", "/api/campaigns/{cid}/results/history", {}, "read"),
-    ("GET", "/api/campaigns/{cid}/operating-ranges?threshold=1", {}, "read"),
-    # POST occupies the analysis slot and the web mints `write` for non-GET (S1).
+    # Both forms refit the GP in the analysis slot, so both need `write` (E-S3);
+    # the web mints `write` for non-GET (S1).
+    ("GET", "/api/campaigns/{cid}/operating-ranges?threshold=1", {}, "write"),
     ("POST", "/api/campaigns/{cid}/operating-ranges", {"json": {"threshold": 1.0}}, "write"),
 ]
 _HOLDS = {"read": "a-read", "write": "a-writeonly"}
