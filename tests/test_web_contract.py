@@ -43,6 +43,21 @@ _WEB_ANALYZE_FIELDS: frozenset[str] = frozenset({
     "embedding", "correlation", "response_surface",
     "model_diagnostics", "gp_shapes",
     "seed", "engine_version",
+    # Web redesign APIs (docs: ENGINE_API_V2): R6 unit, R4 per-proposal intervals, R2 slices.
+    "target_unit", "interval_levels", "interval_method", "slices", "slices_skipped",
+})
+
+# Per-proposal fields the redesign reads (R4): each proposal carries its own
+# conformal intervals (or a structured refusal per level) plus model-based bands.
+_WEB_PROPOSAL_FIELDS: frozenset[str] = frozenset({
+    "recipe", "pred", "std", "mode", "predictive_std", "intervals", "gp_intervals",
+    "quantiles", "expected_improvement", "p_improve",
+})
+
+# R3: the sigma grid and its labels on the 2D surface.
+_WEB_SURFACE_FIELDS: frozenset[str] = frozenset({
+    "x_feature", "y_feature", "x_vals", "y_vals", "z", "std", "std_kind", "std_basis", "z_basis",
+    "fixed_recipe", "swept_at",
 })
 
 _RUN_CSV = (
@@ -93,3 +108,70 @@ def test_providers_response_shape_matches_web(analyze_response: dict) -> None:
     for entry in body["providers"]:
         missing = web_provider_fields - set(entry)
         assert not missing, f"/api/providers entry missing web fields: {sorted(missing)}"
+
+
+@pytest.mark.slow
+def test_proposals_and_surface_carry_the_redesign_fields(analyze_response: dict) -> None:
+    """R2-R4/R6: per-proposal intervals with their real coverage, the sigma grid,
+    slices with a labeled model-based band, and the target unit block."""
+    proposals = analyze_response["proposals"]
+    assert proposals, "the contract sheet should produce proposals"
+    for p in proposals:
+        missing = _WEB_PROPOSAL_FIELDS - set(p)
+        assert not missing, f"proposal missing web fields: {sorted(missing)}"
+        for band in p["intervals"]:
+            assert band["coverage"] in analyze_response["interval_levels"]
+            assert band["method"] == "conformal_normalized"
+            if band["available"]:
+                assert band["lo"] <= p["pred"] <= band["hi"]
+            else:  # a refusal says why, never a guessed band
+                assert band["lo"] is None and band["reason"]
+        for band in p["gp_intervals"]:
+            assert band["method"] == "gp_posterior" and "not held-out calibrated" in band["note"]
+    surface = analyze_response["response_surface"]
+    if surface is not None:
+        assert not _WEB_SURFACE_FIELDS - set(surface)
+    unit = analyze_response["target_unit"]
+    assert set(unit) >= {"unit", "source", "header", "note"}
+    if analyze_response["slices"] is not None:
+        for sl in analyze_response["slices"]:
+            assert sl["band_method"] == "gp_posterior" and sl["coverage"] == 0.9
+
+
+_CAMPAIGN_CSV = "glucose,temperature,titer_g_L\n" + "".join(
+    f"{10 + i},{29 + (i % 6)},{2.0 + 0.1 * i + 0.05 * (i % 3)}\n" for i in range(14)
+)
+
+
+@pytest.mark.slow
+def test_campaign_routes_the_redesign_reads() -> None:
+    """The new campaign-scoped routes answer with the top-level shapes the web reads."""
+    client = TestClient(app)
+    cid = client.post("/api/campaigns", json={"name": "contract"}).json()["id"]
+    up = client.post(
+        f"/api/campaigns/{cid}/upload",
+        files={"file": ("runs.csv", _CAMPAIGN_CSV, "text/csv")},
+    )
+    assert up.status_code == 200, up.text
+
+    listing = client.get("/api/campaigns?summary=true").json()
+    card = next(c for c in listing["campaigns"] if c["id"] == cid)
+    assert {"best_measured", "analysis", "goal", "n_awaiting", "current_stage",
+            "latest_gate_decision", "active_job"} <= set(card)
+    assert card["best_measured"]["basis"] == "measured"
+
+    stages = client.get(f"/api/campaigns/{cid}/stages").json()
+    assert [s["key"] for s in stages["stages"]] == ["S1", "S2", "S3", "S4", "S5", "S6"]
+    gates = client.get(f"/api/campaigns/{cid}/gates").json()
+    assert all(g["computed_evidence"]["basis"] == "computed" for g in gates["gates"])
+    assert client.put(f"/api/campaigns/{cid}/gates/S1", json={"decision": "go"}).status_code == 400
+
+    setup = client.get(f"/api/campaigns/{cid}/setup").json()
+    assert setup["setup"]["goal"] == "maximize" and "settings_in_sync" in setup
+
+    rows = client.get(f"/api/campaigns/{cid}/export/rows").json()
+    assert rows["original_rows"]["n"] == 14
+    history = client.get(f"/api/campaigns/{cid}/results/history").json()
+    assert {"results", "audit"} <= set(history)
+    ranges = client.post(f"/api/campaigns/{cid}/operating-ranges", json={"probability": 0.9}).json()
+    assert ranges["status"] == "not_computed" and ranges["reason_code"] == "threshold_missing"

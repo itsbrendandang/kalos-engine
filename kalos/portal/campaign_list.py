@@ -169,14 +169,18 @@ def _active_jobs(
 ) -> dict[str, dict[str, Any]]:
     """The newest queued/running job per campaign."""
     rows = conn.execute(
-        "SELECT campaign_id, id, kind, state, progress, stage FROM jobs "  # noqa: S608 - only '?' placeholders are interpolated
+        "SELECT campaign_id, id, params, state, progress, stage FROM jobs "  # noqa: S608 - only '?' placeholders are interpolated
         "WHERE tenant = ? AND state IN ('queued', 'running') "
         f"AND campaign_id IN ({_in(ids)}) ORDER BY created_at, id",
         (tenant, *ids),
     ).fetchall()
     out: dict[str, dict[str, Any]] = {}
-    for cid, jid, kind, state, progress, stage in rows:  # newest last, so it wins
-        out[cid] = {"id": jid, "kind": kind, "state": state, "progress": progress,
+    from kalos.portal.jobs import job_kind  # local: jobs imports the campaign store
+
+    for cid, jid, params, state, progress, stage in rows:  # newest last, so it wins
+        # `kind` as the jobs API reports it: 'reanalyze' or 'analysis' (params.mode).
+        out[cid] = {"id": jid, "kind": job_kind({"params": params}), "state": state,
+                    "progress": progress,
                     "stage": stage}
     return out
 
