@@ -11,7 +11,8 @@
   "baseline: feat/web-redesign-apis @ 0fc05c3 before the trust-layer changes",
   "F02: interval labels (coverage_basis, caveat with coverage_at_proposals_estimate, conformal_caveat); additive, no number changes",
   "F05: leak-free CV grouping (replicate clusters, batch/round/scale candidates, lowest score binds); batch columns not fitted",
-  "F04: gates that gate (verdict withholds/labels proposals; floor needs CI>0 and n>=12; feasibility gates not applicable below 5 non-producers; cv_topk under minimize)"
+  "F04: gates that gate (verdict withholds/labels proposals; floor needs CI>0 and n>=12; feasibility gates not applicable below 5 non-producers; cv_topk under minimize)",
+  "F04 follow-up: reliability.verdict (not_judged below 12 runs / 3 groups; clears_floor null then)"
  ],
  "sheets": {
   "batch_text": {
@@ -1842,7 +1843,8 @@
     "unmodeled": [
      "feasibility probability",
      "scale-up transfer"
-    ]
+    ],
+    "verdict": "below_floor"
    },
    "response_surface": {
     "fixed_recipe": {
@@ -5701,7 +5703,8 @@
     "unmodeled": [
      "feasibility probability",
      "scale-up transfer"
-    ]
+    ],
+    "verdict": "below_floor"
    },
    "response_surface": {
     "fixed_recipe": {
@@ -9418,7 +9421,8 @@
     "unmodeled": [
      "feasibility probability",
      "scale-up transfer"
-    ]
+    ],
+    "verdict": "clears_floor"
    },
    "response_surface": {
     "fixed_recipe": {
@@ -13152,7 +13156,8 @@
     "unmodeled": [
      "feasibility probability",
      "scale-up transfer"
-    ]
+    ],
+    "verdict": "below_floor"
    },
    "response_surface": {
     "fixed_recipe": {
@@ -16966,7 +16971,8 @@
     "unmodeled": [
      "feasibility probability",
      "scale-up transfer"
-    ]
+    ],
+    "verdict": "clears_floor"
    },
    "response_surface": {
     "fixed_recipe": {
@@ -20287,7 +20293,8 @@
     "unmodeled": [
      "feasibility probability",
      "scale-up transfer"
-    ]
+    ],
+    "verdict": "clears_floor"
    },
    "response_surface": {
     "fixed_recipe": {
@@ -23586,7 +23593,8 @@
     "unmodeled": [
      "feasibility probability",
      "scale-up transfer"
-    ]
+    ],
+    "verdict": "below_floor"
    },
    "response_surface": {
     "fixed_recipe": {
@@ -27159,7 +27167,8 @@
     "unmodeled": [
      "feasibility probability",
      "scale-up transfer"
-    ]
+    ],
+    "verdict": "clears_floor"
    },
    "response_surface": {
     "fixed_recipe": {

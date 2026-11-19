@@ -509,8 +509,13 @@ reported, not part of the state), `n_runs`, `min_runs` (20), `n_groups`,
   message}`. A refused campaign stays on `plan` with the plan step "No recipes
   proposed" and `next_action.action` "Add runs and upload again".
 - `reliability.clears_floor` now needs the score >= 0.20 AND the lower end of its
-  95% interval > 0, and is judged only with at least 12 runs and 3 CV groups
-  (`reliability.judged`, `not_judged_reason`, `clears_floor_rule`).
+  95% interval > 0, and is judged only with at least 12 runs and 3 CV groups.
+  Not judged, it is `null` (not `false`: the floor was not failed, it could not
+  be asked) with `reliability.verdict: "not_judged"`; otherwise
+  `reliability.verdict` is `clears_floor` or `below_floor`
+  (`reliability.judged`, `not_judged_reason`, `clears_floor_rule`). The model
+  verdict then reads `not_yet` with reason `too_few_rows_to_judge` and the
+  proposals are labelled exploration.
   `space_filling_advice` still accompanies every `clears_floor: false`.
 - `cv_ci95` is `null` (not `[NaN, NaN]`) when fewer than 3 groups leave no
   interval.

@@ -65,6 +65,7 @@ def test_analyze_excludes_outputs_and_reports_honest_cv():
         "clears_floor_rule",
         "judged",
         "not_judged_reason",
+        "verdict",
         "ci_excludes_zero",
         "unmodeled",
         "producer_spearman",

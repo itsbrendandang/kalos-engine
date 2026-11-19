@@ -7,7 +7,7 @@ Newest first.
 ### Changed - trust gates that gate (F04, ML audit B3; proposals change)
 
 - One `verdict` (reliable / not_yet / refused, cherry-picked from `arch-safe-now`) from the leak-free CV acts on the batch: `refused` (fewer than 3 CV groups, or the held-out score's 95% interval at or below 0) withholds the proposals with a `refusal`; `not_yet` labels every proposal `trust.status: exploration_untrusted`; `reliable` labels them `trusted`. `proposal_trust` says what happened.
-- `reliability.clears_floor` needs the interval's lower end above 0, at least 12 runs and 3 CV groups (`judged`, `not_judged_reason`).
+- `reliability.clears_floor` needs the interval's lower end above 0, at least 12 runs and 3 CV groups; below that it is `null` with `reliability.verdict: not_judged` (`judged`, `not_judged_reason`), and the model verdict carries `too_few_rows_to_judge`.
 - The promotion gate can pass on an ordinary target: feasibility gates are not judged below 5 non-producing runs or when minimizing; `promotion.status`. `cv_topk` respects minimize. `cv_ci95` is null instead of NaN below 3 groups.
 
 ### Changed - leak-free cross-validation grouping (F05, ML audit B2; numbers change)

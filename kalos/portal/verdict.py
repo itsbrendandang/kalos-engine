@@ -40,6 +40,10 @@ from typing import Any
 # fold with some left over, and gives the group bootstrap behind the interval
 # enough distinct groups that its resamples are not a handful of repeats.
 MIN_RUNS_FOR_RELIABLE = 20
+# Below this many runs the held-out score is not judged at all (F04, audit N3:
+# at 6-8 runs a 5-fold CV still issued a verdict and cleared on 10% of noise
+# sheets). Same number as analysis_parts/trust_gate.MIN_ROWS_TO_JUDGE.
+MIN_RUNS_TO_JUDGE = 12
 MIN_GROUPS_FOR_RELIABLE = 8
 # Below 3 CV groups the group bootstrap cannot form an interval, so there is no
 # way to say whether the ordering is better than chance: no proposals.
@@ -166,7 +170,12 @@ def model_verdict(
     else:
         if ordering["state"] != "ok":
             reasons.append({"code": "surrogate_spearman", "plain": ordering["plain"]})
-        if n_runs < MIN_RUNS_FOR_RELIABLE:
+        if n_runs < MIN_RUNS_TO_JUDGE:
+            reasons.append({"code": "too_few_rows_to_judge",
+                            "plain": f"The model learned from {n_runs} runs; Kalos does not judge the "
+                                     f"model below {MIN_RUNS_TO_JUDGE} runs, so its suggestions are "
+                                     "exploration."})
+        elif n_runs < MIN_RUNS_FOR_RELIABLE:
             reasons.append({"code": "too_few_rows",
                             "plain": f"The model learned from {n_runs} runs; Kalos needs at least "
                                      f"{MIN_RUNS_FOR_RELIABLE} before it calls the model reliable."})
@@ -177,7 +186,12 @@ def model_verdict(
         state, code = ("reliable", "reliable") if not reasons else ("not_yet", "not-yet")
 
     headline = HEADLINES[code]
-    if state == "not_yet" and ordering["state"] == "ok":
+    if state == "not_yet" and n_runs < MIN_RUNS_TO_JUDGE:
+        headline = (
+            f"Kalos has not judged the model: {n_runs} runs are too few to check whether it puts "
+            "past runs in the right order, so treat its suggestions as exploration."
+        )
+    elif state == "not_yet" and ordering["state"] == "ok":
         # Only the size of the sheet holds it back: say that, not "cannot rank".
         headline = (
             f"The model put your past runs in the right order, but {n_runs} runs in "
@@ -224,6 +238,6 @@ def refusal_notice(refusal: Mapping[str, str], requested: int) -> dict[str, Any]
 
 
 __all__ = [
-    "MIN_GROUPS_FOR_RELIABLE", "MIN_GROUPS_TO_PROPOSE", "MIN_RUNS_FOR_RELIABLE",
+    "MIN_GROUPS_FOR_RELIABLE", "MIN_GROUPS_TO_PROPOSE", "MIN_RUNS_FOR_RELIABLE", "MIN_RUNS_TO_JUDGE",
     "model_verdict", "range_width", "refusal_for", "refusal_notice",
 ]
