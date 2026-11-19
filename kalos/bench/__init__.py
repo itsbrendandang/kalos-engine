@@ -10,7 +10,8 @@ regret is measurable and the whole thing is reproducible from committed code),
 while sweeping observation noise - the same measurement noise that governs
 whether the model helps at all on real, noisy assay data.
 """
-from .benchmark import run_benchmark, run_mixed_one, run_one, summarize  # noqa: F401
+from typing import TYPE_CHECKING, Any
+
 from .objectives import (  # noqa: F401
     MixedObjective,
     Objective,
@@ -18,6 +19,24 @@ from .objectives import (  # noqa: F401
     gaussian_bump,
     mixed_bump,
 )
+
+if TYPE_CHECKING:
+    from .benchmark import run_benchmark, run_mixed_one, run_one, summarize  # noqa: F401
+
+# `benchmark` imports torch (kalos.core.optimize). It is loaded on first use, so
+# importing a torch-free subpackage such as `kalos.bench.faults` (whose fast tier
+# must stay torch-free) does not pay for torch. `from kalos.bench import
+# run_benchmark` works exactly as before.
+_LAZY = frozenset({"run_benchmark", "run_mixed_one", "run_one", "summarize"})
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY:
+        from . import benchmark
+
+        return getattr(benchmark, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "MixedObjective",
