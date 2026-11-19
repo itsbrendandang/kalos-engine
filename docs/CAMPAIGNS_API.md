@@ -348,12 +348,16 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
 ### Promotion gate changes (additive fields)
 
 - `promotion.not_judged`: list of gates that were neither passed nor failed,
-  with the reason. Two cases today:
+  with the reason. Three cases today:
   - `ece: not enough runs to judge calibration (n=<n>, need 20)`: the classifier
     ECE is judged only from 20 pooled out-of-fold runs (`GatesConfig.min_ece_n`).
     Below that it is still reported in `feasibility`-side metrics, but does not
     pass or fail the gate.
   - `group-mean floor: <reason>`: too few recipes with 2+ rows to form the floor.
+  - `feasibility_auc: not applicable when minimizing` (and the same for `ece`
+    and `brier`): the feasibility classifier scores P(y > 0), a maximize
+    notion, so under `direction: minimize` its three gates do not pass or fail.
+    The surrogate Spearman and group-mean floors still apply.
   `promotion.summary` appends `(not judged: ...)` when the list is not empty.
 - Group-mean floor gate: the surrogate must beat the leave-one-row-out recipe
   mean on the same out-of-fold rows by more than a paired bootstrap's
@@ -468,6 +472,56 @@ Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
   (`noise.best_reproducible`, replicate-aware path). The batch itself is
   chosen by qLogNEI, not by this EI. `maximize` is false when the campaign
   setup goal is minimize (then EI / p_improve are for going BELOW the incumbent).
+
+### Verdict and trust gates that gate (F04; proposals change)
+
+Code: `kalos/portal/verdict.py` (cherry-picked from `arch-safe-now` a7a7865 and
+48bf479), `kalos/portal/analysis_parts/trust_gate.py`. ML audit B3: no gate was
+enforced (five proposals on every sheet, pure noise included), the floor passed
+on a point estimate (15.8% of pure-noise sheets) and the promotion gate could not
+pass on an ordinary target (0/280).
+
+Every analysis carries `verdict`: one answer to "can I trust the model's
+suggestions?", read from the held-out score of the leak-free CV (F05). The
+campaign summary (`GET /api/campaign`, `GET /api/campaigns/{id}` `summary`,
+reanalyze `campaign`) returns the stored analysis's own `verdict` (`null` for an
+analysis written before this field).
+
+Fields: `state` (`reliable`, `not_yet`, `refused`), `code` (`reliable`,
+`not-yet`, `insufficient`, `no_ordering`), `headline` (one plain sentence),
+`reasons` (`[{code, plain}]`, empty when reliable; codes `too_few_rows`,
+`too_few_groups`, `surrogate_spearman`, `cv_ci_unavailable`), `ordering`
+(`{state: ok | unsure | weak | absent | unchecked, plain}`), `range_width`
+(`{state: ok | too_narrow | too_wide | unchecked, code: bands_*, plain}`,
+reported, not part of the state), `n_runs`, `min_runs` (20), `n_groups`,
+`min_groups` (8), `rule`. Checked top to bottom:
+
+| state | code | rule | what happens to the proposals |
+|---|---|---|---|
+| `refused` | `insufficient` | no score, or fewer than 3 CV groups (no interval) | withheld: `proposals: []`, `refusal: {code, plain, what_would_help}`, `proposal_notice: {code: "model_refused", reason, requested, returned: 0, message}` |
+| `refused` | `no_ordering` | upper end of the score's 95% interval at or below 0 | withheld (as above) |
+| `reliable` | `reliable` | score >= 0.20, lower end of the interval > 0, >= 20 runs and >= 8 groups | returned, `trust.status: "trusted"` |
+| `not_yet` | `not-yet` | everything else | returned, each labelled `trust.status: "exploration_untrusted"` |
+
+- `proposal_trust` (top level): `{status: trusted | exploration_untrusted |
+  withheld, verdict, gated, withheld, n_requested, n_returned, reasons[codes],
+  message, rule}`; every returned proposal carries `trust: {status, verdict,
+  message}`. A refused campaign stays on `plan` with the plan step "No recipes
+  proposed" and `next_action.action` "Add runs and upload again".
+- `reliability.clears_floor` now needs the score >= 0.20 AND the lower end of its
+  95% interval > 0, and is judged only with at least 12 runs and 3 CV groups
+  (`reliability.judged`, `not_judged_reason`, `clears_floor_rule`).
+  `space_filling_advice` still accompanies every `clears_floor: false`.
+- `cv_ci95` is `null` (not `[NaN, NaN]`) when fewer than 3 groups leave no
+  interval.
+- Promotion: `promotion.status` (`passed`, `failed`, `not_measurable`) and
+  `promotion.unmeasured` (cherry-picked from 64e43ae). The feasibility AUC /
+  ECE / Brier gates go to `promotion.not_judged` instead of failing closed when
+  the goal is minimize (`not applicable when minimizing`, e2257ac) or the sheet
+  has fewer than 5 non-producing runs (`not applicable: too few non-producing
+  runs`). An ordinary learnable target can now be promoted. `promotion` is
+  still reported, not enforced; the verdict is what gates the proposals.
+- `cv_topk` ranks `-y` under minimize (the lowest k runs; 3935dfa).
 
 ### Leak-free cross-validation grouping (F05; numbers change)
 
