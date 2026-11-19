@@ -194,6 +194,7 @@ GLOSSARY: dict[str, str] = {
     'reason_required': 'Changing a result already recorded needs a reason, so the record shows why it changed; nothing was saved without one.',
     'invalid_result': 'A result must be a number, so nothing was saved for this run.',
     'invalid_body': 'Kalos could not read what was sent, so nothing was saved.',
+    'invalid_field': 'One field was not a finite number or a short label, so nothing was saved.',
     'invalid_request': 'Kalos could not use what was sent, so nothing was saved.',
     'validation_error': 'Kalos could not read what was sent, so nothing was saved.',
     'auth_not_configured': 'Sign-in is not set up, so Kalos refuses all work from other computers; nothing is lost.',
