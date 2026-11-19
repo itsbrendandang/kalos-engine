@@ -1084,10 +1084,30 @@ def _no_foreign_data(response, world: _SurfaceWorld, tenant: str = "globex") -> 
     ("POST", "/api/assist/ask", {"question": "lipase titer", "campaign_id": "{cid}"}),
     ("POST", "/api/assist/sop/draft",
      {"campaign_id": "{cid}", "source": {"round": 0}, "template": "batch_recipe"}),
+    # The redesign routes (security review N8): valid bodies, so only the
+    # tenant boundary can produce the 404.
+    ("GET", "/api/campaigns/{cid}/setup", None),
+    ("PUT", "/api/campaigns/{cid}/setup", {"goal": "minimize", "target_unit": "g/L"}),
+    ("GET", "/api/campaigns/{cid}/stages", None),
+    ("PUT", "/api/campaigns/{cid}/stages",
+     {"stages": [{"key": "S1", "label": "intruder"}], "current_stage": "S1"}),
+    ("GET", "/api/campaigns/{cid}/gates", None),
+    ("PUT", "/api/campaigns/{cid}/gates/S1", {"decision": "go", "note": "intruder"}),
+    ("GET", "/api/campaigns/{cid}/export/rows", None),
+    ("GET", "/api/campaigns/{cid}/export/rows?format=csv", None),
+    ("GET", "/api/campaigns/{cid}/results/history", None),
+    ("GET", "/api/campaigns/{cid}/operating-ranges?threshold=1&probability=0.9", None),
+    ("POST", "/api/campaigns/{cid}/operating-ranges", {"threshold": 1.0}),
+    ("POST", "/api/campaigns/{cid}/reanalyze/jobs", None),
 ])
 def test_new_campaign_surfaces_hide_foreign_and_missing(surfaces, method, path, body):
     w = surfaces
-    before = w.request("GET", f"/api/campaigns/{w.campaigns['globex']}", auth=GLOBEX)
+    b_cid = w.campaigns["globex"]
+    # Everything tenant B can see about its campaign, before and after.
+    b_views = (f"/api/campaigns/{b_cid}", f"/api/campaigns/{b_cid}/setup",
+               f"/api/campaigns/{b_cid}/stages", f"/api/campaigns/{b_cid}/gates",
+               f"/api/campaigns/{b_cid}/jobs")
+    before = [w.request("GET", v, auth=GLOBEX) for v in b_views]
     admin = Who(KEY_A, KID, "acme", "user-acme", "sess-acme",
                 ("campaigns:read", "campaigns:write", "org:admin"))
 
@@ -1104,10 +1124,17 @@ def test_new_campaign_surfaces_hide_foreign_and_missing(surfaces, method, path, 
     missing = request("cmp_" + "0" * 32, "0" * 32)
     assert foreign.status_code == missing.status_code == 404, foreign.text
     assert foreign.content == missing.content
+    assert foreign.json() == {"error": "campaign not found", "code": "not_found"}
     _no_foreign_data(foreign, w)
-    after = w.request("GET", f"/api/campaigns/{w.campaigns['globex']}", auth=GLOBEX)
-    assert before.status_code == after.status_code == 200
-    assert before.json() == after.json()
+    if method == "GET":  # the route exists and finds the campaign for its owner
+        # (export/rows answers its owner 409 here: the seeded analysis lacks the
+        # anonymize record; still past the tenant check), so the 404 is the boundary.
+        own = w.request(method, path.format(cid=b_cid, rid=w.runs["globex"]), auth=GLOBEX)
+        assert own.status_code in (200, 409) and own.json().get("code") != "not_found", (path, own.text)
+    after = [w.request("GET", v, auth=GLOBEX) for v in b_views]
+    for b, a in zip(before, after):
+        assert b.status_code == a.status_code == 200, a.text
+        assert b.json() == a.json()
 
 
 def test_new_lists_and_assistant_index_are_tenant_local(surfaces):
@@ -1147,8 +1174,23 @@ def test_new_lists_and_assistant_index_are_tenant_local(surfaces):
     assert AssistIndex(w.store, "globex").path.read_bytes() == b_index
 
 
+def test_campaign_summary_list_is_tenant_local(surfaces):
+    w = surfaces
+    for who, other in ((ACME, "globex"), (GLOBEX, "acme")):
+        r = w.request("GET", "/api/campaigns?summary=true&include_archived=true", auth=who)
+        assert r.status_code == 200, r.text
+        ids = [row["id"] for row in r.json()["campaigns"]]
+        assert w.campaigns[who.tenant] in ids
+        assert w.campaigns[other] not in ids
+        _no_foreign_data(r, w, other)
+
+
 def test_new_empty_tenant_lists_do_not_fall_back_to_other_tenants(surfaces):
     nobody = Who(KEY_A, KID, "empty-tenant", "empty-user", "empty-session", ("campaigns:read",))
+    r = surfaces.request("GET", "/api/campaigns?summary=true", auth=nobody)
+    assert r.status_code == 200 and r.json()["campaigns"] == [], r.text
+    _no_foreign_data(r, surfaces, "acme")
+    _no_foreign_data(r, surfaces, "globex")
     for path, key in (("/api/campaigns", "campaigns"), ("/api/assist/sop", "drafts")):
         r = surfaces.request("GET", path, auth=nobody)
         assert r.status_code == 200 and r.json() == {key: []}
