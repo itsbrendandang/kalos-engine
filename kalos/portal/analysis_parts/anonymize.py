@@ -94,6 +94,13 @@ def _anonymize_result(
         if isinstance(surf_out.get("fixed_recipe"), dict):
             surf_out["fixed_recipe"] = alias_recipe(surf_out["fixed_recipe"])
         out["response_surface"] = surf_out
+    if isinstance(out.get("slices"), list):
+        out["slices"] = [_alias_slice(sl, alias, alias_recipe) for sl in out["slices"]]
+    if isinstance(out.get("slices_skipped"), list):
+        out["slices_skipped"] = [
+            {**e, "feature": alias(str(e["feature"]))} if isinstance(e, dict) and "feature" in e else e
+            for e in out["slices_skipped"]
+        ]
     out["provenance"] = [
         {**row, "name": alias(row["name"])} for row in out.get("provenance", [])
     ]
@@ -197,6 +204,21 @@ def anonymize_rejection(rej: UploadRejected) -> UploadRejected:
         if aliased != name:
             message = message.replace(repr(clip_name(name)), repr(aliased))
     return UploadRejected(message, code=rej.code, context=context)
+
+
+def _alias_slice(
+    sl: object, alias: Callable[[str], str], alias_recipe: Callable[[object], object]
+) -> object:
+    """Alias a `slices[]` entry: its `feature` and its `reference.recipe`."""
+    if not isinstance(sl, dict):
+        return sl
+    out = dict(sl)
+    if isinstance(out.get("feature"), str):
+        out["feature"] = alias(out["feature"])
+    ref = out.get("reference")
+    if isinstance(ref, dict):
+        out["reference"] = {**ref, "recipe": alias_recipe(ref.get("recipe"))}
+    return out
 
 
 def _alias_named_row(row: dict, alias: Callable[[str], str]) -> dict:

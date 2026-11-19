@@ -1384,6 +1384,15 @@ def _analyze_body(
         else:
             response_surface = _surf
 
+    # R2: 1D slices of the same GP through the same reference point as the
+    # surface (kalos/portal/analysis_parts/slices.py). Model-only, gp_posterior band.
+    from kalos.portal.analysis_parts.slices import compute_slices
+    _sl = compute_slices(
+        s, X_fit, y_fit, cont_feats, kept_cats, cat_dims_map or {}, bounds, drv, replicate_aware,
+        incumbent=incumbent,
+    )
+    viz_reasons["slices"] = _sl["reason"]
+
     # Release the fitted GP(s) (hold torch/gpytorch tensors + parameter/prior
     # back-references that can form reference cycles refcounting alone won't
     # break) as soon as their last use is done, rather than waiting on
@@ -1606,6 +1615,8 @@ def _analyze_body(
         "embedding": embedding,
         "correlation": correlation,
         "response_surface": response_surface,
+        "slices": _sl["slices"],
+        "slices_skipped": _sl["slices_skipped"],
         "visualization_reasons": viz_reasons,
         # Numerical record of the proposal surrogate's fit (kalos/core/surrogate.py
         # `Surrogate.fit_diagnostics`): the Cholesky jitter rung and the largest
