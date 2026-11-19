@@ -21,6 +21,15 @@ Two kinds of band, never mixed and always labeled:
 (the process mean, no observation noise) against the incumbent the proposal
 path uses, the convention of analytic EI. Model-based.
 
+Every band carries the BASIS of its coverage claim (F02, ML audit B1):
+`coverage_basis` is `"held_out_past_runs"` for the conformal bands (calibrated
+on grouped-CV out-of-fold runs, i.e. runs like past runs) and `"model_based"`
+for the GP's own bands. The conformal bands at proposals also carry a
+structured `caveat` (`code: "coverage_lower_at_proposals"`, a plain message and
+`coverage_at_proposals_estimate`, the coverage MEASURED at proposals in
+simulation with its source; `kalos/portal/analysis_parts/coverage_evidence.py`).
+A client must not write "calibrated" next to a proposal without that caveat.
+
 Torch-free: the surrogate is only ever called through its `posterior` method.
 """
 from __future__ import annotations
@@ -32,6 +41,14 @@ import numpy as np
 from scipy.special import ndtr, ndtri
 
 from kalos.core.conformal import normalized_conformal_quantile, normalized_scores
+from kalos.portal.analysis_parts.coverage_evidence import (
+    BASIS_HELD_OUT,
+    BASIS_MODEL,
+    CAVEAT_CODE,
+    compact,
+    coverage_at_proposals_estimate,
+    proposal_caveat,
+)
 
 METHOD_CONFORMAL = "conformal_normalized"
 CALIBRATED_ON = "grouped_cv_oof"
@@ -182,6 +199,18 @@ def proposal_interval_fields(
     ei = expected_improvement(mu, lat, incumbent, maximize=maximize)
     pi = probability_of_improvement(mu, lat, incumbent, maximize=maximize)
     cal_levels = list(calibration.get("levels", []))
+    # Per proposal: the caveat with the measured numbers; the full source is
+    # once per analysis, in `interval_method.coverage_at_proposals`.
+    caveats = {}
+    for c in cal_levels:
+        cav = proposal_caveat(METHOD_CONFORMAL, float(c["coverage"]))
+        cav["coverage_at_proposals_estimate"] = compact(
+            cav["coverage_at_proposals_estimate"],
+            f"interval_method.coverage_at_proposals.{float(c['coverage']):g}")
+        caveats[METHOD_CONFORMAL, float(c["coverage"])] = cav
+    gp_estimates = {float(lv): compact(coverage_at_proposals_estimate(METHOD_GP, float(lv)),
+                                       "interval_method.gp_coverage_at_proposals")
+                    for lv in levels}
     rows: list[dict] = []
     for i in range(len(mu)):
         m, sp = float(mu[i]), float(pre[i])
@@ -189,7 +218,8 @@ def proposal_interval_fields(
         ivs: list[dict] = []
         for c in cal_levels:
             base = {"coverage": c["coverage"], "method": METHOD_CONFORMAL, "calibrated_on": CALIBRATED_ON,
-                    "n_calibration": c["n_calibration"]}
+                    "n_calibration": c["n_calibration"], "coverage_basis": BASIS_HELD_OUT,
+                    "caveat": caveats[METHOD_CONFORMAL, float(c["coverage"])]}
             if not c["available"]:
                 ivs.append({**base, "available": False, "lo": None, "hi": None, "code": c["code"],
                             "reason": c["reason"], "what_would_fix_it": c["what_would_fix_it"]})
@@ -205,14 +235,17 @@ def proposal_interval_fields(
         gp: list[dict] = []
         for lv in levels:
             cov = float(lv)
-            entry: dict = {"coverage": _r(cov), "method": METHOD_GP, "posterior": "observation", "note": GP_NOTE}
+            entry: dict = {"coverage": _r(cov), "method": METHOD_GP, "posterior": "observation", "note": GP_NOTE,
+                           "coverage_basis": BASIS_MODEL,
+                           "coverage_at_proposals_estimate": gp_estimates[cov]}
             if np.isfinite(sp) and sp >= 0:
                 half = float(ndtri(0.5 + cov / 2.0)) * sp
                 entry.update(available=True, lo=_r(m - half), hi=_r(m + half))
             else:
                 entry.update(available=False, lo=None, hi=None)
             gp.append(entry)
-        quant: dict[str, Any] = {"basis": METHOD_GP, "posterior": "observation", "note": GP_NOTE}
+        quant: dict[str, Any] = {"basis": METHOD_GP, "posterior": "observation", "note": GP_NOTE,
+                                 "coverage_basis": BASIS_MODEL}
         for p in QUANTILE_LEVELS:
             key = f"p{int(round(p * 100)):02d}"
             quant[key] = _r(m + float(ndtri(p)) * sp) if np.isfinite(sp) and sp >= 0 else None
@@ -238,6 +271,17 @@ def interval_method_summary(calibration: Mapping[str, Any], sigma_source: str) -
     return {
         "method": METHOD_CONFORMAL,
         "calibrated_on": CALIBRATED_ON,
+        # F02: what the coverage claim rests on, and what was measured where the
+        # user acts (the proposals). Per level, same object each proposal carries.
+        "coverage_basis": BASIS_HELD_OUT,
+        "coverage_at_proposals": {
+            f"{float(lv['coverage']):g}": proposal_caveat(METHOD_CONFORMAL, float(lv["coverage"]))
+            for lv in calibration.get("levels", [])
+        },
+        "gp_coverage_at_proposals": {
+            f"{float(lv['coverage']):g}": coverage_at_proposals_estimate(METHOD_GP, float(lv["coverage"]))
+            for lv in calibration.get("levels", [])
+        },
         "score": "abs(y - mu_oof) / sigma_oof",
         "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
         "sigma": "gp_predictive_sd",
@@ -265,7 +309,43 @@ def interval_method_summary(calibration: Mapping[str, Any], sigma_source: str) -
     }
 
 
+def conformal_band_caveat(alpha: float) -> dict:
+    """`conformal_caveat` for the global +/- `conformal_q` band (F02; the
+    arch-safe-now `coverage_not_guaranteed` field, now with the measured
+    coverage at proposals and its source)."""
+    level = 1.0 - float(alpha)
+    est = coverage_at_proposals_estimate("conformal_abs_global", level)
+    cav = proposal_caveat("conformal_abs_global", level)
+    return {
+        "code": "coverage_not_guaranteed",
+        "coverage_basis": BASIS_HELD_OUT,
+        "message": (
+            "The +/- conformal_q band's coverage was measured on held-out past runs. It is not "
+            "guaranteed for proposals, especially those far from the data or at the box edge. "
+            + cav["message"].split(". ", 1)[1]
+        ),
+        "caveat_code": CAVEAT_CODE,
+        "coverage_at_proposals_estimate": est,
+    }
+
+
+def band_from_summary(mean, sd, method_summary: Mapping[str, Any], level: float):
+    """Rebuild the shipped per-proposal band at arbitrary points from the
+    response's `interval_method` (benchmarks and tests: the band a proposal at
+    those points would carry). Returns `(lo, hi)` arrays, or `(None, None)` when
+    the level is unavailable."""
+    mu = np.asarray(mean, float).reshape(-1)
+    sp = np.asarray(sd, float).reshape(-1)
+    for lv in method_summary.get("levels", []):
+        if abs(float(lv["coverage"]) - float(level)) < 1e-9 and lv.get("available"):
+            half = float(lv["q_norm"]) * sp
+            return mu - half, mu + half
+    return None, None
+
+
 __all__ = [
-    "calibrate_normalized", "expected_improvement", "interval_method_summary",
+    "band_from_summary",
+    "calibrate_normalized",
+    "conformal_band_caveat", "expected_improvement", "interval_method_summary",
     "probability_of_improvement", "proposal_interval_fields", "proposal_predictive_std",
 ]

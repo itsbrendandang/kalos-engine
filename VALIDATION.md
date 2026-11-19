@@ -91,3 +91,41 @@ Median experiments to the top 5% (lower is better):
 export KALOS_AMII_DATA=/path/to/the/six/CSVs   # not shipped; see examples/datasets/README.md
 python examples/amii_benchmark.py --seeds 20   # ~30-40 min; writes a JSON report
 ```
+
+---
+
+# Interval coverage at proposals
+
+The per-proposal 90% and 95% ranges are calibrated by grouped cross-validation on
+past runs. Proposals are not like past runs: they are chosen *because* the model
+predicts them high, often where it is least sure. This section measures how often
+the measurement of a **proposed** recipe lands inside the range shown next to it
+(ML audit B1, REORG F02/F15).
+
+**Protocol** (`python -m kalos.bench.coverage_at_proposals --seeds 40`): Latin-hypercube
+design from a known simulator, the production analysis (`_analyze`), then each of the
+5 proposals is measured once with fresh simulated noise and checked against the shipped
+`proposals[].intervals` `[lo, hi]`. The same band is rebuilt at 300 random points in the
+design box ("runs like past runs") for comparison. 40 seeds x 5 proposals = 200 measured
+proposals per scenario; the 95% CI is a seed-cluster bootstrap (the 5 proposals of one
+seed are correlated). Widths are a fraction of the training target's range. All
+simulators are synthetic; Branin is a control where selection hardly matters.
+Results files: `benchmarks/results/coverage_at_proposals_*.json`.
+
+## Before (engine @ `0fc05c3`, normalized conformal band; `coverage_at_proposals_before.json`)
+
+| Scenario | 90%: at proposals [95% CI] | 90%: random in-box | 95%: at proposals [95% CI] | 95%: random in-box | GP band 90% at proposals | `conformal_q` at proposals |
+|---|---|---|---|---|---|---|
+| Hartmann-6, n=30 | **0.60** [0.54, 0.67] | 0.90 | **0.83** [0.77, 0.89] | 0.98 | 0.50 | 0.68 |
+| Hartmann-6, n=80 | **0.65** [0.58, 0.72] | 0.91 | **0.76** [0.69, 0.82] | 0.96 | 0.57 | 0.77 |
+| Bioprocess, n=40 | **0.74** [0.67, 0.81] | 0.91 | **0.83** [0.77, 0.89] | 0.96 | 0.64 | 0.79 |
+| Bioprocess, n=100 | **0.81** [0.77, 0.86] | 0.90 | **0.86** [0.82, 0.90] | 0.95 | 0.73 | 0.83 |
+| Heteroscedastic 3-D, n=40 | **0.69** [0.63, 0.74] | 0.91 | **0.81** [0.75, 0.87] | 0.96 | 0.53 | 0.77 |
+| Branin, n=20 (control) | 0.94 [0.87, 0.98] | 0.91 | 0.96 [0.91, 0.99] | 0.96 | 0.80 | 0.97 |
+
+The calibration step works where it was calibrated (0.90-0.91 and 0.95-0.98 on random
+in-box points). At the proposals it does not: a nominal 90% range contained the
+measurement for 60-81% of proposals, a 95% range for 76-86%. The engine says so: every
+proposal interval carries `coverage_basis: "held_out_past_runs"` and a `caveat` with
+these measured numbers (`docs/CAMPAIGNS_API.md`, "Coverage basis and the proposal
+caveat").
