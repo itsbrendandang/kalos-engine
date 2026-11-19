@@ -1,4 +1,4 @@
-"""Kalos portal - the label-only clone registry (docs/CLONES_REGISTRY.md).
+"""Kalos portal - the label-only clone registry (docs/CLONES.md).
 
 Routes:
 

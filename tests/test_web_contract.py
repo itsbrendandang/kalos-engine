@@ -45,6 +45,9 @@ _WEB_ANALYZE_FIELDS: frozenset[str] = frozenset({
     "seed", "engine_version",
     # Web redesign APIs (docs: ENGINE_API_V2): R6 unit, R4 per-proposal intervals, R2 slices.
     "target_unit", "interval_levels", "interval_method", "slices", "slices_skipped",
+    # Clones / strains (docs/CLONES.md): present on every analysis, empty without a clone.
+    "strain_summary", "slices_by_level", "slices_by_level_skipped", "oof_levels",
+    "covariates", "drivers_skipped", "correlation_skipped", "categorical_effects",
 })
 
 # Per-proposal fields the redesign reads (R4): each proposal carries its own
@@ -175,3 +178,61 @@ def test_campaign_routes_the_redesign_reads() -> None:
     assert {"results", "audit"} <= set(history)
     ranges = client.post(f"/api/campaigns/{cid}/operating-ranges", json={"probability": 0.9}).json()
     assert ranges["status"] == "not_computed" and ranges["reason_code"] == "threshold_missing"
+
+
+_CLONE_CSV = "clone,passage,temperature,feed,titer_g_L\n" + "".join(
+    f"{c},{8 + i},{33 + (i % 5)},{2 + (i % 4)},"
+    f"{2.0 + {'CHO-A12': 0.0, 'CHO-B07': 0.5, 'CHO-C33': 1.0}[c] + 0.2 * (i % 4) - 0.05 * (i % 5) ** 2}\n"
+    for i, c in enumerate(["CHO-A12", "CHO-B07", "CHO-C33"] * 6)
+)
+
+
+@pytest.mark.slow
+def test_clone_fields_and_routes_the_web_renders() -> None:
+    """G1-G5 read only engine fields: strain_summary, slices_by_level (labeled
+    model band with coverage, never calibrated), oof_levels aligned to oof, the
+    held covariate, the clone chip on proposals, and the five registry routes."""
+    client = TestClient(app)
+    cid = client.post("/api/campaigns", json={"name": "clones"}).json()["id"]
+    assert client.put(f"/api/campaigns/{cid}/clones/CHO-C33",
+                      json={"status": "lead", "host": "CHO-K1"}).status_code == 200
+    up = client.post(f"/api/campaigns/{cid}/upload",
+                     files={"file": ("runs.csv", _CLONE_CSV, "text/csv")})
+    assert up.status_code == 200, up.text
+    a = client.get(f"/api/campaigns/{cid}/analysis").json()
+    a = a.get("analysis", a)
+    s = a["strain_summary"]
+    assert s["available"] and s["column"] == "clone" and s["source"] == "detected"
+    lv = s["levels"][0]
+    assert {"label", "n_runs", "n_recipes", "outcomes", "adjusted_effect", "gp_at_reference",
+            "covariates", "flags"} <= set(lv)
+    o = lv["outcomes"]["titer_g_L"]
+    assert o["basis"] == "measured" and {"mean", "ci95", "ci_reason", "n_runs"} <= set(o)
+    assert lv["adjusted_effect"]["basis"] == "derived"
+    assert lv["gp_at_reference"]["basis"] == "predicted"
+    assert {"rows", "cells", "thin_rule", "note"} <= set(s["interaction"])
+    for entries in a["slices_by_level"]["clone"].values():
+        for sl in entries:
+            assert sl["band_kind"] == "gp_posterior" and sl["calibrated"] is False
+            assert isinstance(sl["coverage"], float) and sl["basis"] == "predicted"
+    assert len(a["oof_levels"]["clone"]) == len(a["oof"])
+    assert a["covariates"]["columns"] == ["passage"]
+    for p in a["proposals"]:
+        assert "passage" not in p["recipe"] and p["held"]["passage"]["proposed"] is False
+        assert p["clone"]["level"] == p["recipe"]["clone"]
+
+    # Declare the clone in the setup: fixed policy, the registry lead by default.
+    r = client.put(f"/api/campaigns/{cid}/setup", json={"strain_column": "clone"})
+    assert r.status_code == 200, r.text
+    reg = client.get(f"/api/campaigns/{cid}/clones").json()
+    assert reg["clones"][0]["label"] == "CHO-C33" and "unregistered_labels" in reg
+    assert set(reg["seen_in_data"]) == {"CHO-A12", "CHO-B07", "CHO-C33"}
+    summ = client.get(f"/api/campaigns/{cid}/clones/summary").json()
+    assert summ["available"] and summ["registry_order"][0] == "CHO-C33"
+    h = client.post(f"/api/campaigns/{cid}/clones/CHO-C33/titer-history",
+                    json={"basis": "harvest_titer", "value": 3.1, "unit": "g/L"})
+    assert h.status_code in (200, 201), h.text
+    hist = client.get(f"/api/campaigns/{cid}/clones/CHO-C33/titer-history").json()
+    assert hist["history"]["items"][0]["basis_kind"] == "measured"
+    assert client.put(f"/api/campaigns/{cid}/clones/CHO-C33",
+                      json={"status": "lead", "sequence": "MKT"}).status_code == 400

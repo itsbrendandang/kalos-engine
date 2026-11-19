@@ -619,7 +619,23 @@ def setup_for_analysis(
     except SetupInvalid:
         log.warning("stored campaign setup is unreadable; proposals will be withheld")
         return {"unreadable": True, "hash": None}
-    return None if row is None else analysis_setup(row["value"])
+    if row is None:
+        return None
+    out = analysis_setup(row["value"])
+    if out.get("strain_column") and not out.get("strain_level"):
+        # Policy `fixed` with no named level: the registry's single lead clone is
+        # the default (the analysis falls back to the clone with the most runs
+        # when the lead has none). Not part of the setup hash: the registry is not
+        # the setup.
+        from kalos.portal.clone_registry import lead_clone_label
+
+        try:
+            lead = lead_clone_label(store, tenant=tenant, campaign_id=cid)
+        except CampaignNotFound:
+            lead = None
+        if lead:
+            out["strain_lead"] = lead
+    return out
 
 
 def with_campaign_setup(

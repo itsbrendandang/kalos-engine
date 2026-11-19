@@ -440,6 +440,45 @@ Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
   chosen by qLogNEI, not by this EI. `maximize` is false when the campaign
   setup goal is minimize (then EI / p_improve are for going BELOW the incumbent).
 
+### Clones and strains (additive; analyses computed after this change)
+
+Full contract: docs/CLONES.md. Code: `kalos/portal/analysis_parts/strain_*.py`,
+`kalos/core/strain.py`, `kalos/portal/clones_api.py`, `kalos/portal/clone_registry.py`.
+
+- **Declaring**: setup keys `strain_column`, `strain_policy` (`fixed`, the
+  default once a clone column is declared, or `factor`), `strain_level`,
+  `covariates` on `PUT /api/campaigns/{id}/setup` (stored only when set, so a
+  setup without them keeps its hash). Upload `roles` take `strain`,
+  `strain_policy`, `strain_level`, `covariates`. With no roles, a `clone` /
+  `strain` / `cell line` column is detected (policy `factor`, finding
+  `strain_column_detected`) and passage / generation / PDL / thaw / vial / cell
+  bank columns are covariates. New `PUT setup` refusals: `clone_not_in_training`
+  (a fixed level with no runs), `covariate_not_proposable` (a bound or
+  constraint on a covariate), `unknown_column`. Linear constraints are accepted
+  in a clone campaign (`constraints_with_categoricals` still applies otherwise).
+- **Analysis fields** (on every analysis; empty or `available: false` without a
+  clone): `strain_summary`, `slices_by_level`, `slices_by_level_skipped`,
+  `oof_levels`, `covariates`, `drivers_skipped`, `correlation_skipped`,
+  `categorical_effects`; per proposal `held` (covariates, never in `recipe`),
+  `clone`, `nearest_training_distance_same_clone`, `extrapolated_for_clone`,
+  `extrapolated_for_clone_features`; `drivers[].role` and `provenance[].role`.
+  `gp_shapes` is now available on mixed (categorical) fits.
+- **Proposal refusal**: `proposal_notice.code = "clone_not_in_training"` (no
+  proposals) when the fixed clone has no runs.
+
+| Method | Path | Scope | Purpose |
+|---|---|---|---|
+| GET | `/api/campaigns/{id}/clones` | read | The registry, `seen_in_data` (labels in the latest analysis; empty with a reason when it was anonymized), `unregistered_labels`, `max_clones` (200). |
+| PUT | `/api/campaigns/{id}/clones/{label}` | write | Upsert one clone: `status` (`lead`/`backup`/`retired`/`candidate`) plus allowlisted label fields (`host`, `parent_cell_bank`, `construct_id`, `phenotype_label`, `product`, `passage_at_banking`, `note`). Any other key, including `sequence`, `fasta`, `smiles`, `pdb`, `uniprot`, is `400 invalid_body` ("labels only"); the value is never echoed. Audited. |
+| POST | `/api/campaigns/{id}/clones/{label}/titer-history` | write | Append one MEASURED row (`basis` harvest_titer / qP / space_time_yield, finite `value`, `unit` from the allowlist matching the basis, optional scale and age). A correction needs `previous_id` and `reason`. Append-only (database triggers). Audited. |
+| GET | `/api/campaigns/{id}/clones/{label}/titer-history` | read | Newest first, `before_id` cursor; rows labeled `basis_kind: "measured"`. |
+| GET | `/api/campaigns/{id}/clones/summary` | read | `strain_summary` of the latest analysis joined with the registry (`levels[].registry`, `registry_order`, `unregistered_labels`). `409 no_analysis` without an analysis; `200 {available: false, reason}` without a clone; not joined for an anonymized analysis (`registry_join.applied: false`). |
+
+All five: tenant from the principal (another tenant's campaign is the same 404),
+scope checked first, default JSON body cap, writes audited without field values.
+Schema v7 adds `campaign_clones` and `clone_titer_history` (docs/MIGRATIONS.md);
+v8 is reserved for the Crux items.
+
 ## Not in this slice
 
 - Background jobs for reanalyze (it still runs synchronously; upload has a job route).

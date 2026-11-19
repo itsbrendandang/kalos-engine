@@ -111,7 +111,7 @@ recovery. Nothing is repaired automatically. Recovery, with the engine stopped:
 
 ## Schema v7: clone registry and clone titer history
 
-Schema v7 adds two tables (docs/CLONES_REGISTRY.md). Both carry
+Schema v7 adds two tables (docs/CLONES.md). Both carry
 `FOREIGN KEY (campaign_id, tenant)` to `campaigns (id, tenant)`.
 
 - `campaign_clones(tenant, campaign_id, label, fields, status, updated_at,

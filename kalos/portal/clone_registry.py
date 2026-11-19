@@ -1,7 +1,7 @@
 """Label-only clone registry (schema v7 `campaign_clones` + `clone_titer_history`).
 
 What a process scientist tracks about a production clone, stored as LABELS only
-(docs/CLONES_REGISTRY.md): a status (`lead`, `backup`, `retired`, `candidate`)
+(docs/CLONES.md): a status (`lead`, `backup`, `retired`, `candidate`)
 and a few allowlisted text fields (host, parent cell bank, construct id,
 phenotype, product, passage at banking, note). Kalos stores, shows and filters
 these values; it never parses them, never computes from them beyond counts and

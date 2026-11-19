@@ -345,7 +345,7 @@ _V6_DDL: tuple[str, ...] = (
     END
     """,
 )
-# Schema v7: the label-only clone registry (docs/CLONES_REGISTRY.md). Additive.
+# Schema v7: the label-only clone registry (docs/CLONES.md). Additive.
 # `campaign_clones` holds one row per (campaign, clone label): a status enum and
 # a JSON object of allowlisted LABEL fields (host, parent_cell_bank, construct_id,
 # ...). No sequence, map or structure is ever stored; the route refuses those keys.

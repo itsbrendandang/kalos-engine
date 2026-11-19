@@ -174,3 +174,27 @@ def test_fixed_features_none_is_the_historical_call():
     a = propose_batch(s, b, q=2, seed=3, cat_dims=[3], cat_cardinalities=[3]).X
     c = propose_batch(s, b, q=2, seed=3, cat_dims=[3], cat_cardinalities=[3], fixed_features=None).X
     assert np.array_equal(a, c)
+
+
+def test_the_registry_lead_reaches_the_analysis_setup(env):  # noqa: F811
+    from kalos.portal.setup_settings import setup_for_analysis
+
+    tc, store = env
+    cid = _campaign(store, analysis=_strain_analysis())
+    assert tc.put(f"/api/campaigns/{cid}/clones/CHO-C33", json={"status": "lead"},
+                  headers=H("a-write")).status_code == 200
+    assert tc.put(f"/api/campaigns/{cid}/setup", json={"strain_column": "clone"},
+                  headers=H("a-write")).status_code == 200
+    s = setup_for_analysis(store, tenant="acme", campaign_id=cid)
+    assert s["strain_column"] == "clone" and s["strain_lead"] == "CHO-C33"
+    # a named level wins; the lead is not looked up
+    assert tc.put(f"/api/campaigns/{cid}/setup", json={
+        "strain_column": "clone", "strain_level": "CHO-A12"}, headers=H("a-write")).status_code == 200
+    s = setup_for_analysis(store, tenant="acme", campaign_id=cid)
+    assert s["strain_level"] == "CHO-A12" and "strain_lead" not in s
+    # two leads: no default
+    assert tc.put(f"/api/campaigns/{cid}/clones/CHO-A12", json={"status": "lead"},
+                  headers=H("a-write")).status_code == 200
+    assert tc.put(f"/api/campaigns/{cid}/setup", json={"strain_column": "clone"},
+                  headers=H("a-write")).status_code == 200
+    assert "strain_lead" not in setup_for_analysis(store, tenant="acme", campaign_id=cid)
