@@ -367,6 +367,14 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
   `judgeable`, `judgement` (`"not enough runs to judge calibration"` when
   10 <= n < 20, else `null`) and `judge_min_n` (20). It is still shown from 10.
 
+### Top-k overlap follows the goal (additive)
+
+- `cv_topk` = |true top-k INTERSECT predicted top-k| / k over the pooled
+  out-of-fold predictions, where "top" means the k BEST runs for the campaign
+  goal: the k highest for maximize, the k LOWEST for minimize.
+  `cv_topk.direction` (`"highest"` | `"lowest"`) says which; analyses stored
+  before this field always ranked highest-first.
+
 ### Distance to data (additive)
 
 - `proposals[].nearest_training_distance`: distance from the proposed recipe to
