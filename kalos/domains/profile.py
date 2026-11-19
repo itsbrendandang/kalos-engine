@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 DimensionKind = Literal["continuous", "categorical"]
+STRAIN_POLICIES = ("fixed", "factor")
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,16 @@ class ColumnRoles:
     ids: tuple[str, ...] = ()
     categoricals: tuple[str, ...] = ()
     sparse: tuple[str, ...] = ()
+    # Production clone / strain (docs/CLONES.md). `strain` is always an unordered
+    # label, even when its values look numeric. `strain_policy` "fixed" (the
+    # default once a strain column is declared) holds every proposal at
+    # `strain_level`; "factor" lets the proposals choose among the clones.
+    # `covariates` (passage, generation, PDL, thaw ID) are recorded run
+    # properties: never proposed.
+    strain: str | None = None
+    strain_policy: str | None = None
+    strain_level: str | None = None
+    covariates: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict) -> ColumnRoles:
@@ -95,13 +106,41 @@ class ColumnRoles:
         groups = data.get("groups")
         if groups is not None and not isinstance(groups, str):
             raise ValueError("roles.groups must be a column name or null")
+        strain = data.get("strain")
+        if strain is not None and (not isinstance(strain, str) or not strain.strip()):
+            raise ValueError("roles.strain must be a column name or null")
+        policy = data.get("strain_policy")
+        if policy is not None and policy not in STRAIN_POLICIES:
+            raise ValueError("roles.strain_policy must be 'fixed' or 'factor'")
+        level = data.get("strain_level")
+        if level is not None and (not isinstance(level, (str, int)) or isinstance(level, bool)
+                                  or not str(level).strip() or len(str(level)) > 64):
+            raise ValueError("roles.strain_level must be a clone label of 1-64 characters")
+        if (policy is not None or level is not None) and not strain:
+            raise ValueError("roles.strain_policy / strain_level need roles.strain")
+        if level is not None and policy == "factor":
+            raise ValueError("roles.strain_level applies only to strain_policy 'fixed'")
+        features = as_tuple(data.get("features"))
+        covariates = as_tuple(data.get("covariates"))
+        if strain and strain in features:
+            raise ValueError("roles.strain cannot also be listed in roles.features")
+        if strain and strain in covariates:
+            raise ValueError("roles.strain cannot also be a covariate")
+        if strain and strain == target:
+            raise ValueError("roles.strain cannot be the target")
+        if target in covariates:
+            raise ValueError("roles.target cannot be a covariate")
         return cls(
             target=target,
-            features=as_tuple(data.get("features")),
+            features=features,
             groups=(groups or None),
             ids=as_tuple(data.get("ids")),
             categoricals=as_tuple(data.get("categoricals")),
             sparse=as_tuple(data.get("sparse")),
+            strain=strain or None,
+            strain_policy=(policy if policy is not None else ("fixed" if strain else None)),
+            strain_level=None if level is None else str(level).strip(),
+            covariates=covariates,
         )
 
 

@@ -92,6 +92,13 @@ class _SetupBody(BaseModel):
     )
     # Checked again after trimming (<= 32 characters, no control characters).
     target_unit: Annotated[str, _Strict(), StringConstraints(max_length=64)] | None = None
+    # Clone / strain (docs/CLONES.md). Unset keys are not stored, so a setup
+    # without them keeps its hash. `strain_policy` defaults to "fixed" in the
+    # analysis once `strain_column` is set.
+    strain_column: _Name | None = None
+    strain_policy: Literal["fixed", "factor"] | None = None
+    strain_level: Annotated[str, _Strict(), StringConstraints(min_length=1, max_length=64)] | None = None
+    covariates: list[_Name] | None = Field(default=None, max_length=32)
 
 
 def _view(store: CampaignStore, tenant: str, campaign_id: str) -> dict[str, Any]:
