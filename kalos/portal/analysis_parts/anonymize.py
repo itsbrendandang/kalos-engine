@@ -106,6 +106,26 @@ def _anonymize_result(
         out["response_surface"] = surf_out
     if isinstance(out.get("slices"), list):
         out["slices"] = [_alias_slice(sl, alias, alias_recipe) for sl in out["slices"]]
+    for key in ("drivers_skipped", "correlation_skipped"):
+        if isinstance(out.get(key), list):
+            out[key] = [
+                {**e, "feature": alias(str(e["feature"]))}
+                if isinstance(e, dict) and "feature" in e else e
+                for e in out[key]
+            ]
+    ce = out.get("categorical_effects")
+    if isinstance(ce, dict) and isinstance(ce.get("features"), list):
+        out["categorical_effects"] = {**ce, "features": [
+            {
+                **f, "name": alias(str(f["name"])),
+                "levels": [
+                    {**lv, "level": alias_level(str(f["name"]), lv.get("level"))}
+                    if isinstance(lv, dict) else lv
+                    for lv in f.get("levels") or []
+                ],
+            } if isinstance(f, dict) and "name" in f else f
+            for f in ce["features"]
+        ]}
     if isinstance(out.get("slices_skipped"), list):
         out["slices_skipped"] = [
             {**e, "feature": alias(str(e["feature"]))} if isinstance(e, dict) and "feature" in e else e
