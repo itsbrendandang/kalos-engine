@@ -93,6 +93,7 @@ from kalos.portal.analysis_parts.refusals import (
     _too_few_rows,
     _validate_constraint,
 )
+from kalos.portal.analysis_parts.units import target_unit_block
 from kalos.portal.cells import (
     BLANK,
     CENSORED,
@@ -196,6 +197,7 @@ def _analyze(
     constraint: Mapping[str, Any] | None = None,
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
+    user_target_unit: str | None = None,
 ) -> dict:
     """See `_analyze_body`. Every fitting analysis runs inside `_seeded_analysis`,
     so its proposals depend only on its inputs, not on other analyses in flight."""
@@ -203,6 +205,7 @@ def _analyze(
     kwargs: dict[str, Any] = dict(
         anonymize=anonymize, roles=roles, profile=profile, pending=pending,
         constraint=constraint, progress=progress, preflight_only=preflight_only,
+        user_target_unit=user_target_unit,
     )
     if preflight_only:
         return _analyze_body(df, target, **kwargs)
@@ -221,6 +224,7 @@ def _analyze_body(
     constraint: Mapping[str, Any] | None = None,
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
+    user_target_unit: str | None = None,
 ) -> dict:
     """Run the engine on an arbitrary run sheet: pick the target (the value to
     maximize), use the process INPUTS as features (other measured outputs are
@@ -1561,6 +1565,8 @@ def _analyze_body(
         "seed": ANALYZE_SEED,
         "timestamp": int(time.time()),
         "engine_version": ENGINE_VERSION,
+        # Display unit of the target (VIZ_SPEC R6): user setup > header > none.
+        "target_unit": target_unit_block(str(target), user_target_unit),
     }
     if anonymize:
         result = _anonymize_result(

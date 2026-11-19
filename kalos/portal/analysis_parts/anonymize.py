@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping, Sequence
 
 from kalos.data.anonymizer import _hash
 from kalos.portal.analysis_parts.identifiers import _is_identifier_name
+from kalos.portal.analysis_parts.units import anonymize_target_unit
 from kalos.portal.uploads import ParsedUpload, UploadRejected, clip_name
 
 
@@ -54,6 +55,8 @@ def _anonymize_result(
         out["group_col"] = alias(out["group_col"])
     if isinstance(out.get("target"), str):
         out["target"] = alias(out["target"])
+    if isinstance(out.get("target_unit"), dict):
+        out["target_unit"] = anonymize_target_unit(out["target_unit"], alias)
     for key in ("targets", "features", "categorical_features", "proposal_features"):
         if isinstance(out.get(key), list):
             out[key] = [alias(str(c)) for c in out[key]]
