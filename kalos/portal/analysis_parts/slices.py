@@ -97,8 +97,13 @@ def compute_slices(
     coverage: float = SLICE_COVERAGE,
     max_features: int = SLICE_MAX_FEATURES,
     incumbent: float | None = None,
+    reference_codes: dict[int, int] | None = None,
 ) -> dict:
     """Build `{"slices", "slices_skipped", "reason"}`.
+
+    `reference_codes` (`{dim: level code}`) overrides categorical coordinates of
+    the reference point: the per-clone slices (`slices_by_level`) sweep the same
+    continuous settings with the clone set to each level in turn.
 
     `slices` is a list (possibly empty only if nothing continuous exists, in
     which case it is None with `reason` set). `reason` is None on success.
@@ -129,6 +134,11 @@ def compute_slices(
         ref_vec, ref_recipe, inc_basis = reference_point(
             X_fit, y_fit, cont_feats, kept_cats, cat_dims_map, replicate_aware, incumbent
         )
+        for dim, code in (reference_codes or {}).items():
+            ref_vec[int(dim)] = float(code)
+            k = int(dim) - len(cont_feats)
+            if 0 <= k < len(kept_cats) and kept_cats[k] in cat_dims_map:
+                ref_recipe[str(kept_cats[k])] = cat_dims_map[kept_cats[k]][int(code)]
         reference = {"basis": "incumbent", "incumbent_basis": inc_basis, "recipe": ref_recipe}
         z = NormalDist().inv_cdf(0.5 + coverage / 2.0)
         out: list[dict] = []

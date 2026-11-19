@@ -14,7 +14,8 @@ from kalos.portal.uploads import ParsedUpload, UploadRejected, clip_name
 
 
 def _anonymize_result(
-    result: dict, *, categorical_levels: Mapping[str, Sequence[str]] | None = None
+    result: dict, *, categorical_levels: Mapping[str, Sequence[str]] | None = None,
+    label_columns: Sequence[str] = (),
 ) -> dict:
     """Replace identifier-type column names and values in the response with stable
     pseudonyms (`anonymize=True`).
@@ -30,14 +31,21 @@ def _anonymize_result(
     the owner UI shows them. The mapping is stable (same name -> same pseudonym)
     via the anonymizer's irreversible hash, so the report stays internally
     consistent across fields.
+
+    `label_columns` (the clone / strain column, docs/CLONES.md) have their level
+    values aliased whatever the column is called: clone IDs are often
+    proprietary. Every clone label in `strain_summary`, `slices_by_level`,
+    `oof_levels`, `categorical_effects` and the proposal recipes is replaced, as a
+    value, as a dict key, and inside message text.
     """
     def alias(name: str) -> str:
         return f"col_{_hash(name)[:8]}" if _is_identifier_name(name) else name
 
+    forced = {str(c) for c in label_columns}
     id_levels: dict[str, set[str]] = {
         str(c): {str(v) for v in levels}
         for c, levels in (categorical_levels or {}).items()
-        if _is_identifier_name(str(c))
+        if _is_identifier_name(str(c)) or str(c) in forced
     }
 
     def alias_level(column: str, value: object) -> object:
@@ -51,6 +59,8 @@ def _anonymize_result(
         return {alias(str(k)): alias_level(str(k), v) for k, v in recipe.items()}
 
     out = dict(result)
+    if forced:
+        out = _alias_strain_blocks(out, forced, alias, alias_level, result)
     if out.get("group_col"):
         out["group_col"] = alias(out["group_col"])
     if isinstance(out.get("target"), str):
@@ -139,6 +149,74 @@ def _anonymize_result(
                 alias(str(c)): n for c, n in drops.get("blank_cells_as_absent", {}).items()
             },
         }
+    return out
+
+
+_STRAIN_BLOCKS = ("strain_summary", "slices_by_level", "slices_by_level_skipped", "oof_levels")
+
+
+def _alias_strain_blocks(
+    out: dict, columns: set[str], alias: Callable[[str], str],
+    alias_level: Callable[[str, object], object], result: Mapping,
+) -> dict:
+    """Replace clone labels (values, dict keys, and substrings of messages) in the
+    strain blocks and categorical_effects; alias the clone column name itself."""
+    labels: dict[str, str] = {}
+    for col in columns:
+        found: set[str] = set()
+        summ = result.get("strain_summary")
+        if isinstance(summ, Mapping):
+            found.update(str(lv.get("label")) for lv in summ.get("levels") or []
+                         if isinstance(lv, Mapping) and lv.get("label") is not None)
+        oofl = result.get("oof_levels")
+        if isinstance(oofl, Mapping):
+            found.update(str(v) for v in oofl.get(col) or [] if v is not None)
+        for lv in found:
+            new = alias_level(col, lv)
+            labels[lv] = str(new) if new != lv else f"level_{_hash(col + chr(31) + lv)[:8]}"
+    names = {c: alias(c) for c in columns}
+    ordered = sorted(labels, key=len, reverse=True)
+
+    def text(v: str) -> str:
+        if v in labels:
+            return labels[v]
+        if v in names:
+            return names[v]
+        for lv in ordered:
+            if lv in v:
+                v = v.replace(lv, labels[lv])
+        for c, a in names.items():
+            if a != c and c in v:
+                v = v.replace(c, a)
+        return v
+
+    def walk(obj: object) -> object:
+        if isinstance(obj, str):
+            return text(obj)
+        if isinstance(obj, Mapping):
+            return {(text(k) if isinstance(k, str) else k): walk(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [walk(v) for v in obj]
+        return obj
+
+    out = dict(out)
+    for key in _STRAIN_BLOCKS:
+        if key in out:
+            out[key] = walk(out[key])
+    ce = out.get("categorical_effects")
+    if isinstance(ce, Mapping):
+        out["categorical_effects"] = {
+            **ce,
+            "features": [
+                walk(f) if isinstance(f, Mapping) and str(f.get("name")) in columns else f
+                for f in ce.get("features") or []
+            ],
+        }
+    if isinstance(out.get("proposals"), list):
+        out["proposals"] = [
+            {**p, "clone": walk(p["clone"])} if isinstance(p, dict) and isinstance(p.get("clone"), dict) else p
+            for p in out["proposals"]
+        ]
     return out
 
 
