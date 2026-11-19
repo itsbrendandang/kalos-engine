@@ -115,7 +115,7 @@ def test_clean_v3_migrates_once_and_is_idempotent(tmp_path):
     after = _snapshot(db)
     assert after["audit"] == before["audit"]
     assert after["campaigns"] == before["campaigns"]
-    assert after["versions"] == [(2,), (3,), (4,), (5,)]
+    assert after["versions"] == [(2,), (3,), (4,), (5,), (6,)]
     assert {"audit_log_no_update", "audit_log_no_delete"} <= set(after["triggers"])
     assert not any("backup" in t for t in after["tables"])  # no repair table appeared
     assert migrate.migrate_up(db).action == "noop"
@@ -127,7 +127,7 @@ def test_clean_v3_dry_run_changes_nothing(tmp_path):
     db = _clean_v3(tmp_path)
     before = _snapshot(db)
     plan = migrate.migrate_up(db, dry_run=True).plan_text
-    assert "schema v3 -> v5" in plan
+    assert "schema v3 -> v6" in plan
     assert _snapshot(db) == before
     assert _backups(db) == []
 
@@ -259,7 +259,7 @@ def test_status_on_healthy_db_is_ok_and_exit_zero(tmp_path):
 def test_status_on_clean_v3_shows_plan_and_exit_zero(tmp_path):
     db = _clean_v3(tmp_path)
     report, healthy = migrate.status_report(db)
-    assert healthy and "schema v3 -> v5" in report
+    assert healthy and "schema v3 -> v6" in report
 
 
 def test_status_on_unversioned_v2_tables_is_unhealthy(tmp_path):
