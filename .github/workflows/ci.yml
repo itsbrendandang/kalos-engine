@@ -4,7 +4,7 @@ name: CI
 #
 # The test suite is CPU-bound GP fits. It runs as ONE suite split across
 # parallel jobs: every test except the `serial` determinism tests goes to one of
-# 8 shards, cut into contiguous runs of equal recorded duration (pytest-split's
+# 6 shards, cut into contiguous runs of equal recorded duration (pytest-split's
 # default duration_based_chunks, using the committed `.test_durations`; being
 # contiguous keeps a module's tests, and the analyses they share, together).
 # Each shard runs its share in parallel (pytest-xdist, one worker per core,
@@ -97,24 +97,25 @@ jobs:
         run: uv run --no-sync mypy
 
   tests:
-    name: pytest (shard ${{ matrix.shard }}/8)
+    name: pytest (shard ${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
-    # A balanced shard takes about 1/8 of the suite. The cap is the hang guard.
+    # A balanced shard takes about 1/6 of the suite (about 2-4 min of tests). The
+    # cap is a hang guard, far above that.
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
       - *setup-uv
       - *install
-      - name: pytest (shard ${{ matrix.shard }}/8, parallel, all but serial)
+      - name: pytest (shard ${{ matrix.shard }}/6, parallel, all but serial)
         run: >
           cp .test_durations ci-durations.json 2>/dev/null || echo '{}' > ci-durations.json;
           uv run --no-sync python -m pytest -v -m "not serial" -n auto --dist loadgroup
           -o faulthandler_timeout=900
-          --splits 8 --group ${{ matrix.shard }}
+          --splits 6 --group ${{ matrix.shard }}
           --durations-path=ci-durations.json --store-durations --clean-durations
           --durations=25
       - name: Upload this shard's test durations
@@ -153,7 +154,10 @@ jobs:
           path: shards
       - name: Merge the shard durations into one .test_durations
         run: |
-          jq -s 'add | to_entries | sort_by(.key) | from_entries' shards/*/ci-durations.json > .test_durations
+          # `--dist loadgroup` reports grouped tests as `<nodeid>@<group>`; pytest-split
+          # looks them up by the plain node id, so the suffix is dropped.
+          jq -s 'add | with_entries(.key |= sub("@[A-Za-z0-9_]+$"; "")) | to_entries | sort_by(.key) | from_entries' \
+            shards/*/ci-durations.json > .test_durations
           jq -r '"\(length) tests, \((([.[]] | add) / 60) | floor) min of test time in total"' .test_durations
       - uses: actions/upload-artifact@v4
         with:
