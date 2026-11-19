@@ -13,6 +13,25 @@ from kalos.portal.analysis_parts.units import anonymize_target_unit
 from kalos.portal.uploads import ParsedUpload, UploadRejected, clip_name
 
 
+def _alias_cv_grouping(block: dict, alias: Callable[[str], str]) -> dict:
+    """F05 `cv_grouping`: a grouping column named like an identifier (`batch_id`)
+    is aliased in `used`, every candidate and every warning (message included)."""
+    def col(d: object) -> object:
+        if isinstance(d, dict) and isinstance(d.get("column"), str):
+            name = d["column"]
+            d = {**d, "column": alias(name)}
+            if isinstance(d.get("message"), str) and alias(name) != name:
+                d["message"] = d["message"].replace(name, alias(name))
+        return d
+
+    out = dict(block)
+    out["used"] = col(out.get("used"))
+    for key in ("candidates", "warnings"):
+        if isinstance(out.get(key), list):
+            out[key] = [col(e) for e in out[key]]
+    return out
+
+
 def _anonymize_result(
     result: dict, *, categorical_levels: Mapping[str, Sequence[str]] | None = None
 ) -> dict:
@@ -53,6 +72,8 @@ def _anonymize_result(
     out = dict(result)
     if out.get("group_col"):
         out["group_col"] = alias(out["group_col"])
+    if isinstance(out.get("cv_grouping"), dict):
+        out["cv_grouping"] = _alias_cv_grouping(out["cv_grouping"], alias)
     if isinstance(out.get("target"), str):
         out["target"] = alias(out["target"])
     if isinstance(out.get("target_unit"), dict):

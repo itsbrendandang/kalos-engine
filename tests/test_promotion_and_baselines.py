@@ -383,7 +383,10 @@ def test_cv_logo_declines_above_the_group_cap():
     out = _analyze(_replicated_sheet_many_groups(n_groups=20, reps=3))
     logo = out["cv_logo"]
     assert logo["spearman"] is None
-    assert logo["n_groups"] == 20
+    # F05: declared groups are merged with near-duplicate recipes (within 0.05 of
+    # each input's range), so two of the 20 random recipes may form one group.
+    assert LOGO_MAX_GROUPS < logo["n_groups"] <= 20
+    assert logo["n_groups"] == out["cv_n_groups"]
     assert str(LOGO_MAX_GROUPS) in logo["reason"]
 
 

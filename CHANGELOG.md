@@ -4,6 +4,11 @@ Newest first.
 
 ## Unreleased
 
+### Changed - leak-free cross-validation grouping (F05, ML audit B2; numbers change)
+
+- As-run replicates (settings within 0.05 of each input's range) are held out together; batch, lot, plate, block, round, date and week columns are no longer fitted or proposed and, with scale columns and campaign rounds (now carried by the fold), are cross-validated as groups. The lowest held-out score drives `cv_spearman`, the conformal calibration and the verdict; `cv_grouping` reports every candidate and warnings.
+- False trust on sheets with no input signal (`python -m kalos.bench.trust_leaks`, 20 seeds): text/numeric batch column 1.00 -> 0.10, campaign rounds 0.95 -> 0.10, as-run replicates 1.00 -> 0.15. Batch columns are no longer proposed (1.00 -> 0.00).
+
 ### Changed - honest interval labels (F02, ML audit B1)
 
 - Every band carries `coverage_basis`: `held_out_past_runs` for the conformal bands, `model_based` for the GP's own bands and quantiles.
