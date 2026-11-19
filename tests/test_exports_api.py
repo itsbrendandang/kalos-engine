@@ -435,7 +435,7 @@ def _ranges_campaign(store: CampaignStore, df: pd.DataFrame | None = None, **ove
     return cid
 
 
-def _ranges(tc, cid, body=None, token="a-read"):
+def _ranges(tc, cid, body=None, token="a-writeonly"):
     return tc.post(f"/api/campaigns/{cid}/operating-ranges",
                    json={"threshold": 15.0} if body is None else body, headers=H(token))
 
@@ -575,13 +575,18 @@ def test_operating_ranges_minimize_goal_flips_direction(env):
 # --- cross-tenant + scope on every route ---------------------------------------------- #
 
 
+# (method, path, request kwargs, required scope). Every route here requires
+# exactly one scope; the token holding only the other one gets 403.
 ROUTES = [
-    ("GET", "/api/campaigns/{cid}/export/rows", {}),
-    ("GET", "/api/campaigns/{cid}/export/rows?format=csv", {}),
-    ("GET", "/api/campaigns/{cid}/results/history", {}),
-    ("GET", "/api/campaigns/{cid}/operating-ranges?threshold=1", {}),
-    ("POST", "/api/campaigns/{cid}/operating-ranges", {"json": {"threshold": 1.0}}),
+    ("GET", "/api/campaigns/{cid}/export/rows", {}, "read"),
+    ("GET", "/api/campaigns/{cid}/export/rows?format=csv", {}, "read"),
+    ("GET", "/api/campaigns/{cid}/results/history", {}, "read"),
+    ("GET", "/api/campaigns/{cid}/operating-ranges?threshold=1", {}, "read"),
+    # POST occupies the analysis slot and the web mints `write` for non-GET (S1).
+    ("POST", "/api/campaigns/{cid}/operating-ranges", {"json": {"threshold": 1.0}}, "write"),
 ]
+_HOLDS = {"read": "a-read", "write": "a-writeonly"}
+_LACKS = {"read": "a-writeonly", "write": "a-read"}
 
 
 def _raw(resp) -> tuple:
@@ -591,7 +596,7 @@ def _raw(resp) -> tuple:
 def test_foreign_campaign_is_byte_identical_to_missing_on_every_route(env):
     tc, store = env
     b_cid = _ranges_campaign_for(store, "globex")
-    for method, path, kw in ROUTES:
+    for method, path, kw, _scope in ROUTES:
         foreign = tc.request(method, path.format(cid=b_cid), headers=H("a-admin"), **kw)
         missing = tc.request(method, path.format(cid="cmp_" + uuid.uuid4().hex), headers=H("a-admin"), **kw)
         malformed = tc.request(method, path.format(cid="cmp_nope"), headers=H("a-admin"), **kw)
@@ -613,10 +618,11 @@ def _ranges_campaign_for(store: CampaignStore, tenant: str) -> str:
 def test_scope_is_checked_before_the_campaign_is_looked_at(env):
     tc, store = env
     cid = _ranges_campaign_for(store, "acme")
-    for method, path, kw in ROUTES:
+    for method, path, kw, scope in ROUTES:
         for target in (cid, "cmp_" + uuid.uuid4().hex, "cmp_nope"):
-            r = tc.request(method, path.format(cid=target), headers=H("a-writeonly"), **kw)
+            r = tc.request(method, path.format(cid=target), headers=H(_LACKS[scope]), **kw)
             assert r.status_code == 403, (method, path)
-        ok = tc.request(method, path.format(cid=cid), headers=H("a-read"), **kw)
+            assert r.json()["error"] == f"requires '{scope}' scope", (method, path, r.text)
+        ok = tc.request(method, path.format(cid=cid), headers=H(_HOLDS[scope]), **kw)
         assert ok.status_code == 200, (method, path, ok.text)
         assert tc.request(method, path.format(cid=cid), **kw).status_code == 401
