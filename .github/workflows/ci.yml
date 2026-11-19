@@ -3,12 +3,15 @@ name: CI
 # The checks the README documents under "Development": ruff, mypy, pytest.
 #
 # The test suite is CPU-bound GP fits. It runs as ONE suite split across
-# parallel jobs: every test except the `serial` determinism tests is assigned to
-# one of N shards by its recorded duration (pytest-split, least_duration, using
-# the committed `.test_durations`), and each shard runs its share in parallel
-# (pytest-xdist, one worker per core). The `serial` tests run in their own job
-# without xdist. Together the shards and the serial job are the full suite, slow
-# tests included, on every PR and every push to main; no test runs twice.
+# parallel jobs: every test except the `serial` determinism tests goes to one of
+# 8 shards, cut into contiguous runs of equal recorded duration (pytest-split's
+# default duration_based_chunks, using the committed `.test_durations`; being
+# contiguous keeps a module's tests, and the analyses they share, together).
+# Each shard runs its share in parallel (pytest-xdist, one worker per core,
+# `--dist loadgroup` so tests sharing an expensive fixture via an `xdist_group`
+# mark run on one worker). The `serial` tests run in their own job without
+# xdist. Together the shards and the serial job are the full suite, slow tests
+# included, on every PR and every push to main; no test runs twice.
 #
 # Keeping the shards balanced: each shard uploads the measured durations of the
 # tests it ran, and the `durations` job merges them into one `test-durations`
@@ -103,17 +106,18 @@ jobs:
       - *install
       - name: pytest (shard ${{ matrix.shard }}/8, parallel, all but serial)
         run: >
-          cp .test_durations "$RUNNER_TEMP/durations.json" 2>/dev/null || echo '{}' > "$RUNNER_TEMP/durations.json";
-          uv run --no-sync python -m pytest -q -m "not serial" -n auto
-          --splits 8 --group ${{ matrix.shard }} --splitting-algorithm least_duration
-          --durations-path "$RUNNER_TEMP/durations.json" --store-durations --clean-durations
+          cp .test_durations ci-durations.json 2>/dev/null || echo '{}' > ci-durations.json;
+          uv run --no-sync python -m pytest -v -m "not serial" -n auto --dist loadgroup
+          -o faulthandler_timeout=900
+          --splits 8 --group ${{ matrix.shard }}
+          --durations-path=ci-durations.json --store-durations --clean-durations
           --durations=25
       - name: Upload this shard's test durations
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: durations-shard-${{ matrix.shard }}
-          path: ${{ runner.temp }}/durations.json
+          path: ci-durations.json
           if-no-files-found: ignore
           retention-days: 14
 
@@ -144,7 +148,7 @@ jobs:
           path: shards
       - name: Merge the shard durations into one .test_durations
         run: |
-          jq -s 'add | to_entries | sort_by(.key) | from_entries' shards/*/durations.json > .test_durations
+          jq -s 'add | to_entries | sort_by(.key) | from_entries' shards/*/ci-durations.json > .test_durations
           jq -r '"\(length) tests, \((([.[]] | add) / 60) | floor) min of test time in total"' .test_durations
       - uses: actions/upload-artifact@v4
         with:
