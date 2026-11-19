@@ -80,6 +80,7 @@ GLOSSARY: dict[str, str] = {
     'dropped_constant': 'A column with one value cannot show any effect, so the model learns nothing from it.',
     'dropped_constant_on_fitted_rows': 'A column that only changes in rows the model could not use cannot show any effect in the rows it learned from.',
     'dropped_all_blank': 'A column with no values cannot teach the model anything.',
+    'dropped_cv_group': 'A batch, lot, plate, date or round is when or how a run happened, not a setting; it is used to hold whole batches out when the model is checked, so the check cannot lean on batch-mates.',
     'dropped_non_numeric': 'A column of mostly text cannot be placed on a scale, so the model cannot learn from it as a setting.',
     'dropped_sparse': 'A column that is mostly blank would leave out most runs if it were used, so it was left out instead.',
     'user_excluded': 'You chose to leave this column out, so no suggestion changes it.',

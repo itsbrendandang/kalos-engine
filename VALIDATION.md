@@ -129,3 +129,27 @@ measurement for 60-81% of proposals, a 95% range for 76-86%. The engine says so:
 proposal interval carries `coverage_basis: "held_out_past_runs"` and a `caveat` with
 these measured numbers (`docs/CAMPAIGNS_API.md`, "Coverage basis and the proposal
 caveat").
+
+---
+
+# Trust verdict under leaks (false-trust rates)
+
+Every scenario below has **no learnable input signal**, so any "trusted" verdict is
+false trust (ML audit c1, c2, f1). `python -m kalos.bench.trust_leaks --seeds 20`;
+results in `benchmarks/results/trust_leaks_*.json`. Batch scenarios: 6 batches x 8
+runs clustered in space (as campaign rounds are), batch offset sd 1.0, noise sd 0.2.
+Jitter: 15 recipes x 4 replicates recorded as run, recipe effect sd 1.0.
+
+| Scenario (20 seeds) | `clears_floor` before | after F05 (leak-free CV) | batch proposed as a setpoint before -> after |
+|---|---|---|---|
+| text `batch` column | 1.00 | 0.10 | 1.00 -> 0.00 |
+| numeric `batch` column | 1.00 | 0.10 | 1.00 -> 0.00 |
+| campaign rounds (fold history) | 0.95 | 0.10 | - |
+| no batch column (structure invisible) | 0.95 | 0.95 | - |
+| as-run replicates, 0.2% jitter | 1.00 | 0.15 | - |
+| as-run replicates, 1% jitter | 1.00 | 0.15 | - |
+| pure noise, n=12 / 20 / 40 | 0.30 / 0.10 / 0.05 | 0.30 / 0.10 / 0.10 | - |
+
+When the batch structure is not on the sheet at all, no grouping can see it: record
+the batch, plate, lot or date column, or run the campaign through the fold (rounds are
+carried automatically).

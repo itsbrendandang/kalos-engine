@@ -469,6 +469,43 @@ Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
   chosen by qLogNEI, not by this EI. `maximize` is false when the campaign
   setup goal is minimize (then EI / p_improve are for going BELOW the incumbent).
 
+### Leak-free cross-validation grouping (F05; numbers change)
+
+Code: `kalos/portal/analysis_parts/cv_grouping.py`. ML audit B2: the held-out
+score leaked across as-run replicates (CV 0.95, 100% false trust on a sheet with
+no input signal), batches (CV 0.61, 95% false trust) and campaign rounds.
+
+- Replicates recorded as run are one CV group: rows whose settings are all within
+  `NEAR_DUPLICATE_TOL` (0.05 of each input's box width; complete linkage,
+  Chebyshev) and share every categorical label and missing-value pattern. On a
+  sheet whose groups are the exact recipes nothing changes.
+- Batch-like columns (name ending in batch, lot, plate, block, round, date, week,
+  run date, optionally with an id/no/number suffix, e.g. `media_lot`, `Batch_ID`;
+  not `batch_volume_mL`) are never fitted or proposed (unless declared as
+  features); provenance status `dropped_cv_group`. They, scale columns (scale,
+  vessel, working volume, reactor size; kept as inputs) and the campaign round of
+  folded rows (`CampaignStore.plan_fold` sets `df.attrs["kalos_round_index"]`
+  from the fold history) are CV-group candidates, merged with the replicate
+  groups so neither can straddle a split.
+- Every candidate with at least 3 groups is cross-validated; the **lowest**
+  held-out Spearman drives `cv_spearman`, `cv_ci95`, `cv_n_groups`, `oof`,
+  `conformal_q`, the per-proposal interval calibration, `reliability` and the
+  promotion gate. `cv_logo` runs over the binding grouping when it is a column or
+  round.
+- `cv_grouping` (new): `{used: {basis, column, n_groups, merged_with_replicates?},
+  candidates: [{basis: replicate_clusters | group_column | declared_column |
+  column | scale_column | campaign_round, column, n_groups, n_levels?,
+  merged_with_replicates?, evaluable, spearman, ci95, reason, used,
+  same_partition_as?}], rule, replicate_tolerance, n_exact_recipes,
+  n_replicate_clusters, min_groups, warnings: [{code, message, column?}]}`.
+- Warning codes: `too_few_cv_groups` (< 3 groups: no held-out score; the verdict
+  refuses, F04), `few_cv_groups` (3-4 groups: coarse), `structure_not_checkable`
+  (a batch/scale/round candidate with < 3 levels), `near_duplicate_recipes_grouped`
+  (distinct recipes merged as near-duplicates).
+- Not changed: the replicate noise model and the drivers' unit of analysis still
+  use exact recipe matches; fold fits still use one start and raw rows (ML audit
+  S2 is open).
+
 ## Not in this slice
 
 - Background jobs for reanalyze (it still runs synchronously; upload has a job route).

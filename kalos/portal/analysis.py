@@ -49,6 +49,17 @@ from kalos.portal.analysis_parts.columns import (
     _numeric_cols,
     _resolve_columns,
 )
+from kalos.portal.analysis_parts.cv_grouping import (
+    MIN_GROUPS_FOR_CV,
+    ROUND_ATTR,
+    is_batch_like,
+    leak_free_cv,
+    replicate_clusters,
+    round_index_from_attrs,
+    same_partition,
+    structure_candidates,
+    union_groups,
+)
 from kalos.portal.analysis_parts.diagnostics import (
     _data_drops_block,
     _data_findings,
@@ -330,6 +341,10 @@ def _analyze_body(
     # Header decision from the upload parser (`uploads.choose_header`), read before
     # any frame operation below could drop the attrs.
     header_info: dict = dict(df.attrs.get("kalos_header") or {})
+    # F05: the campaign round of each row, attached by a campaign re-analysis
+    # (`CampaignStore.plan_fold`); read before any frame operation drops attrs.
+    round_attr = df.attrs.get(ROUND_ATTR)
+    frame_index = df.index
     original_columns = {str(c) for c in df.columns}
     n_header_columns = int(df.shape[1])
     df = _dedupe_columns(df.dropna(axis=1, how="all"))
@@ -403,6 +418,13 @@ def _analyze_body(
     )
     # With no declared roles, text factors are auto-detected (see `_auto_categorical`);
     # they are reported as findings so the uploader can confirm or override them.
+    # F05 / audit S1: a batch, lot, plate, block, date, week or round column is
+    # the run's circumstances, never a setpoint. It is not fitted or proposed
+    # (unless the caller declared it a feature); it becomes a CV-group candidate.
+    batch_cols = [c for c in [*cont_feats, *cat_feats] if is_batch_like(str(c)) and c not in declared]
+    if batch_cols:
+        cont_feats = [c for c in cont_feats if c not in batch_cols]
+        cat_feats = [c for c in cat_feats if c not in batch_cols]
     auto_cats = list(cat_feats) if roles is None else []
     # PART 2 leakage guard: the constraint column (e.g. "purity_pct") is
     # normally already excluded from the feature set by `profile.outcome_hint`
@@ -714,6 +736,14 @@ def _analyze_body(
         recipe_gf[c] = df.loc[keep_index, c].fillna("").astype(str)
     recipe_key = row_hash_groups(recipe_gf)
 
+    # F05: replicates recorded as run (settings jittered) are one group, not
+    # distinct recipes. Canonical ids (first appearance), so a sheet whose
+    # clusters ARE the exact recipes gets exactly the old group labels.
+    cont_widths = (bounds[1] - bounds[0])[: len(cont_feats)]
+    rep_clusters = replicate_clusters(
+        Xc_raw.to_numpy(float), cont_widths,
+        recipe_gf[[c for c in kept_cats]] if kept_cats else None,
+    )
     if gcol:
         # fillna("") before astype(str), matching every other cast of this
         # column family in this file (recipe_gf just above, and the label
@@ -732,12 +762,41 @@ def _analyze_body(
         # No declared barrier, so the recipe itself is the safest CV group: two
         # replicates of one recipe must never straddle a fold.
         groups = recipe_key
+    if not gcol and not same_partition(rep_clusters, recipe_key):
+        groups = rep_clusters
+    elif gcol and not same_partition(union_groups(groups, rep_clusters), groups):
+        merged_gcol = union_groups(groups, rep_clusters)
+        if len(set(merged_gcol.tolist())) >= MIN_GROUPS_FOR_CV:
+            groups = merged_gcol.tolist()
 
     # honest grouped cross-validation: pooled out-of-fold predictions + a
     # group-level bootstrap CI, all through the single leakage-checked splitter.
     _progress("fitting", 0.15)
     rep = grouped_cv_report(
         X, y, groups=groups, n_splits=5, bounds=bounds, cat_dims=cat_dims, n_repeats=CV_N_REPEATS,
+    )
+    # F05: every batch/lot/plate/date/round/scale grouping is cross-validated
+    # too, and the LOWEST held-out score drives everything below (trust,
+    # conformal, calibration). Run after the primary CV so a sheet with no such
+    # structure consumes the seeded RNG exactly as before.
+    primary_basis = (
+        ("declared_column" if roles is not None and roles.groups else "group_column") if gcol
+        else "replicate_clusters"
+    )
+    cv_grouping, rep, groups, binding_basis = leak_free_cv(
+        rep, groups, primary_basis, gcol,
+        structure_candidates(
+            df.loc[keep_index],
+            exclude=[str(target), *([str(gcol)] if gcol else []),
+                     *([str(constraint["column"])] if constraint is not None else [])],
+            round_index=round_index_from_attrs(round_attr, frame_index, keep_index),
+            clusters=rep_clusters,
+        ),
+        lambda g: grouped_cv_report(
+            X, y, groups=g, n_splits=5, bounds=bounds, cat_dims=cat_dims, n_repeats=CV_N_REPEATS,
+        ),
+        n_exact_recipes=len(set(np.asarray(recipe_key).tolist())),
+        n_clusters=len(set(rep_clusters.tolist())),
     )
     rho = rep["spearman"]
     # Repeat-0-only: the point estimate and the OOF pools below stay anchored to
@@ -860,7 +919,7 @@ def _analyze_body(
     # fits under CV, no GP involved - unlike the grouped surrogate CV above, so
     # computing it here costs essentially nothing next to the GP fits this
     # function already pays for.
-    feas = feasibility_cv_report(X, y, groups=recipe_key)
+    feas = feasibility_cv_report(X, y, groups=groups)
 
     # PART 1: feasibility-gated production proposals. `feas` above already
     # cross-validates the classifier for the promotion verdict below; this
@@ -1011,7 +1070,7 @@ def _analyze_body(
     # timing this cap is tuned against) - absence is always explained via
     # `reason`, never silent.
     cv_logo: dict[str, Any]
-    if gcol is None:
+    if gcol is None and binding_basis == "replicate_clusters":
         cv_logo = {
             "spearman": None,
             "n_groups": None,
@@ -1448,6 +1507,7 @@ def _analyze_body(
             declared={str(c) for c in declared},
             declared_ids={str(c) for c in roles.ids} if roles is not None else set(),
             declared_features={str(c) for c in roles.features} if roles is not None else set(),
+            cv_group_columns={str(c) for c in batch_cols},
         )
     )
 
@@ -1485,6 +1545,9 @@ def _analyze_body(
         "cv_spearman": None if rho != rho else round(rho, 3),
         "cv_ci95": ci95,
         "cv_n_groups": rep["n_groups"],
+        # F05: which grouping the held-out numbers above come from, every
+        # candidate grouping's score, and warnings (docs/CAMPAIGNS_API.md).
+        "cv_grouping": cv_grouping,
         # How many partitions actually went into `cv_ci95` above - the requested
         # ceiling (`CV_N_REPEATS`) collapses to 1 when the sheet has too few
         # groups for a second, genuinely different partition to exist (see
