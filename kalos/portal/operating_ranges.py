@@ -14,22 +14,34 @@ What is computed, stated so nobody over-reads it:
    analysis's own feature list, categorical features and design box
    (`feature_ranges`). The rows are selected with the analysis's cell rules
    (`kalos.portal.cells`); if the refit does not see exactly the analysis's `n`
-   rows and `best`, the refit is refused (`refit_data_mismatch`) rather than
-   describing a different dataset.
-3. A scrambled Sobol sample of the continuous design box (categorical inputs
-   held at the best measured recipe's levels) is scored with the LATENT GP
-   posterior: P(f(x) >= threshold) for a maximize goal, P(f(x) <= threshold)
-   for minimize. A point "meets the rule" when that probability is at least
-   `probability`.
-4. `method = "gp_posterior_box"`: starting from the best measured recipe, the
-   largest normalized cube (equal relative half-width per feature) that holds
-   no failing sample is grown face by face (features in analysis order, lower
-   face then upper) until each face touches a failing sample or the design
-   bound. The result is MAXIMAL (no face can move out without taking in a
-   failing sample), not necessarily the maximum-volume box. It is then
-   tightened to the extremes of the passing samples inside it, so every
-   reported endpoint is a sampled coordinate. Every sample inside meets the
-   rule. It is a model-based statement that must be verified experimentally.
+   rows and `best` (the max for a maximize goal, the min for minimize), the
+   refit is refused (`refit_data_mismatch`) rather than describing a different
+   dataset.
+2b. The goal is the one the ANALYSIS was computed for (`analysis.goal`,
+   maximize when absent). The campaign's stored setup must still be the one the
+   analysis applied: a different stored goal is refused (`setup_goal_mismatch`),
+   any other change (bounds, constraints, target unit; compared by setup hash,
+   as `settings_in_sync`) is refused (`setup_out_of_sync`), and a setup the
+   analysis could not apply is refused (`setup_not_applied`).
+3. A scrambled Sobol sample of the SETUP REGION - the continuous design box
+   narrowed by the setup bounds the analysis applied (`setup.bounds_applied`),
+   minus every point breaking a linear constraint it applied
+   (`setup.constraints_applied`) - with categorical inputs held at the best
+   measured recipe's levels, is scored with the LATENT GP posterior:
+   P(f(x) >= threshold) for a maximize goal, P(f(x) <= threshold) for minimize.
+   A point "meets the rule" when it is in the setup region and that probability
+   is at least `probability`. The anchor is the best measured recipe INSIDE the
+   setup region.
+4. `method = "gp_posterior_box"`: starting from the anchor, the largest
+   normalized cube (equal relative half-width per feature) that holds no
+   failing sample (a constraint violator counts as failing) is grown face by
+   face (features in analysis order, lower face then upper) until each face
+   touches a failing sample or the setup bound. The result is MAXIMAL (no face
+   can move out without taking in a failing sample), not necessarily the
+   maximum-volume box. It is then tightened to the extremes of the passing
+   samples inside it, so every reported endpoint is a sampled coordinate. Every
+   sample inside meets the rule. It is a model-based statement that must be
+   verified experimentally.
 
 Torch-free at import time: torch/botorch load inside `fit_and_score`.
 """
@@ -80,8 +92,10 @@ class FitPlan:
 
     X: np.ndarray
     y: np.ndarray
-    lower: np.ndarray            # continuous dims only, analysis order
-    upper: np.ndarray
+    lower: np.ndarray            # continuous dims only, analysis order: the SAMPLING box
+    upper: np.ndarray            # (design box narrowed by the setup bounds)
+    design_lower: np.ndarray     # the analysis design box (feature_ranges)
+    design_upper: np.ndarray
     cont_names: list[str]        # names as the analysis shows them
     cat_names: list[str]
     cat_levels: list[list[str]]  # per categorical, sorted labels (code = index)
@@ -94,6 +108,22 @@ class FitPlan:
     target: str
     best_index: int
     context: dict[str, Any]
+    # `sum(coef * x[idx]) >= rhs` over the continuous dims (setup constraints in
+    # ">=" form); `setup` is the report block (what was applied, from where).
+    constraints: list[tuple[list[int], list[float], float]] = field(default_factory=list)
+    setup: dict[str, Any] = field(default_factory=dict)
+
+    def feasible(self, x_cont: np.ndarray) -> np.ndarray:
+        """Row mask over continuous points: inside the sampling box and every
+        setup constraint holds (the analysis's own tolerances)."""
+        from kalos.portal.setup_settings import BOX_TOL, LIN_TOL
+
+        x = np.asarray(x_cont, float)
+        tol = BOX_TOL * np.maximum(1.0, np.maximum(np.abs(self.lower), np.abs(self.upper)))
+        ok = np.all((x >= self.lower - tol) & (x <= self.upper + tol), axis=1)
+        for idx, coef, rhs in self.constraints:
+            ok &= x[:, idx] @ np.asarray(coef, float) >= rhs - LIN_TOL * max(1.0, abs(rhs))
+        return ok & np.isfinite(x).all(axis=1)
 
 
 def _finite(value: Any) -> float | None:
@@ -103,20 +133,82 @@ def _finite(value: Any) -> float | None:
     return v if math.isfinite(v) else None
 
 
-def resolve_goal(setup: dict[str, Any] | None) -> tuple[str, str]:
-    """`(goal, source)` from the campaign's `setup` settings document. Default
-    maximize (the engine's own objective) when no goal was set."""
-    value = (setup or {}).get("value") if isinstance(setup, dict) else None
-    goal = value.get("goal") if isinstance(value, dict) else None
-    if goal is None:
-        return "maximize", "default"
-    if goal in ("maximize", "minimize"):
-        return str(goal), "setup"
-    raise NotComputed(
-        "goal_unrecognized",
-        "the campaign setup names a goal this engine does not recognize",
-        "set the campaign setup goal to 'maximize' or 'minimize'",
+_GOALS = ("maximize", "minimize")
+_REANALYZE = "re-analyze the campaign (POST /api/campaigns/{id}/reanalyze) so it uses the current setup"
+
+
+def resolve_goal(
+    setup: dict[str, Any] | None, analysis: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """`(goal, source)`: the goal the published ANALYSIS was computed for, after
+    checking the campaign's stored `setup` settings row still matches it.
+
+    The analysis's `best`, its incumbent and its proposals all follow
+    `analysis.goal` (maximize when the analysis carries none), so the refit must
+    too. A stored goal that differs is refused (`setup_goal_mismatch`) rather
+    than silently describing the other direction; any other setup change since
+    the analysis is `setup_out_of_sync`; a setup the analysis refused to apply is
+    `setup_not_applied`. `source` is "setup" when the analysis applied a
+    campaign setup, else "default"."""
+    from kalos.portal.setup_settings import (
+        DEFAULT_SETUP_HASH,
+        SetupInvalid,
+        normalize_setup,
+        setup_hash,
     )
+
+    value = (setup or {}).get("value") if isinstance(setup, dict) else None
+    stored = value.get("goal") if isinstance(value, dict) else None
+    if stored is not None and stored not in _GOALS:
+        raise NotComputed(
+            "goal_unrecognized",
+            "the campaign setup names a goal this engine does not recognize",
+            "set the campaign setup goal to 'maximize' or 'minimize'",
+        )
+    analysis = analysis or {}
+    goal = analysis.get("goal", "maximize")
+    if goal not in _GOALS:
+        raise NotComputed(
+            "goal_unrecognized", "the published analysis records a goal this engine does not recognize",
+            _REANALYZE,
+        )
+    stored_goal = stored or "maximize"
+    if stored_goal != goal:
+        raise NotComputed(
+            "setup_goal_mismatch",
+            f"the campaign setup goal is {stored_goal} but the published analysis was computed "
+            f"for {goal}; its best run, incumbent and model direction describe the other goal",
+            _REANALYZE,
+            diagnostics={"setup_goal": stored_goal, "analysis_goal": goal},
+        )
+    block = analysis.get("setup")
+    block = block if isinstance(block, dict) else None
+    if value is None:
+        current = DEFAULT_SETUP_HASH
+    else:
+        try:
+            current = setup_hash(normalize_setup(value))
+        except SetupInvalid as exc:
+            raise NotComputed(
+                "setup_unreadable", "the campaign's stored setup could not be read",
+                "save the setup again (PUT /api/campaigns/{id}/setup)",
+            ) from exc
+    recorded = block.get("hash") if block is not None else None
+    if current != (recorded if isinstance(recorded, str) else DEFAULT_SETUP_HASH):
+        raise NotComputed(
+            "setup_out_of_sync",
+            "the campaign setup (bounds, linear constraints or target unit) changed after the "
+            "published analysis was computed, so its region and threshold units may not match",
+            _REANALYZE,
+        )
+    if block is not None and block.get("status") != "applied":
+        raise NotComputed(
+            "setup_not_applied",
+            "the published analysis could not apply the campaign setup (see its setup.refusal), "
+            "so no region honoring the setup can be described",
+            "fix the campaign setup and re-analyze the campaign",
+        )
+    return str(goal), "setup" if block is not None else "default"
 
 
 def check_preconditions(
@@ -254,8 +346,11 @@ def build_plan(
     idx = np.flatnonzero(ok)
     y = y_all[idx]
     expected_best = _finite(analysis.get("best"))
+    # `analysis.best` follows the analysis goal: the min for minimize, else the max.
+    extreme = (y.min() if goal == "minimize" else y.max()) if len(y) else None
     if len(idx) != n_expected or (
-        expected_best is not None and len(y) and round(float(y.max()), 4) != round(expected_best, 4)
+        expected_best is not None and extreme is not None
+        and round(float(extreme), 4) != round(expected_best, 4)
     ):
         raise NotComputed(
             "refit_data_mismatch",
@@ -273,9 +368,11 @@ def build_plan(
             "measure runs that vary every process input",
         )
     direction = "at_least" if goal == "maximize" else "at_most"
-    best_index = int(np.argmax(y) if goal == "maximize" else np.argmin(y))
-    return FitPlan(
-        X=X, y=y, lower=lower, upper=upper, cont_names=cont, cat_names=[str(c) for c in cats],
+    s_lower, s_upper, constraints, setup_report = _setup_region(
+        analysis.get("setup"), cont, lower, upper)
+    plan = FitPlan(
+        X=X, y=y, lower=s_lower, upper=s_upper, design_lower=lower, design_upper=upper,
+        cont_names=cont, cat_names=[str(c) for c in cats],
         cat_levels=cat_levels,
         cat_display=[
             [display_level(column_for[c], lvl) for lvl in levels]
@@ -283,8 +380,80 @@ def build_plan(
         ],
         direction=direction, goal=goal, goal_source=goal_source,
         threshold=float(threshold), probability=float(probability), target=target,
-        best_index=best_index, context={},
+        best_index=-1, context={}, constraints=constraints, setup=setup_report,
     )
+    # The anchor is the best measured recipe INSIDE the setup region.
+    inside = plan.feasible(X[:, : len(cont)])
+    if not inside.any():
+        raise NotComputed(
+            "no_measured_run_in_setup_region",
+            "no measured run lies inside the campaign setup's bounds and linear constraints, so "
+            "there is no measured anchor to grow a region from",
+            "measure runs inside the setup region, or widen the setup bounds/constraints",
+        )
+    pool = np.flatnonzero(inside)
+    plan.best_index = int(pool[np.argmax(y[pool]) if goal == "maximize" else np.argmin(y[pool])])
+    setup_report["anchor_is_overall_best"] = bool(
+        y[plan.best_index] == (y.max() if goal == "maximize" else y.min()))
+    return plan
+
+
+def _setup_region(
+    block: Any, cont: list[str], lower: np.ndarray, upper: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, list[tuple[list[int], list[float], float]], dict[str, Any]]:
+    """The sampling box and constraints from the setup the ANALYSIS applied
+    (`setup.bounds_applied` / `setup.constraints_applied`, names as the analysis
+    shows them). `resolve_goal` has already checked it is the stored setup and
+    that it was applied."""
+    lo, hi = lower.copy(), upper.copy()
+    report: dict[str, Any] = {
+        "source": "campaign_setup" if isinstance(block, dict) else "none",
+        "hash": block.get("hash") if isinstance(block, dict) else None,
+        "bounds": {}, "linear_constraints": [],
+    }
+    if not isinstance(block, dict):
+        return lo, hi, [], report
+    pos = {n: i for i, n in enumerate(cont)}
+    mismatch = NotComputed(
+        "refit_data_mismatch",
+        "the analysis's applied setup names inputs that are not continuous features of the refit",
+        "re-analyze the campaign",
+    )
+    bounds = block.get("bounds_applied") or {}
+    if not isinstance(bounds, dict):
+        raise mismatch
+    for name, spec in bounds.items():
+        applied = spec.get("applied") if isinstance(spec, dict) else None
+        if name not in pos or not isinstance(applied, list) or len(applied) != 2:
+            raise mismatch
+        j = pos[name]
+        a, b = _finite(applied[0]), _finite(applied[1])
+        if a is None or b is None:
+            raise mismatch
+        lo[j], hi[j] = max(a, lower[j]), min(b, upper[j])
+        if not hi[j] > lo[j]:
+            raise NotComputed(
+                "design_box_degenerate", "a setup bound leaves a zero-width range for an input",
+                "widen the setup bound and re-analyze",
+            )
+        report["bounds"][name] = [float(lo[j]), float(hi[j])]
+    constraints: list[tuple[list[int], list[float], float]] = []
+    cons = block.get("constraints_applied") or []
+    if not isinstance(cons, list):
+        raise mismatch
+    for c in cons:
+        terms = c.get("coefficients") if isinstance(c, dict) else None
+        rhs = _finite(c.get("rhs")) if isinstance(c, dict) else None
+        if not isinstance(terms, dict) or not terms or rhs is None or c.get("op") not in ("<=", ">="):
+            raise mismatch
+        if any(n not in pos or _finite(v) is None for n, v in terms.items()):
+            raise mismatch
+        sign = 1.0 if c["op"] == ">=" else -1.0
+        items = sorted((pos[n], sign * float(v)) for n, v in terms.items())
+        constraints.append(([i for i, _ in items], [v for _, v in items], sign * rhs))
+        report["linear_constraints"].append(
+            {"coefficients": {n: float(v) for n, v in terms.items()}, "op": c["op"], "rhs": rhs})
+    return lo, hi, constraints, report
 
 
 def maximal_box(u: np.ndarray, meets: np.ndarray, anchor: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
@@ -325,6 +494,36 @@ def maximal_box(u: np.ndarray, meets: np.ndarray, anchor: np.ndarray) -> tuple[n
     if not len(pts):
         return None
     return pts.min(axis=0), pts.max(axis=0)
+
+
+def _box_within_constraints(
+    box: tuple[np.ndarray, np.ndarray], anchor_u: np.ndarray, u: np.ndarray, meets: np.ndarray,
+    plan: FitPlan,
+) -> tuple[tuple[np.ndarray, np.ndarray] | None, float]:
+    """`box` (unit coordinates) scaled toward the anchor by the largest factor
+    `t` in [0, 1] for which every corner satisfies every setup constraint, then
+    tightened to the passing samples inside. For a linear constraint the worst
+    corner value is linear in `t`, so `t` is exact. Returns `(box | None, t)`."""
+    lo_u, hi_u = box
+    w = plan.upper - plan.lower
+    t = 1.0
+    for idx, coef, rhs in plan.constraints:
+        a = np.zeros(len(w))
+        a[idx] = coef
+        au = a * w  # the constraint in unit coordinates: au . u >= rhs - a . lower
+        r = rhs - float(a @ plan.lower)
+        va = float(au @ anchor_u)
+        worst = float(np.minimum(au * lo_u, au * hi_u).sum())
+        if worst < r and va > worst:
+            t = min(t, max(0.0, (va - r) / (va - worst)))
+    if t >= 1.0:
+        return box, 1.0
+    lo2 = anchor_u - t * (anchor_u - lo_u)
+    hi2 = anchor_u + t * (hi_u - anchor_u)
+    pts = u[np.all((u >= lo2) & (u <= hi2), axis=1) & meets]
+    if not len(pts):
+        return None, t
+    return (pts.min(axis=0), pts.max(axis=0)), t
 
 
 def _probability(mean: np.ndarray, sd: np.ndarray, threshold: float, direction: str) -> np.ndarray:
@@ -371,14 +570,28 @@ def fit_and_score(plan: FitPlan) -> dict[str, Any]:
     anchor_x = plan.X[plan.best_index]
     anchor_u = (anchor_x[:n_cont] - plan.lower) / (plan.upper - plan.lower)
     anchor_u = np.clip(anchor_u, 0.0, 1.0)
+    # Sampled in the setup box; constraint violators are kept as FAILING samples
+    # so the box can never grow across a constraint.
     u = qmc.Sobol(d=n_cont, scramble=True, seed=SOBOL_SEED).random(N_SAMPLES)
     x_cont = plan.lower + u * (plan.upper - plan.lower)
+    feasible = plan.feasible(x_cont)
+    n_feasible = int(feasible.sum())
+    n_rejected = int(len(u) - n_feasible)
+    if n_feasible < MIN_BOX_SAMPLES:
+        raise NotComputed(
+            "setup_region_too_small",
+            f"only {n_feasible} of {len(u)} sampled points satisfy the setup's linear constraints "
+            f"(at least {MIN_BOX_SAMPLES} are needed)",
+            "loosen the setup's linear constraints or widen its bounds",
+            diagnostics={"n_samples": int(len(u)), "n_samples_rejected_by_constraints": n_rejected},
+        )
     x = np.column_stack([x_cont, np.tile(anchor_x[n_cont:], (len(u), 1))]) if d > n_cont else x_cont
     mean, sd = model.posterior(np.vstack([x, anchor_x[None, :]]))
     prob = _probability(mean, sd, plan.threshold, plan.direction)
-    meets = prob[:-1] >= plan.probability
+    meets = (prob[:-1] >= plan.probability) & feasible
     anchor_prob = float(prob[-1])
-    fraction = float(np.mean(meets))
+    fraction = float(np.mean(meets[feasible]))
+    setup_report = {**plan.setup, "n_samples_rejected_by_constraints": n_rejected}
 
     anchor = {
         "recipe": {
@@ -400,8 +613,9 @@ def fit_and_score(plan: FitPlan) -> dict[str, Any]:
     }
     diagnostics = {
         "fraction_of_design_space_meeting_rule": round(fraction, 4),
-        "n_samples": int(len(u)),
+        "n_samples": n_feasible,
         "anchor": anchor,
+        "setup": setup_report,
     }
     if anchor_prob < plan.probability:
         raise NotComputed(
@@ -412,6 +626,12 @@ def fit_and_score(plan: FitPlan) -> dict[str, Any]:
             diagnostics=diagnostics,
         )
     box = maximal_box(u, meets, anchor_u)
+    shrink = 1.0
+    if box is not None and plan.constraints:
+        # No failing SAMPLE is inside, but an axis-aligned box can still poke a
+        # corner across a diagonal constraint between samples: shrink it toward
+        # the anchor until every corner is feasible, then re-tighten.
+        box, shrink = _box_within_constraints(box, anchor_u, u, meets, plan)
     n_inside = 0
     if box is not None:
         lo_u, hi_u = box
@@ -431,10 +651,13 @@ def fit_and_score(plan: FitPlan) -> dict[str, Any]:
     ranges = [
         {
             "feature": name,
-            "low": round(float(lo[i]), 6),
-            "high": round(float(hi[i]), 6),
-            "design_low": float(plan.lower[i]),
-            "design_high": float(plan.upper[i]),
+            # Rounded INWARD, so a reported endpoint never leaves the box.
+            "low": min(math.ceil(float(lo[i]) * 1e6) / 1e6, float(hi[i])),
+            "high": max(math.floor(float(hi[i]) * 1e6) / 1e6, float(lo[i])),
+            "design_low": float(plan.design_lower[i]),
+            "design_high": float(plan.design_upper[i]),
+            "setup_low": float(plan.lower[i]),
+            "setup_high": float(plan.upper[i]),
             "basis": "predicted",
         }
         for i, name in enumerate(plan.cont_names)
@@ -447,8 +670,9 @@ def fit_and_score(plan: FitPlan) -> dict[str, Any]:
         "must_verify_experimentally": True,
         "statement": (
             "Model-based estimate, not a measurement: the largest axis-aligned box around the "
-            "best measured recipe (grown face by face, then tightened to the sampled points) in "
-            "which EVERY sampled point has GP posterior probability >= "
+            "best measured recipe in the campaign setup region (grown face by face, then "
+            "tightened to the sampled points) in which EVERY sampled point satisfies the setup "
+            "bounds and linear constraints and has GP posterior probability >= "
             f"{plan.probability} of the target being {'at least' if plan.direction == 'at_least' else 'at most'} "
             f"{plan.threshold}. Verify it experimentally before relying on it."
         ),
@@ -473,11 +697,16 @@ def fit_and_score(plan: FitPlan) -> dict[str, Any]:
                 "probabilities come from the GP's Gaussian posterior (not conformal / not held-out calibrated)"
             ),
         },
+        "setup_applied": True,
+        "setup": setup_report,
         "sampling": {
             "method": "sobol_scrambled",
             "seed": SOBOL_SEED,
-            "n_samples": int(len(u)),
-            "space": "the continuous design box (analysis feature_ranges)",
+            "n_samples": n_feasible,
+            "n_drawn": int(len(u)),
+            "n_samples_rejected_by_constraints": n_rejected,
+            "space": ("the continuous design box (analysis feature_ranges) narrowed by the setup "
+                      "bounds the analysis applied, minus points breaking its linear constraints"),
             "categoricals_held_at": held,
         },
         "anchor": anchor,
@@ -486,16 +715,19 @@ def fit_and_score(plan: FitPlan) -> dict[str, Any]:
             "construction": (
                 "largest normalized cube around the anchor free of failing samples, each face then "
                 "pushed out (features in analysis order, lower then upper) to the nearest failing "
-                "sample or the design bound, then tightened to the passing samples inside; maximal, "
+                "sample (constraint violators count as failing) or the setup bound, then tightened to the passing samples inside; maximal, "
                 "not necessarily maximum-volume"
             ),
             "n_samples_inside": n_inside,
             "all_samples_inside_meet_rule": True,
+            "corners_satisfy_setup_constraints": True,
+            "constraint_shrink_factor": round(float(shrink), 6),
             "min_samples_required": MIN_BOX_SAMPLES,
         },
         "fraction_of_design_space_meeting_rule": round(fraction, 4),
         "fraction_scope": (
-            "share of the Sobol sample of the continuous design box that meets the rule"
+            "share of the Sobol sample of the setup region (design box narrowed by the setup "
+            "bounds, constraint violators excluded) that meets the rule"
             + (", with categorical inputs held at the anchor's levels" if plan.cat_names else "")
         ),
     }

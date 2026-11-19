@@ -33,7 +33,8 @@ from kalos.portal.app import app
 from kalos.portal.campaign import CampaignStore, get_campaign_store
 from kalos.portal.campaign_settings import put_setting
 from kalos.portal.exports_api import _column_alias, _level_alias
-from kalos.portal.operating_ranges import maximal_box
+from kalos.portal.operating_ranges import NotComputed, build_plan, maximal_box
+from kalos.portal.setup_settings import normalize_setup, setup_hash
 
 
 def _sha(t: str) -> str:
@@ -562,7 +563,10 @@ def test_operating_ranges_minimize_goal_flips_direction(env):
     b = rng.uniform(20, 40, 30)
     df = pd.DataFrame({"glucose_gL": a.round(3), "temperature_C": b.round(3),
                        "titer": (2 * a + 0.1 * b + rng.normal(0, 0.1, 30)).round(3)})
-    cid = _ranges_campaign(store, df=df, best=round(float(df["titer"].max()), 4))
+    # A real minimize analysis: `best` is the MIN (E-S1), `goal` and the setup
+    # block are what `_analyze(setup=...)` records.
+    cid = _ranges_campaign(store, df=df, best=round(float(df["titer"].min()), 4),
+                           goal="minimize", setup=_setup_block({"goal": "minimize"}))
     put_setting(store, tenant="acme", campaign_id=cid, kind="setup", value={"goal": "minimize"},
                 updated_by="alice@acme")
     body = _ranges(tc, cid, {"threshold": 8.0, "probability": 0.8}).json()
@@ -570,6 +574,174 @@ def test_operating_ranges_minimize_goal_flips_direction(env):
     assert body["rule"]["direction"] == "at_most" and body["rule"]["goal_source"] == "setup"
     assert body["anchor"]["measured_value"] == float(df["titer"].min())
     assert {x["feature"]: x for x in body["ranges"]}["glucose_gL"]["high"] < 4.0
+
+
+def _setup_block(doc: dict, *, status: str = "applied", bounds_applied: dict | None = None,
+                 constraints_applied: list | None = None) -> dict:
+    """The `setup` block an analysis computed with `doc` records."""
+    return {"status": status, "goal": normalize_setup(doc)["goal"],
+            "hash": setup_hash(normalize_setup(doc)), "bounds_applied": bounds_applied or {},
+            "constraints_applied": constraints_applied or [], "warnings": [], "refusal": None}
+
+
+def test_operating_ranges_minimize_best_is_not_a_refit_mismatch(env):
+    """E-S1: a minimize analysis's `best` is the min; the refit check must compare
+    against the min (it compared y.max(), so every minimize campaign was refused).
+    Probed with an unreliable model so the route stops right after the refit check."""
+    tc, store = env
+    df = _learnable()
+    cid = _ranges_campaign(store, best=round(float(df["titer"].min()), 4), goal="minimize",
+                           setup=_setup_block({"goal": "minimize"}))
+    put_setting(store, tenant="acme", campaign_id=cid, kind="setup", value={"goal": "minimize"},
+                updated_by="alice@acme")
+    plan = build_plan(
+        store.get(tenant="acme", campaign_id=cid), store.load_analysis(tenant="acme", campaign_id=cid),
+        threshold=1.0, probability=0.9, goal="minimize", goal_source="setup",
+        column_for={c: c for c in df.columns}, display_level=lambda _c, lbl: lbl)
+    assert plan.y[plan.best_index] == float(df["titer"].min())
+    with _slots_exhausted("acme"):  # got past every refusal, up to the slot
+        assert _ranges(tc, cid).status_code == 503
+    # The max under a minimize goal IS a mismatch now.
+    bad = _ranges_campaign(store, goal="minimize", setup=_setup_block({"goal": "minimize"}))
+    put_setting(store, tenant="acme", campaign_id=bad, kind="setup", value={"goal": "minimize"},
+                updated_by="alice@acme")
+    assert _ranges(tc, bad).json()["reason_code"] == "refit_data_mismatch"
+
+
+def test_operating_ranges_refuses_a_setup_the_analysis_did_not_use(env):
+    tc, store = env
+    # Stored goal minimize, analysis computed for maximize (no setup at the time).
+    cid = _ranges_campaign(store)
+    put_setting(store, tenant="acme", campaign_id=cid, kind="setup", value={"goal": "minimize"},
+                updated_by="alice@acme")
+    body = _ranges(tc, cid).json()
+    assert body["reason_code"] == "setup_goal_mismatch"
+    assert body["diagnostics"] == {"setup_goal": "minimize", "analysis_goal": "maximize"}
+    # Same goal, but the bounds changed after the analysis.
+    cid2 = _ranges_campaign(store)
+    put_setting(store, tenant="acme", campaign_id=cid2, kind="setup",
+                value={"bounds": {"glucose_gL": {"lo": 1.0, "hi": 5.0}}}, updated_by="alice@acme")
+    assert _ranges(tc, cid2).json()["reason_code"] == "setup_out_of_sync"
+    # The analysis could not apply the stored setup.
+    doc = {"bounds": {"glucose_gL": {"lo": 1.0, "hi": 5.0}}}
+    cid3 = _ranges_campaign(store, setup=_setup_block(doc, status="refused"))
+    put_setting(store, tenant="acme", campaign_id=cid3, kind="setup", value=doc,
+                updated_by="alice@acme")
+    assert _ranges(tc, cid3).json()["reason_code"] == "setup_not_applied"
+    # An explicitly saved default setup is in sync with a no-setup analysis.
+    cid4 = _ranges_campaign(store)
+    put_setting(store, tenant="acme", campaign_id=cid4, kind="setup", value={"goal": "maximize"},
+                updated_by="alice@acme")
+    with _slots_exhausted("acme"):
+        assert _ranges(tc, cid4).status_code == 503
+
+
+_SETUP_DOC = {
+    "bounds": {"glucose_gL": {"lo": 2.0, "hi": 9.0}},
+    "linear_constraints": [{"coefficients": {"glucose_gL": 1.0, "temperature_C": 0.25},
+                            "op": "<=", "rhs": 15.0}],
+}
+
+
+def _setup_analysis_overrides(df: pd.DataFrame) -> dict:
+    lo, hi = float(df["glucose_gL"].min()), float(df["glucose_gL"].max())
+    return {"setup": _setup_block(
+        _SETUP_DOC,
+        bounds_applied={"glucose_gL": {"requested": [2.0, 9.0], "observed": [lo, hi],
+                                       "applied": [max(2.0, lo), min(9.0, hi)],
+                                       "extrapolates": False}},
+        constraints_applied=[{"coefficients": {"glucose_gL": 1.0, "temperature_C": 0.25},
+                              "op": "<=", "rhs": 15.0}],
+    )}
+
+
+def test_operating_ranges_plan_samples_the_setup_region(env):
+    """E-S4: the sampling box is the design box narrowed by the applied bounds, the
+    constraint is enforced on samples, and the anchor is the best run INSIDE it."""
+    _tc, store = env
+    df = _learnable()
+    cid = _ranges_campaign(store, **_setup_analysis_overrides(df))
+    plan = build_plan(
+        store.get(tenant="acme", campaign_id=cid), store.load_analysis(tenant="acme", campaign_id=cid),
+        threshold=1.0, probability=0.9, goal="maximize", goal_source="setup",
+        column_for={c: c for c in df.columns}, display_level=lambda _c, lbl: lbl)
+    g = plan.cont_names.index("glucose_gL")
+    assert plan.lower[g] == 2.0 and plan.upper[g] == 9.0
+    assert plan.design_lower[g] == float(df["glucose_gL"].min())
+    assert plan.constraints == [([0, 1], [-1.0, -0.25], -15.0)]
+    x = plan.X[:, :2]
+    inside = (x[:, 0] >= 2.0) & (x[:, 0] <= 9.0) & (x[:, 0] + 0.25 * x[:, 1] <= 15.0)
+    assert (plan.feasible(x) == inside).all() and 0 < inside.sum() < len(x)
+    # The anchor is the best run inside the region, not the overall best.
+    assert plan.y[plan.best_index] == plan.y[inside].max() < plan.y.max()
+    assert plan.setup["source"] == "campaign_setup" and plan.setup["anchor_is_overall_best"] is False
+    # No measured run inside the region: refused, never anchored outside it.
+    tight = dict(_setup_analysis_overrides(df))
+    tight["setup"] = {**tight["setup"], "constraints_applied": [
+        {"coefficients": {"glucose_gL": 1.0}, "op": "<=", "rhs": -1.0}]}
+    cid2 = _ranges_campaign(store, **tight)
+    with pytest.raises(NotComputed) as exc:
+        build_plan(
+            store.get(tenant="acme", campaign_id=cid2),
+            store.load_analysis(tenant="acme", campaign_id=cid2),
+            threshold=1.0, probability=0.9, goal="maximize", goal_source="setup",
+            column_for={c: c for c in df.columns}, display_level=lambda _c, lbl: lbl)
+    assert exc.value.reason_code == "no_measured_run_in_setup_region"
+
+
+def test_box_is_shrunk_until_every_corner_meets_the_constraints():
+    """An axis-aligned box free of failing SAMPLES can still cross a diagonal
+    constraint between samples; the corners must satisfy it after the shrink."""
+    from kalos.portal.operating_ranges import FitPlan, _box_within_constraints
+
+    rng = np.random.default_rng(0)
+    plan = FitPlan(
+        X=np.zeros((1, 2)), y=np.zeros(1), lower=np.array([0.0, 10.0]), upper=np.array([2.0, 20.0]),
+        design_lower=np.array([0.0, 10.0]), design_upper=np.array([2.0, 20.0]),
+        cont_names=["a", "b"], cat_names=[], cat_levels=[], cat_display=[], direction="at_least",
+        goal="maximize", goal_source="default", threshold=0.0, probability=0.9, target="y",
+        best_index=0, context={}, constraints=[([0, 1], [-1.0, -0.1], -2.5)],  # a + 0.1 b <= 2.5
+    )
+    u = rng.uniform(size=(4000, 2))
+    x = plan.lower + u * (plan.upper - plan.lower)
+    meets = plan.feasible(x)
+    box = maximal_box(u, meets, np.array([0.1, 0.1]))
+    assert box is not None
+    hi_x = plan.lower + box[1] * (plan.upper - plan.lower)
+    assert hi_x[0] + 0.1 * hi_x[1] > 2.5  # the unshrunk box pokes across the constraint
+    shrunk, t = _box_within_constraints(box, np.array([0.1, 0.1]), u, meets, plan)
+    assert shrunk is not None and 0 < t < 1
+    lo_x = plan.lower + shrunk[0] * (plan.upper - plan.lower)
+    hi_x = plan.lower + shrunk[1] * (plan.upper - plan.lower)
+    for a in (lo_x[0], hi_x[0]):
+        for b in (lo_x[1], hi_x[1]):
+            assert a + 0.1 * b <= 2.5 + 1e-9
+
+
+@pytest.mark.slow
+def test_operating_ranges_computed_inside_the_setup_region(env):
+    """E-S4 end to end: every reported range sits inside the setup bounds, the box
+    corners satisfy the linear constraint, and the response says the setup was applied."""
+    tc, store = env
+    df = _learnable(40)
+    cid = _ranges_campaign(store, df=df, **_setup_analysis_overrides(df))
+    put_setting(store, tenant="acme", campaign_id=cid, kind="setup", value=_SETUP_DOC,
+                updated_by="alice@acme")
+    body = _ranges(tc, cid, {"threshold": 12.0, "probability": 0.8}).json()
+    assert body["status"] == "computed", body
+    assert body["setup_applied"] is True and body["setup"]["source"] == "campaign_setup"
+    assert body["setup"]["bounds"] == {"glucose_gL": [2.0, 9.0]}
+    assert body["sampling"]["n_samples_rejected_by_constraints"] > 0
+    assert body["sampling"]["n_samples"] + body["sampling"]["n_samples_rejected_by_constraints"] == 4096
+    r = {x["feature"]: x for x in body["ranges"]}
+    assert 2.0 <= r["glucose_gL"]["low"] <= r["glucose_gL"]["high"] <= 9.0
+    assert (r["glucose_gL"]["setup_low"], r["glucose_gL"]["setup_high"]) == (2.0, 9.0)
+    for a in (r["glucose_gL"]["low"], r["glucose_gL"]["high"]):
+        for b in (r["temperature_C"]["low"], r["temperature_C"]["high"]):
+            assert a + 0.25 * b <= 15.0 + 1e-6, (a, b)
+    anchor = body["anchor"]["recipe"]
+    assert 2.0 <= anchor["glucose_gL"] <= 9.0
+    assert anchor["glucose_gL"] + 0.25 * anchor["temperature_C"] <= 15.0
 
 
 # --- cross-tenant + scope on every route ---------------------------------------------- #

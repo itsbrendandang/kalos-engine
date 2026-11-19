@@ -532,7 +532,7 @@ async def _operating_ranges(
         rel = orng.check_preconditions(state, analysis, threshold)
         if state is None or analysis is None or threshold is None:  # narrowed by the check above
             raise orng.NotComputed("no_data", "the campaign has no data yet", "upload a run sheet")
-        goal, goal_source = orng.resolve_goal(setup)
+        goal, goal_source = orng.resolve_goal(setup, analysis)
         column_for, display_level = _ranges_mapping(state, analysis)
         plan = orng.build_plan(
             state, analysis, threshold=threshold, probability=body.probability,
