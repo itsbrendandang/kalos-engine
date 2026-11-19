@@ -217,3 +217,20 @@ and their proposals are labelled exploration, not withheld.
 When the batch structure is not on the sheet at all, no grouping can see it: record
 the batch, plate, lot or date column, or run the campaign through the fold (rounds are
 carried automatically).
+
+## Planted-fault acceptance (feat/planted-faults suite, full tier)
+
+Run against this branch on a scratch merge (`scratch/trust-faults`, not for merge):
+`python -m kalos.bench.faults all --tier full --workers 4 --datasets ~/kalos/datasets`.
+Totals: 20 caught / 4 noticed / 12 missed of 36 at the baseline -> **23 / 3 / 10**;
+false alarms on clean sheets unchanged (6 of 8; the outlier check on the clean sheet
+was left alone).
+
+| Case | Before (baseline scorecard) | After (this branch) |
+|---|---|---|
+| batch offsets, batch column, no signal | missed: CV 0.93 [0.87, 0.96] trusted, `batch: "B4"` proposed | **caught**: CV 0.01 [-0.71, 0.70] by batch, not trusted, batch not proposed |
+| batch offsets, no batch column | missed: CV 0.75 [0.49, 0.88] trusted | **still missed**: the structure is not on the sheet (rows shuffled, no round index) |
+| jittered replicates (0.2%), no signal | missed: CV 0.78 [0.61, 0.97] trusted | **caught**: CV -0.40 [-0.74, 0.37] over 15 replicate groups |
+| 8 rows, 11 inputs | noticed: verdict issued, 5 proposals | **caught**: `reliability.verdict: not_judged`; refused (interval at or below 0), 0 proposals |
+| clean Kaggle slice (150 rows) | trusted with CV 0.27 [-0.06, 0.38] | trusted with CV 0.22 [0.04, 0.36]: one near-duplicate pair now shares a fold, the interval moved above 0, so the stricter F04 rule passes; a weak, borderline ranking |
+| clean scale-up sheet (90 rows) | trusted, CV 0.77 | trusted, CV 0.46 [0.17, 0.69]: leave-one-scale-out (9 scales) binds |
