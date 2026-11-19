@@ -49,6 +49,7 @@ below), which the first legacy upload creates. A campaign made with
 | Method | Path | Scope | Purpose |
 |---|---|---|---|
 | GET | `/api/campaigns?include_archived=false` | read | List the tenant's campaigns, newest first: `{"campaigns": [<campaign>...]}`. |
+| GET | `/api/campaigns?summary=true&limit=50&cursor=...` | read | The same list with per-campaign card fields, paginated (see "Campaigns list summary"). |
 | POST | `/api/campaigns` | write | Create a campaign. Body: `{"name": str}`. `201` and the campaign. |
 | GET | `/api/campaigns/{id}` | read | `{"campaign": <campaign>, "summary": <loop summary>}`. The summary has the same shape as `GET /api/campaign`, scoped to this campaign, including `analysis_in_sync`, `stage` and `next_action` (see "Stage" below). |
 | PATCH | `/api/campaigns/{id}` | write (+admin for `archived`) | Body: `{"name"?: str, "archived"?: bool}`, at least one of the two. Returns the campaign. |
@@ -67,6 +68,36 @@ and its own published analysis, never from another campaign or the tenant's defa
 A campaign that was created but never uploaded reads `stage.current: "setup"`.
 Each pending run carries `round`, the 0-based round it was started in (`null` for runs
 started before the field existed).
+
+### Campaigns list summary
+
+`GET /api/campaigns?summary=true` (scope `read`) returns one page of the tenant's
+campaigns, newest-updated first, each a superset of the campaign object:
+
+`has_data` (base rows > 0), `target`, `n_base`, `round`, `n_awaiting`, `n_measured`,
+`goal` `{direction: maximize|minimize, source: setup|default}` (from settings kind
+`setup`, `value.goal`; anything else is `maximize` with `source: default`),
+`best_measured` `{value, basis: "measured", direction: max|min, reason?}` (best MEASURED
+target over the base rows, i.e. uploaded rows plus folded results; measured runs not yet
+folded by a reanalyze are not included; `reason` explains a `null` value),
+`analysis` (`{present: false}`, or `{present: true, updated, in_sync, engine_version,
+cv_spearman, conformal_q, conformal_coverage, reliability: {clears_floor, ci_excludes_zero,
+spearman, ci95, spearman_floor, producer_clears_floor}, n_proposals}`, values copied as
+stored, `null` when the stored analysis predates a field), `current_stage` (settings kind
+`stages`, `value.current_stage`, as stored), `latest_gate_decision` (`{gate, decision,
+decided_at}` of the newest gate_decisions row, or `null`), `active_job` (`{id, kind, state,
+progress, stage}` of the newest queued/running job, or `null`).
+
+Pagination: `limit` 1..200 (default 50), `cursor` = the previous page's `next_cursor`
+(opaque; `null` on the last page). Ordering is `(updated_at desc, id)`; the cursor is a
+keyset position, so a campaign updated while a client pages moves to the front and can be
+missed or repeated by that walk: restart from the first page to refresh. A malformed
+cursor is `400 {"code": "invalid_cursor"}`; a `limit` out of range is `400 invalid_body`;
+`limit` or `cursor` without `summary=true` is `400 {"code": "invalid_query"}`. Without
+`summary=true` the response is exactly the unpaginated list above.
+
+The page costs a constant number of SQL statements (SQLite JSON functions read the few
+fields from the stored blobs); every statement is tenant-scoped.
 
 ### Name validation
 
@@ -345,6 +376,18 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
   training row. A number only: the engine applies no threshold and no label.
 - `training_nn_distance_median`: the same metric between training rows (median
   distance from each row to its nearest other row), for scale.
+
+### Target unit (additive)
+
+Analyses computed after this change carry `target_unit`:
+`{"unit": str|null, "source": "user"|"header"|"none", "header": str|null, "note": str}`.
+`user` = the unit from the campaign setup, as typed (wins over the header). `header` =
+parsed from the target column header for well-defined patterns only (`titer (g/L)`,
+`titer [mg/mL]`, `Titer g/L`, `titer_g_L`, `titer_g_per_L`, `yield_pct`); ambiguous bare
+suffixes (`_L`, `_C`, `_min`, `od600`) give `unit: null`, `source: "none"`. Display label
+only; values are never converted. With `anonymize=True` and a pseudonymized target header,
+`header` is the alias and a header-derived unit is dropped (`source: "none"`). Older
+stored analyses lack the field.
 
 ## Not in this slice
 
