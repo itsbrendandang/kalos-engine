@@ -58,6 +58,12 @@ from kalos.portal.analysis_parts.identifiers import (
     identifier_pattern,
     is_identifier_name,
 )
+from kalos.portal.analysis_parts.intervals import (
+    calibrate_normalized,
+    interval_method_summary,
+    proposal_interval_fields,
+    proposal_predictive_std,
+)
 from kalos.portal.analysis_parts.noise_blocks import (
     _alternative_scale_block,
     _noise_block,
@@ -73,6 +79,7 @@ from kalos.portal.analysis_parts.policy import (
     DRIVER_TOP_K,
     GATE_MIN_N_INFEASIBLE,
     GROUP_MEAN_BASELINE_MIN_GROUPS,
+    INTERVAL_LEVELS,
     LOGO_MAX_GROUPS,
     RELIABILITY_SPEARMAN_FLOOR,
     validation_mode,
@@ -724,6 +731,8 @@ def _analyze_body(
     # which is often overconfident on small bioprocess datasets.
     resid = np.asarray(oof_a, float) - np.asarray(oof_p, float)
     conformal_q = round(q_from_residuals(resid, alpha=CONFORMAL_ALPHA), 4) if len(resid) else None
+    # Per-proposal normalized conformal (R4), same OOF set: analysis_parts/intervals.py.
+    interval_cal = calibrate_normalized(oof_a, oof_p, oof_s, INTERVAL_LEVELS)
 
     # Honest reliability verdict: only what this path can actually assess. The
     # spearman floor mirrors GatesConfig.min_spearman (kalos/core/gates.py); we do
@@ -1239,6 +1248,8 @@ def _analyze_body(
     for d in drv:
         d.pop("_idx", None)  # internal-only; not part of the returned API surface
     p_mean, p_std = s.posterior(batch)
+    p_std_obs, sigma_source = proposal_predictive_std(
+        s, batch, p_std, float(nr["noise_var"]) if replicate_aware else None)
 
     # PART 1 per-proposal P(feasible), read off the SAME classifier that gated
     # (or did not gate) the batch above - `feas_clf` was fit on the full sheet
@@ -1443,6 +1454,8 @@ def _analyze_body(
         "conformal_q": conformal_q,
         # The band's ACTUAL coverage, so no consumer has to hardcode it.
         "conformal_coverage": round(1.0 - CONFORMAL_ALPHA, 4),
+        "interval_levels": [float(c) for c in INTERVAL_LEVELS],
+        "interval_method": interval_method_summary(interval_cal, sigma_source),
         # How the driver panel was selected and corrected, so the client can see
         # that many features were tested and only the strongest are shown.
         "driver_selection": {
@@ -1525,6 +1538,9 @@ def _analyze_body(
             batch, p_mean, p_std, incumbent, cols=show_idx, design=design,
             p_feasible=p_feasible_arr, constraint=constraint_pred,
             distance=nearest_training_distance(batch, X, bounds, cat_dims),
+            interval_fields=proposal_interval_fields(
+                p_mean, p_std, p_std_obs, interval_cal, INTERVAL_LEVELS, incumbent,
+                "best_reproducible_mean" if replicate_aware else "best_measured_single"),
         ),
         # Context for `proposals[].nearest_training_distance` (same metric): the
         # median distance from each training row to its nearest other row.
