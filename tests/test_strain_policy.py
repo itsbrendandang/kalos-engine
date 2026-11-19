@@ -69,6 +69,7 @@ def test_registry_lead_without_runs_falls_back_to_most_runs():
     r = _analyze(df, setup={**setup(strain_column="clone"), "strain_lead": "Z9"})
     s = r["strain_summary"]
     assert s["fixed_level"] == "B" and s["fixed_level_source"] == "most_runs"
+    assert "not a ranking" in s["fixed_level_note"]
     assert "clone_not_in_training" not in {x["code"] for x in s["refusals"]}
 
 

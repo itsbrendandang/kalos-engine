@@ -487,6 +487,7 @@ def build_summary(
         "numeric_looking_labels": bool(plan.numeric_labels),
         "fixed_level": fixed_level,
         "fixed_level_source": fixed_level_source,
+        "fixed_level_note": _fixed_level_note(fixed_level, fixed_level_source, n_runs_target),
         "reference_level": reference,
         "n_levels": len(levels),
         "n_levels_with_3_runs": n_with3,
@@ -509,6 +510,22 @@ def build_summary(
         "_not_separable": not_sep,
         "_n_runs": n_runs_target,
     }
+
+
+def _fixed_level_note(
+    level: str | None, source: str | None, n_runs: Mapping[str, int],
+) -> str | None:
+    """Say plainly how a default fixed clone was chosen: by run count, never by
+    a performance score, and by label order on a tie."""
+    if level is None or source != "most_runs":
+        return None
+    top = max(n_runs.values(), default=0)
+    tied = sorted(lv for lv, n in n_runs.items() if n == top)
+    if len(tied) > 1:
+        return (f"no strain_level and no registry lead: {len(tied)} clones tie on {top} runs, so the "
+                "first label in sort order is held (not a ranking); set strain_level to choose")
+    return ("no strain_level and no registry lead: the clone with the most runs is held "
+            "(not a ranking); set strain_level to choose")
 
 
 def finish_summary(

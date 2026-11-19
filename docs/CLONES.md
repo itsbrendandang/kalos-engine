@@ -51,7 +51,8 @@ existing campaign).
   holds the clone at one level. The level is `strain_level`, else the
   registry's single `status: lead` clone (when it has runs), else the clone with
   the most runs (ties: label order). `strain_summary.fixed_level_source` says
-  which. A named level with no runs is refused: proposals withheld,
+  which, and `fixed_level_note` says the default is a run count (label order on
+  a tie), never a ranking. A named level with no runs is refused: proposals withheld,
   `proposal_notice.code = clone_not_in_training`; `PUT setup` refuses it too.
 - **Policy `factor`**: the proposals choose among the clones (a clone-by-process
   screen). A proposal on a clone with fewer than 3 runs is marked `mode:
