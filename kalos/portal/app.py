@@ -84,6 +84,8 @@ from kalos.portal.limits import (
 from kalos.portal.migrate import legacy_latest_filename
 from kalos.portal.pipeline import compute_upload_analysis, publish_upload_analysis
 from kalos.portal.scale_routes import router as _scale_router
+from kalos.portal.setup_api import router as _setup_router
+from kalos.portal.setup_settings import setup_for_analysis
 from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.uploads import (
     _ERR_FIT,
@@ -736,8 +738,13 @@ def _run_uploaded_sync(
     # functions the background-job worker uses (kalos/portal/pipeline.py).
     # `_analyze` is resolved from THIS module at call time so tests can stub it.
     validate_tenant_id(tenant)
+    # The campaign's setup (goal, bounds, constraints, unit); None = today's analysis.
+    setup = setup_for_analysis(
+        store if store is not None else get_campaign_store(), tenant=tenant, campaign_id=campaign_id,
+    )
     df, result = compute_upload_analysis(
-        raw, target, anonymize, filename, roles_json, sheet=sheet, analyze=_analyze,
+        raw, target, anonymize, filename, roles_json, sheet=sheet,
+        analyze=_analyze if setup is None else functools.partial(_analyze, setup=setup),
     )
     # A fresh upload starts a fresh campaign state (docs/CAMPAIGN_LOOP.md,
     # "Seeding") in THIS tenant's default campaign (or the explicit
@@ -903,6 +910,7 @@ def upload_error_response(error: BaseException) -> JSONResponse:
 # app.
 app.include_router(_campaign_router)
 app.include_router(_campaigns_router)  # /api/campaigns* (kalos.portal.campaigns_api)
+app.include_router(_setup_router)  # /api/campaigns/{id}/setup (kalos.portal.setup_api)
 app.include_router(_jobs_router)  # background jobs (kalos.portal.jobs_api, docs/JOBS.md)
 app.include_router(_assist_router)  # /api/assist/* (kalos.assist, docs/ASSISTANT.md)
 app.include_router(_assist_sop_router)  # /api/assist/sop* (kalos.assist.sop)

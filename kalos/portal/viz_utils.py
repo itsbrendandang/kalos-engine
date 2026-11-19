@@ -234,7 +234,10 @@ def _response_surface_gp(
 
         # Build fixed recipe at incumbent: use the recipe (from X_fit) with the
         # best target value, fixing all non-swept dims at their incumbent values
-        incumbent_idx = int(np.argmax(y_fit))
+        # (`incumbent` is the best measured value for the campaign's goal: the max,
+        # or the min when minimizing; its first row equals argmax for a maximize.)
+        hits = np.flatnonzero(np.asarray(y_fit) == incumbent)
+        incumbent_idx = int(hits[0]) if hits.size else int(np.argmax(y_fit))
         incumbent_recipe = X_fit[incumbent_idx].copy()
 
         # Determine incumbent basis

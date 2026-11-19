@@ -297,6 +297,11 @@ async def _reanalyze(
     # reach `df`; passed separately they keep the next batch from re-proposing an
     # experiment already underway.
     awaiting = store.awaiting_recipes(tenant=tenant, campaign_id=campaign_id)
+    # The campaign setup (goal, bounds, constraints, unit); None = today's analysis.
+    from kalos.portal.setup_settings import setup_for_analysis
+
+    setup = setup_for_analysis(store, tenant=tenant, campaign_id=campaign_id)
+    setup_kw: dict[str, Any] = {} if setup is None else {"setup": setup}
     # Privacy setting: a re-analysis keeps the anonymize setting of the analysis
     # it replaces (the campaign does not store the flag itself). Without this a
     # re-analysis of an anonymized upload would publish the real column names.
@@ -315,7 +320,7 @@ async def _reanalyze(
         result = await run_in_slot(
             functools.partial(
                 _analyze, df, target, profile=BIOPROCESS_PROFILE, pending=awaiting,
-                anonymize=anonymize,
+                anonymize=anonymize, **setup_kw,
             ),
             tenant=tenant,
         )

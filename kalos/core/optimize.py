@@ -381,6 +381,7 @@ def propose(
     constraint_surrogate: Surrogate | None = None,
     constraint_floor: float | None = None,
     linear_constraints: list[tuple[list[int], list[float], float]] | None = None,
+    maximize: bool = True,
 ) -> np.ndarray:
     """The proposed points only (`propose_batch(...).X`); see `propose_batch`.
 
@@ -402,6 +403,7 @@ def propose(
         constraint_surrogate=constraint_surrogate,
         constraint_floor=constraint_floor,
         linear_constraints=linear_constraints,
+        maximize=maximize,
     ).X
 
 
@@ -421,6 +423,7 @@ def propose_batch(
     constraint_floor: float | None = None,
     min_separation: float = NEAR_DUPLICATE_TOL,
     linear_constraints: list[tuple[list[int], list[float], float]] | None = None,
+    maximize: bool = True,
 ) -> ProposalBatch:
     """Propose up to `q` DISTINCT points maximizing qLogNEI, with an account of
     the batch's distinctness (`ProposalBatch`).
@@ -515,6 +518,12 @@ def propose_batch(
     candidate pool, and on every returned row, including rows refilled by the
     near-duplicate repair; a set that is infeasible within the box raises
     `ValueError` up front. Not supported together with categorical dimensions.
+
+    `maximize=False` proposes toward LOW target values: the acquisition's MC
+    objective negates the target samples (qLogNEI then improves on the lowest
+    baseline value). The surrogate itself is untouched, so every posterior read
+    off it stays in the target's own units and sign. `True` (the default) builds
+    exactly the historical acquisition.
     """
     assert surrogate.model is not None and surrogate._X is not None, "fit the surrogate first"
     if (constraint_surrogate is None) != (constraint_floor is None):
@@ -571,12 +580,17 @@ def propose_batch(
             # constraint callable is satisfied (per qLogNEI's `constraints`
             # contract) where its output is < 0, i.e. constraint_floor - value <= 0
             # <=> value >= constraint_floor.
-            objective = GenericMCObjective(lambda Y, X=None: Y[..., 0])
+            objective = (
+                GenericMCObjective(lambda Y, X=None: Y[..., 0])
+                if maximize
+                else GenericMCObjective(lambda Y, X=None: -Y[..., 0])
+            )
             floor = float(constraint_floor)  # type: ignore[arg-type]
             constraints = [lambda Y: floor - Y[..., 1]]
         else:
             model = surrogate.model
-            objective = None
+            # Minimizing: negate the single output's samples (see `maximize`).
+            objective = None if maximize else GenericMCObjective(lambda Y, X=None: -Y[..., 0])
             constraints = None
         acq: AcquisitionFunction = qLogNoisyExpectedImprovement(
             model,
