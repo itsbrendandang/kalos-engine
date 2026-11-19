@@ -198,8 +198,9 @@ How each part is computed:
   (OLS, adjusted for the other inputs when n >= p + 4) with a percentile
   bootstrap CI (B = 500, seeded). A cell is `insufficient` unless the clone has
   >= 6 runs, >= 3 distinct settings and covers >= 50% of the input's range; a row
-  is `insufficient` unless 2+ clones qualify. Tested rows report Cochran's Q, p,
-  BH-adjusted `p_bh` and I^2; `flag` (clone-dependent response) needs p < 0.05
+  is `insufficient` unless 2+ clones qualify. Tested rows report Cochran's Q, p
+  (Welch's small-sample correction for Q; the chi-squared p is `p_chi2`, which
+  rejected 9.5% of null simulations at a nominal 5%), BH-adjusted `p_bh` and I^2; `flag` (clone-dependent response) needs p < 0.05
   and I^2 >= 50%.
 - **Predicted optimum by clone**: the argmax of each per-clone slice with its
   band. `predicted_optimum_differs_by_clone` when two clones' argmaxes are more
