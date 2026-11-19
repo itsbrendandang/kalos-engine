@@ -18,10 +18,11 @@ import pytest
 #
 # The engine pins torch to KALOS_TORCH_THREADS threads on its first analysis
 # (default min(4, cpus); kalos/portal/pipeline.py). Under `pytest -n auto` that
-# is 4 threads in EVERY xdist worker: 16 busy threads on a 4-core CI runner. On
-# linux the oversubscribed OpenMP pool slows GP fits by 10x or more (the same
-# pathology deploy/compose.yaml documents for the container), which is what made
-# single analyses take 5-10 minutes in CI and the full suite time out. Tests run
+# is 4 threads in EVERY xdist worker, several times more busy threads than the
+# CI runner has cores (2 workers x 4 threads on a 4-vCPU, 2-core runner; more on
+# a workstation). On linux the oversubscribed OpenMP pool slows GP fits by 10x or
+# more (the same pathology deploy/compose.yaml documents for the container),
+# which is what made single analyses take 5-10 minutes in CI. Tests run
 # with one thread per process unless the caller sets the variable (this module
 # is imported before any test module imports kalos.portal). One vs four threads
 # gives identical analysis output (measured; see also tests/test_golden_determinism.py).

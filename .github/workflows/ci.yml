@@ -53,9 +53,9 @@ env:
   MKL_NUM_THREADS: "1"
   OPENBLAS_NUM_THREADS: "1"
   # The engine's own torch pin (default min(4, cpus)) overrides OMP_NUM_THREADS,
-  # so it is set to 1 too: 4 torch threads in each of 4 xdist workers oversubscribe
-  # the runner and slow GP fits 10x or more on linux. tests/conftest.py defaults
-  # to 1 as well; this makes the CI setting explicit.
+  # so it is set to 1 too: 4 torch threads in each xdist worker oversubscribe the
+  # runner and slow GP fits 10x or more on linux. tests/conftest.py defaults to 1
+  # as well; this makes the CI setting explicit.
   KALOS_TORCH_THREADS: "1"
   # CPU-only torch, from PyTorch's CPU wheel index, as in deploy/engine/Containerfile.
   # The default PyPI torch wheel on linux pulls about 3 GB of CUDA libraries that
