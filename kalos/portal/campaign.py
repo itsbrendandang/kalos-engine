@@ -697,8 +697,12 @@ class CampaignStore:
         best = _best_measured(base_rows, target)
 
         # `round` is absent on runs started before it was stamped: reads null.
+        # prediction_at_start / pred_source / residual / inside_band: see
+        # kalos.portal.run_prediction (null on runs started before R5).
+        from kalos.portal.run_prediction import run_view
+
         pending = [
-            {**run, "round": run.get("round"), "awaiting": run["result"] is None}
+            {**run_view(run), "round": run.get("round"), "awaiting": run["result"] is None}
             for run in state["pending"]
         ]
         n_awaiting = sum(1 for run in pending if run["awaiting"])
@@ -734,11 +738,10 @@ class CampaignStore:
         return row, state
 
     @staticmethod
-    def _published_provenance(
+    def _published_analysis(
         conn: sqlite3.Connection, tenant: str, campaign_id: str
     ) -> dict[str, Any] | None:
-        from kalos.portal.run_record import provenance_ref
-
+        """The campaign's published analysis read inside `conn`'s transaction."""
         arow = conn.execute(
             "SELECT state FROM analyses WHERE campaign_id = ? AND tenant = ?",
             (campaign_id, tenant),
@@ -749,13 +752,20 @@ class CampaignStore:
             data = json.loads(arow[0])
         except ValueError:
             return None
-        return provenance_ref(data if isinstance(data, dict) else None)
+        return data if isinstance(data, dict) else None
 
     def start(
         self, recipes: list[dict[str, Any]], *, tenant: str, campaign_id: str | None = None
     ) -> list[dict[str, Any]]:
         """Append each proposed recipe as a pending, awaiting run. Returns
-        the appended runs (each with its assigned `id`)."""
+        the appended runs (each with its assigned `id`).
+
+        Each run also stores `prediction_at_start` (VIZ_SPEC R5): the engine's
+        prediction and band for the recipe, looked up in the published analysis
+        in THIS transaction, or `{available: false, reason}` when the recipe is
+        not one of its proposals (kalos.portal.run_prediction). `pred_source`
+        says whether the run's `pred`/`std` are the engine's (matched: they are
+        replaced by the engine's values) or the caller's (unmatched)."""
         self._check(tenant, campaign_id)
         with self._txn(write=True) as conn:
             row, state = self._writable_state(
@@ -792,7 +802,11 @@ class CampaignStore:
             # has no analysis or one written before the block existed). The
             # recipe itself is caller input; this says what was published, not
             # that the recipe came from it.
-            analysis_ref = self._published_provenance(conn, tenant, row.id)
+            from kalos.portal.run_prediction import prediction_at_start, run_view
+            from kalos.portal.run_record import provenance_ref
+
+            published = self._published_analysis(conn, tenant, row.id)
+            analysis_ref = provenance_ref(published)
             for recipe in recipes:
                 # Validate the recipe mapping HERE, at the point of the bad
                 # input, so a malformed body 400s cleanly at /api/campaign/start
@@ -813,11 +827,17 @@ class CampaignStore:
                 recipe_map, problem = check_recipe_values(recipe_map, kinds)
                 if problem:
                     raise CampaignError(problem)
+                prediction = prediction_at_start(
+                    recipe_map, published, kinds, analysis_ref=analysis_ref, now=now
+                )
+                engine = bool(prediction.get("available"))
                 run = {
                     "id": uuid.uuid4().hex,
                     "recipe": recipe_map,
-                    "pred": recipe.get("pred"),
-                    "std": recipe.get("std"),
+                    "pred": prediction["pred"] if engine else recipe.get("pred"),
+                    "std": prediction["std"] if engine else recipe.get("std"),
+                    "pred_source": "engine" if engine else "caller",
+                    "prediction_at_start": prediction,
                     "mode": recipe.get("mode"),
                     "reason": recipe.get("reason"),
                     "result": None,
@@ -830,7 +850,7 @@ class CampaignStore:
                 appended.append(run)
             state["updated_at"] = now
             self._cas_write(conn, tenant, row, state, row.generation)
-            return appended
+            return [run_view(run) for run in appended]
 
     def set_result(
         self, run_id: str, value: float, *, tenant: str, campaign_id: str | None = None,
@@ -901,8 +921,10 @@ class CampaignStore:
                             subject=actor, auth_method=auth_method, campaign_id=row.id,
                             detail=detail, now=now, structured_detail=True,
                         )
+                    from kalos.portal.run_prediction import run_view
+
                     return {
-                        **run,
+                        **run_view(run),
                         "previous_result": prior,
                         "result_reason": reason_text or None,
                         "result_actor": _clip(actor),
