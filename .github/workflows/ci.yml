@@ -132,7 +132,7 @@ jobs:
     # run under parallel xdist (float results vary per worker even with threads
     # pinned). A handful of tests, so a quick serial job.
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - *setup-uv
