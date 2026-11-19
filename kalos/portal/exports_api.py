@@ -1,6 +1,7 @@
 """Kalos portal - report exports for one campaign ("you own your data").
 
-Routes (all campaign-scoped, all `read` scope; see docs in the route docstrings):
+Routes (all campaign-scoped, `read` scope except `POST .../operating-ranges`,
+which is `write`; see docs in the route docstrings):
 
 - `GET  /api/campaigns/{id}/export/rows?format=csv|json`: the campaign's
   ORIGINAL uploaded rows, and, as a separate, labelled section, the rows folded
@@ -10,6 +11,8 @@ Routes (all campaign-scoped, all `read` scope; see docs in the route docstrings)
   the campaign's audit-log entries, paginated newest first.
 - `GET|POST /api/campaigns/{id}/operating-ranges`: a model-based operating
   range, computed only when defensible (kalos/portal/operating_ranges.py).
+  GET is `read`; POST is `write` (it occupies the analysis slot, and the web
+  mints `write` for every non-GET request; docs/route-scopes.json).
 
 Security rules are those of `kalos.portal.campaigns_api`: scope is checked
 before the id is looked at; the tenant is always `principal.tenant`; malformed,
@@ -64,7 +67,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic import Strict as _Strict
 
-from kalos.portal.auth import READ, Principal, require_scope
+from kalos.portal.auth import READ, WRITE, Principal, require_scope
 from kalos.portal.busy import RETRY_AFTER_SECONDS, AnalysisBusy, run_in_slot
 from kalos.portal.campaign import CampaignNotFound, CampaignStore, get_campaign_store
 from kalos.portal.campaign_routes import campaign_not_found_response
@@ -607,11 +610,13 @@ def _ranges_mapping(state: dict[str, Any], analysis: dict[str, Any]) -> tuple[di
 async def operating_ranges_post(
     campaign_id: str,
     body: _RangesBody,
-    principal: Principal = Depends(require_scope(READ)),
+    principal: Principal = Depends(require_scope(WRITE)),
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
-    """Compute (never store) a model-based operating range. `read` scope: it
-    changes nothing; CPU is bounded by the analysis slot and the sample cap."""
+    """Compute (never store) a model-based operating range. `write` scope: it
+    changes nothing, but it occupies the analysis slot, and the web mints
+    `write` for non-GET requests. Read-only callers use the GET form. CPU is
+    bounded by the analysis slot and the sample cap."""
     return await _operating_ranges(campaign_id, body, principal, store)
 
 
@@ -624,7 +629,7 @@ async def operating_ranges_get(
     principal: Principal = Depends(require_scope(READ)),
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
-    """The GET form of the operating-ranges route (query parameters)."""
+    """The GET form of the operating-ranges route (query parameters); `read` scope."""
     body = _RangesBody(threshold=threshold, probability=probability, basis=basis)
     return await _operating_ranges(campaign_id, body, principal, store)
 
