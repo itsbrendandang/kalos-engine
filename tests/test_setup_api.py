@@ -199,6 +199,9 @@ def test_no_analysis_means_sync_is_null_and_only_feasibility_is_checked(env):
     ({"target_unit": "x" * 33}, "invalid_setup"),
     ({"target_unit": "g/L\u0000"}, "invalid_setup"),
     ({"target_unit": "g/\u200bL"}, "invalid_setup"),  # format char (Cf)
+    ({"target_unit": "g/L\u202e"}, "invalid_setup"),  # bidi override (Cf)
+    ({"target_unit": "\u2066mg\u2069"}, "invalid_setup"),  # bidi isolates (Cf)
+    ({"target_unit": "\ufeffg/L"}, "invalid_setup"),  # BOM / zero width no-break (Cf)
     ({"bounds": {"titer": {"lo": 0, "hi": 1}}}, "target_not_a_feature"),
     ({"bounds": {SECRET_FEATURE: {"lo": 0, "hi": 1}}}, "unknown_feature"),
     ({"linear_constraints": [{"coefficients": {SECRET_FEATURE: 1}, "op": "<=", "rhs": 1}]},

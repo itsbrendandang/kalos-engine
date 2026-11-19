@@ -140,8 +140,13 @@ def clean_target_unit(value: Any) -> str | None:
         raise SetupInvalid(
             "invalid_setup", f"target_unit must be at most {MAX_TARGET_UNIT_CHARS} characters"
         )
+    # Category C* covers Cc controls AND Cf format characters (bidi overrides
+    # such as U+202E, zero-width joiners): text that would display differently
+    # from what it contains.
     if any(unicodedata.category(ch).startswith("C") for ch in text):
-        raise SetupInvalid("invalid_setup", "target_unit must not contain control characters")
+        raise SetupInvalid(
+            "invalid_setup", "target_unit must not contain control or format characters"
+        )
     return text
 
 
