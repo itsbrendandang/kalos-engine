@@ -40,6 +40,11 @@ the database level. No row changes when the triggers are created. `down` drops
 them (v4 -> v3); a v3 engine runs on the result. Its startup no longer deletes
 audit rows (see docs/HARDENING.md, "Audit retention").
 
+Schema v5 adds the append-only `run_results` history; v6 adds
+`campaign_settings` (one JSON document per campaign and kind) and the append-only
+`gate_decisions` registry. Both are additive; their `down` steps rename the new
+tables aside (`<name>_v5_rolledback`, `<name>_v6_rolledback`), never drop them.
+
 This module is torch-free and FastAPI-free on purpose: the CLI must run on a
 box where the engine itself is stopped.
 """
@@ -685,8 +690,8 @@ class UpPlan:
                 lines.append("  create: run_results (append-only result history) with its UPDATE/DELETE triggers")
             if self.from_version < V6:
                 lines.append(
-                    "  create: campaign_settings and gate_decisions (append-only) with its "
-                    "UPDATE/DELETE triggers; no existing row changes"
+                    "  create: campaign_settings, and gate_decisions (append-only: UPDATE/DELETE "
+                    "triggers) (schema v6); no existing row changes"
                 )
             return "\n".join(lines)
         lines = [f"{self.db_path}: schema v{self.from_version} -> v{V2}"]
@@ -1009,8 +1014,8 @@ def migrate_up(
     dry_run: bool = False,
 ) -> MigrationResult:
     """Bring `db_path` to the current schema (v6). Idempotent: a current database
-    is a no-op. v0/v1 go through the v1 -> v2 migration and then v2 -> v3 -> v4 in
-    the SAME transaction; a v2 or v3 database gets the remaining steps. The backup
+    is a no-op. v0/v1 go through the v1 -> v2 migration and then v2 -> ... -> v6 in
+    the SAME transaction; a v2..v5 database gets the remaining steps. The backup
     is labelled for the version it is taken FROM plus one (`pre-v2` from v1,
     `pre-v3` from v2, `pre-v4` from v3, ...).
 
@@ -1103,7 +1108,7 @@ def _refuse_newer(version: int) -> None:
 
 
 def ensure_schema(db_path: Path | str, *, latest_dir: Path | str | None = None) -> MigrationResult:
-    """Startup hook used by `CampaignStore`: migrate to v3 when needed, else verify."""
+    """Startup hook used by `CampaignStore`: migrate to SCHEMA_VERSION when needed, else verify."""
     return migrate_up(db_path, latest_dir=latest_dir)
 
 
@@ -1271,28 +1276,36 @@ def _down_v6_in_txn(conn: sqlite3.Connection) -> None:
 
 
 def _render_down_v6(db_path: Path, conn: sqlite3.Connection) -> str:
-    counts = {}
-    for table in _V6_TABLES:
-        counts[table] = (
-            int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])  # noqa: S608 - module-constant table names
-            if table in _tables(conn) else 0
-        )
-    return "\n".join([
+    """The v6 -> v5 step. Names the tables each v6 table is renamed TO, computed
+    the same way `_down_v6_in_txn` does (an earlier rollback's
+    `<name>_v6_rolledback` is never reused: the next free `_2`, `_3`, ... is)."""
+    tables = _tables(conn)
+    lines = [
         f"{db_path}: schema v{V6} -> v{V5}",
         "  drop: gate_decisions UPDATE/DELETE triggers and its index",
-        f"  rename: campaign_settings -> campaign_settings_v6_rolledback (kept; {counts['campaign_settings']} row(s))",
-        f"  rename: gate_decisions -> gate_decisions_v6_rolledback (kept; {counts['gate_decisions']} row(s))",
-    ])
+    ]
+    for table in _V6_TABLES:
+        if table not in tables:
+            lines.append(f"  {table}: absent; nothing to rename")
+            continue
+        n = int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])  # noqa: S608 - module-constant table names
+        new = _free_name(tables, f"{table}_v6_rolledback")
+        tables.add(new)
+        lines.append(f"  rename: {table} -> {new} (kept, not dropped; {n} row(s))")
+    lines.append("  campaigns, analyses, jobs, audit_log and run_results: unchanged")
+    return "\n".join(lines)
 
 
 def _render_down_v5(db_path: Path, conn: sqlite3.Connection) -> str:
     n = 0
-    if "run_results" in _tables(conn):
+    tables = _tables(conn)
+    if "run_results" in tables:
         n = int(conn.execute("SELECT COUNT(*) FROM run_results").fetchone()[0])
+    new = _free_name(tables, "run_results_v5_rolledback")
     return "\n".join([
         f"{db_path}: schema v{V5} -> v{V4}",
         "  drop: run_results UPDATE/DELETE triggers",
-        f"  rename: run_results -> run_results_v5_rolledback (kept, not dropped; {n} row(s))",
+        f"  rename: run_results -> {new} (kept, not dropped; {n} row(s))",
         "  the campaign state blob keeps each run's current value, so the v4 code still reads it",
     ])
 

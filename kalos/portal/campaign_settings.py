@@ -73,6 +73,8 @@ def put_setting(
 
     _check_kind(kind)
     store._check(tenant, campaign_id)
+    if not isinstance(value, dict):
+        raise ValueError("a settings document must be a JSON object")
     blob = json.dumps(value, sort_keys=True, allow_nan=False)
     if len(blob) > MAX_SETTING_JSON_CHARS:
         raise SettingTooLarge(f"settings document exceeds {MAX_SETTING_JSON_CHARS} characters")
