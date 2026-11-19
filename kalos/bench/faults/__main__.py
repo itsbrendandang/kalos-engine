@@ -5,6 +5,8 @@
     score  join observations with the truth key; write scorecard_<tier>.{json,md}
     all    make + run + score
     gate   score, then compare with a stored baseline (exit 1 on a regression)
+    baseline  score, then write the gate view as the new stored baseline
+              (fast tier, repo-only bases: use --datasets /nonexistent)
 
 Examples:
     python -m kalos.bench.faults all --tier fast --out /tmp/faults
@@ -27,7 +29,7 @@ BASELINE_FAST = Path(__file__).with_name("results") / "baseline_fast_gate.json"
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m kalos.bench.faults", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["make", "run", "score", "all", "gate"])
+    ap.add_argument("command", choices=["make", "run", "score", "all", "gate", "baseline"])
     ap.add_argument("--out", type=Path, default=Path("faults-suite"))
     ap.add_argument("--tier", choices=["fast", "full"], default="fast")
     ap.add_argument("--datasets", type=Path, default=None,
@@ -43,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in ("run", "all"):
         run_suite(args.out, args.tier, workers=args.workers, only=args.only,
                   log=lambda m: print(m, flush=True))
-    if args.command in ("score", "all", "gate"):
+    if args.command in ("score", "all", "gate", "baseline"):
         card = score_suite(args.out, args.tier)
         jpath, mpath = write_scorecard(args.out, args.tier, card)
         t = card["totals"]
@@ -56,6 +58,14 @@ def main(argv: list[str] | None = None) -> int:
             for p in problems:
                 print(f"REGRESSION {p}", file=sys.stderr)
             return 1 if problems else 0
+        if args.command == "baseline":
+            view = {**gate_view(card), "source_commit": card["commit"],
+                    "note": "CI regression gate: fast tier, repo-only bases (Kaggle skipped). "
+                            "Regenerate with `python -m kalos.bench.faults all --tier fast "
+                            "--datasets /nonexistent --out DIR` then `... baseline --out DIR`; "
+                            "see docs/PLANTED_FAULTS.md."}
+            args.baseline.write_text(json.dumps(view, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+            print(f"wrote {args.baseline}")
     return 0
 
 
