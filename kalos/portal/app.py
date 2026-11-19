@@ -108,7 +108,7 @@ log = logging.getLogger("kalos.portal")
 
 # Routes that accept a multipart file upload, and so get the upload-sized body
 # cap rather than the small JSON one (kalos/portal/limits.py).
-UPLOAD_PATHS = frozenset({"/api/run", "/api/scale/readout"})
+UPLOAD_PATHS = frozenset({"/api/run", "/api/scale/readout", "/api/scale/readout.json"})
 
 # --- CPU thread budget ------------------------------------------------------- #
 # The upload handler offloads its CPU-bound body (pandas parse + ~7 GP fits +
