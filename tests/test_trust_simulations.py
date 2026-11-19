@@ -29,3 +29,23 @@ def test_false_trust_stays_low_on_no_signal_sheets(scenario):
     for r in rows:
         if r.get("n_proposals"):
             assert r["trust_status"] in {"exploration_untrusted", "trusted"}
+
+
+@pytest.mark.parametrize("scenario", ["hartmann6_n30", "heteroscedastic_n40"])
+def test_selection_aware_bands_cover_at_the_proposals(scenario):
+    """F15: on fresh seeds the 90% band at proposals covered 0.92-0.99 (40 seeds,
+    benchmarks/results/coverage_at_proposals_after.json; the plain band covered
+    0.60-0.84). On 6 seeds x 5 proposals require >= 0.80 at proposals (the
+    plain band's own 0.60-0.65 on these simulators fails it) and >= 0.85 on
+    random in-box points, at both levels."""
+    from kalos.bench.coverage_at_proposals import run_one
+
+    rows = [run_one(scenario, s) for s in range(200, 206)]
+    rows = [r for r in rows if "error" not in r]
+    assert len(rows) >= 5
+    for lv in ("0.9", "0.95"):
+        inside = [b for r in rows for b in r["levels"][lv]["inside"]]
+        assert len(inside) >= 20
+        assert sum(inside) / len(inside) >= 0.80, (lv, sum(inside), len(inside))
+        rand = [r["levels"][lv]["random_coverage"] for r in rows]
+        assert min(rand) >= 0.85, (lv, rand)

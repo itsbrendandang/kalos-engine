@@ -4,6 +4,10 @@ Newest first.
 
 ## Unreleased
 
+### Changed - selection-aware proposal intervals (F15, ML audit B1 fix 2; interval numbers change)
+
+- `proposals[].intervals` are calibrated on the held-out runs each fold model ranked highest (top 30%, both CV repeats) with the proposal sd floored at the 90th percentile of held-out sds (`method: conformal_selection_aware`, `coverage_basis: held_out_top_ranked_runs`). Measured at proposals on fresh simulation seeds: 90% band 0.60-0.83 -> 0.92-0.99, 95% band 0.72-0.92 -> 0.96-0.99, at 2.5-3.2x the median width; in-box coverage 0.98-1.00 (conservative). Per-level fallback to the plain band with `selection_aware_unavailable` when too few runs are selected. VALIDATION.md has the table.
+
 ### Changed - trust gates that gate (F04, ML audit B3; proposals change)
 
 - One `verdict` (reliable / not_yet / refused, cherry-picked from `arch-safe-now`) from the leak-free CV acts on the batch: `refused` (fewer than 3 CV groups, or the held-out score's 95% interval at or below 0) withholds the proposals with a `refusal`; `not_yet` labels every proposal `trust.status: exploration_untrusted`; `reliable` labels them `trusted`. `proposal_trust` says what happened.

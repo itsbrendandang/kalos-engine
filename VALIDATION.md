@@ -130,6 +130,62 @@ proposal interval carries `coverage_basis: "held_out_past_runs"` and a `caveat` 
 these measured numbers (`docs/CAMPAIGNS_API.md`, "Coverage basis and the proposal
 caveat").
 
+## After F15: selection-aware bands (fresh seeds 100-139)
+
+The proposal bands are now calibrated on the held-out runs the model ranked highest
+in each fold (top 30%, pooled over both CV repeats), and the proposal's sd is floored
+at the 90th percentile of the held-out sds (`calibrate_selection_aware`,
+`kalos/portal/analysis_parts/intervals.py`). The two parameters were chosen on seeds
+0-39 (`coverage_at_proposals_after_selection_seeds.json`); the numbers below are on
+**fresh seeds 100-139**, with the old band re-run on the same seeds
+(`coverage_at_proposals_before_seeds100.json` -> `coverage_at_proposals_after.json`).
+
+**90% nominal**
+
+| Scenario | before: at proposals [95% CI] | **after: at proposals [95% CI]** | random in-box before -> after | median width at proposals (x y range) | available |
+|---|---|---|---|---|---|
+| Hartmann-6, n=30 | 0.64 [0.56, 0.72] | **0.94** [0.90, 0.97] | 0.91 -> 0.98 | 0.71 -> 1.76 (x2.5) | 1.00 |
+| Hartmann-6, n=80 | 0.60 [0.53, 0.68] | **0.94** [0.89, 0.97] | 0.91 -> 0.99 | 0.38 -> 0.98 (x2.6) | 1.00 |
+| Bioprocess, n=40 | 0.66 [0.59, 0.72] | **0.92** [0.87, 0.96] | 0.91 -> 0.99 | 0.72 -> 1.82 (x2.5) | 1.00 |
+| Bioprocess, n=100 | 0.83 [0.80, 0.88] | **0.99** [0.97, 1.00] | 0.90 -> 0.99 | 0.45 -> 1.31 (x2.9) | 1.00 |
+| Heteroscedastic 3-D, n=40 | 0.65 [0.57, 0.71] | **0.96** [0.93, 0.98] | 0.89 -> 0.99 | 0.54 -> 1.71 (x3.2) | 1.00 |
+| Branin, n=20 (control) | 0.87 [0.80, 0.94] | 0.98 [0.96, 0.99] | 0.89 -> 0.98 | 0.55 -> 0.84 (x1.5) | 1.00 |
+
+**95% nominal**
+
+| Scenario | before: at proposals [95% CI] | **after: at proposals [95% CI]** | random in-box before -> after | median width at proposals (x y range) | available |
+|---|---|---|---|---|---|
+| Hartmann-6, n=30 | 0.80 [0.73, 0.86] | **0.97** [0.95, 0.99] | 0.97 -> 0.99 | 1.23 -> 2.40 (x1.9) | 1.00 |
+| Hartmann-6, n=80 | 0.72 [0.65, 0.79] | **0.97** [0.94, 0.99] | 0.95 -> 1.00 | 0.53 -> 1.54 (x2.9) | 1.00 |
+| Bioprocess, n=40 | 0.77 [0.70, 0.82] | **0.96** [0.92, 1.00] | 0.95 -> 1.00 | 1.04 -> 2.64 (x2.5) | 1.00 |
+| Bioprocess, n=100 | 0.92 [0.89, 0.94] | **0.99** [0.98, 1.00] | 0.95 -> 1.00 | 0.80 -> 1.82 (x2.3) | 1.00 |
+| Heteroscedastic 3-D, n=40 | 0.77 [0.70, 0.83] | **0.99** [0.98, 1.00] | 0.95 -> 1.00 | 0.80 -> 2.57 (x3.2) | 1.00 |
+| Branin, n=20 (control) | 0.95 [0.91, 0.98] | 0.99 [0.98, 1.00] | 0.94 -> 0.99 | 0.74 -> 0.97 (x1.3) | 1.00 |
+
+What this shows, and what it does not:
+
+- **Nominal is reached at the proposals** on every simulator: 0.92-0.99 at 90%,
+  0.96-0.99 at 95% (the lower CI bound of the worst case, bioprocess n=40, is 0.87).
+  The shipped caveat carries these numbers (`coverage_measured_at_proposals`).
+- **The price is width.** The bands at proposals are 2.5-3.2x wider (median), often
+  wider than the whole range of the training target when the model is weak (Hartmann-6
+  n=30 has a held-out Spearman near 0.3). They are honest, not informative: a model
+  that cannot rank its own held-out runs cannot say where a proposal will land.
+- **They over-cover.** 0.99 on random in-box points and 0.99 at proposals on the
+  bioprocess n=100 sheet: the 90th-percentile sd floor is conservative. A less
+  conservative floor (75th percentile) measured 0.87 on bioprocess n=40 on the
+  selection seeds; we kept the floor that reached nominal everywhere.
+- **No guarantee.** The pooled CV repeats re-use each run once per repeat and the
+  top-ranked held-out runs are only a proxy for proposals. The claim is the measured
+  coverage on these synthetic simulators, nothing more; CRUX_PORT_PLAN Rank 2 (F12)
+  measures it prospectively on real campaigns.
+- **Fallback.** A level with too few top-ranked held-out runs (90% needs 9, 95% needs
+  19; e.g. a sheet whose binding CV grouping is 5 batches) falls back to the plain
+  normalized band, which keeps its own caveat (0.60-0.81 measured at proposals) and a
+  `selection_aware_unavailable` reason.
+- Cost: no extra model fits (arithmetic on the CV predictions already computed);
+  median analysis time was unchanged within machine-load noise.
+
 ---
 
 # Trust verdict under leaks (false-trust rates)

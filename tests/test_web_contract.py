@@ -136,7 +136,11 @@ def test_proposals_and_surface_carry_the_redesign_fields(analyze_response: dict)
         assert not missing, f"proposal missing web fields: {sorted(missing)}"
         for band in p["intervals"]:
             assert band["coverage"] in analyze_response["interval_levels"]
-            assert band["method"] == "conformal_normalized"
+            # F15: selection-aware per level, the plain normalized band as the
+            # per-level fallback; both carry their coverage basis and caveat (F02).
+            assert band["method"] in {"conformal_selection_aware", "conformal_normalized"}
+            assert band["coverage_basis"] in {"held_out_top_ranked_runs", "held_out_past_runs"}
+            assert band["caveat"]["code"]
             if band["available"]:
                 assert band["lo"] <= p["pred"] <= band["hi"]
             else:  # a refusal says why, never a guessed band

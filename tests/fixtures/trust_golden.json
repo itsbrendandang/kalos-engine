@@ -12,7 +12,8 @@
   "F02: interval labels (coverage_basis, caveat with coverage_at_proposals_estimate, conformal_caveat); additive, no number changes",
   "F05: leak-free CV grouping (replicate clusters, batch/round/scale candidates, lowest score binds); batch columns not fitted",
   "F04: gates that gate (verdict withholds/labels proposals; floor needs CI>0 and n>=12; feasibility gates not applicable below 5 non-producers; cv_topk under minimize)",
-  "F04 follow-up: reliability.verdict (not_judged below 12 runs / 3 groups; clears_floor null then)"
+  "F04 follow-up: reliability.verdict (not_judged below 12 runs / 3 groups; clears_floor null then)",
+  "F15: selection-aware per-proposal intervals (top-30% held-out runs per fold, pooled repeats, sd floored at the 90th percentile)"
  ],
  "sheets": {
   "batch_text": {
@@ -556,18 +557,18 @@
     "calibrated_on": "grouped_cv_oof",
     "coverage_at_proposals": {
      "0.9": {
-      "code": "coverage_lower_at_proposals",
+      "code": "coverage_measured_at_proposals",
       "coverage_at_proposals_estimate": {
        "basis": "simulation",
        "by_scenario": {
-        "bioprocess_n100": 0.81,
-        "bioprocess_n40": 0.74,
-        "hartmann6_n30": 0.6,
-        "hartmann6_n80": 0.65,
-        "heteroscedastic_n40": 0.685
+        "bioprocess_n100": 0.99,
+        "bioprocess_n40": 0.92,
+        "hartmann6_n30": 0.935,
+        "hartmann6_n80": 0.94,
+        "heteroscedastic_n40": 0.96
        },
-       "measured_max": 0.81,
-       "measured_min": 0.6,
+       "measured_max": 0.99,
+       "measured_min": 0.92,
        "nominal": 0.9,
        "source": {
         "benchmark": "python -m kalos.bench.coverage_at_proposals",
@@ -575,7 +576,7 @@
         "kind": "simulation",
         "measurement": "one fresh simulated measurement per proposal",
         "proposals_per_seed": 5,
-        "results": "benchmarks/results/coverage_at_proposals_before.json",
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
         "scenarios": [
          "hartmann6_n30",
          "hartmann6_n80",
@@ -583,10 +584,11 @@
          "bioprocess_n100",
          "heteroscedastic_n40"
         ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
      },
      "0.95": {
       "code": "coverage_lower_at_proposals",
@@ -619,7 +621,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+      "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -733,10 +735,46 @@
       "rank": 47
      }
     ],
-    "method": "conformal_normalized",
+    "method": "mixed",
+    "method_by_level": {
+     "0.9": "conformal_selection_aware",
+     "0.95": "conformal_normalized"
+    },
     "n_calibration": 48,
     "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
     "score": "abs(y - mu_oof) / sigma_oof",
+    "selection_aware": {
+     "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+     "coverage_guarantee": "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are correlated; the coverage at proposals is measured in simulation and shipped with the band",
+     "levels": [
+      {
+       "available": true,
+       "coverage": 0.9,
+       "n_pooled": 48,
+       "n_selected": 17,
+       "q_sel": 9.1886,
+       "rank": 17
+      },
+      {
+       "available": false,
+       "code": "too_few_top_ranked_runs",
+       "coverage": 0.95,
+       "min_selected": 19,
+       "n_pooled": 48,
+       "n_selected": 17,
+       "rank": 18,
+       "reason": "17 top-ranked held-out runs; the 95% selection-aware band needs 19"
+      }
+     ],
+     "method": "conformal_selection_aware",
+     "n_pooled": 48,
+     "n_selected": 17,
+     "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+     "selection": "in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the fold model ranked best (highest prediction; lowest when minimizing)",
+     "sigma_floor": 0.6948,
+     "sigma_floor_quantile": 0.9,
+     "top_fraction": 0.3
+    },
     "sigma": "gp_predictive_sd",
     "sigma_source": "surrogate_fitted_noise"
    },
@@ -1093,27 +1131,28 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9375,
-       "hi": 4.398,
-       "lo": -3.0971,
-       "method": "conformal_normalized",
-       "n_calibration": 48,
-       "q_norm": 8.4028
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 7.0344,
+       "lo": -5.7336,
+       "method": "conformal_selection_aware",
+       "n_calibration": 17,
+       "q_sel": 9.1886,
+       "sigma_floor": 0.6948,
+       "sigma_used": 0.6948
       },
       {
        "available": true,
@@ -1128,7 +1167,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -1137,7 +1176,11 @@
        "lo": -3.5865,
        "method": "conformal_normalized",
        "n_calibration": 48,
-       "q_norm": 9.5001
+       "q_norm": 9.5001,
+       "selection_aware_unavailable": {
+        "code": "too_few_top_ranked_runs",
+        "reason": "17 top-ranked held-out runs; the 95% selection-aware band needs 19"
+       }
       }
      ],
      "mode": "explore",
@@ -1236,27 +1279,28 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9375,
-       "hi": 4.9006,
-       "lo": -2.477,
-       "method": "conformal_normalized",
-       "n_calibration": 48,
-       "q_norm": 8.4028
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 7.5958,
+       "lo": -5.1722,
+       "method": "conformal_selection_aware",
+       "n_calibration": 17,
+       "q_sel": 9.1886,
+       "sigma_floor": 0.6948,
+       "sigma_used": 0.6948
       },
       {
        "available": true,
@@ -1271,7 +1315,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -1280,7 +1324,11 @@
        "lo": -2.9586,
        "method": "conformal_normalized",
        "n_calibration": 48,
-       "q_norm": 9.5001
+       "q_norm": 9.5001,
+       "selection_aware_unavailable": {
+        "code": "too_few_top_ranked_runs",
+        "reason": "17 top-ranked held-out runs; the 95% selection-aware band needs 19"
+       }
       }
      ],
      "mode": "exploit",
@@ -1379,27 +1427,28 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9375,
-       "hi": 5.0483,
-       "lo": -2.6153,
-       "method": "conformal_normalized",
-       "n_calibration": 48,
-       "q_norm": 8.4028
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 7.6005,
+       "lo": -5.1675,
+       "method": "conformal_selection_aware",
+       "n_calibration": 17,
+       "q_sel": 9.1886,
+       "sigma_floor": 0.6948,
+       "sigma_used": 0.6948
       },
       {
        "available": true,
@@ -1414,7 +1463,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -1423,7 +1472,11 @@
        "lo": -3.1156,
        "method": "conformal_normalized",
        "n_calibration": 48,
-       "q_norm": 9.5001
+       "q_norm": 9.5001,
+       "selection_aware_unavailable": {
+        "code": "too_few_top_ranked_runs",
+        "reason": "17 top-ranked held-out runs; the 95% selection-aware band needs 19"
+       }
       }
      ],
      "mode": "exploit",
@@ -1522,27 +1575,28 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9375,
-       "hi": 5.2366,
-       "lo": -2.7654,
-       "method": "conformal_normalized",
-       "n_calibration": 48,
-       "q_norm": 8.4028
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 7.6196,
+       "lo": -5.1484,
+       "method": "conformal_selection_aware",
+       "n_calibration": 17,
+       "q_sel": 9.1886,
+       "sigma_floor": 0.6948,
+       "sigma_used": 0.6948
       },
       {
        "available": true,
@@ -1557,7 +1611,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -1566,7 +1620,11 @@
        "lo": -3.2879,
        "method": "conformal_normalized",
        "n_calibration": 48,
-       "q_norm": 9.5001
+       "q_norm": 9.5001,
+       "selection_aware_unavailable": {
+        "code": "too_few_top_ranked_runs",
+        "reason": "17 top-ranked held-out runs; the 95% selection-aware band needs 19"
+       }
       }
      ],
      "mode": "exploit",
@@ -1665,27 +1723,28 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9375,
-       "hi": 4.9617,
-       "lo": -3.731,
-       "method": "conformal_normalized",
-       "n_calibration": 48,
-       "q_norm": 8.4028
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 6.9993,
+       "lo": -5.7686,
+       "method": "conformal_selection_aware",
+       "n_calibration": 17,
+       "q_sel": 9.1886,
+       "sigma_floor": 0.6948,
+       "sigma_used": 0.6948
       },
       {
        "available": true,
@@ -1700,7 +1759,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -1709,7 +1768,11 @@
        "lo": -4.2985,
        "method": "conformal_normalized",
        "n_calibration": 48,
-       "q_norm": 9.5001
+       "q_norm": 9.5001,
+       "selection_aware_unavailable": {
+        "code": "too_few_top_ranked_runs",
+        "reason": "17 top-ranked held-out runs; the 95% selection-aware band needs 19"
+       }
       }
      ],
      "mode": "explore",
@@ -4497,18 +4560,18 @@
     "calibrated_on": "grouped_cv_oof",
     "coverage_at_proposals": {
      "0.9": {
-      "code": "coverage_lower_at_proposals",
+      "code": "coverage_measured_at_proposals",
       "coverage_at_proposals_estimate": {
        "basis": "simulation",
        "by_scenario": {
-        "bioprocess_n100": 0.81,
-        "bioprocess_n40": 0.74,
-        "hartmann6_n30": 0.6,
-        "hartmann6_n80": 0.65,
-        "heteroscedastic_n40": 0.685
+        "bioprocess_n100": 0.99,
+        "bioprocess_n40": 0.92,
+        "hartmann6_n30": 0.935,
+        "hartmann6_n80": 0.94,
+        "heteroscedastic_n40": 0.96
        },
-       "measured_max": 0.81,
-       "measured_min": 0.6,
+       "measured_max": 0.99,
+       "measured_min": 0.92,
        "nominal": 0.9,
        "source": {
         "benchmark": "python -m kalos.bench.coverage_at_proposals",
@@ -4516,7 +4579,7 @@
         "kind": "simulation",
         "measurement": "one fresh simulated measurement per proposal",
         "proposals_per_seed": 5,
-        "results": "benchmarks/results/coverage_at_proposals_before.json",
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
         "scenarios": [
          "hartmann6_n30",
          "hartmann6_n80",
@@ -4524,24 +4587,25 @@
          "bioprocess_n100",
          "heteroscedastic_n40"
         ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
      },
      "0.95": {
-      "code": "coverage_lower_at_proposals",
+      "code": "coverage_measured_at_proposals",
       "coverage_at_proposals_estimate": {
        "basis": "simulation",
        "by_scenario": {
-        "bioprocess_n100": 0.855,
-        "bioprocess_n40": 0.825,
-        "hartmann6_n30": 0.83,
-        "hartmann6_n80": 0.755,
-        "heteroscedastic_n40": 0.805
+        "bioprocess_n100": 0.995,
+        "bioprocess_n40": 0.965,
+        "hartmann6_n30": 0.97,
+        "hartmann6_n80": 0.97,
+        "heteroscedastic_n40": 0.995
        },
-       "measured_max": 0.855,
-       "measured_min": 0.755,
+       "measured_max": 0.995,
+       "measured_min": 0.965,
        "nominal": 0.95,
        "source": {
         "benchmark": "python -m kalos.bench.coverage_at_proposals",
@@ -4549,7 +4613,7 @@
         "kind": "simulation",
         "measurement": "one fresh simulated measurement per proposal",
         "proposals_per_seed": 5,
-        "results": "benchmarks/results/coverage_at_proposals_before.json",
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
         "scenarios": [
          "hartmann6_n30",
          "hartmann6_n80",
@@ -4557,10 +4621,11 @@
          "bioprocess_n100",
          "heteroscedastic_n40"
         ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+      "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -4674,10 +4739,44 @@
       "rank": 30
      }
     ],
-    "method": "conformal_normalized",
+    "method": "conformal_selection_aware",
+    "method_by_level": {
+     "0.9": "conformal_selection_aware",
+     "0.95": "conformal_selection_aware"
+    },
     "n_calibration": 30,
     "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
     "score": "abs(y - mu_oof) / sigma_oof",
+    "selection_aware": {
+     "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+     "coverage_guarantee": "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are correlated; the coverage at proposals is measured in simulation and shipped with the band",
+     "levels": [
+      {
+       "available": true,
+       "coverage": 0.9,
+       "n_pooled": 60,
+       "n_selected": 20,
+       "q_sel": 5.3526,
+       "rank": 19
+      },
+      {
+       "available": true,
+       "coverage": 0.95,
+       "n_pooled": 60,
+       "n_selected": 20,
+       "q_sel": 7.18,
+       "rank": 20
+      }
+     ],
+     "method": "conformal_selection_aware",
+     "n_pooled": 60,
+     "n_selected": 20,
+     "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+     "selection": "in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the fold model ranked best (highest prediction; lowest when minimizing)",
+     "sigma_floor": 0.2287,
+     "sigma_floor_quantile": 0.9,
+     "top_fraction": 0.3
+    },
     "sigma": "gp_predictive_sd",
     "sigma_source": "surrogate_fitted_noise"
    },
@@ -4960,51 +5059,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9333,
-       "hi": 0.6837,
-       "lo": -0.3012,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 2.9495
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.4154,
+       "lo": -1.0329,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.3526,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 1.085,
-       "lo": -0.7024,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 5.3526
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.8334,
+       "lo": -1.4508,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 7.18,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       }
      ],
      "mode": "explore",
@@ -5103,51 +5204,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9333,
-       "hi": 0.683,
-       "lo": -0.2014,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 2.9495
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.465,
+       "lo": -0.9834,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.3526,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 1.0434,
-       "lo": -0.5617,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 5.3526
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.8829,
+       "lo": -1.4013,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 7.18,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       }
      ],
      "mode": "explore",
@@ -5246,51 +5349,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9333,
-       "hi": 1.0915,
-       "lo": 0.1432,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 2.9495
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.8415,
+       "lo": -0.6068,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.3526,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 1.4778,
-       "lo": -0.2431,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 5.3526
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 2.2594,
+       "lo": -1.0248,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 7.18,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       }
      ],
      "mode": "explore",
@@ -5389,51 +5494,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9333,
-       "hi": 1.1121,
-       "lo": 0.1438,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 2.9495
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.8521,
+       "lo": -0.5962,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.3526,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 1.5066,
-       "lo": -0.2506,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 5.3526
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 2.2701,
+       "lo": -1.0141,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 7.18,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       }
      ],
      "mode": "explore",
@@ -5532,51 +5639,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9333,
-       "hi": 1.1,
-       "lo": 0.1143,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 2.9495
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.8313,
+       "lo": -0.617,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.3526,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 1.5015,
-       "lo": -0.2872,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 5.3526
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 2.2493,
+       "lo": -1.0349,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 7.18,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       }
      ],
      "mode": "explore",
@@ -8218,18 +8327,18 @@
     "calibrated_on": "grouped_cv_oof",
     "coverage_at_proposals": {
      "0.9": {
-      "code": "coverage_lower_at_proposals",
+      "code": "coverage_measured_at_proposals",
       "coverage_at_proposals_estimate": {
        "basis": "simulation",
        "by_scenario": {
-        "bioprocess_n100": 0.81,
-        "bioprocess_n40": 0.74,
-        "hartmann6_n30": 0.6,
-        "hartmann6_n80": 0.65,
-        "heteroscedastic_n40": 0.685
+        "bioprocess_n100": 0.99,
+        "bioprocess_n40": 0.92,
+        "hartmann6_n30": 0.935,
+        "hartmann6_n80": 0.94,
+        "heteroscedastic_n40": 0.96
        },
-       "measured_max": 0.81,
-       "measured_min": 0.6,
+       "measured_max": 0.99,
+       "measured_min": 0.92,
        "nominal": 0.9,
        "source": {
         "benchmark": "python -m kalos.bench.coverage_at_proposals",
@@ -8237,7 +8346,7 @@
         "kind": "simulation",
         "measurement": "one fresh simulated measurement per proposal",
         "proposals_per_seed": 5,
-        "results": "benchmarks/results/coverage_at_proposals_before.json",
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
         "scenarios": [
          "hartmann6_n30",
          "hartmann6_n80",
@@ -8245,10 +8354,11 @@
          "bioprocess_n100",
          "heteroscedastic_n40"
         ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
      },
      "0.95": {
       "code": "coverage_lower_at_proposals",
@@ -8281,7 +8391,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+      "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -8395,10 +8505,46 @@
       "rank": 35
      }
     ],
-    "method": "conformal_normalized",
+    "method": "mixed",
+    "method_by_level": {
+     "0.9": "conformal_selection_aware",
+     "0.95": "conformal_normalized"
+    },
     "n_calibration": 35,
     "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
     "score": "abs(y - mu_oof) / sigma_oof",
+    "selection_aware": {
+     "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+     "coverage_guarantee": "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are correlated; the coverage at proposals is measured in simulation and shipped with the band",
+     "levels": [
+      {
+       "available": true,
+       "coverage": 0.9,
+       "n_pooled": 35,
+       "n_selected": 12,
+       "q_sel": 3.4829,
+       "rank": 12
+      },
+      {
+       "available": false,
+       "code": "too_few_top_ranked_runs",
+       "coverage": 0.95,
+       "min_selected": 19,
+       "n_pooled": 35,
+       "n_selected": 12,
+       "rank": 13,
+       "reason": "12 top-ranked held-out runs; the 95% selection-aware band needs 19"
+      }
+     ],
+     "method": "conformal_selection_aware",
+     "n_pooled": 35,
+     "n_selected": 12,
+     "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+     "selection": "in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the fold model ranked best (highest prediction; lowest when minimizing)",
+     "sigma_floor": 0.7012,
+     "sigma_floor_quantile": 0.9,
+     "top_fraction": 0.3
+    },
     "sigma": "gp_predictive_sd",
     "sigma_source": "surrogate_fitted_noise"
    },
@@ -8695,27 +8841,28 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9429,
-       "hi": 2.5051,
-       "lo": 1.3587,
-       "method": "conformal_normalized",
-       "n_calibration": 35,
-       "q_norm": 3.4171
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 4.3742,
+       "lo": -0.5104,
+       "method": "conformal_selection_aware",
+       "n_calibration": 12,
+       "q_sel": 3.4829,
+       "sigma_floor": 0.7012,
+       "sigma_used": 0.7012
       },
       {
        "available": true,
@@ -8730,7 +8877,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -8739,7 +8886,11 @@
        "lo": 1.2515,
        "method": "conformal_normalized",
        "n_calibration": 35,
-       "q_norm": 4.0559
+       "q_norm": 4.0559,
+       "selection_aware_unavailable": {
+        "code": "too_few_top_ranked_runs",
+        "reason": "12 top-ranked held-out runs; the 95% selection-aware band needs 19"
+       }
       }
      ],
      "mode": "explore",
@@ -8836,27 +8987,28 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9429,
-       "hi": 4.0272,
-       "lo": 2.9332,
-       "method": "conformal_normalized",
-       "n_calibration": 35,
-       "q_norm": 3.4171
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.9225,
+       "lo": 1.0379,
+       "method": "conformal_selection_aware",
+       "n_calibration": 12,
+       "q_sel": 3.4829,
+       "sigma_floor": 0.7012,
+       "sigma_used": 0.7012
       },
       {
        "available": true,
@@ -8871,7 +9023,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -8880,7 +9032,11 @@
        "lo": 2.8309,
        "method": "conformal_normalized",
        "n_calibration": 35,
-       "q_norm": 4.0559
+       "q_norm": 4.0559,
+       "selection_aware_unavailable": {
+        "code": "too_few_top_ranked_runs",
+        "reason": "12 top-ranked held-out runs; the 95% selection-aware band needs 19"
+       }
       }
      ],
      "mode": "explore",
@@ -8977,27 +9133,28 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9429,
-       "hi": 2.4865,
-       "lo": 1.1009,
-       "method": "conformal_normalized",
-       "n_calibration": 35,
-       "q_norm": 3.4171
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 4.236,
+       "lo": -0.6486,
+       "method": "conformal_selection_aware",
+       "n_calibration": 12,
+       "q_sel": 3.4829,
+       "sigma_floor": 0.7012,
+       "sigma_used": 0.7012
       },
       {
        "available": true,
@@ -9012,7 +9169,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -9021,7 +9178,11 @@
        "lo": 0.9714,
        "method": "conformal_normalized",
        "n_calibration": 35,
-       "q_norm": 4.0559
+       "q_norm": 4.0559,
+       "selection_aware_unavailable": {
+        "code": "too_few_top_ranked_runs",
+        "reason": "12 top-ranked held-out runs; the 95% selection-aware band needs 19"
+       }
       }
      ],
      "mode": "explore",
@@ -9118,27 +9279,28 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9429,
-       "hi": 3.6761,
-       "lo": 2.2047,
-       "method": "conformal_normalized",
-       "n_calibration": 35,
-       "q_norm": 3.4171
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.3827,
+       "lo": 0.4981,
+       "method": "conformal_selection_aware",
+       "n_calibration": 12,
+       "q_sel": 3.4829,
+       "sigma_floor": 0.7012,
+       "sigma_used": 0.7012
       },
       {
        "available": true,
@@ -9153,7 +9315,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -9162,7 +9324,11 @@
        "lo": 2.0671,
        "method": "conformal_normalized",
        "n_calibration": 35,
-       "q_norm": 4.0559
+       "q_norm": 4.0559,
+       "selection_aware_unavailable": {
+        "code": "too_few_top_ranked_runs",
+        "reason": "12 top-ranked held-out runs; the 95% selection-aware band needs 19"
+       }
       }
      ],
      "mode": "explore",
@@ -9259,27 +9425,28 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9429,
-       "hi": 3.9959,
-       "lo": 2.817,
-       "method": "conformal_normalized",
-       "n_calibration": 35,
-       "q_norm": 3.4171
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.8488,
+       "lo": 0.9641,
+       "method": "conformal_selection_aware",
+       "n_calibration": 12,
+       "q_sel": 3.4829,
+       "sigma_floor": 0.7012,
+       "sigma_used": 0.7012
       },
       {
        "available": true,
@@ -9294,7 +9461,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -9303,7 +9470,11 @@
        "lo": 2.7068,
        "method": "conformal_normalized",
        "n_calibration": 35,
-       "q_norm": 4.0559
+       "q_norm": 4.0559,
+       "selection_aware_unavailable": {
+        "code": "too_few_top_ranked_runs",
+        "reason": "12 top-ranked held-out runs; the 95% selection-aware band needs 19"
+       }
       }
      ],
      "mode": "explore",
@@ -11829,18 +12000,18 @@
     "calibrated_on": "grouped_cv_oof",
     "coverage_at_proposals": {
      "0.9": {
-      "code": "coverage_lower_at_proposals",
+      "code": "coverage_measured_at_proposals",
       "coverage_at_proposals_estimate": {
        "basis": "simulation",
        "by_scenario": {
-        "bioprocess_n100": 0.81,
-        "bioprocess_n40": 0.74,
-        "hartmann6_n30": 0.6,
-        "hartmann6_n80": 0.65,
-        "heteroscedastic_n40": 0.685
+        "bioprocess_n100": 0.99,
+        "bioprocess_n40": 0.92,
+        "hartmann6_n30": 0.935,
+        "hartmann6_n80": 0.94,
+        "heteroscedastic_n40": 0.96
        },
-       "measured_max": 0.81,
-       "measured_min": 0.6,
+       "measured_max": 0.99,
+       "measured_min": 0.92,
        "nominal": 0.9,
        "source": {
         "benchmark": "python -m kalos.bench.coverage_at_proposals",
@@ -11848,7 +12019,7 @@
         "kind": "simulation",
         "measurement": "one fresh simulated measurement per proposal",
         "proposals_per_seed": 5,
-        "results": "benchmarks/results/coverage_at_proposals_before.json",
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
         "scenarios": [
          "hartmann6_n30",
          "hartmann6_n80",
@@ -11856,24 +12027,25 @@
          "bioprocess_n100",
          "heteroscedastic_n40"
         ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
      },
      "0.95": {
-      "code": "coverage_lower_at_proposals",
+      "code": "coverage_measured_at_proposals",
       "coverage_at_proposals_estimate": {
        "basis": "simulation",
        "by_scenario": {
-        "bioprocess_n100": 0.855,
-        "bioprocess_n40": 0.825,
-        "hartmann6_n30": 0.83,
-        "hartmann6_n80": 0.755,
-        "heteroscedastic_n40": 0.805
+        "bioprocess_n100": 0.995,
+        "bioprocess_n40": 0.965,
+        "hartmann6_n30": 0.97,
+        "hartmann6_n80": 0.97,
+        "heteroscedastic_n40": 0.995
        },
-       "measured_max": 0.855,
-       "measured_min": 0.755,
+       "measured_max": 0.995,
+       "measured_min": 0.965,
        "nominal": 0.95,
        "source": {
         "benchmark": "python -m kalos.bench.coverage_at_proposals",
@@ -11881,7 +12053,7 @@
         "kind": "simulation",
         "measurement": "one fresh simulated measurement per proposal",
         "proposals_per_seed": 5,
-        "results": "benchmarks/results/coverage_at_proposals_before.json",
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
         "scenarios": [
          "hartmann6_n30",
          "hartmann6_n80",
@@ -11889,10 +12061,11 @@
          "bioprocess_n100",
          "heteroscedastic_n40"
         ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+      "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -12006,10 +12179,44 @@
       "rank": 58
      }
     ],
-    "method": "conformal_normalized",
+    "method": "conformal_selection_aware",
+    "method_by_level": {
+     "0.9": "conformal_selection_aware",
+     "0.95": "conformal_selection_aware"
+    },
     "n_calibration": 60,
     "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
     "score": "abs(y - mu_oof) / sigma_oof",
+    "selection_aware": {
+     "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+     "coverage_guarantee": "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are correlated; the coverage at proposals is measured in simulation and shipped with the band",
+     "levels": [
+      {
+       "available": true,
+       "coverage": 0.9,
+       "n_pooled": 120,
+       "n_selected": 40,
+       "q_sel": 3.0663,
+       "rank": 37
+      },
+      {
+       "available": true,
+       "coverage": 0.95,
+       "n_pooled": 120,
+       "n_selected": 40,
+       "q_sel": 3.1726,
+       "rank": 39
+      }
+     ],
+     "method": "conformal_selection_aware",
+     "n_pooled": 120,
+     "n_selected": 40,
+     "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+     "selection": "in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the fold model ranked best (highest prediction; lowest when minimizing)",
+     "sigma_floor": 1.1819,
+     "sigma_floor_quantile": 0.9,
+     "top_fraction": 0.3
+    },
     "sigma": "gp_predictive_sd",
     "sigma_source": "surrogate_fitted_noise"
    },
@@ -12413,51 +12620,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9167,
-       "hi": 3.7308,
-       "lo": -0.8344,
-       "method": "conformal_normalized",
-       "n_calibration": 60,
-       "q_norm": 2.588
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.0724,
+       "lo": -2.176,
+       "method": "conformal_selection_aware",
+       "n_calibration": 40,
+       "q_sel": 3.0663,
+       "sigma_floor": 1.1819,
+       "sigma_used": 1.1819
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9667,
-       "hi": 4.1758,
-       "lo": -1.2794,
-       "method": "conformal_normalized",
-       "n_calibration": 60,
-       "q_norm": 3.0926
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.198,
+       "lo": -2.3016,
+       "method": "conformal_selection_aware",
+       "n_calibration": 40,
+       "q_sel": 3.1726,
+       "sigma_floor": 1.1819,
+       "sigma_used": 1.1819
       }
      ],
      "mode": "explore",
@@ -12556,51 +12765,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9167,
-       "hi": 3.737,
-       "lo": 0.3152,
-       "method": "conformal_normalized",
-       "n_calibration": 60,
-       "q_norm": 2.588
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.6503,
+       "lo": -1.5981,
+       "method": "conformal_selection_aware",
+       "n_calibration": 40,
+       "q_sel": 3.0663,
+       "sigma_floor": 1.1819,
+       "sigma_used": 1.1819
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9667,
-       "hi": 4.0706,
-       "lo": -0.0184,
-       "method": "conformal_normalized",
-       "n_calibration": 60,
-       "q_norm": 3.0926
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.7759,
+       "lo": -1.7237,
+       "method": "conformal_selection_aware",
+       "n_calibration": 40,
+       "q_sel": 3.1726,
+       "sigma_floor": 1.1819,
+       "sigma_used": 1.1819
       }
      ],
      "mode": "explore",
@@ -12699,51 +12910,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9167,
-       "hi": 3.6939,
-       "lo": -0.8554,
-       "method": "conformal_normalized",
-       "n_calibration": 60,
-       "q_norm": 2.588
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.0434,
+       "lo": -2.2049,
+       "method": "conformal_selection_aware",
+       "n_calibration": 40,
+       "q_sel": 3.0663,
+       "sigma_floor": 1.1819,
+       "sigma_used": 1.1819
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9667,
-       "hi": 4.1374,
-       "lo": -1.2989,
-       "method": "conformal_normalized",
-       "n_calibration": 60,
-       "q_norm": 3.0926
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.169,
+       "lo": -2.3305,
+       "method": "conformal_selection_aware",
+       "n_calibration": 40,
+       "q_sel": 3.1726,
+       "sigma_floor": 1.1819,
+       "sigma_used": 1.1819
       }
      ],
      "mode": "explore",
@@ -12842,51 +13055,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9167,
-       "hi": 3.9143,
-       "lo": 0.1836,
-       "method": "conformal_normalized",
-       "n_calibration": 60,
-       "q_norm": 2.588
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.6731,
+       "lo": -1.5752,
+       "method": "conformal_selection_aware",
+       "n_calibration": 40,
+       "q_sel": 3.0663,
+       "sigma_floor": 1.1819,
+       "sigma_used": 1.1819
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9667,
-       "hi": 4.278,
-       "lo": -0.1801,
-       "method": "conformal_normalized",
-       "n_calibration": 60,
-       "q_norm": 3.0926
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.7987,
+       "lo": -1.7009,
+       "method": "conformal_selection_aware",
+       "n_calibration": 40,
+       "q_sel": 3.1726,
+       "sigma_floor": 1.1819,
+       "sigma_used": 1.1819
       }
      ],
      "mode": "explore",
@@ -12985,51 +13200,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9167,
-       "hi": 3.7498,
-       "lo": 0.2223,
-       "method": "conformal_normalized",
-       "n_calibration": 60,
-       "q_norm": 2.588
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.6102,
+       "lo": -1.6381,
+       "method": "conformal_selection_aware",
+       "n_calibration": 40,
+       "q_sel": 3.0663,
+       "sigma_floor": 1.1819,
+       "sigma_used": 1.1819
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9667,
-       "hi": 4.0937,
-       "lo": -0.1216,
-       "method": "conformal_normalized",
-       "n_calibration": 60,
-       "q_norm": 3.0926
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.7358,
+       "lo": -1.7638,
+       "method": "conformal_selection_aware",
+       "n_calibration": 40,
+       "q_sel": 3.1726,
+       "sigma_floor": 1.1819,
+       "sigma_used": 1.1819
       }
      ],
      "mode": "explore",
@@ -15814,18 +16031,18 @@
     "calibrated_on": "grouped_cv_oof",
     "coverage_at_proposals": {
      "0.9": {
-      "code": "coverage_lower_at_proposals",
+      "code": "coverage_measured_at_proposals",
       "coverage_at_proposals_estimate": {
        "basis": "simulation",
        "by_scenario": {
-        "bioprocess_n100": 0.81,
-        "bioprocess_n40": 0.74,
-        "hartmann6_n30": 0.6,
-        "hartmann6_n80": 0.65,
-        "heteroscedastic_n40": 0.685
+        "bioprocess_n100": 0.99,
+        "bioprocess_n40": 0.92,
+        "hartmann6_n30": 0.935,
+        "hartmann6_n80": 0.94,
+        "heteroscedastic_n40": 0.96
        },
-       "measured_max": 0.81,
-       "measured_min": 0.6,
+       "measured_max": 0.99,
+       "measured_min": 0.92,
        "nominal": 0.9,
        "source": {
         "benchmark": "python -m kalos.bench.coverage_at_proposals",
@@ -15833,7 +16050,7 @@
         "kind": "simulation",
         "measurement": "one fresh simulated measurement per proposal",
         "proposals_per_seed": 5,
-        "results": "benchmarks/results/coverage_at_proposals_before.json",
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
         "scenarios": [
          "hartmann6_n30",
          "hartmann6_n80",
@@ -15841,24 +16058,25 @@
          "bioprocess_n100",
          "heteroscedastic_n40"
         ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
      },
      "0.95": {
-      "code": "coverage_lower_at_proposals",
+      "code": "coverage_measured_at_proposals",
       "coverage_at_proposals_estimate": {
        "basis": "simulation",
        "by_scenario": {
-        "bioprocess_n100": 0.855,
-        "bioprocess_n40": 0.825,
-        "hartmann6_n30": 0.83,
-        "hartmann6_n80": 0.755,
-        "heteroscedastic_n40": 0.805
+        "bioprocess_n100": 0.995,
+        "bioprocess_n40": 0.965,
+        "hartmann6_n30": 0.97,
+        "hartmann6_n80": 0.97,
+        "heteroscedastic_n40": 0.995
        },
-       "measured_max": 0.855,
-       "measured_min": 0.755,
+       "measured_max": 0.995,
+       "measured_min": 0.965,
        "nominal": 0.95,
        "source": {
         "benchmark": "python -m kalos.bench.coverage_at_proposals",
@@ -15866,7 +16084,7 @@
         "kind": "simulation",
         "measurement": "one fresh simulated measurement per proposal",
         "proposals_per_seed": 5,
-        "results": "benchmarks/results/coverage_at_proposals_before.json",
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
         "scenarios": [
          "hartmann6_n30",
          "hartmann6_n80",
@@ -15874,10 +16092,11 @@
          "bioprocess_n100",
          "heteroscedastic_n40"
         ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+      "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -15991,10 +16210,44 @@
       "rank": 24
      }
     ],
-    "method": "conformal_normalized",
+    "method": "conformal_selection_aware",
+    "method_by_level": {
+     "0.9": "conformal_selection_aware",
+     "0.95": "conformal_selection_aware"
+    },
     "n_calibration": 24,
     "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
     "score": "abs(y - mu_oof) / sigma_oof",
+    "selection_aware": {
+     "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+     "coverage_guarantee": "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are correlated; the coverage at proposals is measured in simulation and shipped with the band",
+     "levels": [
+      {
+       "available": true,
+       "coverage": 0.9,
+       "n_pooled": 48,
+       "n_selected": 20,
+       "q_sel": 2.1245,
+       "rank": 19
+      },
+      {
+       "available": true,
+       "coverage": 0.95,
+       "n_pooled": 48,
+       "n_selected": 20,
+       "q_sel": 3.4835,
+       "rank": 20
+      }
+     ],
+     "method": "conformal_selection_aware",
+     "n_pooled": 48,
+     "n_selected": 20,
+     "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+     "selection": "in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the fold model ranked best (highest prediction; lowest when minimizing)",
+     "sigma_floor": 0.6227,
+     "sigma_floor_quantile": 0.9,
+     "top_fraction": 0.3
+    },
     "sigma": "gp_predictive_sd",
     "sigma_source": "surrogate_fitted_noise"
    },
@@ -16245,51 +16498,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 0.8384,
-       "lo": -0.058,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.4585
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.713,
+       "lo": -0.9327,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1245,
+       "sigma_floor": 0.6227,
+       "sigma_used": 0.6227
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 0.905,
-       "lo": -0.1247,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.824
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 2.5592,
+       "lo": -1.7789,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 3.4835,
+       "sigma_floor": 0.6227,
+       "sigma_used": 0.6227
       }
      ],
      "mode": "explore",
@@ -16386,51 +16641,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 6.2599,
-       "lo": 4.7539,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.4585
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 6.8297,
+       "lo": 4.184,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1245,
+       "sigma_floor": 0.6227,
+       "sigma_used": 0.6227
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 6.3718,
-       "lo": 4.6419,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.824
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 7.6759,
+       "lo": 3.3378,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 3.4835,
+       "sigma_floor": 0.6227,
+       "sigma_used": 0.6227
       }
      ],
      "mode": "explore",
@@ -16527,51 +16784,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 0.5722,
-       "lo": -0.51,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.4585
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.354,
+       "lo": -1.2918,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1245,
+       "sigma_floor": 0.6227,
+       "sigma_used": 0.6227
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 0.6526,
-       "lo": -0.5904,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.824
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 2.2002,
+       "lo": -2.138,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 3.4835,
+       "sigma_floor": 0.6227,
+       "sigma_used": 0.6227
       }
      ],
      "mode": "exploit",
@@ -16668,51 +16927,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 0.7044,
-       "lo": -0.563,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.4585
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.3936,
+       "lo": -1.2522,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1245,
+       "sigma_floor": 0.6227,
+       "sigma_used": 0.6227
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 0.7986,
-       "lo": -0.6572,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.824
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 2.2398,
+       "lo": -2.0983,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 3.4835,
+       "sigma_floor": 0.6227,
+       "sigma_used": 0.6227
       }
      ],
      "mode": "explore",
@@ -16809,51 +17070,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 0.6288,
-       "lo": -0.5059,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.4585
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.3843,
+       "lo": -1.2614,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1245,
+       "sigma_floor": 0.6227,
+       "sigma_used": 0.6227
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 0.7131,
-       "lo": -0.5902,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.824
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 2.2305,
+       "lo": -2.1076,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 3.4835,
+       "sigma_floor": 0.6227,
+       "sigma_used": 0.6227
       }
      ],
      "mode": "explore",
@@ -19117,18 +19380,18 @@
     "calibrated_on": "grouped_cv_oof",
     "coverage_at_proposals": {
      "0.9": {
-      "code": "coverage_lower_at_proposals",
+      "code": "coverage_measured_at_proposals",
       "coverage_at_proposals_estimate": {
        "basis": "simulation",
        "by_scenario": {
-        "bioprocess_n100": 0.81,
-        "bioprocess_n40": 0.74,
-        "hartmann6_n30": 0.6,
-        "hartmann6_n80": 0.65,
-        "heteroscedastic_n40": 0.685
+        "bioprocess_n100": 0.99,
+        "bioprocess_n40": 0.92,
+        "hartmann6_n30": 0.935,
+        "hartmann6_n80": 0.94,
+        "heteroscedastic_n40": 0.96
        },
-       "measured_max": 0.81,
-       "measured_min": 0.6,
+       "measured_max": 0.99,
+       "measured_min": 0.92,
        "nominal": 0.9,
        "source": {
         "benchmark": "python -m kalos.bench.coverage_at_proposals",
@@ -19136,7 +19399,7 @@
         "kind": "simulation",
         "measurement": "one fresh simulated measurement per proposal",
         "proposals_per_seed": 5,
-        "results": "benchmarks/results/coverage_at_proposals_before.json",
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
         "scenarios": [
          "hartmann6_n30",
          "hartmann6_n80",
@@ -19144,24 +19407,25 @@
          "bioprocess_n100",
          "heteroscedastic_n40"
         ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
      },
      "0.95": {
-      "code": "coverage_lower_at_proposals",
+      "code": "coverage_measured_at_proposals",
       "coverage_at_proposals_estimate": {
        "basis": "simulation",
        "by_scenario": {
-        "bioprocess_n100": 0.855,
-        "bioprocess_n40": 0.825,
-        "hartmann6_n30": 0.83,
-        "hartmann6_n80": 0.755,
-        "heteroscedastic_n40": 0.805
+        "bioprocess_n100": 0.995,
+        "bioprocess_n40": 0.965,
+        "hartmann6_n30": 0.97,
+        "hartmann6_n80": 0.97,
+        "heteroscedastic_n40": 0.995
        },
-       "measured_max": 0.855,
-       "measured_min": 0.755,
+       "measured_max": 0.995,
+       "measured_min": 0.965,
        "nominal": 0.95,
        "source": {
         "benchmark": "python -m kalos.bench.coverage_at_proposals",
@@ -19169,7 +19433,7 @@
         "kind": "simulation",
         "measurement": "one fresh simulated measurement per proposal",
         "proposals_per_seed": 5,
-        "results": "benchmarks/results/coverage_at_proposals_before.json",
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
         "scenarios": [
          "hartmann6_n30",
          "hartmann6_n80",
@@ -19177,10 +19441,11 @@
          "bioprocess_n100",
          "heteroscedastic_n40"
         ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+      "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -19294,10 +19559,44 @@
       "rank": 24
      }
     ],
-    "method": "conformal_normalized",
+    "method": "conformal_selection_aware",
+    "method_by_level": {
+     "0.9": "conformal_selection_aware",
+     "0.95": "conformal_selection_aware"
+    },
     "n_calibration": 24,
     "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
     "score": "abs(y - mu_oof) / sigma_oof",
+    "selection_aware": {
+     "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+     "coverage_guarantee": "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are correlated; the coverage at proposals is measured in simulation and shipped with the band",
+     "levels": [
+      {
+       "available": true,
+       "coverage": 0.9,
+       "n_pooled": 48,
+       "n_selected": 20,
+       "q_sel": 4.9815,
+       "rank": 19
+      },
+      {
+       "available": true,
+       "coverage": 0.95,
+       "n_pooled": 48,
+       "n_selected": 20,
+       "q_sel": 5.0188,
+       "rank": 20
+      }
+     ],
+     "method": "conformal_selection_aware",
+     "n_pooled": 48,
+     "n_selected": 20,
+     "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+     "selection": "in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the fold model ranked best (highest prediction; lowest when minimizing)",
+     "sigma_floor": 0.1534,
+     "sigma_floor_quantile": 0.9,
+     "top_fraction": 0.3
+    },
     "sigma": "gp_predictive_sd",
     "sigma_source": "surrogate_fitted_noise"
    },
@@ -19555,51 +19854,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.6303,
-       "lo": 2.323,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.0188
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.741,
+       "lo": 2.2123,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 4.9815,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.7412,
-       "lo": 2.2121,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.8701
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7468,
+       "lo": 2.2066,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.0188,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       }
      ],
      "mode": "explore",
@@ -19697,51 +19998,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.5649,
-       "lo": 2.3947,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.0188
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7442,
+       "lo": 2.2155,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 4.9815,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.6642,
-       "lo": 2.2955,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.8701
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7499,
+       "lo": 2.2098,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.0188,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       }
      ],
      "mode": "explore",
@@ -19839,51 +20142,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.6345,
-       "lo": 2.3096,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.0188
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7364,
+       "lo": 2.2077,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 4.9815,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.7468,
-       "lo": 2.1973,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.8701
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7421,
+       "lo": 2.202,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.0188,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       }
      ],
      "mode": "explore",
@@ -19981,51 +20286,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.5008,
-       "lo": 2.476,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.0188
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7528,
+       "lo": 2.224,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 4.9815,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.5877,
-       "lo": 2.3891,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.8701
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7585,
+       "lo": 2.2183,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.0188,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       }
      ],
      "mode": "explore",
@@ -20123,51 +20430,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.5017,
-       "lo": 2.4816,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.0188
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.756,
+       "lo": 2.2273,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 4.9815,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.5883,
-       "lo": 2.3951,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.8701
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7617,
+       "lo": 2.2216,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.0188,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       }
      ],
      "mode": "explore",
@@ -22427,18 +22736,18 @@
     "calibrated_on": "grouped_cv_oof",
     "coverage_at_proposals": {
      "0.9": {
-      "code": "coverage_lower_at_proposals",
+      "code": "coverage_measured_at_proposals",
       "coverage_at_proposals_estimate": {
        "basis": "simulation",
        "by_scenario": {
-        "bioprocess_n100": 0.81,
-        "bioprocess_n40": 0.74,
-        "hartmann6_n30": 0.6,
-        "hartmann6_n80": 0.65,
-        "heteroscedastic_n40": 0.685
+        "bioprocess_n100": 0.99,
+        "bioprocess_n40": 0.92,
+        "hartmann6_n30": 0.935,
+        "hartmann6_n80": 0.94,
+        "heteroscedastic_n40": 0.96
        },
-       "measured_max": 0.81,
-       "measured_min": 0.6,
+       "measured_max": 0.99,
+       "measured_min": 0.92,
        "nominal": 0.9,
        "source": {
         "benchmark": "python -m kalos.bench.coverage_at_proposals",
@@ -22446,7 +22755,7 @@
         "kind": "simulation",
         "measurement": "one fresh simulated measurement per proposal",
         "proposals_per_seed": 5,
-        "results": "benchmarks/results/coverage_at_proposals_before.json",
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
         "scenarios": [
          "hartmann6_n30",
          "hartmann6_n80",
@@ -22454,24 +22763,25 @@
          "bioprocess_n100",
          "heteroscedastic_n40"
         ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
      },
      "0.95": {
-      "code": "coverage_lower_at_proposals",
+      "code": "coverage_measured_at_proposals",
       "coverage_at_proposals_estimate": {
        "basis": "simulation",
        "by_scenario": {
-        "bioprocess_n100": 0.855,
-        "bioprocess_n40": 0.825,
-        "hartmann6_n30": 0.83,
-        "hartmann6_n80": 0.755,
-        "heteroscedastic_n40": 0.805
+        "bioprocess_n100": 0.995,
+        "bioprocess_n40": 0.965,
+        "hartmann6_n30": 0.97,
+        "hartmann6_n80": 0.97,
+        "heteroscedastic_n40": 0.995
        },
-       "measured_max": 0.855,
-       "measured_min": 0.755,
+       "measured_max": 0.995,
+       "measured_min": 0.965,
        "nominal": 0.95,
        "source": {
         "benchmark": "python -m kalos.bench.coverage_at_proposals",
@@ -22479,7 +22789,7 @@
         "kind": "simulation",
         "measurement": "one fresh simulated measurement per proposal",
         "proposals_per_seed": 5,
-        "results": "benchmarks/results/coverage_at_proposals_before.json",
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
         "scenarios": [
          "hartmann6_n30",
          "hartmann6_n80",
@@ -22487,10 +22797,11 @@
          "bioprocess_n100",
          "heteroscedastic_n40"
         ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+      "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -22604,10 +22915,44 @@
       "rank": 20
      }
     ],
-    "method": "conformal_normalized",
+    "method": "conformal_selection_aware",
+    "method_by_level": {
+     "0.9": "conformal_selection_aware",
+     "0.95": "conformal_selection_aware"
+    },
     "n_calibration": 20,
     "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
     "score": "abs(y - mu_oof) / sigma_oof",
+    "selection_aware": {
+     "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+     "coverage_guarantee": "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are correlated; the coverage at proposals is measured in simulation and shipped with the band",
+     "levels": [
+      {
+       "available": true,
+       "coverage": 0.9,
+       "n_pooled": 40,
+       "n_selected": 20,
+       "q_sel": 3.1954,
+       "rank": 19
+      },
+      {
+       "available": true,
+       "coverage": 0.95,
+       "n_pooled": 40,
+       "n_selected": 20,
+       "q_sel": 3.8988,
+       "rank": 20
+      }
+     ],
+     "method": "conformal_selection_aware",
+     "n_pooled": 40,
+     "n_selected": 20,
+     "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+     "selection": "in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the fold model ranked best (highest prediction; lowest when minimizing)",
+     "sigma_floor": 1.0965,
+     "sigma_floor_quantile": 0.9,
+     "top_fraction": 0.3
+    },
     "sigma": "gp_predictive_sd",
     "sigma_source": "surrogate_fitted_noise"
    },
@@ -22850,51 +23195,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.95,
-       "hi": 7.7407,
-       "lo": 2.4982,
-       "method": "conformal_normalized",
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 8.6233,
+       "lo": 1.6156,
+       "method": "conformal_selection_aware",
        "n_calibration": 20,
-       "q_norm": 2.5819
+       "q_sel": 3.1954,
+       "sigma_floor": 1.0965,
+       "sigma_used": 1.0965
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 8.3191,
-       "lo": 1.9198,
-       "method": "conformal_normalized",
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 9.3946,
+       "lo": 0.8443,
+       "method": "conformal_selection_aware",
        "n_calibration": 20,
-       "q_norm": 3.1516
+       "q_sel": 3.8988,
+       "sigma_floor": 1.0965,
+       "sigma_used": 1.0965
       }
      ],
      "mode": "explore",
@@ -22993,51 +23340,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.95,
-       "hi": 7.8662,
-       "lo": 5.0391,
-       "method": "conformal_normalized",
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 9.9565,
+       "lo": 2.9488,
+       "method": "conformal_selection_aware",
        "n_calibration": 20,
-       "q_norm": 2.5819
+       "q_sel": 3.1954,
+       "sigma_floor": 1.0965,
+       "sigma_used": 1.0965
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 8.1781,
-       "lo": 4.7272,
-       "method": "conformal_normalized",
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 10.7278,
+       "lo": 2.1775,
+       "method": "conformal_selection_aware",
        "n_calibration": 20,
-       "q_norm": 3.1516
+       "q_sel": 3.8988,
+       "sigma_floor": 1.0965,
+       "sigma_used": 1.0965
       }
      ],
      "mode": "explore",
@@ -23136,51 +23485,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.95,
-       "hi": 7.8707,
-       "lo": 3.1395,
-       "method": "conformal_normalized",
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 9.0089,
+       "lo": 2.0013,
+       "method": "conformal_selection_aware",
        "n_calibration": 20,
-       "q_norm": 2.5819
+       "q_sel": 3.1954,
+       "sigma_floor": 1.0965,
+       "sigma_used": 1.0965
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 8.3927,
-       "lo": 2.6175,
-       "method": "conformal_normalized",
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 9.7802,
+       "lo": 1.2299,
+       "method": "conformal_selection_aware",
        "n_calibration": 20,
-       "q_norm": 3.1516
+       "q_sel": 3.8988,
+       "sigma_floor": 1.0965,
+       "sigma_used": 1.0965
       }
      ],
      "mode": "explore",
@@ -23279,51 +23630,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.95,
-       "hi": 7.7079,
-       "lo": 2.3746,
-       "method": "conformal_normalized",
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 8.5451,
+       "lo": 1.5375,
+       "method": "conformal_selection_aware",
        "n_calibration": 20,
-       "q_norm": 2.5819
+       "q_sel": 3.1954,
+       "sigma_floor": 1.0965,
+       "sigma_used": 1.0965
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 8.2963,
-       "lo": 1.7862,
-       "method": "conformal_normalized",
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 9.3164,
+       "lo": 0.7661,
+       "method": "conformal_selection_aware",
        "n_calibration": 20,
-       "q_norm": 3.1516
+       "q_sel": 3.8988,
+       "sigma_floor": 1.0965,
+       "sigma_used": 1.0965
       }
      ],
      "mode": "explore",
@@ -23422,51 +23775,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.95,
-       "hi": 7.9452,
-       "lo": 2.9689,
-       "method": "conformal_normalized",
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 8.9609,
+       "lo": 1.9532,
+       "method": "conformal_selection_aware",
        "n_calibration": 20,
-       "q_norm": 2.5819
+       "q_sel": 3.1954,
+       "sigma_floor": 1.0965,
+       "sigma_used": 1.0965
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 8.4942,
-       "lo": 2.4199,
-       "method": "conformal_normalized",
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 9.7322,
+       "lo": 1.1819,
+       "method": "conformal_selection_aware",
        "n_calibration": 20,
-       "q_norm": 3.1516
+       "q_sel": 3.8988,
+       "sigma_floor": 1.0965,
+       "sigma_used": 1.0965
       }
      ],
      "mode": "explore",
@@ -26010,18 +26365,18 @@
     "calibrated_on": "grouped_cv_oof",
     "coverage_at_proposals": {
      "0.9": {
-      "code": "coverage_lower_at_proposals",
+      "code": "coverage_measured_at_proposals",
       "coverage_at_proposals_estimate": {
        "basis": "simulation",
        "by_scenario": {
-        "bioprocess_n100": 0.81,
-        "bioprocess_n40": 0.74,
-        "hartmann6_n30": 0.6,
-        "hartmann6_n80": 0.65,
-        "heteroscedastic_n40": 0.685
+        "bioprocess_n100": 0.99,
+        "bioprocess_n40": 0.92,
+        "hartmann6_n30": 0.935,
+        "hartmann6_n80": 0.94,
+        "heteroscedastic_n40": 0.96
        },
-       "measured_max": 0.81,
-       "measured_min": 0.6,
+       "measured_max": 0.99,
+       "measured_min": 0.92,
        "nominal": 0.9,
        "source": {
         "benchmark": "python -m kalos.bench.coverage_at_proposals",
@@ -26029,7 +26384,7 @@
         "kind": "simulation",
         "measurement": "one fresh simulated measurement per proposal",
         "proposals_per_seed": 5,
-        "results": "benchmarks/results/coverage_at_proposals_before.json",
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
         "scenarios": [
          "hartmann6_n30",
          "hartmann6_n80",
@@ -26037,24 +26392,25 @@
          "bioprocess_n100",
          "heteroscedastic_n40"
         ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
      },
      "0.95": {
-      "code": "coverage_lower_at_proposals",
+      "code": "coverage_measured_at_proposals",
       "coverage_at_proposals_estimate": {
        "basis": "simulation",
        "by_scenario": {
-        "bioprocess_n100": 0.855,
-        "bioprocess_n40": 0.825,
-        "hartmann6_n30": 0.83,
-        "hartmann6_n80": 0.755,
-        "heteroscedastic_n40": 0.805
+        "bioprocess_n100": 0.995,
+        "bioprocess_n40": 0.965,
+        "hartmann6_n30": 0.97,
+        "hartmann6_n80": 0.97,
+        "heteroscedastic_n40": 0.995
        },
-       "measured_max": 0.855,
-       "measured_min": 0.755,
+       "measured_max": 0.995,
+       "measured_min": 0.965,
        "nominal": 0.95,
        "source": {
         "benchmark": "python -m kalos.bench.coverage_at_proposals",
@@ -26062,7 +26418,7 @@
         "kind": "simulation",
         "measurement": "one fresh simulated measurement per proposal",
         "proposals_per_seed": 5,
-        "results": "benchmarks/results/coverage_at_proposals_before.json",
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
         "scenarios": [
          "hartmann6_n30",
          "hartmann6_n80",
@@ -26070,10 +26426,11 @@
          "bioprocess_n100",
          "heteroscedastic_n40"
         ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+      "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -26187,10 +26544,44 @@
       "rank": 24
      }
     ],
-    "method": "conformal_normalized",
+    "method": "conformal_selection_aware",
+    "method_by_level": {
+     "0.9": "conformal_selection_aware",
+     "0.95": "conformal_selection_aware"
+    },
     "n_calibration": 24,
     "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
     "score": "abs(y - mu_oof) / sigma_oof",
+    "selection_aware": {
+     "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+     "coverage_guarantee": "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are correlated; the coverage at proposals is measured in simulation and shipped with the band",
+     "levels": [
+      {
+       "available": true,
+       "coverage": 0.9,
+       "n_pooled": 48,
+       "n_selected": 20,
+       "q_sel": 2.0764,
+       "rank": 19
+      },
+      {
+       "available": true,
+       "coverage": 0.95,
+       "n_pooled": 48,
+       "n_selected": 20,
+       "q_sel": 2.1124,
+       "rank": 20
+      }
+     ],
+     "method": "conformal_selection_aware",
+     "n_pooled": 48,
+     "n_selected": 20,
+     "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+     "selection": "in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the fold model ranked best (highest prediction; lowest when minimizing)",
+     "sigma_floor": 0.1931,
+     "sigma_floor_quantile": 0.9,
+     "top_fraction": 0.3
+    },
     "sigma": "gp_predictive_sd",
     "sigma_source": "surrogate_fitted_noise"
    },
@@ -26441,51 +26832,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 5.7963,
-       "lo": 5.2651,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.0764
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.9316,
+       "lo": 5.1297,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.0764,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 5.8009,
-       "lo": 5.2605,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.1124
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.9385,
+       "lo": 5.1228,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1124,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       }
      ],
      "mode": "explore",
@@ -26582,51 +26975,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 0.8506,
-       "lo": 0.3427,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.0764
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 0.9976,
+       "lo": 0.1957,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.0764,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 0.855,
-       "lo": 0.3383,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.1124
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.0045,
+       "lo": 0.1888,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1124,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       }
      ],
      "mode": "explore",
@@ -26723,51 +27118,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 5.7954,
-       "lo": 5.2143,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.0764
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.9058,
+       "lo": 5.1039,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.0764,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 5.8004,
-       "lo": 5.2093,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.1124
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.9127,
+       "lo": 5.097,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1124,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       }
      ],
      "mode": "explore",
@@ -26864,51 +27261,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.1738,
-       "lo": 2.6727,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.0764
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.3242,
+       "lo": 2.5223,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.0764,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.1781,
-       "lo": 2.6684,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.1124
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.3311,
+       "lo": 2.5154,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1124,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       }
      ],
      "mode": "explore",
@@ -27005,51 +27404,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.81,
-         "measured_min": 0.6,
+         "measured_max": 0.99,
+         "measured_min": 0.92,
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 60-81% of proposals."
+        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
        },
        "coverage": 0.9,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 0.9583,
-       "hi": 0.656,
-       "lo": 0.1125,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.0764
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 0.7852,
+       "lo": -0.0167,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.0764,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
        "caveat": {
-        "code": "coverage_lower_at_proposals",
+        "code": "coverage_measured_at_proposals",
         "coverage_at_proposals_estimate": {
          "basis": "simulation",
          "benchmark": "python -m kalos.bench.coverage_at_proposals",
-         "measured_max": 0.855,
-         "measured_min": 0.755,
+         "measured_max": 0.995,
+         "measured_min": 0.965,
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 76-86% of proposals."
+        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
        },
        "coverage": 0.95,
-       "coverage_basis": "held_out_past_runs",
-       "empirical_oof_coverage": 1.0,
-       "hi": 0.6607,
-       "lo": 0.1078,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.1124
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 0.7921,
+       "lo": -0.0236,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1124,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       }
      ],
      "mode": "explore",

@@ -473,6 +473,41 @@ Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
   chosen by qLogNEI, not by this EI. `maximize` is false when the campaign
   setup goal is minimize (then EI / p_improve are for going BELOW the incumbent).
 
+### Selection-aware proposal intervals (F15; interval numbers change)
+
+Code: `calibrate_selection_aware` in `kalos/portal/analysis_parts/intervals.py`;
+evidence in VALIDATION.md "Interval coverage at proposals". The plain normalized
+band covered 0.60-0.84 of measured proposals at 90% nominal; the selection-aware
+band covers 0.92-0.99 (95%: 0.96-0.99) on fresh simulation seeds, at 2.5-3.2x the
+width.
+
+- `proposals[].intervals[]` (per level, when available): `{coverage, method:
+  "conformal_selection_aware", calibrated_on: "grouped_cv_oof_top_ranked",
+  n_calibration (selected runs), coverage_basis: "held_out_top_ranked_runs",
+  caveat {code: "coverage_measured_at_proposals" (or
+  "coverage_lower_at_proposals" if a measured scenario fell below nominal),
+  message, coverage_at_proposals_estimate}, available, lo, hi, q_sel,
+  sigma_floor, sigma_used}`; `lo = pred - q_sel * max(predictive_std,
+  sigma_floor)`.
+- Per-level fallback: when too few top-ranked held-out runs exist for a level's
+  rank (90% needs 9 selected runs, 95% needs 19), that level keeps the plain
+  `conformal_normalized` entry (F02 fields and caveat) plus
+  `selection_aware_unavailable: {code: too_few_top_ranked_runs |
+  degenerate_sigma | degenerate_proposal_sigma, reason}`.
+- `interval_method.method`: `conformal_selection_aware`, `conformal_normalized`
+  or `mixed`; `interval_method.method_by_level`; `interval_method.selection_aware`:
+  `{method, top_fraction (0.3), sigma_floor_quantile (0.9), sigma_floor,
+  n_selected, n_pooled, levels[{coverage, available, q_sel, rank, n_selected,
+  n_pooled | code, reason, min_selected}], score, band, selection,
+  coverage_guarantee}`. `interval_method.levels` keeps the plain normalized
+  calibration (the fallback), unchanged in shape.
+- `interval_method.coverage_at_proposals[level]` is the caveat of the method that
+  level actually uses.
+- Selection mimics the proposal step: in every fold of both CV repeats, the
+  `ceil(0.3 * n_fold)` held-out runs the fold model ranked best (lowest when
+  minimizing). The floor corrects the full-data model's sd at its own proposals,
+  measured at 0.6-0.8 of the held-out sds. No guarantee: measured coverage only.
+
 ### Verdict and trust gates that gate (F04; proposals change)
 
 Code: `kalos/portal/verdict.py` (cherry-picked from `arch-safe-now` a7a7865 and

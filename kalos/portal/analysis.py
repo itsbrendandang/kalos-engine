@@ -71,6 +71,7 @@ from kalos.portal.analysis_parts.identifiers import (
 )
 from kalos.portal.analysis_parts.intervals import (
     calibrate_normalized,
+    calibrate_selection_aware,
     conformal_band_caveat,
     interval_method_summary,
     proposal_interval_fields,
@@ -823,6 +824,10 @@ def _analyze_body(
     conformal_q = round(q_from_residuals(resid, alpha=CONFORMAL_ALPHA), 4) if len(resid) else None
     # Per-proposal normalized conformal (R4), same OOF set: analysis_parts/intervals.py.
     interval_cal = calibrate_normalized(oof_a, oof_p, oof_s, INTERVAL_LEVELS)
+    # F15: the selection-aware band the proposals carry (top-ranked held-out runs
+    # of every fold and repeat; analysis_parts/intervals.py). Falls back, per
+    # level, to the plain normalized band above when too few runs are selected.
+    selection_cal = calibrate_selection_aware(rep.get("oof_repeats", []), INTERVAL_LEVELS, maximize=not _minimize)
 
     # Honest reliability verdict: only what this path can actually assess. The
     # spearman floor mirrors GatesConfig.min_spearman (kalos/core/gates.py); we do
@@ -1622,7 +1627,7 @@ def _analyze_body(
         # The band's ACTUAL coverage, so no consumer has to hardcode it.
         "conformal_coverage": round(1.0 - CONFORMAL_ALPHA, 4),
         "interval_levels": [float(c) for c in INTERVAL_LEVELS],
-        "interval_method": interval_method_summary(interval_cal, sigma_source),
+        "interval_method": interval_method_summary(interval_cal, sigma_source, selection_cal),
         # What `conformal_coverage` does NOT promise (cherry-picked from
         # arch-safe-now 47143f3, F02): the band is one +/- width from held-out
         # residuals of past runs; at proposals its measured coverage is lower.
@@ -1716,7 +1721,7 @@ def _analyze_body(
             interval_fields=proposal_interval_fields(
                 p_mean, p_std, p_std_obs, interval_cal, INTERVAL_LEVELS, incumbent,
                 "best_reproducible_mean" if replicate_aware else "best_measured_single",
-                maximize=not _minimize),
+                maximize=not _minimize, selection=selection_cal),
         ),
         # Context for `proposals[].nearest_training_distance` (same metric): the
         # median distance from each training row to its nearest other row.

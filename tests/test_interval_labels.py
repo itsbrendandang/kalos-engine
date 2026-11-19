@@ -7,6 +7,7 @@ Fast unit tests on `kalos.portal.analysis_parts.intervals` and
 from __future__ import annotations
 
 import json
+import math
 
 import numpy as np
 import pandas as pd
@@ -14,7 +15,9 @@ import pandas as pd
 from kalos.portal.analysis_parts.coverage_evidence import (
     BASIS_HELD_OUT,
     BASIS_MODEL,
+    BASIS_SELECTION_AWARE,
     CAVEAT_CODE,
+    CAVEAT_CODE_MEASURED,
     MEASURED,
     coverage_at_proposals_estimate,
     proposal_caveat,
@@ -51,8 +54,8 @@ def test_estimate_has_source_and_range():
 def test_caveat_states_the_measured_range_in_plain_words():
     cav = proposal_caveat("conformal_normalized", 0.9)
     assert cav["code"] == CAVEAT_CODE
-    lo = int(round(cav["coverage_at_proposals_estimate"]["measured_min"] * 100))
-    hi = int(round(cav["coverage_at_proposals_estimate"]["measured_max"] * 100))
+    lo = math.floor(cav["coverage_at_proposals_estimate"]["measured_min"] * 100 + 1e-9)
+    hi = math.floor(cav["coverage_at_proposals_estimate"]["measured_max"] * 100 + 1e-9)
     assert "held-out runs similar to past runs" in cav["message"]
     assert f"{lo}-{hi}%" in cav["message"] and "lower" in cav["message"]
     # an unmeasured method says so instead of inventing a number
@@ -123,7 +126,10 @@ def test_analysis_labels_every_band():
     assert r["conformal_caveat"]["coverage_basis"] == BASIS_HELD_OUT
     assert r["interval_method"]["coverage_basis"] == BASIS_HELD_OUT
     for p in r["proposals"]:
-        assert all(iv["coverage_basis"] == BASIS_HELD_OUT and iv["caveat"]["code"] == CAVEAT_CODE
+        # F15: the proposal bands are selection-aware when enough held-out runs
+        # are top-ranked; the plain band (held_out_past_runs) is the fallback.
+        assert all(iv["coverage_basis"] in {BASIS_HELD_OUT, BASIS_SELECTION_AWARE}
+                   and iv["caveat"]["code"] in {CAVEAT_CODE, CAVEAT_CODE_MEASURED}
                    for iv in p["intervals"])
         assert all(g["coverage_basis"] == BASIS_MODEL for g in p["gp_intervals"])
 
@@ -142,6 +148,11 @@ def test_evidence_table_matches_the_committed_benchmark_results():
             assert before[sc]["levels"][lv]["methods"] == ["conformal_normalized"]
         for sc, v in MEASURED["gp_posterior"][lv].items():
             assert before[sc]["levels"][lv]["gp_posterior_coverage_at_proposals"] == v, (sc, lv)
+    after = json.loads((root / "benchmarks/results/coverage_at_proposals_after.json").read_text())["summary"]
+    for lv in ("0.9", "0.95"):
+        for sc, v in MEASURED["conformal_selection_aware"][lv].items():
+            assert after[sc]["levels"][lv]["coverage_at_proposals"] == v, (sc, lv)
+            assert after[sc]["levels"][lv]["methods"] == ["conformal_selection_aware"]
     for sc, v in MEASURED["conformal_abs_global"]["0.9"].items():
         assert before[sc]["levels"]["0.9"]["conformal_q_coverage_at_proposals"] == v, sc
     assert set(SOURCE["scenarios"]) <= set(before)
