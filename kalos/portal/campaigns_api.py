@@ -43,7 +43,14 @@ from pydantic import Strict as _Strict
 from starlette.concurrency import run_in_threadpool
 
 from kalos.assist.hooks import after_write as _assist_after_write
-from kalos.portal.auth import ADMIN, READ, WRITE, Principal, require_scope
+from kalos.portal.auth import (
+    ADMIN,
+    READ,
+    WRITE,
+    Principal,
+    conditional_scope,
+    require_scope,
+)
 from kalos.portal.campaign import (
     CampaignError,
     CampaignNotFound,
@@ -283,6 +290,7 @@ def get_campaign(
 
 
 @router.patch("/api/campaigns/{campaign_id}")
+@conditional_scope(ADMIN, "body sets 'archived' (archive/unarchive)")
 def update_campaign(
     campaign_id: str,
     body: _PatchBody,
