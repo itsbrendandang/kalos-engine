@@ -442,8 +442,14 @@ Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
 - `proposals[].quantiles`: `{basis: "gp_posterior", posterior: "observation",
   note, p05, p25, p50, p75, p95}` of the same Gaussian.
 - `proposals[].expected_improvement` / `p_improve`: `{value, incumbent,
-  incumbent_basis, maximize, basis: "model", method, posterior: "latent", note}`.
-  Analytic EI / P(f > incumbent) of the LATENT posterior (`pred`, `std`).
+  incumbent_basis, maximize, basis: "model", method, posterior: "latent", note,
+  description}`. Analytic EI / P(f > incumbent) of the LATENT posterior (`pred`, `std`).
+  **`p_improve` (the "chance to beat" the best) is the probability that the
+  model's latent MEAN at the recipe beats the incumbent, not the probability
+  that one new measurement does**: a single run adds assay noise, which pulls
+  the chance toward 0.5 (a mean 1 latent sd above the incumbent gives 0.84; with
+  observation noise equal to the latent sd, one run beats it with probability
+  0.76). `description` states this on every value.
   `incumbent` is the value the proposal annotation compares against:
   `best_measured_single` (`best`) or `best_reproducible_mean`
   (`noise.best_reproducible`, replicate-aware path). The batch itself is
