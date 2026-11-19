@@ -21,7 +21,12 @@ from kalos.portal import app as portal_module
 from kalos.portal import campaign as campaign_module
 from kalos.portal.app import app
 from kalos.portal.campaign import CampaignStore, get_campaign_store
-from kalos.portal.stages import DEFAULT_STAGES, MAX_DECISIONS_PER_CAMPAIGN
+from kalos.portal.stages import (
+    DEFAULT_STAGES,
+    GATE_HISTORY_PREVIEW,
+    MAX_DECISIONS_PER_CAMPAIGN,
+    MAX_NOTE_CHARS,
+)
 
 
 def _sha(t: str) -> str:
@@ -265,6 +270,12 @@ def test_decider_identity_cannot_come_from_body(env):
          "invalid_body"),
         ({"decision": "go", "note": "x", "evidence": [{"kind": "run", "id": "a"}] * 21}, "invalid_body"),
         ({"decision": "go", "note": "x", "evidence": [{"kind": "run", "id": "a", "x": 1}]}, "invalid_body"),
+        # Unicode format characters (Cf): bidi override, isolate, zero width.
+        ({"decision": "go", "note": "approved \u202edevorppa"}, "invalid_note"),
+        ({"decision": "go", "note": "ok\u2066x\u2069"}, "invalid_note"),
+        ({"decision": "go", "note": "ok\u200b"}, "invalid_note"),
+        ({"decision": "go", "note": "x", "evidence": [{"kind": "run", "id": "a", "label": "\u202eabc"}]},
+         "invalid_body"),
     ],
 )
 def test_decision_validation(env, body, code):
@@ -375,6 +386,14 @@ def test_read_token_cannot_write(env):
     assert _decide(tc, "cmp_nope", token="a-read").status_code == 403
     assert tc.get(f"/api/campaigns/{cid}/stages").status_code == 401
     assert tc.get(f"/api/campaigns/{cid}/gates").status_code == 401
+    assert tc.get(f"/api/campaigns/{cid}/gates/S1/history").status_code == 401
+    # Read scope reads the history route but cannot record through any gate route.
+    assert tc.get(f"/api/campaigns/{cid}/gates/S1/history", headers=H("a-read")).status_code == 200
+    for method in ("PUT", "POST", "DELETE"):
+        r = tc.request(method, f"/api/campaigns/{cid}/gates/S1", headers=H("a-read"),
+                       json={"decision": "go", "note": "x"})
+        assert r.status_code in (403, 405), method
+    assert tc.get(f"/api/campaigns/{cid}/gates", headers=H("a-read")).json()["gates"][0]["history_count"] == 0
 
 
 def _routes():
@@ -384,6 +403,9 @@ def _routes():
         ("GET", "/api/campaigns/{cid}/gates", {}),
         ("PUT", "/api/campaigns/{cid}/gates/S1", {"json": {"decision": "go", "note": "x"}}),
         ("PUT", "/api/campaigns/{cid}/gates/NOPE", {"json": {"decision": "go", "note": "x"}}),
+        ("GET", "/api/campaigns/{cid}/gates/S2/history", {}),
+        ("GET", "/api/campaigns/{cid}/gates/S2/history?limit=1&before_id=999", {}),
+        ("GET", "/api/campaigns/{cid}/gates/NOPE/history", {}),
     ]
 
 
@@ -445,4 +467,150 @@ def test_decision_limit(env, monkeypatch):
     assert _decide(tc, cid).status_code == 200
     r = _decide(tc, cid)
     assert r.status_code == 409 and r.json()["code"] == "gate_decision_limit"
-    assert MAX_DECISIONS_PER_CAMPAIGN >= 1000
+    assert MAX_DECISIONS_PER_CAMPAIGN == 1000 and MAX_NOTE_CHARS == 2000
+
+
+# --- bounded responses (S3) and format characters (N5) ----------------------- #
+
+
+def _decide_many(tc, cid, gate, n):
+    ids = []
+    for i in range(n):
+        r = _decide(tc, cid, gate, decision="pending" if i % 2 else "go", note=f"decision {i}")
+        assert r.status_code == 200, r.text
+        ids.append(r.json()["recorded"]["id"])
+    return ids
+
+
+def test_gates_history_truncated_to_preview(env):
+    tc, store = env
+    cid = _cid(store)
+    ids = _decide_many(tc, cid, "S1", GATE_HISTORY_PREVIEW + 3)
+    _decide_many(tc, cid, "S2", 2)
+    g = tc.get(f"/api/campaigns/{cid}/gates", headers=H("a-read")).json()
+    assert g["history_preview"] == GATE_HISTORY_PREVIEW
+    gates = {x["key"]: x for x in g["gates"]}
+    s1 = gates["S1"]
+    assert s1["history_count"] == GATE_HISTORY_PREVIEW + 3
+    assert s1["history_truncated"] is True
+    assert [h["id"] for h in s1["history"]] == ids[::-1][:GATE_HISTORY_PREVIEW]
+    assert s1["current"]["id"] == ids[-1] and s1["decision"] == "go"
+    assert gates["S2"]["history_truncated"] is False and gates["S2"]["history_count"] == 2
+    assert gates["S3"]["history_truncated"] is False and gates["S3"]["history"] == []
+    # PUT returns the recorded row and only that gate's summary.
+    r = _decide(tc, cid, "S1", note="one more")
+    body = r.json()
+    assert set(body) == {"campaign_id", "recorded", "gate"}
+    assert body["gate"]["key"] == "S1" and body["gate"]["history_count"] == GATE_HISTORY_PREVIEW + 4
+    assert len(body["gate"]["history"]) == GATE_HISTORY_PREVIEW
+    assert body["gate"]["history"][0] == body["recorded"] | {"decided_at": body["gate"]["history"][0]["decided_at"]}
+    assert body["gate"]["history_truncated"] is True
+    assert body["gate"]["computed_evidence"]["basis"] == "computed"
+    # /stages counts, never embeds history.
+    st = tc.get(f"/api/campaigns/{cid}/stages", headers=H("a-read")).json()
+    assert st["stages"][0]["gate"]["history_count"] == GATE_HISTORY_PREVIEW + 4
+    assert st["stages"][0]["gate"]["current"]["note"] == "one more"
+    assert "history" not in st["stages"][0]["gate"]
+
+
+def test_gate_history_pagination(env):
+    tc, store = env
+    cid = _cid(store)
+    ids = _decide_many(tc, cid, "S1", 23)
+    _decide_many(tc, cid, "S2", 3)  # interleaved other gate never leaks into S1's pages
+    url = f"/api/campaigns/{cid}/gates/S1/history"
+    seen: list[int] = []
+    before = None
+    pages = 0
+    while True:
+        q = {"limit": 10} | ({"before_id": before} if before is not None else {})
+        r = tc.get(url, headers=H("a-read"), params=q)
+        assert r.status_code == 200, r.text
+        page = r.json()
+        assert page["campaign_id"] == cid and page["gate"] == "S1" and page["limit"] == 10
+        assert all(i["gate"] == "S1" and i["basis"] == "recorded" for i in page["items"])
+        seen += [i["id"] for i in page["items"]]
+        pages += 1
+        if not page["has_more"]:
+            assert page["next_before_id"] is None
+            break
+        assert page["next_before_id"] == page["items"][-1]["id"]
+        before = page["next_before_id"]
+    assert pages == 3 and seen == ids[::-1]
+    default = tc.get(url, headers=H("a-read")).json()
+    assert default["limit"] == 50 and len(default["items"]) == 23 and default["has_more"] is False
+    exact = tc.get(url, headers=H("a-read"), params={"limit": 23}).json()
+    assert exact["has_more"] is False and exact["next_before_id"] is None
+    empty = tc.get(f"/api/campaigns/{cid}/gates/S3/history", headers=H("a-read")).json()
+    assert empty["items"] == [] and empty["has_more"] is False
+    for bad in ({"limit": 0}, {"limit": 201}, {"before_id": 0}, {"limit": "x"}):
+        r = tc.get(url, headers=H("a-read"), params=bad)
+        assert r.status_code == 400 and r.json()["code"] == "invalid_body", bad
+    assert tc.get(url, headers=H("a-read"), params={"limit": 200}).status_code == 200
+
+
+def test_gate_history_unknown_and_orphaned_gate(env):
+    tc, store = env
+    cid = _cid(store)
+    assert _decide(tc, cid, "S5", decision="no_go", note="titer collapsed").status_code == 200
+    for gate in ("S7", "NOPE-SECRET", "x" * 300, "S1%00"):
+        r = tc.get(f"/api/campaigns/{cid}/gates/{gate}/history", headers=H("a-read"))
+        assert r.status_code == 404
+        assert r.json() == {"error": "gate not found", "code": "gate_not_found"}
+    # S5 leaves the definitions: PUT refuses it, its history stays readable.
+    assert tc.put(f"/api/campaigns/{cid}/stages", headers=H("a-write"), json=_stages_body()).status_code == 200
+    assert _decide(tc, cid, "S5").status_code == 404
+    r = tc.get(f"/api/campaigns/{cid}/gates/S5/history", headers=H("a-read"))
+    assert r.status_code == 200 and [i["decision"] for i in r.json()["items"]] == ["no_go"]
+
+
+def test_orphaned_gates_listing_is_capped(env, monkeypatch):
+    tc, store = env
+    cid = _cid(store)
+    for k in ("S4", "S5", "S6"):
+        assert _decide(tc, cid, k).status_code == 200
+    import kalos.portal.stages as stages_module
+    monkeypatch.setattr(stages_module, "MAX_ORPHANED_GATES_LISTED", 2)
+    tc.put(f"/api/campaigns/{cid}/stages", headers=H("a-write"), json=_stages_body())
+    for path in ("stages", "gates"):
+        body = tc.get(f"/api/campaigns/{cid}/{path}", headers=H("a-read")).json()
+        # The two with the newest decisions, sorted by key.
+        assert [o["key"] for o in body["orphaned_gates"]] == ["S5", "S6"], path
+        assert body["orphaned_gates_total"] == 3 and body["orphaned_gates_truncated"] is True
+
+
+def test_stage_counts_use_group_by_not_row_loads(env):
+    tc, store = env
+    cid = _cid(store)
+    _decide_many(tc, cid, "S1", 3)
+    seen: list[str] = []
+    store._conn.set_trace_callback(seen.append)
+    try:
+        assert tc.get(f"/api/campaigns/{cid}/stages", headers=H("a-read")).status_code == 200
+        assert tc.get(f"/api/campaigns/{cid}/gates", headers=H("a-read")).status_code == 200
+    finally:
+        store._conn.set_trace_callback(None)
+    stmts = [s for s in seen if "gate_decisions" in s]
+    assert any("GROUP BY gate" in s for s in stmts)
+    row_loads = [s for s in stmts if "note" in s]
+    assert row_loads and all("ROW_NUMBER()" in s for s in row_loads), row_loads
+    assert all("tenant = 'acme'" in s for s in stmts)
+
+
+def test_note_keeps_newline_and_tab(env):
+    tc, store = env
+    cid = _cid(store)
+    r = _decide(tc, cid, note="line one\n\tindented")
+    assert r.status_code == 200 and r.json()["recorded"]["note"] == "line one\n\tindented"
+
+
+@pytest.mark.parametrize("label", ["Screen\u202e", "\u2067Screen", "Scr\u200deen", "Scr\ufeffeen"])
+def test_stage_label_format_characters_refused(env, label):
+    tc, store = env
+    cid = _cid(store)
+    body = _stages_body()
+    body["stages"][0]["label"] = label
+    r = tc.put(f"/api/campaigns/{cid}/stages", headers=H("a-write"), json=body)
+    assert r.status_code == 400 and r.json()["code"] == "invalid_label"
+    assert label not in r.text
+    assert tc.get(f"/api/campaigns/{cid}/stages", headers=H("a-read")).json()["source"] == "default"

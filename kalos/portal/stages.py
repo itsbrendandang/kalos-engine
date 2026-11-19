@@ -53,7 +53,16 @@ EVIDENCE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 MAX_EVIDENCE_LABEL_CHARS = 120
 # Bound on the append-only table per campaign, so one campaign cannot grow it
 # without limit. Far above any real decision cadence.
-MAX_DECISIONS_PER_CAMPAIGN = 5000
+MAX_DECISIONS_PER_CAMPAIGN = 1000
+# `/gates` and `PUT /gates/{gate}` embed only the newest GATE_HISTORY_PREVIEW
+# decisions of a gate; the rest is paged by `GET /gates/{gate}/history`.
+GATE_HISTORY_PREVIEW = 20
+HISTORY_DEFAULT_LIMIT = 50
+HISTORY_MAX_LIMIT = 200
+# Orphaned gates (decisions whose stage key was removed) listed in `/stages`
+# and `/gates`: the ones with the most recent decisions, at most this many.
+# Their full history stays readable via the history route.
+MAX_ORPHANED_GATES_LISTED = 12
 
 # REDESIGN_DIRECTION.md: Stage 1 HT media screen -> Stage 2 HT microbioreactor
 # (100 uL to 3 mL) -> Stage 3 flask (50 to 250 mL) -> Stage 4 bench bioreactor
@@ -68,7 +77,10 @@ DEFAULT_STAGES: tuple[dict[str, Any], ...] = (
     {"key": "S6", "label": "Data package and handoff", "min_L": None, "max_L": None, "nominal_L": None},
 )
 
-_LABEL_FORBIDDEN = {"Cc", "Cs", "Zl", "Zp"}
+# Cc control, Cf format (bidi overrides U+202A-U+202E / U+2066-U+2069, zero
+# width characters: text that displays differently from what it contains),
+# Cs surrogates, Zl/Zp line/paragraph separators.
+_LABEL_FORBIDDEN = {"Cc", "Cf", "Cs", "Zl", "Zp"}
 # A note may span lines; every other control character is refused.
 _NOTE_ALLOWED_CONTROL = {"\n", "\r", "\t"}
 
@@ -103,7 +115,9 @@ def check_label(value: str, *, max_chars: int = MAX_LABEL_CHARS, what: str = "la
     if not 1 <= len(label) <= max_chars:
         raise StageValidationError("invalid_label", f"{what} must be 1-{max_chars} characters")
     if any(unicodedata.category(ch) in _LABEL_FORBIDDEN for ch in label):
-        raise StageValidationError("invalid_label", f"{what} must not contain control characters")
+        raise StageValidationError(
+            "invalid_label", f"{what} must not contain control or format characters"
+        )
     return label
 
 
@@ -118,7 +132,8 @@ def check_note(value: str) -> str:
             continue
         if unicodedata.category(ch) in _LABEL_FORBIDDEN:
             raise StageValidationError(
-                "invalid_note", "note must not contain control characters other than newline and tab"
+                "invalid_note",
+                "note must not contain control or format characters other than newline and tab",
             )
     return note
 
@@ -288,24 +303,123 @@ def _decision_row(row: tuple[Any, ...]) -> dict[str, Any]:
     }
 
 
-def list_decisions(
+def _check_campaign(store: CampaignStore, conn: Any, tenant: str, campaign_id: str) -> None:
+    if store._row(conn, tenant, campaign_id) is None:
+        raise CampaignNotFound()
+
+
+def _counts_in_txn(conn: Any, tenant: str, campaign_id: str) -> dict[str, tuple[int, int]]:
+    """`{gate: (count, newest_id)}` counted in SQL; no decision row is loaded."""
+    rows = conn.execute(
+        "SELECT gate, COUNT(*), MAX(id) FROM gate_decisions "
+        "WHERE tenant = ? AND campaign_id = ? GROUP BY gate",
+        (tenant, campaign_id),
+    ).fetchall()
+    return {str(r[0]): (int(r[1]), int(r[2])) for r in rows}
+
+
+def decision_counts(
     store: CampaignStore, *, tenant: str, campaign_id: str
-) -> dict[str, list[dict[str, Any]]]:
-    """Every recorded decision of the campaign, grouped by gate key, newest
-    first. Raises `CampaignNotFound` for a missing or foreign campaign."""
+) -> dict[str, tuple[int, int]]:
+    """`{gate: (count, newest_id)}` (`SELECT gate, COUNT(*) ... GROUP BY
+    gate`). Raises `CampaignNotFound` for a missing or foreign campaign."""
     store._check(tenant, campaign_id)
     with store._txn(write=False) as conn:
-        if store._row(conn, tenant, campaign_id) is None:
-            raise CampaignNotFound()
-        rows = conn.execute(
-            f"SELECT {_DECISION_COLUMNS} FROM gate_decisions "  # noqa: S608 - column list is a module constant; values are bound parameters
-            "WHERE tenant = ? AND campaign_id = ? ORDER BY id DESC",
-            (tenant, campaign_id),
-        ).fetchall()
-    grouped: dict[str, list[dict[str, Any]]] = {}
+        _check_campaign(store, conn, tenant, campaign_id)
+        return _counts_in_txn(conn, tenant, campaign_id)
+
+
+def select_orphans(
+    counts: dict[str, tuple[int, int]], stage_keys: list[str]
+) -> tuple[list[str], int]:
+    """Orphaned gate keys to list (at most MAX_ORPHANED_GATES_LISTED: those
+    with the most recent decisions, returned sorted by key) and the total."""
+    orphans = sorted((k for k in counts if k not in stage_keys),
+                     key=lambda k: counts[k][1], reverse=True)
+    return sorted(orphans[:MAX_ORPHANED_GATES_LISTED]), len(orphans)
+
+
+def gate_summaries(
+    store: CampaignStore, *, tenant: str, campaign_id: str, stage_keys: list[str],
+    only_gate: str | None = None, per_gate: int = GATE_HISTORY_PREVIEW,
+) -> tuple[dict[str, dict[str, Any]], int]:
+    """Per gate: `{"count", "latest"}` where `latest` is the newest `per_gate`
+    decisions, newest first. Gates listed: every key in `stage_keys` plus the
+    orphaned gates chosen by `select_orphans` (or only `only_gate`). Returns
+    the summaries and the TOTAL number of orphaned gates. Never loads more
+    than `per_gate` rows per listed gate. Raises `CampaignNotFound`."""
+    store._check(tenant, campaign_id)
+    with store._txn(write=False) as conn:
+        _check_campaign(store, conn, tenant, campaign_id)
+        counts = _counts_in_txn(conn, tenant, campaign_id)
+        orphans, n_orphans = select_orphans(counts, stage_keys)
+        wanted = [only_gate] if only_gate is not None else [*stage_keys, *orphans]
+        wanted = [g for g in dict.fromkeys(wanted) if g in counts]
+        rows: list[tuple[Any, ...]] = []
+        if wanted:
+            marks = ", ".join("?" for _ in wanted)
+            rows = conn.execute(
+                f"SELECT {_DECISION_COLUMNS} FROM gate_decisions "  # noqa: S608 - column list is a module constant; placeholders only; values are bound parameters
+                "WHERE tenant = ? AND id IN ("
+                " SELECT id FROM ("
+                "  SELECT id, ROW_NUMBER() OVER (PARTITION BY gate ORDER BY id DESC) AS rn"
+                "  FROM gate_decisions WHERE tenant = ? AND campaign_id = ?"
+                f"  AND gate IN ({marks})"
+                " ) WHERE rn <= ?"
+                ") ORDER BY id DESC",
+                (tenant, tenant, campaign_id, *wanted, per_gate),
+            ).fetchall()
+    out: dict[str, dict[str, Any]] = {
+        g: {"count": counts.get(g, (0, 0))[0], "latest": []}
+        for g in ([only_gate] if only_gate is not None else [*stage_keys, *orphans])
+    }
     for row in rows:
-        grouped.setdefault(str(row[1]), []).append(_decision_row(row))
-    return grouped
+        entry = out.get(str(row[1]))
+        if entry is not None:
+            entry["latest"].append(_decision_row(row))
+    return out, n_orphans
+
+
+def gate_history(
+    store: CampaignStore, *, tenant: str, campaign_id: str, gate: str,
+    limit: int = HISTORY_DEFAULT_LIMIT, before_id: int | None = None,
+) -> dict[str, Any]:
+    """One newest-first page of a gate's decisions (keyset pagination on `id`).
+
+    The gate must be a stage key of the current definitions or have recorded
+    decisions (an orphaned gate keeps a readable history); otherwise
+    `GateNotFound`. Raises `CampaignNotFound` for a missing or foreign
+    campaign (checked first)."""
+    limit = max(1, min(int(limit), HISTORY_MAX_LIMIT))
+    store._check(tenant, campaign_id)
+    with store._txn(write=False) as conn:
+        _check_campaign(store, conn, tenant, campaign_id)
+        if not valid_stage_key(gate):
+            raise GateNotFound()
+        if gate not in _stage_keys_in_txn(conn, tenant, campaign_id):
+            known = conn.execute(
+                "SELECT 1 FROM gate_decisions WHERE tenant = ? AND campaign_id = ? AND gate = ? LIMIT 1",
+                (tenant, campaign_id, gate),
+            ).fetchone()
+            if known is None:
+                raise GateNotFound()
+        sql = (
+            f"SELECT {_DECISION_COLUMNS} FROM gate_decisions "  # noqa: S608 - column list is a module constant; values are bound parameters
+            "WHERE tenant = ? AND campaign_id = ? AND gate = ?"
+            + (" AND id < ?" if before_id is not None else "")
+            + " ORDER BY id DESC LIMIT ?"
+        )
+        params: tuple[Any, ...] = (
+            tenant, campaign_id, gate, *((before_id,) if before_id is not None else ()), limit + 1,
+        )
+        fetched = conn.execute(sql, params).fetchall()
+    items = [_decision_row(r) for r in fetched[:limit]]
+    has_more = len(fetched) > limit
+    return {
+        "items": items,
+        "has_more": has_more,
+        "next_before_id": items[-1]["id"] if has_more and items else None,
+    }
 
 
 def record_decision(
