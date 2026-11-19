@@ -9,7 +9,34 @@ singleton; tests that pin their own store (`monkeypatch.setattr(campaign,
 """
 from __future__ import annotations
 
+import os
+import sys
+
 import pytest
+
+# --- one torch thread per test process ----------------------------------------- #
+#
+# The engine pins torch to KALOS_TORCH_THREADS threads on its first analysis
+# (default min(4, cpus); kalos/portal/pipeline.py). Under `pytest -n auto` that
+# is 4 threads in EVERY xdist worker: 16 busy threads on a 4-core CI runner. On
+# linux the oversubscribed OpenMP pool slows GP fits by 10x or more (the same
+# pathology deploy/compose.yaml documents for the container), which is what made
+# single analyses take 5-10 minutes in CI and the full suite time out. Tests run
+# with one thread per process unless the caller sets the variable (this module
+# is imported before any test module imports kalos.portal). One vs four threads
+# gives identical analysis output (measured; see also tests/test_golden_determinism.py).
+os.environ.setdefault("KALOS_TORCH_THREADS", "1")
+_TEST_TORCH_THREADS = int(os.environ["KALOS_TORCH_THREADS"].strip() or 0)
+
+
+@pytest.fixture(autouse=True)
+def _torch_thread_count_does_not_leak():
+    """A test that pins torch to another count (tests/test_run_provenance.py
+    pins 3) must not leave the whole worker process at that count."""
+    yield
+    torch = sys.modules.get("torch")
+    if torch is not None and _TEST_TORCH_THREADS > 0 and torch.get_num_threads() != _TEST_TORCH_THREADS:
+        torch.set_num_threads(_TEST_TORCH_THREADS)
 
 
 @pytest.fixture(autouse=True)
