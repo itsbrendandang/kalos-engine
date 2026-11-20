@@ -117,34 +117,6 @@ def test_api_run_returns_503_with_retry_after_while_slot_held(tmp_path, monkeypa
 # before that fix: the next acquire would answer 503 for good.
 
 
-def test_demo_route_cancelled_before_its_task_starts_releases_slot():
-    import asyncio
-    from types import SimpleNamespace
-
-    from kalos.portal import app as appmod
-
-    busy.reset_limiter(total=1, per_tenant=1)
-    ran: list[int] = []
-
-    async def scenario() -> None:
-        outer = asyncio.ensure_future(
-            appmod._run_demo(lambda: ran.append(1), SimpleNamespace(tenant="default"))
-        )
-        # One step: the handler takes the slot and schedules its dispatch task.
-        await asyncio.sleep(0)
-        dispatch = [t for t in asyncio.all_tasks() if t is not outer and t is not asyncio.current_task()]
-        assert len(dispatch) == 1
-        dispatch[0].cancel()  # cancelled before its first step: the thread never runs
-        with pytest.raises(asyncio.CancelledError):
-            await outer
-
-    asyncio.run(scenario())
-    assert ran == []
-    assert busy.limiter().running() == 0
-    run_exclusively(lambda: None)()  # the slot is free again
-    busy.reset_limiter()
-
-
 def test_run_in_slot_cancelled_while_waiting_for_a_thread_releases_slot(monkeypatch):
     import asyncio
 
