@@ -43,11 +43,28 @@ from kalos.portal.analysis_parts.anonymize import (
     anonymize_sheet_rejection,
     sheet_alias,
 )
+from kalos.portal.analysis_parts.categorical_effects import (
+    categorical_effects,
+)
+from kalos.portal.analysis_parts.categorical_effects import (
+    skipped as categorical_skipped,
+)
 from kalos.portal.analysis_parts.columns import (
     AUTO_CATEGORICAL_MAX_LEVELS,
     _dedupe_columns,
     _numeric_cols,
     _resolve_columns,
+)
+from kalos.portal.analysis_parts.cv_grouping import (
+    MIN_GROUPS_FOR_CV,
+    ROUND_ATTR,
+    is_batch_like,
+    leak_free_cv,
+    replicate_clusters,
+    round_index_from_attrs,
+    same_partition,
+    structure_candidates,
+    union_groups,
 )
 from kalos.portal.analysis_parts.diagnostics import (
     _data_drops_block,
@@ -60,6 +77,8 @@ from kalos.portal.analysis_parts.identifiers import (
 )
 from kalos.portal.analysis_parts.intervals import (
     calibrate_normalized,
+    calibrate_selection_aware,
+    conformal_band_caveat,
     interval_method_summary,
     proposal_interval_fields,
     proposal_predictive_std,
@@ -101,6 +120,14 @@ from kalos.portal.analysis_parts.refusals import (
     _validate_constraint,
 )
 from kalos.portal.analysis_parts.setup_apply import _propose_with_setup, withheld_batch
+from kalos.portal.analysis_parts.strain_roles import resolve_strain
+from kalos.portal.analysis_parts.strain_state import (
+    StrainState,
+    covariates_block,
+    strain_outputs,
+)
+from kalos.portal.analysis_parts.trust_gate import clears_floor as trust_clears_floor
+from kalos.portal.analysis_parts.trust_gate import label_proposals, proposal_trust
 from kalos.portal.analysis_parts.units import target_unit_block
 from kalos.portal.cells import (
     BLANK,
@@ -123,6 +150,7 @@ from kalos.portal.uploads import (
     clip_name,
 )
 from kalos.portal.validate import column_provenance, provenance_dicts
+from kalos.portal.verdict import model_verdict, refusal_for, refusal_notice
 from kalos.validation import apply_unit_conversions, report_dict, validate_frame
 
 # Re-exported: each name below was defined in this module before the split into
@@ -316,7 +344,12 @@ def _analyze_body(
             feasibility_cv_report,
             feasible_labels,
         )
-        from kalos.core.gates import GatesConfig, check_gates
+        from kalos.core.gates import (
+            NOT_APPLICABLE_FEW_NON_PRODUCERS,
+            NOT_APPLICABLE_WHEN_MINIMIZING,
+            GatesConfig,
+            check_gates,
+        )
         from kalos.core.optimize import MAX_MIXED_COMBOS, propose_batch
         from kalos.core.surrogate import FitError, Surrogate, proposal_restarts
         from kalos.portal.viz_utils import (
@@ -329,6 +362,10 @@ def _analyze_body(
     # Header decision from the upload parser (`uploads.choose_header`), read before
     # any frame operation below could drop the attrs.
     header_info: dict = dict(df.attrs.get("kalos_header") or {})
+    # F05: the campaign round of each row, attached by a campaign re-analysis
+    # (`CampaignStore.plan_fold`); read before any frame operation drops attrs.
+    round_attr = df.attrs.get(ROUND_ATTR)
+    frame_index = df.index
     original_columns = {str(c) for c in df.columns}
     n_header_columns = int(df.shape[1])
     df = _dedupe_columns(df.dropna(axis=1, how="all"))
@@ -400,9 +437,34 @@ def _analyze_body(
     target, cont_feats, cat_feats, gcol, declared = _resolve_columns(
         df, num, target, roles, profile
     )
+    # Clone / strain and covariate roles (docs/CLONES.md): the clone is always an
+    # unordered label (never `clone: 329.44`), covariates are never proposed. With
+    # neither column present this returns the feature lists unchanged.
+    df, cont_feats, cat_feats, strain_plan = resolve_strain(
+        df, target=str(target), roles=roles, setup=setup,
+        cont_feats=list(cont_feats), cat_feats=list(cat_feats),
+        keep=classify_cells(df[target]).to_numpy(object) == NUMERIC,
+    )
     # With no declared roles, text factors are auto-detected (see `_auto_categorical`);
     # they are reported as findings so the uploader can confirm or override them.
-    auto_cats = list(cat_feats) if roles is None else []
+    # F05 / audit S1: a batch, lot, plate, block, date, week or round column is
+    # the run's circumstances, never a setpoint. It is not fitted or proposed
+    # (unless the caller declared it a feature); it becomes a CV-group candidate.
+    # The clone column and covariates keep the roles `resolve_strain` gave them.
+    _strain_cols = {
+        c for c in (strain_plan.column, *strain_plan.covariates_numeric, *strain_plan.covariates_label)
+        if c is not None
+    }
+    batch_cols = [
+        c for c in [*cont_feats, *cat_feats]
+        if is_batch_like(str(c)) and c not in declared and str(c) not in _strain_cols
+    ]
+    if batch_cols:
+        cont_feats = [c for c in cont_feats if c not in batch_cols]
+        cat_feats = [c for c in cat_feats if c not in batch_cols]
+    auto_cats = (
+        [c for c in cat_feats if str(c) != strain_plan.column] if roles is None else []
+    )
     # PART 2 leakage guard: the constraint column (e.g. "purity_pct") is
     # normally already excluded from the feature set by `profile.outcome_hint`
     # (the same mechanism that excludes the target itself), same as the
@@ -626,11 +688,26 @@ def _analyze_body(
     bounds = design.bounds()
     cat_dims = design.cat_dims or None
     cat_cardinalities = design.cat_cardinalities or None
-    # Campaign setup (goal, user bounds, linear constraints): None = today's path.
-    setup_plan = None if setup is None else plan_setup(
-        setup, names=design.names, categorical=[str(c) for c in kept_cats], bounds=bounds,
-        target=str(target), converted=[str(c.column) for c in validation.conversions],
+    # Clone policy and covariates: which dims every proposal HOLDS (never proposes).
+    strain = StrainState.build(
+        strain_plan, df=df, keep_index=keep_index, X=X, bounds=bounds,
+        cont_feats=cont_feats, kept_cats=kept_cats, cat_dims_map=cat_dims_map,
     )
+    # Campaign setup (goal, user bounds, linear constraints): None = today's path.
+    if setup is None:
+        setup_plan = None
+    elif strain.active:
+        setup_plan = plan_setup(
+            setup, names=design.names, categorical=[str(c) for c in kept_cats], bounds=bounds,
+            target=str(target), converted=[str(c.column) for c in validation.conversions],
+            held=strain.held_names, mixed_constraints_ok=strain.mixed_constraints_ok(
+                cat_dims or [], cat_cardinalities or [], MAX_MIXED_COMBOS),
+        )
+    else:
+        setup_plan = plan_setup(
+            setup, names=design.names, categorical=[str(c) for c in kept_cats], bounds=bounds,
+            target=str(target), converted=[str(c.column) for c in validation.conversions],
+        )
     _minimize = setup_plan is not None and setup_plan.minimize
 
     # PART 2: constrained single-objective proposals. Fit a SECOND `Surrogate`
@@ -713,6 +790,14 @@ def _analyze_body(
         recipe_gf[c] = df.loc[keep_index, c].fillna("").astype(str)
     recipe_key = row_hash_groups(recipe_gf)
 
+    # F05: replicates recorded as run (settings jittered) are one group, not
+    # distinct recipes. Canonical ids (first appearance), so a sheet whose
+    # clusters ARE the exact recipes gets exactly the old group labels.
+    cont_widths = (bounds[1] - bounds[0])[: len(cont_feats)]
+    rep_clusters = replicate_clusters(
+        Xc_raw.to_numpy(float), cont_widths,
+        recipe_gf[[c for c in kept_cats]] if kept_cats else None,
+    )
     if gcol:
         # fillna("") before astype(str), matching every other cast of this
         # column family in this file (recipe_gf just above, and the label
@@ -731,12 +816,41 @@ def _analyze_body(
         # No declared barrier, so the recipe itself is the safest CV group: two
         # replicates of one recipe must never straddle a fold.
         groups = recipe_key
+    if not gcol and not same_partition(rep_clusters, recipe_key):
+        groups = rep_clusters
+    elif gcol and not same_partition(union_groups(groups, rep_clusters), groups):
+        merged_gcol = union_groups(groups, rep_clusters)
+        if len(set(merged_gcol.tolist())) >= MIN_GROUPS_FOR_CV:
+            groups = merged_gcol.tolist()
 
     # honest grouped cross-validation: pooled out-of-fold predictions + a
     # group-level bootstrap CI, all through the single leakage-checked splitter.
     _progress("fitting", 0.15)
     rep = grouped_cv_report(
         X, y, groups=groups, n_splits=5, bounds=bounds, cat_dims=cat_dims, n_repeats=CV_N_REPEATS,
+    )
+    # F05: every batch/lot/plate/date/round/scale grouping is cross-validated
+    # too, and the LOWEST held-out score drives everything below (trust,
+    # conformal, calibration). Run after the primary CV so a sheet with no such
+    # structure consumes the seeded RNG exactly as before.
+    primary_basis = (
+        ("declared_column" if roles is not None and roles.groups else "group_column") if gcol
+        else "replicate_clusters"
+    )
+    cv_grouping, rep, groups, binding_basis = leak_free_cv(
+        rep, groups, primary_basis, gcol,
+        structure_candidates(
+            df.loc[keep_index],
+            exclude=[str(target), *([str(gcol)] if gcol else []),
+                     *([str(constraint["column"])] if constraint is not None else [])],
+            round_index=round_index_from_attrs(round_attr, frame_index, keep_index),
+            clusters=rep_clusters,
+        ),
+        lambda g: grouped_cv_report(
+            X, y, groups=g, n_splits=5, bounds=bounds, cat_dims=cat_dims, n_repeats=CV_N_REPEATS,
+        ),
+        n_exact_recipes=len(set(np.asarray(recipe_key).tolist())),
+        n_clusters=len(set(rep_clusters.tolist())),
     )
     rho = rep["spearman"]
     # Repeat-0-only: the point estimate and the OOF pools below stay anchored to
@@ -755,11 +869,22 @@ def _analyze_body(
     conformal_q = round(q_from_residuals(resid, alpha=CONFORMAL_ALPHA), 4) if len(resid) else None
     # Per-proposal normalized conformal (R4), same OOF set: analysis_parts/intervals.py.
     interval_cal = calibrate_normalized(oof_a, oof_p, oof_s, INTERVAL_LEVELS)
+    # F15: the selection-aware band the proposals carry (top-ranked held-out runs
+    # of every fold and repeat; analysis_parts/intervals.py). Falls back, per
+    # level, to the plain normalized band above when too few runs are selected.
+    selection_cal = calibrate_selection_aware(rep.get("oof_repeats", []), INTERVAL_LEVELS, maximize=not _minimize)
 
     # Honest reliability verdict: only what this path can actually assess. The
     # spearman floor mirrors GatesConfig.min_spearman (kalos/core/gates.py); we do
     # NOT assert the feasibility gate, which is not measured here.
-    ci95 = None if rho != rho else [round(rep["ci95"][0], 3), round(rep["ci95"][1], 3)]
+    # Null (not [NaN, NaN]) when the group bootstrap could not run (< 3 CV
+    # groups): the interval does not exist, and NaN is not JSON (arch-safe-now
+    # 08db682 made the same fix on the reanalyze path).
+    _ci_lo, _ci_hi = rep["ci95"]
+    ci95 = (
+        None if (rho != rho or _ci_lo != _ci_lo or _ci_hi != _ci_hi)
+        else [round(_ci_lo, 3), round(_ci_hi, 3)]
+    )
 
     # CALIBRATION. A model can rank held-out runs correctly and still state every
     # uncertainty at half its true width, and the scientist reading "4.2 +/- 0.3"
@@ -789,11 +914,21 @@ def _analyze_body(
     # The assay LOD is the correct value - below it a reading is censored rather
     # than zero - and is not available until an SOP supplies it.
     prod = producer_only_spearman(oof_a, oof_p)
+    # F04: the floor needs the interval, not only the point estimate, and is not
+    # judged on a sheet too small to judge (kalos/portal/analysis_parts/trust_gate.py).
+    floor_check = trust_clears_floor(
+        rho=rho, ci95=ci95, floor=RELIABILITY_SPEARMAN_FLOOR, n_runs=len(y), n_groups=int(rep["n_groups"]),
+    )
     reliability = {
         "spearman": None if rho != rho else round(rho, 3),
         "ci95": ci95,
         "spearman_floor": RELIABILITY_SPEARMAN_FLOOR,
-        "clears_floor": bool(rho == rho and rho >= RELIABILITY_SPEARMAN_FLOOR),
+        "clears_floor": floor_check["clears_floor"],
+        "clears_floor_rule": floor_check["rule"],
+        "judged": floor_check["judged"],
+        # "clears_floor" | "below_floor" | "not_judged" (F04; clears_floor null when not judged).
+        "verdict": floor_check["verdict"],
+        "not_judged_reason": floor_check["not_judged_reason"],
         # Reported alongside, not folded into `clears_floor`: making the gate
         # stricter changes which uploads the API accepts, which is a product
         # decision rather than a bug fix. Surfaced so the divergence is visible
@@ -839,7 +974,8 @@ def _analyze_body(
         if reliability["clears_floor"]
         else (
             "The model has not yet shown it can rank unseen runs (CV Spearman "
-            f"below the {RELIABILITY_SPEARMAN_FLOOR} floor), so this batch explores "
+            f"below the {RELIABILITY_SPEARMAN_FLOOR} floor, its 95% interval reaching 0, "
+            "or too few runs to judge), so this batch explores "
             "rather than exploits. On data like this a space-filling design (e.g. "
             "Latin hypercube) is expected to do about as well; the model's "
             "advantage appears once it clears the floor."
@@ -859,7 +995,7 @@ def _analyze_body(
     # fits under CV, no GP involved - unlike the grouped surrogate CV above, so
     # computing it here costs essentially nothing next to the GP fits this
     # function already pays for.
-    feas = feasibility_cv_report(X, y, groups=recipe_key)
+    feas = feasibility_cv_report(X, y, groups=groups)
 
     # PART 1: feasibility-gated production proposals. `feas` above already
     # cross-validates the classifier for the promotion verdict below; this
@@ -967,6 +1103,19 @@ def _analyze_body(
         "ece_n": feas["n"] if feas.get("evaluable") else None,
         "brier": feas["brier"],
     }
+    if _minimize:
+        # P(feasible) scores y > 0, a maximize notion: its AUC/ECE/Brier gates are
+        # reported as not judged rather than passing or failing a minimize run
+        # (cherry-picked from arch-safe-now e2257ac).
+        gate_stats["feasibility_not_applicable"] = NOT_APPLICABLE_WHEN_MINIMIZING
+    elif n_infeasible < GATE_MIN_N_INFEASIBLE:
+        # F04 / audit B3: with fewer than GATE_MIN_N_INFEASIBLE non-producing runs
+        # feasibility is not a question this sheet asks, and its AUC/ECE/Brier are
+        # unmeasurable. Failing closed on them made promotion impossible on any
+        # ordinary target (0/280 in the audit); they are now "not applicable".
+        gate_stats["feasibility_not_applicable"] = (
+            f"{NOT_APPLICABLE_FEW_NON_PRODUCERS} ({n_infeasible} non-producing runs, need {GATE_MIN_N_INFEASIBLE})"
+        )
     promotion_result = check_gates(gate_stats)
     promotion = {
         "passed": promotion_result.passed,
@@ -979,6 +1128,11 @@ def _analyze_body(
         # Gates neither passed nor failed, e.g. "ece: not enough runs to judge
         # calibration (n=14, need 20)". Additive.
         "not_judged": promotion_result.not_judged,
+        # Additive: `passed`, `failed` (a measured gate missed), or
+        # `not_measurable` (every blocking gate was unmeasured, e.g. no
+        # non-producers to score feasibility). Same verdict as `passed`.
+        "status": promotion_result.status,
+        "unmeasured": list(promotion_result.unmeasured),
         # FAIL-CLOSED IS CORRECT, BUT ILLEGIBLE WITHOUT THIS. On an all-producer
         # sheet (no non-producers to build a feasibility classifier from) or
         # any sheet too small to measure one of the four gates,
@@ -997,6 +1151,15 @@ def _analyze_body(
         ),
     }
 
+    # ONE VERDICT (kalos/portal/verdict.py): reliable / not_yet / refused, from
+    # the numbers above. Stored on the analysis; every route returns this object.
+    # `refused` means no proposals (applied where `result` is assembled below).
+    verdict = model_verdict(
+        n_runs=len(y), n_groups=int(rep["n_groups"]), spearman=None if rho != rho else float(rho),
+        ci95=ci95, floor=RELIABILITY_SPEARMAN_FLOOR, calibration=calibration,
+    )
+    refusal = refusal_for(verdict)
+
     # LEAVE-ONE-GROUP-OUT. Grouped K-fold above tests generalization to a FEW
     # unseen groups among many familiar ones; LOGO is the harder question -
     # generalization to the NEXT group the model has seen nothing like - and
@@ -1010,7 +1173,7 @@ def _analyze_body(
     # timing this cap is tuned against) - absence is always explained via
     # `reason`, never silent.
     cv_logo: dict[str, Any]
-    if gcol is None:
+    if gcol is None and binding_basis == "replicate_clusters":
         cv_logo = {
             "spearman": None,
             "n_groups": None,
@@ -1247,7 +1410,8 @@ def _analyze_body(
     # level cannot be placed in the design at all), so the count actually used is
     # reported rather than assumed equal to what the caller passed.
     X_pending, n_pending_dropped = _encode_pending(
-        pending, cont_feats, kept_cats, code_maps, X.shape[1],
+        strain.pending(pending) if strain.active else pending,
+        cont_feats, kept_cats, code_maps, X.shape[1],
         absent_zero=absent_zero & set(map(str, cont_feats)),
     )
     n_pending = 0 if X_pending is None else int(X_pending.shape[0])
@@ -1256,8 +1420,11 @@ def _analyze_body(
     # batch comes back SHORT, and `proposal_notice` below says so.
     if setup_plan is not None and setup_plan.refused:
         proposal = withheld_batch(setup_plan, q=5, d=X.shape[1])
+    elif strain.refusal is not None:
+        proposal = strain.withheld_batch(q=5, d=X.shape[1])
     else:
         proposal = _propose_with_setup(propose_batch, setup_plan, dict(
+        **strain.propose_kwargs(),
         surrogate=s,
         bounds=bounds,
         q=5,
@@ -1276,8 +1443,10 @@ def _analyze_body(
         constraint_floor=constraint_floor_val if constraint_applied else None,
     ), d=X.shape[1])
     batch = proposal.X if setup_plan is None else setup_plan.post_check(proposal.X)
-    show = [d["name"] for d in drv[:4]]
-    show_idx = [d["_idx"] for d in drv[:4]]  # carry the feature index, not a name lookup
+    # Covariates are held, not proposed, so they are not among the shown features.
+    _shown = [d for d in drv if d["name"] not in strain.held_covariates][:4]
+    show = [d["name"] for d in _shown]
+    show_idx = [d["_idx"] for d in _shown]  # carry the feature index, not a name lookup
     for d in drv:
         d.pop("_idx", None)  # internal-only; not part of the returned API surface
     p_mean, p_std = s.posterior(batch) if len(batch) else (np.empty(0), np.empty(0))
@@ -1334,13 +1503,19 @@ def _analyze_body(
     # inside a GP that never saw that row. The observed spread it compares peak
     # height against would be the raw spread too, assay noise included, which
     # makes a real bump read as flat.
+    #
+    # The FULL design rows are passed with the continuous columns to sweep: a mixed
+    # GP takes d columns, and handing it only the d_cont continuous slice made
+    # every mixed fit report "posterior sweep failed: RuntimeError" (the input
+    # transform's tensor-size check). Categorical codes are held at the incumbent.
     gp_shapes = gp_shape_report(
         s,
-        X_fit[:, : len(cont_feats)] if cont_feats else np.empty((len(y_fit), 0)),
+        X_fit if cont_feats else np.empty((len(y_fit), 0)),
         y_fit,
         feature_names=[str(c) for c in cont_feats],
         cv_spearman=None if rho != rho else float(rho),
         rho_floor=RELIABILITY_SPEARMAN_FLOOR,
+        sweep_columns=list(range(len(cont_feats))) if cont_feats else None,
     ).to_dict()
 
     # VISUALIZATION PAYLOADS: embedding (PCA), correlation (Spearman), and
@@ -1398,6 +1573,21 @@ def _analyze_body(
     )
     viz_reasons["slices"] = _sl["reason"]
 
+    # Per-clone predicted pieces (slices per level, the GP at one reference
+    # process per clone, predicted optimum per clone), read off this same GP.
+    strain_pred = strain.predicted(
+        s, X_fit=X_fit, y_fit=y_fit, cont_feats=cont_feats, kept_cats=kept_cats,
+        cat_dims_map=cat_dims_map or {}, bounds=bounds, drv=drv,
+        replicate_aware=replicate_aware, incumbent=incumbent,
+        interval_fields=lambda pts, m, sd, _s=s: proposal_interval_fields(
+            m, sd,
+            proposal_predictive_std(
+                _s, pts, sd, float(nr["noise_var"]) if replicate_aware else None)[0],
+            interval_cal, INTERVAL_LEVELS, incumbent,
+            "best_reproducible_mean" if replicate_aware else "best_measured_single",
+            maximize=not _minimize),
+    )
+
     # Release the fitted GP(s) (hold torch/gpytorch tensors + parameter/prior
     # back-references that can form reference cycles refcounting alone won't
     # break) as soon as their last use is done, rather than waiting on
@@ -1435,6 +1625,47 @@ def _analyze_body(
         grouped_cv_report=grouped_cv_report, interval_calibration=interval_calibration,
     )
 
+    # Per-clone summary (docs/CLONES.md). Also after every proposal-path fit for
+    # the same reason as the block above: its process-only CV and
+    # leave-one-clone-out fits draw from the seeded RNG.
+    if strain.has_clone:
+        _units = {
+            str(c): target_unit_block(
+                str(c), (user_target_unit if user_target_unit is not None
+                         else (setup or {}).get("user_target_unit")) if str(c) == str(target) else None,
+            ).get("unit")
+            for c in candidate_targets
+        }
+        _direction = {str(target): "lower_is_better" if _minimize else "higher_is_better"}
+        if constraint_applied and constraint_col is not None:
+            _direction[constraint_col] = "floor"
+        strain_summary, oof_levels = strain_outputs(
+            strain, df=df, target=str(target),
+            outcomes=[str(c) for c in candidate_targets if str(c) in {str(x) for x in df.columns}],
+            outcome_units=_units, outcome_direction=_direction, keep_index=keep_index,
+            y=y, X=X, kept_cats=kept_cats,
+            features=[str(c) for c in cont_feats] + [str(c) for c in kept_cats],
+            maximize=not _minimize, seed=ANALYZE_SEED, anonymize=anonymize,
+            predicted=strain_pred, groups=groups, bounds=bounds, cat_dims=cat_dims,
+            oof_index=rep["oof_index"], oof_a=oof_a, oof_p=oof_p, oof_s=oof_s,
+            interval_cal=interval_cal, grouped_cv_report=grouped_cv_report,
+            logo_report=logo_report,
+        )
+    else:
+        strain_summary, oof_levels = strain_outputs(
+            strain, df=df, target=str(target), outcomes=[], outcome_units={},
+            outcome_direction={}, keep_index=keep_index, y=y, X=X, kept_cats=kept_cats,
+            features=[], maximize=not _minimize, seed=ANALYZE_SEED, anonymize=anonymize,
+            predicted=None, groups=groups, bounds=bounds, cat_dims=cat_dims, oof_index=[],
+            oof_a=[], oof_p=[], oof_s=[], interval_cal={}, grouped_cv_report=grouped_cv_report,
+            logo_report=logo_report,
+        )
+    _cat_effects = categorical_effects(
+        y, {str(c): df.loc[keep_index, c].fillna("").astype(str).str.strip().tolist()
+            for c in kept_cats},
+        list(recipe_key), fdr_q=DRIVER_FDR_Q,
+    ) if kept_cats else None
+
     # per-column provenance: what was kept as a feature, used as the target, or
     # dropped (id / other output / constant / sparse), so the client is never left
     # guessing about a silently dropped column. Mirrors the selection logic above.
@@ -1452,6 +1683,7 @@ def _analyze_body(
             declared={str(c) for c in declared},
             declared_ids={str(c) for c in roles.ids} if roles is not None else set(),
             declared_features={str(c) for c in roles.features} if roles is not None else set(),
+            cv_group_columns={str(c) for c in batch_cols},
         )
     )
 
@@ -1489,6 +1721,9 @@ def _analyze_body(
         "cv_spearman": None if rho != rho else round(rho, 3),
         "cv_ci95": ci95,
         "cv_n_groups": rep["n_groups"],
+        # F05: which grouping the held-out numbers above come from, every
+        # candidate grouping's score, and warnings (docs/CAMPAIGNS_API.md).
+        "cv_grouping": cv_grouping,
         # How many partitions actually went into `cv_ci95` above - the requested
         # ceiling (`CV_N_REPEATS`) collapses to 1 when the sheet has too few
         # groups for a second, genuinely different partition to exist (see
@@ -1505,7 +1740,11 @@ def _analyze_body(
         # The band's ACTUAL coverage, so no consumer has to hardcode it.
         "conformal_coverage": round(1.0 - CONFORMAL_ALPHA, 4),
         "interval_levels": [float(c) for c in INTERVAL_LEVELS],
-        "interval_method": interval_method_summary(interval_cal, sigma_source),
+        "interval_method": interval_method_summary(interval_cal, sigma_source, selection_cal),
+        # What `conformal_coverage` does NOT promise (cherry-picked from
+        # arch-safe-now 47143f3, F02): the band is one +/- width from held-out
+        # residuals of past runs; at proposals its measured coverage is lower.
+        "conformal_caveat": conformal_band_caveat(CONFORMAL_ALPHA),
         # How the driver panel was selected and corrected, so the client can see
         # that many features were tested and only the strongest are shown.
         "driver_selection": {
@@ -1529,6 +1768,10 @@ def _analyze_body(
         # above where `promotion` is assembled for why this must never change
         # what the API accepts).
         "promotion": promotion,
+        # The one verdict (kalos/portal/verdict.py, docs/CAMPAIGNS_API.md "Verdict")
+        # and, when it is `refused`, why there are no proposals.
+        "verdict": verdict,
+        "refusal": refusal,
         # PART 1: whether/why the proposal acquisition was gated by P(feasible)
         # (see the GATE POLICY block above `promotion` is assembled near, for
         # the full three-condition reasoning). `threshold` is the label
@@ -1591,7 +1834,7 @@ def _analyze_body(
             interval_fields=proposal_interval_fields(
                 p_mean, p_std, p_std_obs, interval_cal, INTERVAL_LEVELS, incumbent,
                 "best_reproducible_mean" if replicate_aware else "best_measured_single",
-                maximize=not _minimize),
+                maximize=not _minimize, selection=selection_cal),
         ),
         # Context for `proposals[].nearest_training_distance` (same metric): the
         # median distance from each training row to its nearest other row.
@@ -1610,7 +1853,7 @@ def _analyze_body(
                     by_column, n_rows_dropped, n_censored_rows, zero_filled,
                     auto_cats=[str(c) for c in auto_cats if c in kept_cats],
                     header=header_info,
-                ),
+                ) + list(strain_plan.findings),
             )
         ),
         # Features whose search range was narrowed because some observed cells
@@ -1639,9 +1882,45 @@ def _analyze_body(
     }
     if setup_plan is not None:
         result.update(setup_plan.result_fields())  # `goal` + the `setup` block
+    # Clone / strain and covariates (docs/CLONES.md). Additive keys: a sheet with
+    # no clone column gets `strain_summary.available: false` and empty blocks.
+    if strain.active:
+        # A fitted covariate can rank as a driver; it is labeled, never a setpoint.
+        result["drivers"] = [
+            {**d, "role": "covariate"} if d["name"] in strain.held_covariates else d
+            for d in result["drivers"]
+        ]
+        result["proposals"] = strain.annotate_proposals(
+            result["proposals"], batch, X, bounds, cat_dims, nearest_training_distance,
+        )
+    result["strain_summary"] = strain_summary
+    _pred = strain_pred if isinstance(strain_pred, dict) and "error" not in strain_pred else None
+    result["slices_by_level"] = (_pred or {}).get("slices_by_level") or {}
+    result["slices_by_level_skipped"] = (_pred or {}).get("slices_by_level_skipped") or {}
+    result["oof_levels"] = oof_levels
+    result["covariates"] = covariates_block(strain.plan, strain.held_info)
+    # Categorical inputs are never silently absent from the rank panels.
+    result["drivers_skipped"] = categorical_skipped([str(c) for c in kept_cats])
+    result["correlation_skipped"] = categorical_skipped([str(c) for c in kept_cats])
+    result["categorical_effects"] = _cat_effects
+    if strain.active:
+        _roles = {strain.plan.column: "strain"} if strain.plan.column else {}
+        _roles.update({c: "covariate" for c in covariates_block(strain.plan, {})["columns"]})
+        result["provenance"] = [
+            {**row, "role": _roles[row["name"]]} if row.get("name") in _roles else row
+            for row in result["provenance"]
+        ]
+    if refusal is not None:  # verdict `refused`: no recipes, and the notice says why
+        result["proposals"] = []
+        result["proposal_notice"] = refusal_notice(refusal, 5)
+    # F04: the verdict acts on the batch. Withheld above when refused; otherwise
+    # every proposal says whether it is model-guided (trusted) or exploration.
+    result["proposal_trust"] = proposal_trust(verdict, n_returned=len(result["proposals"]), n_requested=5)
+    result["proposals"] = label_proposals(result["proposals"], result["proposal_trust"])
     if anonymize:
         result = _anonymize_result(
             result,
             categorical_levels={str(c): cat_dims_map[c] for c in kept_cats},
+            label_columns=[strain.plan.column] if strain.plan.column else [],
         )
     return result

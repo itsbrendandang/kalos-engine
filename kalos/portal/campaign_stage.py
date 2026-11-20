@@ -114,8 +114,19 @@ def stage_fields(summary: dict[str, Any], analysis: dict[str, Any] | None) -> di
     None when that campaign has none. Never another campaign's analysis."""
     has_analysis = bool(analysis)
     proposals = (analysis or {}).get("proposals") or []
-    return derive_stage(
+    out = derive_stage(
         summary,
         analysis_exists=has_analysis,
         n_proposed=len(proposals) if has_analysis else None,
     )
+    # A refused analysis (verdict `refused`, kalos/portal/verdict.py) proposes
+    # nothing: the plan step says so instead of "Review and start round N".
+    refusal = (analysis or {}).get("refusal")
+    if isinstance(refusal, dict) and out["stage"]["current"] == "plan":
+        out["stage"]["steps"][1]["detail"] = "No recipes proposed"
+        out["next_action"] = {
+            "stage": "setup",
+            "action": "Add runs and upload again",
+            "reason": f"{refusal.get('plain', '')} {refusal.get('what_would_help', '')}".strip(),
+        }
+    return out

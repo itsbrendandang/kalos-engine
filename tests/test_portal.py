@@ -66,6 +66,11 @@ def test_analyze_excludes_outputs_and_reports_honest_cv(shared_analysis):
         "ci95",
         "spearman_floor",
         "clears_floor",
+        # F04: how the floor was judged
+        "clears_floor_rule",
+        "judged",
+        "not_judged_reason",
+        "verdict",
         "ci_excludes_zero",
         "unmodeled",
         "producer_spearman",

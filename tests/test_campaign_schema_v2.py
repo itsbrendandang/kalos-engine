@@ -23,7 +23,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from kalos.portal import campaign_settings, migrate
+from kalos.portal import campaign_settings, clone_registry, migrate
 from kalos.portal.campaign import (
     CampaignArchived,
     CampaignConflict,
@@ -125,11 +125,12 @@ def test_fresh_database_is_created_at_v2_without_a_backup(tmp_path):
     db = tmp_path / "portal.db"
     assert {"schema_migrations", "campaigns", "analyses", "tenant_defaults", "audit_log"} <= _tables(db)
     # schema v3 (background jobs), v4 (append-only audit log), v5 (append-only
-    # result history) and v6 (campaign settings + gate decisions) are applied on
+    # result history), v6 (campaign settings + gate decisions) and v7 (clone
+    # registry + clone titer history) are applied on
     # top of v2 in the same transaction
     assert _q(db, "SELECT version, name FROM schema_migrations ORDER BY version") == [
         (2, migrate.V2_NAME), (3, migrate.V3_NAME), (4, migrate.V4_NAME), (5, migrate.V5_NAME),
-        (6, migrate.V6_NAME)]
+        (6, migrate.V6_NAME), (7, migrate.V7_NAME)]
     assert not list(tmp_path.glob("portal.db.pre-*"))
     assert store.get(tenant="acme") is None
     assert store.summary(tenant="acme") == {"has_campaign": False}
@@ -353,7 +354,7 @@ def test_migration_is_idempotent(tmp_path):
     CampaignStore(tmp_path)
     CampaignStore(tmp_path)
     assert _q(db, "SELECT id FROM campaigns ORDER BY id") == ids
-    assert _q(db, "SELECT version FROM schema_migrations ORDER BY version") == [(2,), (3,), (4,), (5,), (6,)]
+    assert _q(db, "SELECT version FROM schema_migrations ORDER BY version") == [(2,), (3,), (4,), (5,), (6,), (7,)]
     assert len(list(tmp_path.glob("portal.db.pre-v2-*"))) == 1
     assert migrate.migrate_up(db, dry_run=True).plan_text.endswith("nothing to do")
 
@@ -388,7 +389,7 @@ def test_down_restores_the_v1_shape_the_old_code_reads(tmp_path):
     store.close()
 
     plan = migrate.migrate_down(db, dry_run=True, target=1)
-    assert "schema v6 -> v5" in plan.plan_text and "schema v5 -> v4" in plan.plan_text
+    assert "schema v7 -> v6" in plan.plan_text and "schema v6 -> v5" in plan.plan_text and "schema v5 -> v4" in plan.plan_text
     assert "schema v4 -> v3" in plan.plan_text
     assert "schema v3 -> v2" in plan.plan_text
     assert "schema v2 -> v1" in plan.plan_text
@@ -439,7 +440,7 @@ def test_cli_up_down_status(tmp_path, capsys):
     assert migrate.main(["up", "--state-dir", str(tmp_path)]) == 0
     assert "result: migrated" in capsys.readouterr().out
     assert migrate.main(["status", "--state-dir", str(tmp_path)]) == 0
-    assert "schema version: v6" in capsys.readouterr().out
+    assert "schema version: v7" in capsys.readouterr().out
     assert migrate.main(["down", "--to", "1", "--state-dir", str(tmp_path)]) == 0
     assert "result: rolled_back" in capsys.readouterr().out
 
@@ -573,6 +574,19 @@ def test_every_traced_statement_on_a_tenant_table_mentions_tenant(tmp_path):
         updated_by="u", audit_action="settings.put",
     )
     campaign_settings.get_setting(store, tenant="acme", campaign_id=c["id"], kind="setup")
+    clone_registry.put_clone(store, tenant="acme", campaign_id=c["id"], label="CHO-A12",
+                             status="lead", fields={"host": "CHO-K1"}, updated_by="u")
+    clone_registry.list_clones(store, tenant="acme", campaign_id=c["id"])
+    clone_registry.get_clone(store, tenant="acme", campaign_id=c["id"], label="CHO-A12")
+    clone_registry.lead_clone_label(store, tenant="acme", campaign_id=c["id"])
+    first = clone_registry.append_titer(
+        store, tenant="acme", campaign_id=c["id"], label="CHO-A12",
+        row={"basis": "harvest_titer", "value": 3.1, "unit": "g/L"}, actor="u")
+    clone_registry.append_titer(
+        store, tenant="acme", campaign_id=c["id"], label="CHO-A12",
+        row={"basis": "harvest_titer", "value": 3.2, "unit": "g/L", "previous_id": first["id"],
+             "reason": "re-read"}, actor="u")
+    clone_registry.list_titer_history(store, tenant="acme", campaign_id=c["id"], label="CHO-A12")
     store.archive_campaign(tenant="acme", campaign_id=c["id"])
     store.record_audit(tenant="acme", action="a", outcome="ok")
     store.audit_entries(tenant="acme")
@@ -599,7 +613,8 @@ def _sql_strings(source: str) -> list[str]:
 
 @pytest.mark.parametrize(
     ("module_name", "min_statements"),
-    [("kalos.portal.campaign", 8), ("kalos.portal.campaign_settings", 2)],
+    [("kalos.portal.campaign", 8), ("kalos.portal.campaign_settings", 2),
+     ("kalos.portal.clone_registry", 8)],
 )
 def test_store_source_never_queries_a_tenant_table_without_tenant(module_name, min_statements):
     import importlib
@@ -777,5 +792,5 @@ def test_startup_migrates_and_a_failed_backup_stops_the_app(tmp_path, monkeypatc
 
     with TestClient(portal_module.app) as tc:
         assert tc.get("/readyz").json() == {"status": "ok"}
-    assert _q(db, "SELECT version FROM schema_migrations ORDER BY version") == [(2,), (3,), (4,), (5,), (6,)]
+    assert _q(db, "SELECT version FROM schema_migrations ORDER BY version") == [(2,), (3,), (4,), (5,), (6,), (7,)]
     assert campaign_module._STORE.get(tenant="acme") == json.loads(blobs["acme"])

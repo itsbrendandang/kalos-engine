@@ -33,6 +33,7 @@ from kalos.portal import app as portal_module
 from kalos.portal import campaign as campaign_module
 from kalos.portal.app import app
 from kalos.portal.campaign import CampaignStore, get_campaign_store
+from kalos.portal.route_scopes import _walk
 
 
 def _sha(t: str) -> str:
@@ -108,7 +109,10 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(portal_module, "_STATE_DIR", tmp_path)
     monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
     monkeypatch.setattr(campaign_module, "_STORE", store)
-    if not any(getattr(r, "path", "") == "/api/assist/sop/draft" for r in app.routes):
+    # FastAPI 0.16x includes routers lazily (`app.routes` holds the included
+    # router, not its routes), so look through them; re-including the router
+    # would register every SOP route twice for the rest of the process.
+    if not any(path == "/api/assist/sop/draft" for path, _, _ in _walk(app.routes, "", ())):
         app.include_router(router)
     app.dependency_overrides[get_campaign_store] = lambda: store
     try:

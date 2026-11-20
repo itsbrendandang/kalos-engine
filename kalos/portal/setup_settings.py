@@ -65,6 +65,12 @@ BOX_TOL = 1e-9
 DEFAULT_SETUP: dict[str, Any] = {
     "goal": "maximize", "bounds": {}, "linear_constraints": [], "target_unit": None,
 }
+# Clone / strain keys (docs/CLONES.md). Optional: a document that does not set
+# them normalizes WITHOUT them, so every existing setup keeps its hash.
+STRAIN_KEYS = ("strain_column", "strain_policy", "strain_level", "covariates")
+STRAIN_POLICIES = ("fixed", "factor")
+MAX_CLONE_LABEL_CHARS = 64
+MAX_COVARIATES = 32
 
 SIGN_CONVENTION = (
     "drivers[].rho, cv_spearman and gp_shapes describe the target as measured "
@@ -156,7 +162,7 @@ def normalize_setup(raw: Mapping[str, Any]) -> dict[str, Any]:
     sorted by name; constraint terms by name; constraint order is kept."""
     if not isinstance(raw, Mapping):
         raise SetupInvalid("invalid_setup", "the setup must be a JSON object")
-    unknown = set(raw) - set(DEFAULT_SETUP)
+    unknown = set(raw) - set(DEFAULT_SETUP) - set(STRAIN_KEYS)
     if unknown:
         raise SetupInvalid("invalid_setup", "the setup has unknown keys")
     goal = raw.get("goal", "maximize")
@@ -216,10 +222,61 @@ def normalize_setup(raw: Mapping[str, Any]) -> dict[str, Any]:
             {"coefficients": terms, "op": c["op"], "rhs": _number(c["rhs"], f"{where} rhs")}
         )
 
-    return {
+    doc: dict[str, Any] = {
         "goal": goal, "bounds": bounds, "linear_constraints": constraints,
         "target_unit": clean_target_unit(raw.get("target_unit")),
     }
+    doc.update(_normalize_strain(raw))
+    return doc
+
+
+def _normalize_strain(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """The clone keys of a setup document, only those that are set. A policy or
+    level without a clone column is refused; `fixed` is the default policy once a
+    clone column is declared; a level applies to `fixed` only."""
+    out: dict[str, Any] = {}
+    col = raw.get("strain_column")
+    if col is not None:
+        out["strain_column"] = _feature_name(col, "strain_column")
+    policy = raw.get("strain_policy")
+    if policy is not None:
+        if policy not in STRAIN_POLICIES:
+            raise SetupInvalid("invalid_setup", "strain_policy must be 'fixed' or 'factor'")
+        out["strain_policy"] = policy
+    level = raw.get("strain_level")
+    if level is not None:
+        if not isinstance(level, str):
+            raise SetupInvalid("invalid_setup", "strain_level must be a clone label (string)")
+        text = level.strip()
+        if not 1 <= len(text) <= MAX_CLONE_LABEL_CHARS:
+            raise SetupInvalid(
+                "invalid_setup", f"strain_level must be 1-{MAX_CLONE_LABEL_CHARS} characters"
+            )
+        if any(unicodedata.category(ch).startswith("C") for ch in text):
+            raise SetupInvalid("invalid_setup", "strain_level must not contain control characters")
+        out["strain_level"] = text
+    covs = raw.get("covariates")
+    if covs is not None:
+        if not isinstance(covs, Sequence) or isinstance(covs, (str, bytes)):
+            raise SetupInvalid("invalid_setup", "covariates must be a list of column names")
+        if len(covs) > MAX_COVARIATES:
+            raise SetupInvalid("invalid_setup", f"at most {MAX_COVARIATES} covariates are allowed")
+        names = sorted({_feature_name(c, f"covariates[{k}]") for k, c in enumerate(covs)})
+        if names:
+            out["covariates"] = names
+    if ("strain_policy" in out or "strain_level" in out) and "strain_column" not in out:
+        raise SetupInvalid(
+            "invalid_setup", "strain_policy / strain_level need strain_column",
+            "name the clone column in strain_column",
+        )
+    if out.get("strain_policy") == "factor" and "strain_level" in out:
+        raise SetupInvalid(
+            "invalid_setup", "strain_level applies to strain_policy 'fixed' only",
+            "remove strain_level, or use strain_policy 'fixed'",
+        )
+    if "strain_column" in out and out["strain_column"] in out.get("covariates", []):
+        raise SetupInvalid("invalid_setup", "the clone column cannot also be a covariate")
+    return out
 
 
 def setup_hash(doc: Mapping[str, Any]) -> str:
@@ -246,6 +303,11 @@ class DatasetContext:
     continuous: tuple[str, ...]
     categorical: tuple[str, ...]
     ranges: dict[str, tuple[float, float]]  # observed design box per continuous feature
+    # Clone / covariate context (docs/CLONES.md); empty for an analysis without them.
+    columns: tuple[str, ...] = ()
+    strain_column: str | None = None
+    strain_levels: tuple[str, ...] | None = None  # None: unknown (no block, or anonymized)
+    covariates: tuple[str, ...] = ()
 
 
 def dataset_context(analysis: Mapping[str, Any] | None) -> DatasetContext | None:
@@ -264,9 +326,31 @@ def dataset_context(analysis: Mapping[str, Any] | None) -> DatasetContext | None
             ):
                 ranges[str(name)] = (float(pair[0]), float(pair[1]))
     target = analysis.get("target")
+    columns = tuple(
+        str(r["name"]) for r in analysis.get("provenance") or []
+        if isinstance(r, Mapping) and isinstance(r.get("name"), str)
+    )
+    strain = analysis.get("strain_summary")
+    strain_column: str | None = None
+    strain_levels: tuple[str, ...] | None = None
+    if isinstance(strain, Mapping) and isinstance(strain.get("column"), str):
+        strain_column = strain["column"]
+        run = analysis.get("run")
+        anonymized = isinstance(run, Mapping) and bool(run.get("anonymize"))
+        if not anonymized and isinstance(strain.get("levels"), list):
+            strain_levels = tuple(
+                str(lv["label"]) for lv in strain["levels"]
+                if isinstance(lv, Mapping) and lv.get("label") is not None
+            )
+    cov = analysis.get("covariates")
+    covariates = tuple(
+        str(c) for c in (cov.get("columns") or [])
+    ) if isinstance(cov, Mapping) else ()
     return DatasetContext(
         target=str(target) if isinstance(target, str) else None,
         continuous=cont, categorical=cats, ranges=ranges,
+        columns=columns, strain_column=strain_column, strain_levels=strain_levels,
+        covariates=covariates,
     )
 
 
@@ -370,6 +454,17 @@ def validate_against_dataset(doc: Mapping[str, Any], ctx: DatasetContext | None)
     if ctx is not None:
         fix = {"continuous_features": list(ctx.continuous)}
         cont, cats = set(ctx.continuous), set(ctx.categorical)
+        strain_col = doc.get("strain_column") or ctx.strain_column
+        covs = set(doc.get("covariates") or ctx.covariates)
+        _validate_strain_against_dataset(doc, ctx)
+        for name in [*bounds, *(n for c in cons for n in c["coefficients"])]:
+            if name in covs:
+                raise SetupInvalid(
+                    "covariate_not_proposable", "a bound or linear constraint names a covariate; "
+                    "covariates (passage, generation, PDL, thaw) are recorded run properties, "
+                    "held in proposals and never proposed", "remove it from the bounds and "
+                    "constraints", fix,
+                )
         for k, name in enumerate(bounds):
             where = f"bounds entry {k + 1} (sorted by name)"
             if ctx.target is not None and name == ctx.target:
@@ -414,7 +509,7 @@ def validate_against_dataset(doc: Mapping[str, Any], ctx: DatasetContext | None)
                         "feature of this campaign's current analysis",
                         "use one of `continuous_features`", fix,
                     )
-        if cons and ctx.categorical:
+        if cons and ctx.categorical and strain_col is None:
             raise SetupInvalid(
                 "constraints_with_categoricals",
                 "this campaign's design has categorical features, and the optimizer does not "
@@ -433,6 +528,40 @@ def validate_against_dataset(doc: Mapping[str, Any], ctx: DatasetContext | None)
             else:
                 box[name] = (None, None)
     check_feasible(box, cons)
+
+
+def _validate_strain_against_dataset(doc: Mapping[str, Any], ctx: DatasetContext) -> None:
+    """The clone keys against the campaign's latest analysis: the clone column
+    and covariates must be columns of the sheet, and a fixed level must be a clone
+    that has runs (`clone_not_in_training`: Kalos never predicts an unseen clone)."""
+    columns = set(ctx.columns)
+    col = doc.get("strain_column")
+    if col is not None and columns and col not in columns:
+        raise SetupInvalid(
+            "unknown_column", "strain_column is not a column of this campaign's sheet",
+            "name the clone column exactly as in the sheet header",
+        )
+    if col is not None and ctx.target is not None and col == ctx.target:
+        raise SetupInvalid("invalid_setup", "strain_column cannot be the target")
+    for k, c in enumerate(doc.get("covariates") or []):
+        if columns and c not in columns:
+            raise SetupInvalid(
+                "unknown_column", f"covariates[{k}] (sorted) is not a column of this campaign's sheet",
+                "name covariate columns exactly as in the sheet header",
+            )
+        if ctx.target is not None and c == ctx.target:
+            raise SetupInvalid("invalid_setup", "the target cannot be a covariate")
+    level = doc.get("strain_level")
+    if (
+        level is not None and ctx.strain_levels is not None
+        and (col == ctx.strain_column) and level not in set(ctx.strain_levels)
+    ):
+        raise SetupInvalid(
+            "clone_not_in_training",
+            "strain_level names a clone with no runs in this campaign's data; Kalos never "
+            "predicts an unseen clone (the categorical kernel has nothing to say about a new label)",
+            "choose a clone that has runs, or run the new clone first",
+        )
 
 
 # --- loading ------------------------------------------------------------------- #
@@ -455,7 +584,7 @@ def load_setup(store: Any, *, tenant: str, campaign_id: str) -> dict[str, Any] |
 
 def analysis_setup(doc: Mapping[str, Any]) -> dict[str, Any]:
     """The `setup=` mapping `kalos.portal.analysis._analyze` takes."""
-    return {
+    out: dict[str, Any] = {
         "goal": doc["goal"],
         "bounds": {k: dict(v) for k, v in doc["bounds"].items()},
         "linear_constraints": [
@@ -464,6 +593,10 @@ def analysis_setup(doc: Mapping[str, Any]) -> dict[str, Any]:
         "user_target_unit": doc.get("target_unit"),
         "hash": setup_hash(doc),
     }
+    for key in STRAIN_KEYS:
+        if key in doc:
+            out[key] = list(doc[key]) if key == "covariates" else doc[key]
+    return out
 
 
 def setup_for_analysis(
@@ -486,7 +619,23 @@ def setup_for_analysis(
     except SetupInvalid:
         log.warning("stored campaign setup is unreadable; proposals will be withheld")
         return {"unreadable": True, "hash": None}
-    return None if row is None else analysis_setup(row["value"])
+    if row is None:
+        return None
+    out = analysis_setup(row["value"])
+    if out.get("strain_column") and not out.get("strain_level"):
+        # Policy `fixed` with no named level: the registry's single lead clone is
+        # the default (the analysis falls back to the clone with the most runs
+        # when the lead has none). Not part of the setup hash: the registry is not
+        # the setup.
+        from kalos.portal.clone_registry import lead_clone_label
+
+        try:
+            lead = lead_clone_label(store, tenant=tenant, campaign_id=cid)
+        except CampaignNotFound:
+            lead = None
+        if lead:
+            out["strain_lead"] = lead
+    return out
 
 
 def with_campaign_setup(
@@ -606,6 +755,8 @@ def plan_setup(
     bounds: np.ndarray,
     target: str,
     converted: Sequence[str] = (),
+    held: Sequence[str] = (),
+    mixed_constraints_ok: bool = False,
 ) -> SetupPlan:
     """Turn the `_analyze(setup=...)` mapping into a `SetupPlan` for one sheet.
 
@@ -614,7 +765,14 @@ def plan_setup(
     validation gate unit-converted (their bounds are read in the converted unit).
     Never raises: anything that cannot be applied becomes a `refusal` (a
     constraint is never dropped) or, for a bound on a feature this sheet does not
-    model (the proposals do not set it at all), a warning."""
+    model (the proposals do not set it at all), a warning.
+
+    `held` names dims every proposal holds at one value (a fixed clone level,
+    covariates); a bound or constraint on one is refused (`covariate_not_proposable`).
+    Linear constraints with categorical features are applied when every
+    categorical dim is held, or when `mixed_constraints_ok` (a clone campaign
+    whose free categorical combinations the exact mixed optimizer enumerates,
+    ML_AUDIT N2); otherwise refused as before."""
     box = np.array(bounds, dtype=float, copy=True)
     goal = setup.get("goal") if setup.get("goal") in GOALS else "maximize"
     plan = SetupPlan(goal=str(goal), hash=setup.get("hash"), bounds=box, linear_constraints=[])
@@ -628,6 +786,15 @@ def plan_setup(
     pos = {str(n): i for i, n in enumerate(names)}
     cats = {str(c) for c in categorical}
     conv = {str(c) for c in converted}
+    held_set = {str(c) for c in held}
+    for name in [*(setup.get("bounds") or {}), *(n for c in setup.get("linear_constraints") or []
+                                                 for n in c["coefficients"])]:
+        if name in held_set and name not in cats:
+            plan._refuse(
+                "covariate_not_proposable", "a bound or linear constraint names a covariate; "
+                "covariates are held at a reference value in every proposal and never proposed",
+                "remove the covariate from the campaign setup's bounds and constraints",
+            )
 
     if plan.minimize:
         plan.warnings.append(_warning(
@@ -681,7 +848,7 @@ def plan_setup(
             ))
 
     cons = list(setup.get("linear_constraints") or [])
-    if cons and cats:
+    if cons and (cats - held_set) and not mixed_constraints_ok:
         plan._refuse(
             "constraints_with_categoricals", "this sheet has categorical features, and the "
             "optimizer does not support linear constraints together with categorical "

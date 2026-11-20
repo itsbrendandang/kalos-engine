@@ -32,6 +32,7 @@ ColumnStatus = Literal[
     "dropped_sparse",
     "dropped_non_numeric",
     "dropped_all_blank",
+    "dropped_cv_group",
 ]
 
 
@@ -86,6 +87,7 @@ def column_provenance(
     declared: set[str] | None = None,
     declared_ids: set[str] | None = None,
     declared_features: set[str] | None = None,
+    cv_group_columns: set[str] | None = None,
 ) -> list[ColumnProvenance]:
     """Build a per-column provenance report mirroring `_analyze`'s selection.
 
@@ -108,6 +110,10 @@ def column_provenance(
         column is non-numeric (and not a categorical the engine used) it is
         reported as `dropped_non_numeric` - an honest "you likely meant to mark
         this categorical" - rather than the misleading `dropped_sparse`.
+      - `cv_group_columns`: batch, lot, plate, block, date, week or round
+        columns (F05) that are the run's circumstances, not settings: they are
+        not fitted or proposed and serve as cross-validation group candidates
+        (`dropped_cv_group`).
 
     Status precedence per column:
       target -> kept_feature -> dropped_id(declared) -> dropped_constant_on_fitted_rows
@@ -120,6 +126,7 @@ def column_provenance(
     declared_set = declared or set()
     declared_id_set = declared_ids or set()
     declared_feat_set = declared_features or set()
+    cv_group_set = cv_group_columns or set()
     report: list[ColumnProvenance] = []
     for col in df.columns:
         name = str(col)
@@ -129,6 +136,8 @@ def column_provenance(
             status = "target"
         elif col in feat_set:
             status = "kept_feature"
+        elif name in cv_group_set:
+            status = "dropped_cv_group"
         elif name in declared_id_set:
             # the caller explicitly excluded this column; its drop is an
             # instruction, not a data-quality inference.

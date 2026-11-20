@@ -46,7 +46,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
@@ -148,6 +148,35 @@ def _finite_number(value: Any) -> float | None:
         return None
     v = float(value)
     return v if math.isfinite(v) else None
+
+
+def base_row_rounds(state: Mapping[str, Any]) -> list[int] | None:
+    """The round in which each of `state["base_rows"]` entered the campaign
+    (0 = the upload), read off the fold history: `seed` records `{round: 0,
+    n_base}` and every `commit_fold` APPENDS its rows and records `{round: k,
+    n_base}`, so rows `[n_base[k-1], n_base[k])` are round k (the same rule
+    exports_api `_partition_rows` uses). None when the history is missing,
+    malformed or does not match the rows."""
+    rows = state.get("base_rows")
+    history = state.get("history")
+    if not isinstance(rows, list) or not isinstance(history, list) or not history:
+        return None
+    sizes: list[int] = []
+    for k, h in enumerate(history):
+        if not isinstance(h, dict):
+            return None
+        r, n = h.get("round"), h.get("n_base")
+        if not (isinstance(r, int) and isinstance(n, int)) or isinstance(r, bool) or isinstance(n, bool):
+            return None
+        if r != k or n < 0 or (sizes and n < sizes[-1]):
+            return None
+        sizes.append(n)
+    if sizes[-1] != len(rows):
+        return None
+    out = [0] * sizes[0]
+    for k in range(1, len(sizes)):
+        out += [k] * (sizes[k] - sizes[k - 1])
+    return out
 
 
 def _best_measured(
@@ -1017,7 +1046,14 @@ class CampaignStore:
                 measured += 1
         if measured == 0:
             raise CampaignError("no measured runs to fold; log at least one result first")
-        return pd.DataFrame(folded), target, state.get("generation")
+        frame = pd.DataFrame(folded)
+        # F05: the round each row was measured in (upload = 0, this fold = the
+        # next round), so the analysis can hold whole rounds out of its
+        # cross-validation. Absent when the fold history cannot place every row.
+        rounds = base_row_rounds(state)
+        if rounds is not None:
+            frame.attrs["kalos_round_index"] = [*rounds, *([int(state["round"]) + 1] * measured)]
+        return frame, target, state.get("generation")
 
     def awaiting_recipes(
         self, *, tenant: str, campaign_id: str | None = None
