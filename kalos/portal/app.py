@@ -29,7 +29,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 from fastapi import Depends, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -41,7 +40,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from kalos.assist.hooks import after_write as _assist_after_write
 from kalos.assist.routes import router as _assist_router
 from kalos.assist.sop_routes import router as _assist_sop_router
-from kalos.portal.analysis import _analyze, _annotate
+from kalos.portal.analysis import _analyze
 from kalos.portal.auth import (
     READ,
     WRITE,
@@ -54,7 +53,6 @@ from kalos.portal.auth_errors import JwtConfigError
 from kalos.portal.busy import (
     RETRY_AFTER_SECONDS,
     AnalysisBusy,
-    run_exclusively,
     run_in_slot,
 )
 from kalos.portal.campaign import CampaignError, CampaignStore, get_campaign_store
@@ -135,7 +133,7 @@ UPLOAD_PATHS = frozenset({"/api/run", "/api/scale/readout", "/api/scale/readout.
 # The value and the pin live in `kalos.portal.pipeline` (shared with the
 # background-job worker process); re-exported under the historical names.
 from kalos.portal.pipeline import TORCH_THREADS as _TORCH_THREADS  # noqa: E402,F401
-from kalos.portal.pipeline import (  # noqa: E402
+from kalos.portal.pipeline import (  # noqa: E402,F401
     ensure_torch_threads as _ensure_torch_threads,
 )
 
@@ -143,10 +141,9 @@ from kalos.portal.pipeline import (  # noqa: E402
 # Decided once, at startup. KALOS_ENV=production (docs/HARDENING.md):
 #   - refuses to start (import fails) unless authentication is enforced; the
 #     KALOS_ALLOW_OPEN_ACCESS escape hatch does not apply;
-#   - disables the interactive docs and the schema (/docs, /redoc, /openapi.json);
-#   - does not register the demo routes /api/single and /api/multi (CPU-heavy GP
-#     loops), so they are 404. Outside production they now run under the same
-#     admission limiter as every analysis, with a wall-clock timeout.
+#   - disables the interactive docs and the schema (/docs, /redoc, /openapi.json).
+# The demo routes /api/single and /api/multi were removed (REORG decision D5):
+# their synthetic GP loops were unseeded, so no two calls agreed.
 _PRODUCTION = is_production()
 
 
@@ -387,28 +384,6 @@ app.add_middleware(CORSMiddleware, **cors_config())
 # Log the effective security posture (auth + CORS) once at import/startup.
 log_security_posture(auth_enforced=_AUTH_ENFORCED_AT_STARTUP)
 
-BOUNDS = np.array([[0, 0, 0], [1, 1, 1]], float)
-TITER_OPT = np.array([0.7, 0.3, 0.5])
-PURITY_OPT = np.array([0.2, 0.8, 0.4])  # different recipe -> titer/purity trade off
-
-
-# Synthetic but honest demo objectives in real units: titer 0..22 mg/L (peaks at
-# TITER_OPT), purity 0..100 % (peaks at a different recipe, so they trade off).
-def _titer(X: np.ndarray) -> np.ndarray:
-    d = np.sum((np.atleast_2d(X) - TITER_OPT) ** 2, axis=1)
-    return 22.0 * np.exp(-3.0 * d)
-
-
-def _purity(X: np.ndarray) -> np.ndarray:
-    d = np.sum((np.atleast_2d(X) - PURITY_OPT) ** 2, axis=1)
-    return 100.0 * np.exp(-3.0 * d)
-
-
-def _objectives(X: np.ndarray) -> np.ndarray:
-    x = np.atleast_2d(X)
-    return np.stack([_titer(x), _purity(x)], axis=-1)
-
-
 # --- the most-recently analyzed real dataset, PER TENANT ---------------------- #
 # The Overview reads /api/latest so the landing page reflects the LAST dataset a
 # tenant actually uploaded. Since schema v2 (kalos/portal/migrate.py) that is the
@@ -554,150 +529,6 @@ def readyz() -> JSONResponse:
             {"status": "unavailable", "reason": "background jobs are not running"}, status_code=503
         )
     return JSONResponse({"status": "ok"})
-
-
-# The demo routes take their work size from the URL, so it is capped: each round
-# is a GP fit + acquisition, and an unbounded `rounds`/`q` let one request queue
-# hours of CPU outside the single analysis slot.
-def _single_compute(rounds: int, q: int) -> dict:
-    from kalos.core.optimize import propose
-    from kalos.core.surrogate import Surrogate
-
-    _ensure_torch_threads()
-    rng = np.random.default_rng(0)
-    X = rng.uniform(0, 1, (6, 3))
-    y = _titer(X)
-    traj = [{"round": 0, "best": float(y.max()), "n": len(y)}]
-    proposals: list = []
-    for r in range(rounds):
-        s = Surrogate().fit(X, y, bounds=BOUNDS)
-        nxt = propose(s, BOUNDS, q=q)
-        X = np.vstack([X, nxt])
-        y = np.concatenate([y, _titer(nxt)])
-        traj.append({"round": r + 1, "best": float(y.max()), "n": len(y)})
-    # annotate the last proposed batch with predicted value + uncertainty + why
-    # best before this batch was measured; len(nxt), not q: a batch can come
-    # back short when the space has fewer than q distinct candidates
-    incumbent = float(y[: -len(nxt)].max())
-    mean, std = s.posterior(nxt)
-    proposals = _annotate(nxt, mean, std, incumbent)
-    bi = int(y.argmax())
-    return {
-        "trajectory": traj,
-        "proposals": proposals,
-        "best_recipe": np.round(X[bi], 3).tolist(),
-        "best_value": float(y[bi]),
-        "optimum": TITER_OPT.tolist(),
-    }
-
-
-def _multi_compute(rounds: int, q: int) -> dict:
-    from kalos.core.multiobjective import (
-        MultiObjectiveSurrogate,
-        propose_multiobjective,
-    )
-    from kalos.core.surrogate import DEVICE, DTYPE
-
-    _ensure_torch_threads()
-    rng = np.random.default_rng(0)
-    X = rng.uniform(0, 1, (8, 3))
-    Y = _objectives(X)
-    traj: list = []
-    proposals: list = []
-    last_batch = np.empty((0, X.shape[1]))
-    for r in range(rounds):
-        s = MultiObjectiveSurrogate().fit(X, Y, bounds=BOUNDS)
-        nxt = propose_multiobjective(s, BOUNDS, q=q)
-        X = np.vstack([X, nxt])
-        Y = np.vstack([Y, _objectives(nxt)])
-        _, py = s.pareto()
-        traj.append(
-            {"round": r + 1, "pareto": len(py), "best_titer": float(Y[:, 0].max()), "best_purity": float(Y[:, 1].max())}
-        )
-        last_batch = nxt
-    s = MultiObjectiveSurrogate().fit(X, Y, bounds=BOUNDS)
-    assert s.model is not None  # fit() always sets the ModelListGP
-    # predicted titer + purity (with uncertainty) for each proposed experiment
-    import torch
-    post = s.model.posterior(torch.as_tensor(last_batch, dtype=DTYPE, device=DEVICE))
-    mY = post.mean.detach().cpu().numpy().reshape(len(last_batch), -1)
-    sdY = post.variance.clamp_min(1e-12).sqrt().detach().cpu().numpy().reshape(len(last_batch), -1)
-    sd_mean = sdY.mean(axis=1)
-    sd_thr = float(np.quantile(sd_mean, 2 / 3)) if len(sd_mean) > 2 else float(sd_mean.max())
-    proposals = [{
-        "vals": np.round(last_batch[i], 3).tolist(),
-        "pred_titer": round(float(mY[i, 0]), 1), "pred_purity": round(float(mY[i, 1]), 0),
-        "mode": "explore" if sd_mean[i] >= sd_thr else "exploit",
-        "reason": "fills a gap on the titer/purity frontier",
-    } for i in range(len(last_batch))]
-    _, py = s.pareto()
-    order = np.argsort(py[:, 0])
-    return {
-        "trajectory": traj,
-        "pareto": [{"titer": float(py[i, 0]), "purity": float(py[i, 1])} for i in order],
-        "all": [{"titer": float(Y[i, 0]), "purity": float(Y[i, 1])} for i in range(len(Y))],
-        "proposals": proposals,
-    }
-
-
-# Demo-route wall clock. The thread cannot be killed, so on timeout the client
-# gets a 504 while the computation finishes in the background, STILL holding
-# its admission slot (released by the worker thread, kalos/portal/busy.py).
-DEMO_TIMEOUT_SECONDS = float(os.environ.get("KALOS_DEMO_TIMEOUT_S", "").strip() or "120")
-
-
-async def _run_demo(fn, principal: Principal, *args) -> JSONResponse:
-    """Run a demo GP loop in the threadpool under the shared admission limiter
-    (busy.py) and a wall-clock timeout, so a demo call can neither starve the
-    analysis paths nor block the event loop (health probes stay live)."""
-    import asyncio
-
-    try:
-        locked = run_exclusively(functools.partial(fn, *args), tenant=principal.tenant)
-    except AnalysisBusy as busy:
-        return JSONResponse(
-            {"error": str(busy), "code": "engine_busy"}, status_code=503,
-            headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
-        )
-    try:
-        task = asyncio.ensure_future(run_in_threadpool(locked))
-    except BaseException:
-        locked.abandon()
-        raise
-    # The task can be cancelled before its first step, in which case the
-    # coroutine never runs and the thread never releases the slot. A finished
-    # task (cancelled or not) has no thread left, so release here too.
-    task.add_done_callback(lambda _t: locked.abandon())
-    try:
-        result = await asyncio.wait_for(asyncio.shield(task), timeout=DEMO_TIMEOUT_SECONDS)
-    except TimeoutError:
-        log.warning("demo route exceeded %ss; answered 504", DEMO_TIMEOUT_SECONDS)
-        return JSONResponse(
-            {"error": "the demo computation timed out", "code": "engine_timeout"}, status_code=504
-        )
-    return JSONResponse(result)
-
-
-async def run_single(
-    rounds: int = Query(6, ge=1, le=12),
-    q: int = Query(2, ge=1, le=4),
-    _principal: Principal = Depends(require_scope(READ)),
-) -> JSONResponse:
-    return await _run_demo(_single_compute, _principal, rounds, q)
-
-
-async def run_multi(
-    rounds: int = Query(5, ge=1, le=12),  # >= 1, so last_batch is always bound
-    q: int = Query(2, ge=1, le=4),
-    _principal: Principal = Depends(require_scope(READ)),
-) -> JSONResponse:
-    return await _run_demo(_multi_compute, _principal, rounds, q)
-
-
-# Demo routes are development conveniences: never served in production.
-if not _PRODUCTION:
-    app.get("/api/single")(run_single)
-    app.get("/api/multi")(run_multi)
 
 
 _NO_GUARD: Any = object()  # publish without a compare-and-swap (a confirmed replacement)

@@ -592,19 +592,6 @@
   },
   {
     "method": "GET",
-    "path": "/api/multi",
-    "module": "kalos.portal.app",
-    "endpoint": "run_multi",
-    "scopes": [
-      "read"
-    ],
-    "auth": "required",
-    "in_schema": true,
-    "status_code": null,
-    "response_model": null
-  },
-  {
-    "method": "GET",
     "path": "/api/providers",
     "module": "kalos.portal.app",
     "endpoint": "providers",
@@ -649,19 +636,6 @@
     "endpoint": "scale_readout_json",
     "scopes": [
       "write"
-    ],
-    "auth": "required",
-    "in_schema": true,
-    "status_code": null,
-    "response_model": null
-  },
-  {
-    "method": "GET",
-    "path": "/api/single",
-    "module": "kalos.portal.app",
-    "endpoint": "run_single",
-    "scopes": [
-      "read"
     ],
     "auth": "required",
     "in_schema": true,

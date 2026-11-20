@@ -4,6 +4,10 @@ Newest first.
 
 ## Unreleased
 
+### Removed - the demo routes `GET /api/single` and `GET /api/multi` (REORG decision D5)
+
+- The two synthetic Bayesian-optimization demos are gone in every environment (404). They were development-only, not called by the redesigned kalos-web (its proxy no longer allows them), and their numbers differed on every call (the GP loop was not seeded), which the golden oracle (R02) found. `KALOS_DEMO_TIMEOUT_S` is no longer read. Tests pin the 404.
+
 ### Changed - selection-aware proposal intervals (F15, ML audit B1 fix 2; interval numbers change)
 
 - `proposals[].intervals` are calibrated on the held-out runs each fold model ranked highest (top 30%, both CV repeats) with the proposal sd floored at the 90th percentile of held-out sds (`method: conformal_selection_aware`, `coverage_basis: held_out_top_ranked_runs`). Measured at proposals on fresh simulation seeds: 90% band 0.60-0.83 -> 0.92-0.99, 95% band 0.72-0.92 -> 0.96-0.99, at 2.5-3.2x the median width; in-box coverage 0.98-1.00 (conservative). Per-level fallback to the plain band with `selection_aware_unavailable` when too few runs are selected. VALIDATION.md has the table.

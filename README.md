@@ -141,7 +141,6 @@ test keeps it equal to the code). `{id}` is a campaign id.
 | Assistant | `/api/assist/next`, `/ask`, `/index/*`, `/sop/*` | read / write | [`docs/ASSISTANT.md`](docs/ASSISTANT.md) |
 | Legacy: one sheet per tenant | `POST /api/run`, `GET /api/latest` | write / read | [`docs/UPLOADS.md`](docs/UPLOADS.md) |
 | Legacy: default campaign | `GET /api/campaign`, `POST /api/campaign/start`, `/result`, `/reanalyze` | read / write | [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md) |
-| Demo | `GET /api/single`, `GET /api/multi` (synthetic; not served when `KALOS_ENV=production`) | read | |
 | Probes | `GET /healthz`, `GET /readyz` (public), `GET /api/providers` (read) | | |
 
 The legacy routes still work and are tested; they act on one sheet or the

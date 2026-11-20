@@ -101,7 +101,7 @@ When none of `KALOS_AUTH_TOKENS_FILE`, `KALOS_AUTH_TOKENS` and `KALOS_JWT_PUBLIC
 ### Deployment templates: two settings deliberately not changed
 
 - **`KALOS_VALIDATION_MODE` stays at `warn` in `deploy/compose.yaml` and `deploy/.env.example`.** Setting `strict` refuses every sheet with an error-severity validation finding. Run against the current suite (review H3, 2026-10-19), `KALOS_VALIDATION_MODE=strict` makes 77 existing tests fail across upload errors, campaign routes, jobs, the scale readout, run records and the validation gate, so it would change what the API accepts for clients today. Turning it on is a product decision for the pilot owner, to be made per client with its findings in hand.
-- **`KALOS_ENV=production` is not set in `deploy/compose.yaml`.** Production mode turns off the demo routes `/api/single` and `/api/multi`, which the kalos-web simulator page calls, and disables the docs. Setting it is the right posture for a shared deployment, but it needs that page changed first. Until then the compose stack runs in development posture; the bind and token checks (`assert_safe_exposure`) still refuse an open non-loopback start.
+- **`KALOS_ENV=production` is not set in `deploy/compose.yaml`.** Production mode disables the docs and requires authentication. It used to also turn off the demo routes `/api/single` and `/api/multi`, which the old kalos-web simulator page called; those routes are now removed from the engine and the redesigned web no longer has that page. Setting production in compose is the right posture for a shared deployment and is a separate deployment change. Until then the compose stack runs in development posture; the bind and token checks (`assert_safe_exposure`) still refuse an open non-loopback start.
 
 ### Error envelope
 
@@ -148,7 +148,6 @@ Decided once at startup. In production the engine:
 - **Refuses invalid auth config at startup.** This covers an unreadable or malformed JWKS file (validated whenever `KALOS_JWT_PUBLIC_KEYS_FILE` is set, even alongside static tokens), a JWKS containing the published test-vector keys, an out-of-range `KALOS_JWT_*` knob, and static records that are not `"service_account": true` or that hold `admin`.
 - **Fails closed at runtime.** Tokens and keys are re-read per request (rotation without restart). If both sources are emptied after startup, every request except `/healthz` and `/readyz` gets a 503, local callers included, instead of silently reopening as anonymous read+write. This holds at two layers: the production middleware refuses the request, and `Authenticator.principal_for` (the `require_principal` dependency) itself raises 503 `authentication is not configured` in production when neither static tokens nor a JWT key file are configured, so a file emptied between the middleware check and the dependency cannot yield the anonymous principal. A JWKS file that goes bad at runtime is a 503 too (in every environment).
 - **Disables the API docs and schema:** `/docs`, `/redoc` and `/openapi.json` are 404.
-- **Does not serve the demo routes** `/api/single` and `/api/multi` (404). They run CPU-heavy GP loops on a synthetic surface outside the single analysis slot (`kalos/portal/busy.py`), so in a shared deployment any token holder could tie up the CPU with them.
 
 Development (the default) keeps all of the above as before.
 

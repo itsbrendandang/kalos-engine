@@ -367,14 +367,6 @@
   },
   {
     "method": "GET",
-    "path": "/api/multi",
-    "scopes": [
-      "read"
-    ],
-    "auth": "required"
-  },
-  {
-    "method": "GET",
     "path": "/api/providers",
     "scopes": [
       "read"
@@ -402,14 +394,6 @@
     "path": "/api/scale/readout.json",
     "scopes": [
       "write"
-    ],
-    "auth": "required"
-  },
-  {
-    "method": "GET",
-    "path": "/api/single",
-    "scopes": [
-      "read"
     ],
     "auth": "required"
   },
