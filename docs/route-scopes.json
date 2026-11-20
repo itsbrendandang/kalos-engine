@@ -198,6 +198,14 @@
     "auth": "required"
   },
   {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/design",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
     "method": "GET",
     "path": "/api/campaigns/{campaign_id}/export/rows",
     "scopes": [

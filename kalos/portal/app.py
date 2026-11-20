@@ -73,6 +73,7 @@ from kalos.portal.config import (
     log_security_posture,
     open_access_explicitly_allowed,
 )
+from kalos.portal.design_api import router as _design_router
 from kalos.portal.exports_api import router as _exports_router
 from kalos.portal.gates_api import router as _gates_router
 from kalos.portal.jobs_api import JobUploadAuthPrecheck, JobUploadSizeLimit
@@ -920,6 +921,7 @@ app.include_router(_assist_router)  # /api/assist/* (kalos.assist, docs/ASSISTAN
 app.include_router(_assist_sop_router)  # /api/assist/sop* (kalos.assist.sop)
 app.include_router(_gates_router)  # /api/campaigns/{id}/stages|gates (kalos.portal.gates_api)
 app.include_router(_clones_router)  # /api/campaigns/{id}/clones* (kalos.portal.clones_api)
+app.include_router(_design_router)  # /api/campaigns/{id}/design (kalos.portal.design_api)
 
 
 _CAMPAIGN_BODY_FIELDS = frozenset(
