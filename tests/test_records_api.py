@@ -536,3 +536,32 @@ def test_a_campaign_that_can_no_longer_be_read_can_still_be_detached(records_env
     r = env.tc.delete(f"/api/projects/{pid}/campaigns/{cid}", headers=H("a-write"))
     assert r.status_code == 200 and r.json()["attached"] is False
     assert env.tc.get(f"/api/projects/{pid}", headers=H("a-read")).json()["campaigns"] == []
+
+
+def test_refusal_audit_rows_are_throttled_per_token(records_env, monkeypatch):
+    """N5: a token that keeps sending refused writes cannot grow the append-only
+    audit log without bound; the suppressed count is written once the window
+    passes. Other tokens keep their own budget."""
+    from kalos.api.routers import _records_common as rc
+
+    env = records_env
+    monkeypatch.setattr(rc, "REFUSAL_AUDIT_BUDGET", 3)
+    for _ in range(10):
+        env.tc.post("/api/lineage/links", headers=H("a-write"), json={
+            "parent_campaign_id": "cmp_" + "0" * 32, "child_campaign_id": "cmp_" + "1" * 32,
+            "relation": "scale_up"})  # 404: audited as a refusal
+    refused = [a for a in env.audit() if a[1].startswith("http_")]
+    assert len(refused) == 3
+    env.tc.post("/api/lineage/links", headers=H("b-write"), json={
+        "parent_campaign_id": "cmp_" + "0" * 32, "child_campaign_id": "cmp_" + "1" * 32,
+        "relation": "scale_up"})
+    assert len([a for a in env.audit("globex") if a[1].startswith("http_")]) == 1
+    for w in rc._REFUSALS.values():
+        w.started -= rc.REFUSAL_AUDIT_WINDOW_S  # the window passes
+    env.tc.post("/api/lineage/links", headers=H("a-write"), json={
+        "parent_campaign_id": "cmp_" + "0" * 32, "child_campaign_id": "cmp_" + "1" * 32,
+        "relation": "scale_up"})
+    rows = env.audit()
+    summary = [a for a in rows if a[0] == "records.refusals_suppressed"]
+    assert len(summary) == 1 and summary[0][4] == "suppressed=7;window_s=60"
+    assert rows[-1][:2] == ("lineage.link.create", "http_404")

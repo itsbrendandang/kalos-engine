@@ -98,7 +98,7 @@ def records_env(request, tmp_path, monkeypatch) -> Iterator[Env]:
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
-    from kalos.api.routers._records_common import reset_backends
+    from kalos.api.routers._records_common import reset_backends, reset_refusal_budget
     from kalos.portal import app as portal_module
     from kalos.portal import campaign as campaign_module
     from kalos.portal.app import app
@@ -116,6 +116,7 @@ def records_env(request, tmp_path, monkeypatch) -> Iterator[Env]:
     monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
     monkeypatch.setattr(campaign_module, "_STORE", store)
     app.dependency_overrides[get_campaign_store] = lambda: store
+    reset_refusal_budget()
     try:
         yield Env(TestClient(app), store, request.param)
     finally:

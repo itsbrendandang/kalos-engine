@@ -213,19 +213,80 @@ def audit_ok(conn: Any, principal: Principal, action: str, *, detail: str,
     )
 
 
+# Refused writes are audited, but a token that keeps sending bad requests must
+# not grow the append-only audit log without bound: each token (tenant +
+# subject + auth method) gets REFUSAL_AUDIT_BUDGET refusal rows per window; the
+# rest are counted, and the next row written after the window says how many were
+# suppressed (`records.refusals_suppressed`, detail `suppressed=<n>`).
+REFUSAL_AUDIT_BUDGET = 20
+REFUSAL_AUDIT_WINDOW_S = 60.0
+_REFUSAL_STATE_MAX = 4096
+
+
+@dataclass
+class _RefusalWindow:
+    started: float
+    written: int = 0
+    suppressed: int = 0
+
+
+_REFUSALS: OrderedDict[tuple[str, str, str], _RefusalWindow] = OrderedDict()
+_REFUSALS_LOCK = threading.Lock()
+
+
+def _refusal_slot(principal: Principal) -> tuple[bool, int]:
+    """(write this refusal row?, suppressed count to report first)."""
+    key = (principal.tenant, str(principal.subject), _auth_method(principal))
+    now = time.monotonic()
+    with _REFUSALS_LOCK:
+        w = _REFUSALS.get(key)
+        report = 0
+        if w is None or now - w.started >= REFUSAL_AUDIT_WINDOW_S:
+            report = w.suppressed if w is not None else 0
+            w = _RefusalWindow(started=now)
+            _REFUSALS[key] = w
+        _REFUSALS.move_to_end(key)
+        while len(_REFUSALS) > _REFUSAL_STATE_MAX:
+            _REFUSALS.popitem(last=False)
+        if w.written >= REFUSAL_AUDIT_BUDGET:
+            w.suppressed += 1
+            return False, report
+        w.written += 1
+        return True, report
+
+
 def audit_refused(rec: Records, principal: Principal, action: str, status: int, *,
                   code: str, campaign_id: str | None = None) -> None:
-    """Best-effort audit of a refused write (never fails the request). Only
-    the refusal code is kept, never what was sent."""
+    """Best-effort audit of a refused write (never fails the request), rate
+    limited per token (REFUSAL_AUDIT_BUDGET per window). Only the refusal code
+    is kept, never what was sent."""
+    write, suppressed = _refusal_slot(principal)
+    if not write and not suppressed:
+        return
     try:
         with rec.records.txn(write=True) as conn:
-            records_repo.insert_audit(
-                conn, tenant=principal.tenant, action=action, outcome=f"http_{status}",
-                subject=principal.subject, auth_method=_auth_method(principal), now=time.time(),
-                campaign_id=campaign_id, request_id=current_request_id(), detail=f"code={code}",
-            )
+            now = time.time()
+            if suppressed:
+                records_repo.insert_audit(
+                    conn, tenant=principal.tenant, action="records.refusals_suppressed",
+                    outcome="suppressed", subject=principal.subject,
+                    auth_method=_auth_method(principal), now=now, request_id=current_request_id(),
+                    detail=f"suppressed={suppressed};window_s={int(REFUSAL_AUDIT_WINDOW_S)}",
+                )
+            if write:
+                records_repo.insert_audit(
+                    conn, tenant=principal.tenant, action=action, outcome=f"http_{status}",
+                    subject=principal.subject, auth_method=_auth_method(principal), now=now,
+                    campaign_id=campaign_id, request_id=current_request_id(), detail=f"code={code}",
+                )
     except Exception:  # noqa: BLE001 - auditing a refusal must not turn it into a 500
         log.warning("records: could not audit a refused %s", action)
+
+
+def reset_refusal_budget() -> None:
+    """Forget every token's refusal window (tests)."""
+    with _REFUSALS_LOCK:
+        _REFUSALS.clear()
 
 
 def campaign_info(store: CampaignStore, tenant: str, campaign_id: str) -> dict[str, Any] | None:
