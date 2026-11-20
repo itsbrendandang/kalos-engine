@@ -15,7 +15,7 @@ the results, and it proposes again. It works in three steps:
 - **Validate.** Grouped cross-validation that holds related runs out together,
   a verdict that labels or withholds proposals when the model cannot be shown to
   rank past runs, and per-proposal 90% and 95% ranges that state what they were
-  calibrated on and the coverage measured at proposed recipes.
+  sized on and the coverage measured at proposed recipes.
 
 This repository is the engine: a Python package and a FastAPI service with no UI.
 The scientist-facing app is [kalos-web](https://github.com/itsbrendandang/kalos-web).
@@ -184,19 +184,23 @@ More in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Validation and its limits
 
-- **Intervals.** The global 90% band (`conformal_q`) is calibrated on held-out
-  runs (split-conformal on grouped cross-validation); on new runs that resemble
-  past runs it covers about 90% or slightly more. Proposals are not like past
-  runs: they are chosen where predictions are high. Each proposal's 90% and 95%
-  range is therefore sized on the held-out runs each fold model ranked highest,
-  to mimic that selection. Measured at proposed recipes in simulation (five
-  scenarios, 40 fresh seeds each), the 90% range covered 92-99% and the 95%
-  range 96-99%; the ranges are about 2.5-3x wider than the plain band, which
-  covered only 60-81% (90%) at proposals. This is simulation evidence, not a
-  guarantee. Each proposal interval carries a caveat with the coverage measured
-  at proposals and its source; when too few held-out runs are ranked high
-  enough, the plain band is shown with its lower measured coverage
-  ([`VALIDATION.md`](VALIDATION.md#interval-coverage-at-proposals)).
+- **Intervals.** The global 90% band (`conformal_q`) is sized on held-out runs
+  (split-conformal on grouped cross-validation); on new runs that resemble past
+  runs it covers about 90% or slightly more. Proposals are not like past runs:
+  they are chosen where predictions are high. Each proposal's 90% and 95% range
+  is therefore sized on the held-out runs each fold model ranked highest, to
+  mimic that selection. Measured at proposed recipes in simulation on `main`
+  (five scenarios, 40 fresh seeds each), the 90% range covered 86-96.5% on
+  Python 3.11 and 92-99% on Python 3.12, and the 95% range 93.5-99% and
+  96.5-99.5%. That is **below nominal in some cases**: bioprocess n=40 at 90%
+  covered 0.86 [0.79, 0.92] on Python 3.11. The two stacks are the two that
+  `uv.lock` pins (numpy and scipy differ, and scipy moves the proposals).
+  At the same proposals the ranges are 2.5-3.7x (90%) and 1.9-3.2x (95%) wider
+  than the plain band, which covered 54.5-83.5% (90%). This is simulation
+  evidence, not a guarantee. Each proposal interval carries a caveat with the
+  coverage measured at proposals and its source; when too few held-out runs
+  are ranked high enough, the plain band is shown with its lower measured
+  coverage ([`VALIDATION.md`](VALIDATION.md#interval-coverage-at-proposals)).
 - **Grouped cross-validation.** Runs that cannot be independent are held out
   together: as-run replicates (settings within 5% of each input's range),
   declared groups, batch, lot, plate, block, round, date and week columns,
@@ -221,8 +225,9 @@ More in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
   synthetic data: a regression gate and a to-do list, not a catch rate for real
   data. How to run it and the full table:
   [`docs/PLANTED_FAULTS.md`](docs/PLANTED_FAULTS.md).
-- **Optimizer.** On synthetic problems with known optima it beats random search
-  and matches a well-configured plain BoTorch qLogNEI. In a retrospective replay
+- **Optimizer.** On synthetic problems with known optima it beats random search,
+  and ties or beats a library-default BoTorch GP-EI and Ax
+  ([`docs/BENCHMARK.md`](docs/BENCHMARK.md)). In a retrospective replay
   of six published media datasets it needed about 4x fewer experiments than
   Latin-hypercube sampling on the largest, hardest one, showed no significant
   difference on four, and did worse on one ([`VALIDATION.md`](VALIDATION.md),
@@ -230,13 +235,19 @@ More in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
   inputs already observed.
 - **No live-lab result yet.** Nothing here shows that Kalos improves outcomes in
   a running lab.
-- **Runtime.** An analysis of the 160-row example takes about 1-2 minutes today
-  (57 s on an idle Apple-silicon machine, around 2 minutes on a busy one), most of
-  it in the acquisition step. Web clients should use background jobs. Making it
-  faster without changing results is open work.
-- **Determinism.** Analyses are seeded; in our checks the same input gave the
-  same proposals on the locked stack. Results depend on the torch build and
-  platform, so the ML stack is pinned (`uv.lock`, `kalos/versions.py`).
+- **Runtime.** An analysis of the 160-row example takes minutes, most of it in
+  the acquisition step; web clients should use background jobs. No idle-machine
+  figure is claimed yet. Measure it with the quick-start engine running:
+  `time curl -s -o /dev/null -F file=@examples/synthetic_bioprocess/synthetic_bioprocess.csv -F target=titer_g_L http://127.0.0.1:8050/api/run`.
+  The only recorded run was on a 14-core Apple-silicon machine at load average
+  250-370 (other jobs running): 634 s and 646 s, so it says little about an idle
+  machine. Making it faster without changing results is open work.
+- **Determinism.** Analyses are seeded. Repeated runs on one machine and stack
+  gave identical outputs. Benchmark results recorded on another stack did not
+  reproduce exactly: `uv.lock` pins numpy 2.4.6 / scipy 1.17.1 on Python 3.11
+  and numpy 2.5.1 / scipy 1.18.0 on Python 3.12 and later, and the proposals
+  differ between the two (VALIDATION.md, "Interval coverage at proposals").
+  CI runs Python 3.11; the engine image runs Python 3.12.
 
 ## Deployment
 

@@ -48,9 +48,9 @@ below), which the first legacy upload creates. A campaign made with
 
 | Method | Path | Scope | Purpose |
 |---|---|---|---|
-| GET | `/api/campaigns?include_archived=false` | read | List the tenant's campaigns, newest first: `{"campaigns": [<campaign>...]}`. |
+| GET | `/api/campaigns?include_archived=false` | read | List the tenant's campaigns, newest first: `{"campaigns": [<campaign>...]}`. Not paginated; bounded by the per-tenant cap of 1000 campaigns (archived included). Use `summary=true` for pages. |
 | GET | `/api/campaigns?summary=true&limit=50&cursor=...` | read | The same list with per-campaign card fields, paginated (see "Campaigns list summary"). |
-| POST | `/api/campaigns` | write | Create a campaign. Body: `{"name": str}`. `201` and the campaign. |
+| POST | `/api/campaigns` | write | Create a campaign. Body: `{"name": str}`. `201` and the campaign. `409` with `"code": "campaign_limit_reached"` when the tenant already has 1000 campaigns, archived included (`MAX_CAMPAIGNS_PER_TENANT`); nothing is created. |
 | GET | `/api/campaigns/{id}` | read | `{"campaign": <campaign>, "summary": <loop summary>}`. The summary has the same shape as `GET /api/campaign`, scoped to this campaign, including `analysis_in_sync`, `stage` and `next_action` (see "Stage" below). |
 | PATCH | `/api/campaigns/{id}` | write (+admin for `archived`) | Body: `{"name"?: str, "archived"?: bool}`, at least one of the two. Returns the campaign. |
 | POST | `/api/campaigns/{id}/upload` | write | Upload a run sheet into this campaign (multipart; `replace=true` confirms replacing the campaign's runs, see below). Same contract as `/api/run`. |
@@ -58,6 +58,22 @@ below), which the first legacy upload creates. A campaign made with
 | POST | `/api/campaigns/{id}/runs` | write | Start runs from a proposed batch. Same body and bounds as `/api/campaign/start`. Returns `{"started": [...]}`. |
 | POST | `/api/campaigns/{id}/runs/{run_id}/result` | write | Body: `{"value": number, "reason"?: str}`. Records a measured outcome and returns the run. A correction needs `reason` (see "Recording results"). |
 | POST | `/api/campaigns/{id}/reanalyze` | write | Fold measured runs, re-run the engine and publish the new analysis. Returns `{"analysis": ..., "campaign": <summary>}`, where `campaign` is this campaign's summary with `stage` and `next_action`. |
+| POST | `/api/campaigns/{id}/reanalyze/jobs` | write | Queue the same re-analysis as a background job: `202` + the job (see "Background jobs" and docs/JOBS.md). |
+| POST, GET | `/api/campaigns/{id}/jobs` | write, read | Queue an upload as a background job; list this campaign's recent jobs ("Background jobs"). |
+| GET | `/api/campaigns/{id}/setup` | read | The campaign's setup (defaults when none was saved), per-bound extrapolation flags against the latest analysis, and `settings_in_sync`. |
+| PUT | `/api/campaigns/{id}/setup` | write | Replace the setup (goal, bounds, linear constraints, target unit, clone and covariate roles) after validating it against the latest analysis and checking that the bounds and constraints are feasible. |
+| GET | `/api/campaigns/{id}/stages` | read | Stage definitions (defaults until edited), the recorded current stage, and each stage's gate status with its decision count. |
+| PUT | `/api/campaigns/{id}/stages` | write | Replace the stage definitions and the recorded current stage. A gate whose stage is removed keeps its history and is listed under `orphaned_gates`. |
+| GET | `/api/campaigns/{id}/gates` | read | Every gate with its newest recorded decision, against the newest stored analysis. |
+| PUT | `/api/campaigns/{id}/gates/{gate}` | write | Record a `go` / `no_go` / `pending` decision for one gate. Append-only: each call adds a row that supersedes the previous one. |
+| GET | `/api/campaigns/{id}/gates/{gate}/history` | read | One page of a gate's recorded decisions, newest first (`before_id` cursor). |
+| GET | `/api/campaigns/{id}/export/rows` | read | The uploaded rows and, labelled separately, the rows folded in from measured runs. Every export (success or refusal) is audited. |
+| GET | `/api/campaigns/{id}/results/history` | read | Every recorded result version (corrections included) and the campaign's audit entries, each newest first with its own `before_id` cursor. |
+| GET, POST | `/api/campaigns/{id}/operating-ranges` | write (both) | Compute, never store, a model-based operating range. `write` on GET too: it refits the model in the analysis slot. |
+| | `/api/campaigns/{id}/clones*` | read / write | Clone registry and titer history: see "Clones and strains" below. |
+
+The full list of routes and their scopes is `docs/route-scopes.json`; a test keeps it
+equal to the code.
 
 ### Stage
 
@@ -135,9 +151,7 @@ The form fields and errors match `POST /api/run`:
 A campaign that has awaiting or measured runs is refused with `409` and
 `"code": "campaign_has_runs"`, before the file is read, unless the form carries
 `replace=true`. Nothing is changed on refusal. Clients must confirm the replacement with the
-user before they send `replace=true`. (The kalos-web client does not do this yet:
-its analyze and validate pages post to `/api/run` without the field, so they
-receive the 409 as a rejected upload.)
+user before they send `replace=true`.
 
 On success the upload replaces this campaign's state and discards its pending
 runs, and publishes the analysis in the same transaction (docs/CAMPAIGN_LOOP.md,
@@ -185,7 +199,7 @@ A result is never overwritten in place.
 The `reason` field of a run is still the proposal's reason (why the run was
 proposed). The correction reason is `result_reason`.
 
-The history is not yet exposed over HTTP (the audit and read API is a separate change).
+History and audit entries: `GET /api/campaigns/{id}/results/history`.
 
 ### Runs and results
 
@@ -277,18 +291,20 @@ identifier-type columns in the analysis body. Full scope, including the raw
 sheet stored at rest in `campaigns.base_rows`: docs/HARDENING.md, "What
 `anonymize=true` covers".
 
-Determinism: **not guaranteed, even for identical runs.** Measured: an 80-row,
-6-feature subset of the committed synthetic example, analysed four times in one
-process with the same library stack and thread count, gave four different
-proposal batches (at 4 threads and at 1; the same happens before the R2 changes,
-at 23d11df). The fitted posterior agreed to about 1e-16 between runs, but the
-acquisition optimum moved by whole units. Small sheets do repeat
-(`tests/test_golden_determinism.py`); the 80x6 case is a recorded xfail in the
-same file. The cause is not isolated yet (the usual suspect is acquisition
-optimizer RNG or state that `_seeded_analysis` does not reset). A different
-torch or botorch version, or a different thread count, can also change the
-numbers. Compare `run` and `proposal_provenance` before comparing proposals;
-equal provenance does not mean equal proposals.
+Determinism: repeated runs on one machine and library stack gave identical
+outputs. `tests/test_golden_determinism.py` checks this on the same machine:
+two small sheets, a fresh subprocess, and an 80-row, 6-feature subset of the
+committed synthetic example analysed three times in one process. (That 80x6
+case was a recorded xfail after a loaded-machine measurement at 23d11df gave
+different proposal batches; it passes on main in CI and locally, so the xfail
+was removed.) Results recorded on another stack did not reproduce exactly.
+`uv.lock` itself pins two stacks (Python 3.11: numpy 2.4.6, scipy 1.17.1;
+Python >= 3.12: numpy 2.5.1, scipy 1.18.0), and the coverage benchmark's rows
+agree 240/240 within a stack but 1/240 across the two (VALIDATION.md, "Interval
+coverage at proposals"). A different Python, numpy, scipy, torch or botorch
+version, or a different thread count, can change the proposals. Compare `run` and
+`proposal_provenance` before comparing proposals; equal provenance does not mean
+equal proposals.
 
 ### Proposal provenance
 
@@ -448,27 +464,36 @@ Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
     `quantiles` carry `coverage_basis: "model_based"`.
   - `proposals[].intervals[].caveat`: `{code: "coverage_lower_at_proposals",
     message, coverage_at_proposals_estimate}`. `message` is plain words for
-    display. It says what the band was calibrated on and the coverage measured
+    display. It says what the band was sized on and the coverage measured
     at proposed recipes, never that the range "is calibrated". Selection-aware
-    band (F15, `code: "coverage_measured_at_proposals"`): "Based on held-out
-    runs: this 90% range was sized on the held-out past runs the model ranked
-    highest, to mimic how proposals are chosen. At proposed recipes this 90%
-    range covered 92-99% in simulation (measured, not guaranteed)." Plain
-    fallback band: "Based on held-out runs similar to past runs. Proposals are
-    chosen for high predicted values, so coverage at proposed recipes is lower:
-    in simulation this 90% range covered only 60-81%."
+    band (F15): "Based on held-out runs: this 90% range was sized on the
+    held-out past runs the model ranked highest, to mimic how proposals are
+    chosen. At proposed recipes this 90% range covered 86-99% in simulation,
+    below 90% in some cases (measured, not guaranteed)." Its `code` is
+    `"coverage_lower_at_proposals"` because the lowest measured value is below
+    nominal; it would be `"coverage_measured_at_proposals"` only if every
+    measured scenario reached nominal. Plain fallback band: "Based on held-out
+    runs similar to past runs. Proposals are chosen for high predicted values,
+    so coverage at proposed recipes is lower: in simulation this 90% range
+    covered only 54-83%."
   - `coverage_at_proposals_estimate` (per proposal, compact): `{nominal,
     measured_min, measured_max, basis: "simulation", source, benchmark}`, the
     coverage MEASURED at proposals by `python -m kalos.bench.coverage_at_proposals`
     (VALIDATION.md, "Interval coverage at proposals"); `source` points at the
     full object below. The same compact estimate is on `gp_intervals[]`.
+    `measured_min` / `measured_max` span the two numerical stacks `uv.lock`
+    pins (Python 3.11 and Python >= 3.12), which give different proposals.
     Evidence from synthetic simulators, not a guarantee.
   - `interval_method.coverage_basis`, `interval_method.coverage_at_proposals`
     (`{"0.9": caveat, "0.95": caveat}`) and
     `interval_method.gp_coverage_at_proposals` (`{"0.9": estimate, ...}`): once
     per analysis, with the full estimate `{nominal, measured_min, measured_max,
-    by_scenario{...}, basis, source{kind, benchmark, results, doc, scenarios,
-    seeds_per_scenario, proposals_per_seed, measurement}}`.
+    by_scenario{...} (the lower of the two stacks), by_stack{py311, py312:
+    {scenario: coverage}}, ci95_by_stack (seed-cluster bootstrap, where
+    measured), basis, source{kind, benchmark, command, results[2 files], doc,
+    scenarios, seeds, seeds_per_scenario, proposals_per_seed, measurement,
+    stacks{label, results, recorded_on{git_commit, python, numpy, scipy, torch,
+    botorch, gpytorch, ...}}, range}}`.
   - `conformal_caveat` (top level, for `conformal_q`): `{code:
     "coverage_not_guaranteed", coverage_basis, message, caveat_code,
     coverage_at_proposals_estimate}`.
@@ -497,10 +522,13 @@ Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
 ### Selection-aware proposal intervals (F15; interval numbers change)
 
 Code: `calibrate_selection_aware` in `kalos/portal/analysis_parts/intervals.py`;
-evidence in VALIDATION.md "Interval coverage at proposals". The plain normalized
-band covered 0.60-0.84 of measured proposals at 90% nominal; the selection-aware
-band covers 0.92-0.99 (95%: 0.96-0.99) on fresh simulation seeds, at 2.5-3.2x the
-width.
+evidence in VALIDATION.md "Interval coverage at proposals". On `main`, fresh
+simulation seeds 100-139, at the same proposals: the plain normalized band covered
+0.545-0.835 of measured proposals at 90% nominal, and the selection-aware band
+0.86-0.99 (95%: 0.935-0.995), over the two stacks `uv.lock` pins (Python 3.11:
+0.86-0.965; Python >= 3.12: 0.92-0.99). It is below nominal in some cases
+(bioprocess n=40 at 90% on Python 3.11: 0.86 [0.79, 0.92]), at 2.5-3.7x (90%) and
+1.9-3.2x (95%) the plain band's width.
 
 - `proposals[].intervals[]` (per level, when available): `{coverage, method:
   "conformal_selection_aware", calibrated_on: "grouped_cv_oof_top_ranked",
@@ -662,9 +690,4 @@ v8 is reserved for the Crux items.
 
 ## Not in this slice
 
-- Background jobs for reanalyze (it still runs synchronously; upload has a job route).
-- JWT principals (E2). `auth_method` will read the principal's
-  `auth_method` once it exists. `tests/test_cross_tenant_isolation_jwt.py` is
-  a skipped TODO stub until E2 lands.
-- Deleting a campaign, changing the default campaign, and reading the audit
-  log over HTTP.
+- Deleting a campaign and changing the default campaign.
