@@ -201,7 +201,9 @@ def test_measuring_calibration_did_not_move_any_existing_number():
 
     res = _analyze(_replicated_sheet(), "lipase_titer")
     assert res["cv_spearman"] == pytest.approx(0.783, abs=0.02)
-    assert res["conformal_q"] == pytest.approx(2.6208, abs=0.1)
+    # 2.6208 -> 2.5162 with F05: near-duplicate recipes (within 0.05 of each
+    # input's range) now share a CV group, which changes the out-of-fold set.
+    assert res["conformal_q"] == pytest.approx(2.5162, abs=0.1)
 
 
 def test_calibration_declines_on_a_sheet_too_small_to_measure_it():
