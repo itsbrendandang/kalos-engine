@@ -29,7 +29,16 @@ zero-inflated, 12% multiplicative noise; n=40, 100), a heteroscedastic 3-D bump
         --out benchmarks/results/coverage_at_proposals.json
 
 `--seed-offset` draws fresh seeds (the selection-aware method was chosen on
-seeds 0-39; its reported numbers come from seeds 100-139).
+seeds 0-39; its reported numbers come from seeds 100-139). The served evidence
+(kalos/portal/analysis_parts/coverage_evidence.py) is
+
+    python -m kalos.bench.coverage_at_proposals --seeds 40 --seed-offset 100 \
+        --out benchmarks/results/coverage_at_proposals_main_py311_seeds100.json
+
+run once on each stack uv.lock pins (Python 3.11 and Python >= 3.12: numpy and
+scipy differ, and so do the proposals), then `--print-evidence FILE` for each.
+Every results file records its commit, Python, library versions and thread
+counts in `meta.environment`.
 """
 from __future__ import annotations
 
@@ -213,12 +222,24 @@ def run_one(name: str, seed: int) -> dict[str, Any]:
             g = next((e for e in p.get("gp_intervals", []) if abs(float(e["coverage"]) - lv) < 1e-9), None)
             if g and g.get("available"):
                 gp_in.append(bool(g["lo"] <= p_y[i] <= g["hi"]))
+        # The plain normalized band (the fallback when the selection-aware band is
+        # unavailable) at the same proposals: pred +/- q_norm * predictive sd.
+        # Deterministic given the response; draws no random numbers.
+        q_norm = next((float(c["q_norm"]) for c in res["interval_method"].get("levels", [])
+                       if abs(float(c["coverage"]) - lv) < 1e-9 and c.get("available")), None)
+        plain_in, plain_w = [], []
+        for i, p in enumerate(props):
+            sp = p.get("predictive_std")
+            if q_norm is not None and sp is not None and np.isfinite(sp) and sp > 0:
+                plain_in.append(bool(abs(p_y[i] - p["pred"]) <= q_norm * sp))
+                plain_w.append(2 * q_norm * sp / yrange)
         cq = res.get("conformal_q")
         cq_in = ([bool(abs(p_y[i] - p["pred"]) <= cq) for i, p in enumerate(props)]
                  if cq is not None and abs(float(res.get("conformal_coverage", 0)) - lv) < 1e-9 else [])
         out["levels"][str(lv)] = {"inside": inside, "width": widths, "available": avail,
                                   "random_coverage": r_in, "random_width": r_w, "method": method,
-                                  "gp_inside": gp_in, "conformal_q_inside": cq_in}
+                                  "gp_inside": gp_in, "conformal_q_inside": cq_in,
+                                  "plain_inside": plain_in, "plain_width": plain_w}
     return out
 
 
@@ -260,6 +281,9 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             methods = sorted({r["levels"][k]["method"] for r in rs if r["levels"][k]["method"]})
             gp = [b for r in rs for b in r["levels"][k].get("gp_inside", [])]
             cqi = [b for r in rs for b in r["levels"][k].get("conformal_q_inside", [])]
+            plain_seed = [r["levels"][k].get("plain_inside", []) for r in rs]
+            plain = [b for s in plain_seed for b in s]
+            plain_w = [x for r in rs for x in r["levels"][k].get("plain_width", [])]
             sc["levels"][k] = {
                 "coverage_at_proposals": round(float(np.mean(flat)), 3) if flat else None,
                 "ci95_seed_cluster": _cluster_ci(per_seed),
@@ -271,6 +295,10 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "methods": methods,
                 "gp_posterior_coverage_at_proposals": round(float(np.mean(gp)), 3) if gp else None,
                 "conformal_q_coverage_at_proposals": round(float(np.mean(cqi)), 3) if cqi else None,
+                "plain_normalized_coverage_at_proposals": round(float(np.mean(plain)), 3) if plain else None,
+                "plain_normalized_ci95_seed_cluster": _cluster_ci(plain_seed),
+                "plain_normalized_median_width_at_proposals": round(float(np.median(plain_w)), 3)
+                if plain_w else None,
             }
         out[name] = sc
     return out
@@ -280,6 +308,96 @@ def _worker(args: tuple[str, int]) -> dict[str, Any]:
     return run_one(*args)
 
 
+# The served evidence table (kalos/portal/analysis_parts/coverage_evidence.py,
+# MEASURED and CI95) is this function of one results file;
+# tests/test_interval_labels.py asserts it, so the caveat a client shows and
+# the file cannot disagree. Branin is a control and is left out.
+EVIDENCE_SCENARIOS = ("hartmann6_n30", "hartmann6_n80", "bioprocess_n40", "bioprocess_n100",
+                      "heteroscedastic_n40")
+# served method -> (summary field with the coverage, summary field with its CI or None, levels)
+EVIDENCE_FIELDS: dict[str, tuple[str, str | None, tuple[float, ...]]] = {
+    "conformal_selection_aware": ("coverage_at_proposals", "ci95_seed_cluster", LEVELS),
+    "conformal_normalized": ("plain_normalized_coverage_at_proposals", "plain_normalized_ci95_seed_cluster",
+                             LEVELS),
+    "conformal_abs_global": ("conformal_q_coverage_at_proposals", None, (0.9,)),
+    "gp_posterior": ("gp_posterior_coverage_at_proposals", None, LEVELS),
+}
+
+
+def evidence_table(summary: dict[str, Any]) -> tuple[dict[str, dict[str, dict[str, float]]],
+                                                     dict[str, dict[str, dict[str, list[float]]]]]:
+    """`(MEASURED, CI95)` for coverage_evidence.py from a results `summary`:
+    method -> level -> scenario -> coverage (and its seed-cluster 95% CI where
+    the benchmark computes one). The selection-aware rows require that every
+    proposal in the scenario carried the selection-aware band."""
+    measured: dict[str, dict[str, dict[str, float]]] = {}
+    ci95: dict[str, dict[str, dict[str, list[float]]]] = {}
+    for method, (field, ci_field, levels) in EVIDENCE_FIELDS.items():
+        for lv in levels:
+            k = f"{lv:g}"
+            for sc in EVIDENCE_SCENARIOS:
+                entry = summary[sc]["levels"][str(lv)]
+                if method == "conformal_selection_aware" and entry["methods"] != [method]:
+                    raise ValueError(f"{sc} {k}: bands {entry['methods']}, not only {method}")
+                if entry.get(field) is None:
+                    raise ValueError(f"{sc} {k}: no {field} in the results")
+                measured.setdefault(method, {}).setdefault(k, {})[sc] = entry[field]
+                if ci_field is not None and entry.get(ci_field) is not None:
+                    ci95.setdefault(method, {}).setdefault(k, {})[sc] = list(entry[ci_field])
+    return measured, ci95
+
+
+def environment() -> dict[str, Any]:
+    """Where a results file came from: commit, stack and thread counts.
+
+    The coverage at the proposals depends on the exact proposals, and those move
+    with the code and the numerical stack (VERIFY_MAIN claim 3: a file recorded
+    on another stack reproduced 1/240 rows on main). Every results file carries
+    this block so a rerun can be compared like for like."""
+    import hashlib
+    import platform
+    import subprocess
+    from importlib import metadata
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+
+    def git(*a: str) -> str | None:
+        try:
+            return subprocess.run(  # noqa: S603 - fixed git argv, no shell
+                ["git", *a], cwd=root, capture_output=True, text=True, check=True, timeout=10,  # noqa: S607
+            ).stdout.strip()
+        except subprocess.TimeoutExpired:
+            return None
+        except (OSError, subprocess.CalledProcessError):
+            return None
+
+    def version(dist: str) -> str | None:
+        try:
+            return metadata.version(dist)
+        except metadata.PackageNotFoundError:
+            return None
+
+    lock = root / "uv.lock"
+    status = git("status", "--porcelain", "--untracked-files=no")
+    return {
+        "git_commit": git("rev-parse", "HEAD"),
+        "git_dirty": None if status is None else bool(status),
+        "uv_lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest() if lock.exists() else None,
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "packages": {d: version(d) for d in ("torch", "botorch", "gpytorch", "numpy", "scipy",
+                                             "pandas", "scikit-learn")},
+        # run_one pins torch to 1 thread in every worker process.
+        "cpu_count": os.cpu_count(),
+        "load_avg_at_start": [round(x, 1) for x in os.getloadavg()] if hasattr(os, "getloadavg") else None,
+        "torch_threads_per_worker": 1,
+        "env_threads": {k: os.environ.get(k) for k in ("KALOS_TORCH_THREADS", "OMP_NUM_THREADS",
+                                                        "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")},
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seeds", type=int, default=40)
@@ -287,8 +405,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--procs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     ap.add_argument("--scenarios", default=",".join(SCENARIOS))
     ap.add_argument("--out", default=None, help="write {summary, rows, meta} JSON here")
+    ap.add_argument("--print-evidence", metavar="RESULTS_JSON", default=None,
+                    help="print MEASURED and CI95 for coverage_evidence.py from a results file; run nothing")
     args = ap.parse_args(argv)
+    if args.print_evidence:
+        with open(args.print_evidence) as fh:
+            measured, ci95 = evidence_table(json.load(fh)["summary"])
+        print("MEASURED =", json.dumps(measured, indent=4))
+        print("CI95 =", json.dumps(ci95, indent=4))
+        return 0
     os.environ.setdefault("OMP_NUM_THREADS", "1")
+    env = environment()  # before the run: the commit the rows come from
+    t_start = time.time()
+    started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t_start))
     jobs = [(nm, args.seed_offset + s) for nm in args.scenarios.split(",") for s in range(args.seeds)]
     if args.procs > 1:
         from multiprocessing import get_context
@@ -301,7 +430,10 @@ def main(argv: list[str] | None = None) -> int:
     from kalos import __version__
 
     meta = {"seeds": args.seeds, "seed_offset": args.seed_offset, "engine_version": __version__,
-            "n_random_points": N_RANDOM, "levels": list(LEVELS)}
+            "n_random_points": N_RANDOM, "levels": list(LEVELS), "procs": args.procs,
+            "command": "python -m kalos.bench.coverage_at_proposals " + " ".join(argv or sys.argv[1:]),
+            "started_utc": started, "seconds_wall": round(time.time() - t_start, 1),
+            "environment": env}
     print(json.dumps(summary, indent=1))
     if args.out:
         with open(args.out, "w") as fh:

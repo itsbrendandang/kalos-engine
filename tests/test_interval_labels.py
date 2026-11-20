@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -92,13 +93,17 @@ def test_selection_aware_caveat_states_coverage_measured_at_proposed_recipes():
         est = cav["coverage_at_proposals_estimate"]
         lo = math.floor(est["measured_min"] * 100 + 1e-9)
         hi = math.floor(est["measured_max"] * 100 + 1e-9)
-        assert cav["code"] == CAVEAT_CODE_MEASURED
+        assert cav["code"] == (CAVEAT_CODE_MEASURED if est["measured_min"] >= level else CAVEAT_CODE)
         assert cav["message"].startswith("Based on held-out runs:")
         assert f"At proposed recipes this {pct}% range covered {lo}-{hi}% in simulation" in cav["message"]
         assert "not guaranteed" in cav["message"]
-    # The committed benchmark numbers (seeds 100-139): 90% -> 92-99%, 95% -> 96-99%.
-    assert "covered 92-99% in simulation" in proposal_caveat("conformal_selection_aware", 0.9)["message"]
-    assert "covered 96-99% in simulation" in proposal_caveat("conformal_selection_aware", 0.95)["message"]
+    # Main @ cf7105c, seeds 100-139, on the two stacks uv.lock pins: bioprocess
+    # n=40 measured 0.86 at 90% and 0.935 at 95% on Python 3.11 (VERIFY_MAIN
+    # claim 3), so neither level reached nominal everywhere and the caveat says so.
+    msg90 = proposal_caveat("conformal_selection_aware", 0.9)["message"]
+    assert "covered 86-99% in simulation, below 90% in some cases" in msg90
+    msg95 = proposal_caveat("conformal_selection_aware", 0.95)["message"]
+    assert "covered 93-99% in simulation, below 95% in some cases" in msg95
 
 
 def test_every_proposal_interval_carries_its_basis_and_caveat():
@@ -175,25 +180,93 @@ def test_analysis_labels_every_band():
             _assert_honest_proposal_wording(iv["caveat"]["message"])
 
 
-def test_evidence_table_matches_the_committed_benchmark_results():
-    """The numbers a client shows are the numbers the benchmark wrote."""
-    from pathlib import Path
-
-    from kalos.portal.analysis_parts.coverage_evidence import SOURCE
+def _results() -> dict[str, dict]:
+    from kalos.portal.analysis_parts.coverage_evidence import STACKS
 
     root = Path(__file__).resolve().parents[1]
-    before = json.loads((root / "benchmarks/results/coverage_at_proposals_before.json").read_text())["summary"]
-    for lv in ("0.9", "0.95"):
-        for sc, v in MEASURED["conformal_normalized"][lv].items():
-            assert before[sc]["levels"][lv]["coverage_at_proposals"] == v, (sc, lv)
-            assert before[sc]["levels"][lv]["methods"] == ["conformal_normalized"]
-        for sc, v in MEASURED["gp_posterior"][lv].items():
-            assert before[sc]["levels"][lv]["gp_posterior_coverage_at_proposals"] == v, (sc, lv)
-    after = json.loads((root / "benchmarks/results/coverage_at_proposals_after.json").read_text())["summary"]
-    for lv in ("0.9", "0.95"):
-        for sc, v in MEASURED["conformal_selection_aware"][lv].items():
-            assert after[sc]["levels"][lv]["coverage_at_proposals"] == v, (sc, lv)
-            assert after[sc]["levels"][lv]["methods"] == ["conformal_selection_aware"]
-    for sc, v in MEASURED["conformal_abs_global"]["0.9"].items():
-        assert before[sc]["levels"]["0.9"]["conformal_q_coverage_at_proposals"] == v, sc
-    assert set(SOURCE["scenarios"]) <= set(before)
+    return {st: json.loads((root / v["results"]).read_text()) for st, v in STACKS.items()}
+
+
+def test_evidence_table_is_the_committed_results_files():
+    """The numbers a client shows are the numbers the benchmark wrote: per stack,
+    MEASURED_BY_STACK and CI95_BY_STACK are exactly `evidence_table` of that
+    stack's results file, and MEASURED is the lower of the two per scenario."""
+    from kalos.bench.coverage_at_proposals import EVIDENCE_SCENARIOS, evidence_table
+    from kalos.portal.analysis_parts.coverage_evidence import (
+        CI95_BY_STACK,
+        MEASURED_BY_STACK,
+        SOURCE,
+        STACKS,
+    )
+
+    files = _results()
+    assert set(files) == set(MEASURED_BY_STACK) == set(CI95_BY_STACK) == {"py311", "py312"}
+    for st, res in files.items():
+        measured, ci95 = evidence_table(res["summary"])
+        assert measured == MEASURED_BY_STACK[st], st
+        assert ci95 == CI95_BY_STACK[st], st
+    for method, levels in MEASURED.items():
+        for lv, by in levels.items():
+            for sc, v in by.items():
+                assert v == min(MEASURED_BY_STACK[st][method][lv][sc] for st in STACKS), (method, lv, sc)
+    assert list(SOURCE["scenarios"]) == list(EVIDENCE_SCENARIOS)
+    assert SOURCE["results"] == [v["results"] for v in STACKS.values()]
+
+
+def test_results_files_record_their_commit_and_stack():
+    """VERIFY_MAIN B5: a results file without its commit and environment cannot
+    be reproduced. STACKS[...].recorded_on repeats each file's meta, both files
+    use the documented seeds, and each stack is one of the two uv.lock pins
+    (numpy/scipy fork at Python 3.12)."""
+    from kalos.portal.analysis_parts.coverage_evidence import STACKS
+
+    lock = (Path(__file__).resolve().parents[1] / "uv.lock").read_text()
+    for st, res in _results().items():
+        meta, env = res["meta"], res["meta"]["environment"]
+        assert meta["seeds"] == 40 and meta["seed_offset"] == 100, st
+        assert re.fullmatch(r"[0-9a-f]{40}", env["git_commit"]) and env["git_dirty"] is False, st
+        rec = STACKS[st]["recorded_on"]
+        assert rec["git_commit"] == env["git_commit"] and rec["python"] == env["python"], st
+        assert rec["platform"] == env["platform"], st
+        assert rec["torch_threads_per_worker"] == env["torch_threads_per_worker"] == 1, st
+        for pkg in ("numpy", "scipy", "torch", "botorch", "gpytorch"):
+            assert rec[pkg] == env["packages"][pkg], (st, pkg)
+        marker = "python_full_version < '3.12'" if st == "py311" else "python_full_version >= '3.12'"
+        assert (st == "py311") == env["python"].startswith("3.11."), st
+        for pkg in ("numpy", "scipy"):
+            assert f'{pkg}=={rec[pkg]} ; {marker}' in _lock_constraints(lock, pkg), (st, pkg)
+        for pkg in ("torch", "botorch", "gpytorch"):
+            assert f'name = "{pkg}"\nversion = "{rec[pkg]}"' in lock, (st, pkg)
+
+
+def _lock_constraints(lock: str, pkg: str) -> str:
+    """`pkg==version ; marker` lines for every locked version of `pkg`."""
+    out = []
+    pat = r'\{ name = "' + re.escape(pkg) + r'", version = "([^"]+)".*?marker = "([^"]+)" \}'
+    for m in re.finditer(pat, lock):
+        out.append(f"{pkg}=={m.group(1)} ; {m.group(2)}")
+    return "\n".join(out)
+
+
+def test_caveat_numbers_and_code_follow_the_results_files():
+    """The served caveat text is built from the files: the whole-percent range
+    (rounded down) from the lowest to the highest coverage measured over the five
+    scenarios on both stacks, and the 'below N% in some cases' wording whenever
+    the lowest is below nominal."""
+    from kalos.bench.coverage_at_proposals import EVIDENCE_SCENARIOS
+
+    files = _results()
+    for level, pct in ((0.9, 90), (0.95, 95)):
+        vals = [res["summary"][sc]["levels"][str(level)]["coverage_at_proposals"]
+                for res in files.values() for sc in EVIDENCE_SCENARIOS]
+        lo, hi = math.floor(min(vals) * 100 + 1e-9), math.floor(max(vals) * 100 + 1e-9)
+        cav = proposal_caveat("conformal_selection_aware", level)
+        assert f"covered {lo}-{hi}% in simulation" in cav["message"], (level, cav["message"])
+        below = min(vals) < level
+        assert (f"below {pct}% in some cases" in cav["message"]) is below
+        assert cav["code"] == (CAVEAT_CODE if below else CAVEAT_CODE_MEASURED)
+        est = cav["coverage_at_proposals_estimate"]
+        assert est["measured_min"] == min(vals) and est["measured_max"] == max(vals)
+        for st, res in files.items():
+            for sc in EVIDENCE_SCENARIOS:
+                assert est["ci95_by_stack"][st][sc] == res["summary"][sc]["levels"][str(level)]["ci95_seed_cluster"]
