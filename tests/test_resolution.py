@@ -22,7 +22,8 @@ from kalos.core.resolution import (
 @dataclass(frozen=True)
 class _Factor:
     """Structural stand-in with the attribute names of the cold-start design's
-    factor (`kalos.core.design.ContinuousFactor`: name, lo, hi, step, levels).
+    factor (`kalos.core.design.ContinuousFactor`: name, lo, hi, step, levels;
+    feat/cold-start-design 538c550 snaps a step to the same absolute grid).
     WS-A PR 2 replaces it with the real class once feat/cold-start-design merges
     and asserts equality with `ContinuousFactor.grid()`."""
 
@@ -182,36 +183,42 @@ def test_step_snaps_to_the_grid_without_binary_noise():
     assert res.rules == ("step",) * 3
 
 
-def test_step_grid_is_anchored_at_the_factor_lo_like_the_design_grid():
-    # ContinuousFactor.grid(): lo + k * step, k = 0..K -> 0.37, 0.87, 1.37, ...
+def test_step_grid_is_absolute_multiples_of_the_step_like_the_design_grid():
+    # ContinuousFactor.grid(): k * step inside [lo, hi] -> 6.05, 6.10, ... for lo = 6.02
+    f = _Factor(lo=6.02, hi=8.0, step=0.05)
+    res = round_to_resolution([6.021, 6.12, 7.999], [f, f, f], [[6.02] * 3, [8.0] * 3])
+    assert res.x is not None and res.x.tolist() == [6.05, 6.1, 8.0]
     f = _Factor(lo=0.37, hi=3.0, step=0.5)
-    res = round_to_resolution([1.0, 2.99], [f, f], [[0.37, 0.37], [3.0, 3.0]])
-    assert res.x is not None and res.x.tolist() == [0.87, 2.87]
+    res = round_to_resolution([0.38, 2.99], [f, f], [[0.37, 0.37], [3.0, 2.9]])
+    assert res.x is not None and res.x.tolist() == [0.5, 2.5]  # 3.0 is outside the proposal box
 
 
 def test_every_step_output_is_a_point_of_the_factor_grid():
-    """Membership in a locally built lo + k*step grid (k = 0..K), for random
-    factors, proposal boxes inside the factor and random points."""
+    """Membership in a locally built absolute grid k * step inside the factor's
+    [lo, hi] (k range as in ContinuousFactor.grid()), for random factors,
+    proposal boxes inside the factor and random points."""
     rng = np.random.default_rng(5)
+    n_served = 0
     for _ in range(2000):
         f_lo = float(np.round(rng.uniform(-5, 5), int(rng.integers(0, 4))))
         step = float(rng.choice([0.001, 0.01, 0.05, 0.1, 0.25, 0.3, 1.0, 2.5]))
-        k_last = int(rng.integers(1, 40))
-        f_hi = f_lo + k_last * step + float(rng.uniform(0, step * 0.99))
+        f_hi = f_lo + step * float(rng.uniform(1.0, 40.0))
         f = _Factor(lo=f_lo, hi=f_hi, step=step)
         lo, hi = np.sort(rng.uniform(f_lo, f_hi, 2))
         x = float(rng.uniform(lo - step, hi + step))
         res = round_to_resolution([x], [f], [[lo], [hi]])
-        grid = np.array([f_lo + k * step for k in range(int(np.floor((f_hi - f_lo) / step + 1e-9)) + 1)])
+        ks = range(int(np.ceil(f_lo / step - 1e-9)), int(np.floor(f_hi / step + 1e-9)) + 1)
+        grid = np.array([k * step for k in ks])
         inside = grid[(grid >= lo - 1e-9) & (grid <= hi + 1e-9)]
         if res.x is None:
-            assert inside.size == 0 or not np.any((inside >= lo) & (inside <= hi)), (f, lo, hi)
+            assert not np.any((inside >= lo) & (inside <= hi)), (f, lo, hi)
             continue
+        n_served += 1
         v = float(res.x[0])
         assert lo <= v <= hi
         assert np.min(np.abs(grid - v)) < 1e-9, (f, lo, hi, x, v)
-        # and it is a nearest grid point inside the box
-        assert abs(v - x) <= np.min(np.abs(inside - x)) + 1e-9
+        assert abs(v - x) <= np.min(np.abs(inside - x)) + 1e-9  # a nearest grid point inside the box
+    assert n_served > 1000
 
 
 def test_step_rounds_into_the_bounds_not_across_them():

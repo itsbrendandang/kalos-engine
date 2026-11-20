@@ -11,12 +11,15 @@ re-checks at the returned point; nothing here predicts.)
 Per input, in order of precedence:
 
 - a categorical input (`cat_dims`): left exactly as given (an integer level code);
-- a factor with `levels` or `step`: a point of the factor's own grid, exactly
-  as `kalos.core.design.ContinuousFactor.grid()` defines it (the declared levels
-  inside the factor's [lo, hi]; or ``lo + k * step`` for k = 0..K, rounded to the
-  step's decimals plus two), that also lies inside the proposal bounds. This
-  module does not define a second grid; it adds only what the factor lacks:
-  rounding toward the feasible side of the proposal bounds and constraints;
+- a factor with `levels` or `step`: a point of the factor's grid, the one
+  `kalos.core.design.ContinuousFactor.grid()` defines (the declared levels
+  inside the factor's [lo, hi]; or the absolute grid ``k * step`` inside
+  [lo, hi], e.g. pH 6.05, 6.10, ... for lo = 6.02 and step 0.05: pipetting and
+  weighing increments, not offsets from a bound), that also lies inside the
+  proposal bounds. The grid is shared with `kalos.core.design`, not redefined;
+  this module adds only what the factor lacks: rounding toward the feasible
+  side of the proposal bounds and linear constraints (the nearest multiple
+  unless the proposal box or a constraint excludes it, then inward);
 - otherwise (no factor, or a factor with neither): `sig_figs` significant
   figures (default 4). Kalos never invents a step for an undeclared input, and
   significant figures keep sub-milligram inputs (e.g. 0.000208 to 0.000898)
@@ -165,41 +168,39 @@ def _candidates_levels(
     return _neighbours(below[-1] if below else None, above[0] if above else None, xj)
 
 
-def _decimals(v: float) -> int:
-    exp = Decimal(repr(float(v))).normalize().as_tuple().exponent
-    return max(0, -int(exp)) if isinstance(exp, int) else 12
-
-
-def _step_value(step: float, f_lo: float, k: int) -> float:
-    """Grid point k of a step factor: ``lo + k * step`` with the binary noise
-    stripped (rounded to two more decimals than the step or lo, at most 12).
-    `ContinuousFactor.grid()` rounds to the step's decimals only, which equals
-    this whenever lo has no more decimals than the step (lo = 4.984 with
-    step = 1.0 would otherwise give 5.98, off its own grid)."""
-    return round(f_lo + k * step, min(max(_decimals(step), _decimals(f_lo)) + 2, 12))
+def _step_value(step: float, k: int) -> float:
+    """Grid point k of a step factor: ``k * step`` with the binary noise stripped
+    (rounded to two more decimals than the step, at most 12), the same values as
+    `kalos.core.design.ContinuousFactor.grid()`."""
+    exp = Decimal(repr(float(step))).normalize().as_tuple().exponent
+    decimals = max(0, -int(exp)) if isinstance(exp, int) else 12
+    return round(k * step, min(decimals + 2, 12))
 
 
 def _candidates_step(step: float, f_lo: float, f_hi: float, lo: float, hi: float, xj: float) -> list[float]:
-    """Neighbours among the factor's grid points k = 0..K that lie inside [lo, hi]."""
-    k_last = int(math.floor((f_hi - f_lo) / step + 1e-9))
+    """Neighbours among the factor's grid (multiples k * step inside its own
+    [f_lo, f_hi], k range as in `ContinuousFactor.grid()`) that lie inside the
+    proposal bounds [lo, hi]."""
+    k_first = math.ceil(f_lo / step - 1e-9)
+    k_last = math.floor(f_hi / step + 1e-9)
 
     def val(k: int) -> float:
-        return _step_value(step, f_lo, k)
+        return _step_value(step, k)
 
     # Integer estimates, then exact correction against the computed grid values.
-    k_min = min(max(0, math.ceil((lo - f_lo) / step - 1e-9)), k_last + 1)
+    k_min = min(max(k_first, math.ceil(lo / step - 1e-9)), k_last + 1)
     while k_min <= k_last and val(k_min) < lo:
         k_min += 1
-    while k_min > 0 and val(k_min - 1) >= lo:
+    while k_min > k_first and val(k_min - 1) >= lo:
         k_min -= 1
-    k_max = max(min(k_last, math.floor((hi - f_lo) / step + 1e-9)), -1)
-    while k_max >= 0 and val(k_max) > hi:
+    k_max = max(min(k_last, math.floor(hi / step + 1e-9)), k_first - 1)
+    while k_max >= k_first and val(k_max) > hi:
         k_max -= 1
     while k_max < k_last and val(k_max + 1) <= hi:
         k_max += 1
     if k_min > k_max:
         return []
-    q = (xj - f_lo) / step
+    q = xj / step
     k_dn = min(max(math.floor(q), k_min), k_max)
     k_up = min(max(math.ceil(q), k_min), k_max)
     if k_dn > k_min and val(k_dn) > xj:  # float noise in q
