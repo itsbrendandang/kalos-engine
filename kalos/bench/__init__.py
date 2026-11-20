@@ -21,7 +21,12 @@ from .objectives import (  # noqa: F401
 )
 
 if TYPE_CHECKING:
-    from .benchmark import run_benchmark, run_mixed_one, run_one, summarize  # noqa: F401
+    from .benchmark import (  # noqa: F401
+        run_benchmark,
+        run_mixed_one,
+        run_one,
+        summarize,
+    )
 
 # `benchmark` imports torch (kalos.core.optimize). It is loaded on first use, so
 # importing a torch-free subpackage such as `kalos.bench.faults` (whose fast tier
