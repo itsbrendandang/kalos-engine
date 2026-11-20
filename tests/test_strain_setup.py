@@ -17,7 +17,7 @@ from kalos.portal.setup_settings import (
 )
 
 pytest.importorskip("fastapi")
-from tests.test_setup_api import H, _campaign, env  # noqa: E402,F401
+from test_setup_api import H, _campaign, env  # noqa: E402,F401
 
 
 def _strain_analysis(levels=("CHO-A12", "CHO-C33"), anonymize=False) -> dict:
