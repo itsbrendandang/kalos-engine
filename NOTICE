@@ -1,0 +1,20 @@
+Kalos
+Copyright the Kalos authors. Licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+This product includes work adapted from the following sources.
+
+-------------------------------------------------------------------------------
+Lab-file parsers: plates (Bioqore lab analyses; idea credit)
+-------------------------------------------------------------------------------
+
+Source: github.com/Bioqore/ad_hoc_data_analyses (commit 82e6ae0, 2026-06-24),
+the lab's plate-map analyses.
+
+Idea credit; re-implemented, no code copied. The ideas: a plate map that places
+each sample on a culture plate and an analytics plate; joining instrument reads
+to samples by plate and well position rather than by sample name; treating
+"A01" and "A1" as the same well. Used in kalos/ingest/plates.py.
+
+No data from that repository is included. The test fixtures are synthetic and
+copy only the header layout of the lab's files.
