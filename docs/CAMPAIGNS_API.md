@@ -58,6 +58,7 @@ below), which the first legacy upload creates. A campaign made with
 | POST | `/api/campaigns/{id}/runs` | write | Start runs from a proposed batch. Same body and bounds as `/api/campaign/start`. Returns `{"started": [...]}`. |
 | POST | `/api/campaigns/{id}/runs/{run_id}/result` | write | Body: `{"value": number, "reason"?: str}`. Records a measured outcome and returns the run. A correction needs `reason` (see "Recording results"). |
 | POST | `/api/campaigns/{id}/reanalyze` | write | Fold measured runs, re-run the engine and publish the new analysis. Returns `{"analysis": ..., "campaign": <summary>}`, where `campaign` is this campaign's summary with `stage` and `next_action`. |
+| POST | `/api/campaigns/{id}/design` | write | A cold-start exploration plan: space-filling recipes with no model and no predicted values; `format=csv` returns it as a run sheet. See "Exploration design (cold start)". |
 
 ### Stage
 
@@ -659,6 +660,97 @@ All five: tenant from the principal (another tenant's campaign is the same 404),
 scope checked first, default JSON body cap, writes audited without field values.
 Schema v7 adds `campaign_clones` and `clone_titer_history` (docs/MIGRATIONS.md);
 v8 is reserved for the Crux items.
+
+### Exploration design (cold start)
+
+`POST /api/campaigns/{id}/design` (scope `write`). Method, defaults, the benchmark
+behind them and the BayOp edge cases: docs/COLD_START_DESIGN.md. Code:
+`kalos/core/design.py` (generator), `kalos/portal/design_plan.py`,
+`kalos/portal/design_api.py`.
+
+A plan of recipes chosen only to cover the declared region, for a campaign with no
+or few measured runs. **No model is used**: no row carries a predicted value, a
+standard deviation, an interval or an expected improvement; every row reads
+`label: "exploration design, no model yet"` (`"exploration design, model not
+used"` when the campaign's model is trusted and the plan deliberately ignores it),
+and `model_not_used` says why.
+
+Body (every field optional; unknown fields are a 400):
+
+| Field | Default | Meaning |
+|---|---|---|
+| `n` | 12 | Space-filling rows, 1-96. `n + centre_points + replicate_slots` is at most 96. |
+| `method` | `sobol` | `sobol` (scrambled Sobol) or `lhs_maximin`. With runs already measured or started, the plan fills gaps whatever the method (`method: "maximin_fill"` in the response). |
+| `seed` | 0 | 0 to 2^31-1. The same request on the same campaign data returns the same rows. |
+| `centre_points` | 0 | 0-8 rows at the centre of the region (the feasible candidate nearest it when the centre breaks a constraint). |
+| `replicate_slots` | 0 | 0-16 rows repeating the most spread-out design rows (`role: replicate`, `replicate_of`). |
+| `factors` | `{}` | Per column: `step` or `levels` (snap to real setpoints; a step is never invented), `unit` (enables the physical-range check), and `lo`/`hi` only for a column the setup does not bound. At most 64. |
+| `categoricals` | `{}` | Per categorical column, its levels (1-64 labels of at most 64 characters; at most 16 columns). A seeded campaign's levels default to the ones in its data. |
+| `target` | campaign target, else `result` | The target column of the CSV template (a campaign with no data only). |
+| `include_pending` | true | Count started-but-unmeasured runs as existing points to stay away from. |
+| `format` | `json` | `json` or `csv`. |
+
+Where the factors come from: the campaign setup's `bounds` (the one source of truth
+for a bound; a different `lo`/`hi` in `factors` is `400 bounds_conflict`), else the
+request, else the range already measured (the plan then stays inside it and says so
+in `warnings`). The setup's `linear_constraints` apply by rejection (counts in
+`constraints`). The clone column follows the setup's `strain_policy`: `fixed` holds
+every row at `strain_level` (or the analysis's fixed clone), `factor` balances the
+rows over the clones; covariates are never set (`not_designed`). Other categoricals
+are balanced, counting the runs that already exist.
+
+Response `200 {"campaign_id", "design": {...}}`. `design` keys: `kind`
+(`exploration_design`), `label`, `model_used: false`, `predictions: null`,
+`model_not_used` (`code`: `no_measured_runs`, `n_below_trust_threshold`,
+`model_not_trusted` or `model_trusted_not_used`; `message`, `n_measured`,
+`thresholds` (12 runs to judge, 20 runs and 8 groups for reliable), `verdict`,
+`proposal_trust`), `method`, `requested_method`, `seed`, `n_rows`, `rows[]`
+(`row`, `run_label` `design-01`..., `role` space_filling/centre/replicate,
+`replicate_of`, `recipe`, `label`, `model_used`), `factors[]` (bounds and their
+source, step/levels, observed range, `beyond_observed_range`, `physical_check`),
+`not_designed`, `constraints` (rejected and drawn candidate counts, acceptance
+rate), `snapping`, `levels` (per categorical: policy, held level, design and
+existing counts), `quality` (on the continuous factors scaled to [0, 1]:
+`min_pairwise_distance`, `mean_nearest_neighbour_distance`,
+`centered_l2_discrepancy`, `min_distance_to_existing`,
+`centered_l2_discrepancy_with_existing`, and `random_reference`, the median of 64
+random designs of the same size from the same feasible candidates), `existing`
+(`n_measured`, `n_awaiting`, `n_used_for_gap_filling`, `mode`), `shortfall`
+(fewer distinct recipes exist than asked, e.g. a coarse level grid), `warnings`,
+`next_step`, `template` (`columns`, `target`).
+
+`format=csv`: `text/csv`, `Content-Disposition: attachment;
+filename="<id>-exploration-design-no-model.csv"`, headers `X-Kalos-Design-Label`,
+`X-Kalos-Design-Method`, `X-Kalos-Design-Seed`, `X-Kalos-Content-Sha256`. The
+header row is the campaign's own sheet columns (or `run_id`, the factors and the
+target for a campaign with no data); a `run_id` column is added in front when the
+sheet has no id column; the id column holds `design-01`...; the target and every
+column the plan does not set are blank. Text starting with `= + - @` TAB or CR gets
+a leading apostrophe. Fill in the target and upload the sheet, or start the rows as
+runs (`POST .../runs` with `mode: "exploration_design"` and no `pred`; their
+`prediction_at_start` reads `available: false`).
+
+Refusals (`400 {"error", "code", "what_would_fix_it"?}`; caller input is never
+echoed): `invalid_body`, `invalid_size`, `no_factors`, `unknown_factor`,
+`factor_without_bounds`, `invalid_bounds`, `bounds_conflict`, `invalid_step`,
+`invalid_levels`, `invalid_factor`, `physically_impossible_bounds` (outside the
+physical range of the column's dimension, e.g. pH above 14; unit-aware when
+`kalos.validation.bounds.column_bounds` is available), `categorical_without_levels`,
+`clone_level_required`, `clone_levels_required`, `no_feasible_candidates`,
+`constraint_unknown_factor`, `target_mismatch`, `target_is_factor`. `409`:
+archived campaign, unreadable stored setup, or `anonymized_template_unavailable`
+(an anonymized campaign's plan names identifier columns or clone labels: the JSON
+plan carries the analysis's pseudonyms, the CSV is refused). Every call writes a
+`campaign.design` audit row with sizes, method and format only.
+
+**In the analysis (additive key).** When `proposal_trust.status` is not `trusted`
+(the batch is withheld, or labelled exploration and `reliability.space_filling_advice`
+applies), the analysis carries `exploration_design`: the same block for 5 rows that
+fill the gaps between the fitted runs (setup bounds where declared, else the observed
+range; constraints, the held clone level and held covariates applied; `answers`
+names the advice or notice it backs, `route` points to the full route above). It is
+`{available: false, code, reason}` when no plan can be built. A trusted analysis has
+no such key. No other analysis field changes (trust goldens: 0 changed leaves).
 
 ## Not in this slice
 

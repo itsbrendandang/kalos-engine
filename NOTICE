@@ -1,0 +1,25 @@
+Kalos engine
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes ideas and test fixtures from the following earlier work.
+
+------------------------------------------------------------------------------
+BayOp (Bioqore "voyager-ml-bayop")
+Authors: Kai Suematsu and joshBioqore, Bioqore.
+Used with the permission of its owner, the author of this repository, who
+asked for the BayOp work to be taken into Kalos (recorded 2026-11-20 on branch
+feat/cold-start-design). The BayOp repository has no license file of its own;
+this permission is the basis for the reuse below.
+
+What was taken:
+- The idea of a model-free, space-filling first round: BayOp's Latin-hypercube
+  mode (bayop_libraries/bayop_sampling.py and bayop_pipeline_states/
+  lhs_state.py: 30 runs, no target needed). Kalos re-implements it in
+  kalos/core/design.py and kalos/portal/design_plan.py with its own methods
+  (scrambled Sobol, LHS-maximin, gap filling), constraints, setpoint snapping,
+  balanced levels and honest labels. No BayOp source file is copied.
+- The edge-case fixture recipe (tests/data/_generate_fixtures.py: a fabricated
+  24-run, 6-setting sheet with flat-target, single-row, NaN and
+  column-mismatch variants). tests/test_bayop_edge_cases.py regenerates the
+  same synthetic data from the same recipe.
+------------------------------------------------------------------------------

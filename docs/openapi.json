@@ -341,6 +341,108 @@
         "title": "_DecisionBody",
         "type": "object"
       },
+      "_DesignBody": {
+        "additionalProperties": false,
+        "properties": {
+          "categoricals": {
+            "additionalProperties": {
+              "items": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 64,
+              "minItems": 1,
+              "type": "array"
+            },
+            "maxProperties": 16,
+            "propertyNames": {
+              "maxLength": 256,
+              "minLength": 1
+            },
+            "title": "Categoricals",
+            "type": "object"
+          },
+          "centre_points": {
+            "default": 0,
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "title": "Centre Points",
+            "type": "integer"
+          },
+          "factors": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/_FactorSpec"
+            },
+            "maxProperties": 64,
+            "propertyNames": {
+              "maxLength": 256,
+              "minLength": 1
+            },
+            "title": "Factors",
+            "type": "object"
+          },
+          "format": {
+            "default": "json",
+            "enum": [
+              "json",
+              "csv"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "include_pending": {
+            "default": true,
+            "title": "Include Pending",
+            "type": "boolean"
+          },
+          "method": {
+            "default": "sobol",
+            "enum": [
+              "sobol",
+              "lhs_maximin"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "n": {
+            "default": 12,
+            "maximum": 96.0,
+            "minimum": 1.0,
+            "title": "N",
+            "type": "integer"
+          },
+          "replicate_slots": {
+            "default": 0,
+            "maximum": 16.0,
+            "minimum": 0.0,
+            "title": "Replicate Slots",
+            "type": "integer"
+          },
+          "seed": {
+            "default": 0,
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Seed",
+            "type": "integer"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          }
+        },
+        "title": "_DesignBody",
+        "type": "object"
+      },
       "_DraftBody": {
         "additionalProperties": false,
         "properties": {
@@ -423,6 +525,84 @@
           "id"
         ],
         "title": "_EvidenceIn",
+        "type": "object"
+      },
+      "_FactorSpec": {
+        "additionalProperties": false,
+        "description": "Per-factor declarations. `lo`/`hi` only for a factor the campaign setup\ndoes not bound (setup bounds are the one source of truth); `step` or\n`levels` (not both) snap values to real setpoints; `unit` enables the\nphysical-range check (e.g. \"°C\", \"%\", \"g/L\").",
+        "properties": {
+          "hi": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000.0,
+                "minimum": -1000000000000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hi"
+          },
+          "levels": {
+            "anyOf": [
+              {
+                "items": {
+                  "maximum": 1000000000000.0,
+                  "minimum": -1000000000000.0,
+                  "type": "number"
+                },
+                "maxItems": 64,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Levels"
+          },
+          "lo": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000.0,
+                "minimum": -1000000000000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lo"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 1000000000000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "title": "_FactorSpec",
         "type": "object"
       },
       "_FillBody": {
@@ -2404,6 +2584,70 @@
           }
         },
         "summary": "Post Titer History"
+      }
+    },
+    "/api/campaigns/{campaign_id}/design": {
+      "post": {
+        "description": "A cold-start exploration plan for this campaign: space-filling recipes,\nno model, no predicted values (see the module docstring).",
+        "operationId": "design_campaign_api_campaigns__campaign_id__design_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_DesignBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Design Campaign"
       }
     },
     "/api/campaigns/{campaign_id}/export/rows": {
