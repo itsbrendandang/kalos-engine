@@ -1,0 +1,64 @@
+Kalos
+Copyright the Kalos authors. Licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+This product includes work adapted from the following sources.
+
+-------------------------------------------------------------------------------
+Voyager backend (Bioqore)
+-------------------------------------------------------------------------------
+
+Sources:
+  - github.com/Bioqore/voyager-flask-back-end (commit e4f4ef7, 2026-07-02)
+    Flask API, pydantic request validators (validators/schemas.py), tests.
+  - github.com/Bioqore/py-common (commit b77092c, 2026-07-31)
+    PostgreSQL data model and queries (VoyagerDatabaseManagement.py,
+    DatabaseManagement.py), structured logging and request correlation
+    (Logging.py, Middleware.py).
+
+Authors (from the repositories' history): Tim (timbioqore, tlorgeree),
+Kai Suematsu (ks-bio), Anh.
+
+Permission: the owner of these repositories authorized porting them into Kalos,
+including the backend setup, on 2026-11-20 ("port everything"). Neither
+repository carried a license file; they are used here under that permission and
+under the terms below.
+
+What was adapted (re-implemented in Kalos's architecture, not copied):
+  - the project / factor / experiment-link / outcome data model, as
+    kalos/records/, kalos/storage/records_repo.py, kalos/storage/migrations/v9.py
+    and kalos/api/routers/{projects,lineage,units}.py (docs/RECORDS.md);
+  - the recursive experiment-lineage traversal, as a bounded traversal in
+    kalos/records/lineage.py;
+  - the data-unit table, as the code registry kalos/normalize/unit_registry.py;
+  - the request-validation pattern (strings trimmed, every field described), as
+    kalos/api/schemas/records.py;
+  - the correlation-id logging, as kalos/api/request_context.py;
+  - the PostgreSQL deployment and its CI service container, as the optional
+    PostgreSQL backend (kalos/storage/backend.py,
+    kalos/storage/migrations/pg_runner.py) and the CI postgres job.
+Not adapted, by decision (see docs/RECORDS.md, "Not ported"): Google ID-token
+login and HS256 token signing, the DISABLE_AUTH bypass, unauthenticated write
+routes, the employee and customer tables, and per-environment .env files.
+
+Terms for the adapted Voyager material (MIT-style):
+
+  Copyright (c) 2025-2026 Bioqore and the Voyager authors listed above.
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.

@@ -11,7 +11,9 @@ name: CI
 # `--dist loadgroup` so tests sharing an expensive fixture via an `xdist_group`
 # mark run on one worker). The `serial` tests run in their own job without
 # xdist. Together the shards and the serial job are the full suite, slow tests
-# included, on every PR and every push to main; no test runs twice.
+# included, on every PR and every push to main; no test runs twice. The
+# `postgres` tests skip there and run in the `tests-postgres` job, against a
+# PostgreSQL service container.
 #
 # Keeping the shards balanced: each shard uploads the measured durations of the
 # tests it ran, and the `durations` job merges them into one `test-durations`
@@ -140,6 +142,45 @@ jobs:
       - *install
       - name: pytest (serial, no xdist)
         run: uv run --no-sync python -m pytest -q -m "serial" --durations=10
+
+  tests-postgres:
+    name: pytest (PostgreSQL backend)
+    # The `postgres`-marked tests (records routes, the storage backend and the
+    # PostgreSQL schema runner) against a real server. Everywhere else they skip:
+    # KALOS_TEST_DATABASE_URL is set only here. The password is a throwaway for
+    # this job's service container, never a secret. Each test works in its own
+    # schema, so they run in parallel.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: kalos
+          POSTGRES_PASSWORD: kalos-ci-throwaway
+          POSTGRES_DB: kalos_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kalos -d kalos_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      KALOS_TEST_DATABASE_URL: postgresql://kalos:kalos-ci-throwaway@127.0.0.1:5432/kalos_test
+    steps:
+      - uses: actions/checkout@v4
+      - *setup-uv
+      - name: Create a venv and install the locked versions (ml, portal, dev, postgres; CPU torch)
+        run: |
+          uv venv --python "$PYTHON_VERSION" .venv
+          uv export --frozen --extra ml --extra portal --extra dev --extra postgres \
+            --no-emit-project --no-hashes -o "$RUNNER_TEMP/constraints.txt"
+          uv pip install -e ".[ml,portal,dev,postgres]" -c "$RUNNER_TEMP/constraints.txt"
+      - name: PostgreSQL client tools (the verified-backup test needs pg_dump/pg_restore)
+        run: |
+          sudo apt-get install -y -qq postgresql-client >/dev/null 2>&1 || true
+          pg_dump --version || echo "pg_dump unavailable: the verified-backup test will skip"
+      - name: pytest (-m postgres)
+        run: uv run --no-sync python -m pytest -v -m postgres -n auto -rs
 
   durations:
     name: merge test durations
