@@ -14,7 +14,8 @@
   "F04: gates that gate (verdict withholds/labels proposals; floor needs CI>0 and n>=12; feasibility gates not applicable below 5 non-producers; cv_topk under minimize)",
   "F04 follow-up: reliability.verdict (not_judged below 12 runs / 3 groups; clears_floor null then)",
   "F15: selection-aware per-proposal intervals (top-30% held-out runs per fold, pooled repeats, sd floored at the 90th percentile)",
-  "Caveat wording: proposal caveats say what the band was calibrated on and the coverage measured at proposed recipes, never that the range 'is calibrated' (message text only; no number changed)"
+  "Caveat wording: proposal caveats say what the band was calibrated on and the coverage measured at proposed recipes, never that the range 'is calibrated' (message text only; no number changed)",
+  "Merge of main (#164 review fixes, #165 clones): additive fields only (cv_topk.direction, p_improve/expected_improvement.description, the strain blocks) plus the intended strain fix gp_shapes available on mixed fits (mixed_medium); no trust-layer number changed"
  ],
  "sheets": {
   "batch_text": {
@@ -37,6 +38,7 @@
     "returned": 5
    },
    "best": 0.8068,
+   "categorical_effects": null,
    "categorical_features": [],
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
@@ -119,6 +121,15 @@
     "n_units": 48,
     "unit": "recipe"
    },
+   "correlation_skipped": [],
+   "covariates": {
+    "columns": [],
+    "fitted": [],
+    "held": {},
+    "not_fitted": {},
+    "note": "covariates are recorded run properties: never proposed, never in a recipe",
+    "source": null
+   },
    "cv_ci95": [
     -0.471,
     0.254
@@ -197,6 +208,7 @@
     -0.094
    ],
    "cv_topk": {
+    "direction": "highest",
     "evaluable": true,
     "k": 5,
     "n": 48,
@@ -266,6 +278,7 @@
      "survives_fdr": false
     }
    ],
+   "drivers_skipped": [],
    "embedding": {
     "encoding": "standardized_continuous_one_hot_categorical",
     "method": "pca",
@@ -693,7 +706,7 @@
      "gp_intervals": "observation (latent + observation noise), one new measurement",
      "incumbent": "the value the proposal annotation compares against (best single measurement, or best replicate-averaged recipe mean when the replicate-aware surrogate proposed); analytic EI is reported for ranking context, the batch itself was chosen by qLogNEI",
      "note": "model-based, not held-out calibrated",
-     "p_improve": "latent mean (no observation noise)",
+     "p_improve": "latent mean (no observation noise): P(the model's mean beats the incumbent), not P(one new measurement beats it)",
      "quantiles": "observation (latent + observation noise), one new measurement"
     },
     "levels": [
@@ -1028,6 +1041,7 @@
      0.0218
     ]
    ],
+   "oof_levels": {},
    "orientation": null,
    "promotion": {
     "failures": [
@@ -1083,6 +1097,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.8068,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -1189,6 +1204,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.8068,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -1231,6 +1247,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.8068,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -1337,6 +1354,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.8068,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -1379,6 +1397,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.8068,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -1485,6 +1504,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.8068,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -1527,6 +1547,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.8068,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -1633,6 +1654,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.8068,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -1675,6 +1697,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.8068,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -1781,6 +1804,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.8068,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -3899,7 +3923,20 @@
      ]
     }
    ],
+   "slices_by_level": {},
+   "slices_by_level_skipped": {},
    "slices_skipped": [],
+   "strain_summary": {
+    "available": false,
+    "column": null,
+    "fixed_level": null,
+    "levels": [],
+    "policy": null,
+    "reason": "no clone column: declare one (strain_column in the campaign setup, or roles.strain) to see per-clone results",
+    "reference_level": null,
+    "refusals": [],
+    "source": null
+   },
    "target": "titer",
    "target_unit": {
     "header": "titer",
@@ -4116,6 +4153,7 @@
     "returned": 5
    },
    "best": 0.942,
+   "categorical_effects": null,
    "categorical_features": [],
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
@@ -4198,6 +4236,15 @@
     "n_units": 30,
     "unit": "recipe"
    },
+   "correlation_skipped": [],
+   "covariates": {
+    "columns": [],
+    "fitted": [],
+    "held": {},
+    "not_fitted": {},
+    "note": "covariates are recorded run properties: never proposed, never in a recipe",
+    "source": null
+   },
    "cv_ci95": [
     -0.131,
     0.563
@@ -4256,6 +4303,7 @@
     0.197
    ],
    "cv_topk": {
+    "direction": "highest",
     "evaluable": true,
     "k": 5,
     "n": 30,
@@ -4325,6 +4373,7 @@
      "survives_fdr": false
     }
    ],
+   "drivers_skipped": [],
    "embedding": {
     "encoding": "standardized_continuous_one_hot_categorical",
     "method": "pca",
@@ -4697,7 +4746,7 @@
      "gp_intervals": "observation (latent + observation noise), one new measurement",
      "incumbent": "the value the proposal annotation compares against (best single measurement, or best replicate-averaged recipe mean when the replicate-aware surrogate proposed); analytic EI is reported for ranking context, the batch itself was chosen by qLogNEI",
      "note": "model-based, not held-out calibrated",
-     "p_improve": "latent mean (no observation noise)",
+     "p_improve": "latent mean (no observation noise): P(the model's mean beats the incumbent), not P(one new measurement beats it)",
      "quantiles": "observation (latent + observation noise), one new measurement"
     },
     "levels": [
@@ -4958,6 +5007,7 @@
      0.1339
     ]
    ],
+   "oof_levels": {},
    "orientation": null,
    "promotion": {
     "failures": [
@@ -5011,6 +5061,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.942,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -5114,6 +5165,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.942,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -5156,6 +5208,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.942,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -5259,6 +5312,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.942,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -5301,6 +5355,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.942,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -5404,6 +5459,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.942,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -5446,6 +5502,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.942,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -5549,6 +5606,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.942,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -5591,6 +5649,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.942,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -5694,6 +5753,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.942,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -7715,7 +7775,20 @@
      ]
     }
    ],
+   "slices_by_level": {},
+   "slices_by_level_skipped": {},
    "slices_skipped": [],
+   "strain_summary": {
+    "available": false,
+    "column": null,
+    "fixed_level": null,
+    "levels": [],
+    "policy": null,
+    "reason": "no clone column: declare one (strain_column in the campaign setup, or roles.strain) to see per-clone results",
+    "reference_level": null,
+    "refusals": [],
+    "source": null
+   },
    "target": "titer_g_L",
    "target_unit": {
     "header": "titer_g_L",
@@ -7872,6 +7945,7 @@
     "returned": 5
    },
    "best": 3.4698,
+   "categorical_effects": null,
    "categorical_features": [],
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
@@ -7943,6 +8017,15 @@
     "n_rows": 35,
     "n_units": 35,
     "unit": "recipe"
+   },
+   "correlation_skipped": [],
+   "covariates": {
+    "columns": [],
+    "fitted": [],
+    "held": {},
+    "not_fitted": {},
+    "note": "covariates are recorded run properties: never proposed, never in a recipe",
+    "source": null
    },
    "cv_ci95": [
     0.165,
@@ -8026,6 +8109,7 @@
     0.549
    ],
    "cv_topk": {
+    "direction": "highest",
     "evaluable": true,
     "k": 5,
     "n": 35,
@@ -8083,6 +8167,7 @@
      "survives_fdr": false
     }
    ],
+   "drivers_skipped": [],
    "embedding": {
     "encoding": "standardized_continuous_one_hot_categorical",
     "method": "pca",
@@ -8463,7 +8548,7 @@
      "gp_intervals": "observation (latent + observation noise), one new measurement",
      "incumbent": "the value the proposal annotation compares against (best single measurement, or best replicate-averaged recipe mean when the replicate-aware surrogate proposed); analytic EI is reported for ranking context, the batch itself was chosen by qLogNEI",
      "note": "model-based, not held-out calibrated",
-     "p_improve": "latent mean (no observation noise)",
+     "p_improve": "latent mean (no observation noise): P(the model's mean beats the incumbent), not P(one new measurement beats it)",
      "quantiles": "observation (latent + observation noise), one new measurement"
     },
     "levels": [
@@ -8745,6 +8830,7 @@
      1.7516
     ]
    ],
+   "oof_levels": {},
    "orientation": null,
    "promotion": {
     "failures": [],
@@ -8793,6 +8879,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 3.4698,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -8899,6 +8986,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 3.4698,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -8939,6 +9027,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 3.4698,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -9045,6 +9134,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 3.4698,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -9085,6 +9175,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 3.4698,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -9191,6 +9282,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 3.4698,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -9231,6 +9323,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 3.4698,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -9337,6 +9430,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 3.4698,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -9377,6 +9471,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 3.4698,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -9483,6 +9578,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 3.4698,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -11279,7 +11375,20 @@
      ]
     }
    ],
+   "slices_by_level": {},
+   "slices_by_level_skipped": {},
    "slices_skipped": [],
+   "strain_summary": {
+    "available": false,
+    "column": null,
+    "fixed_level": null,
+    "levels": [],
+    "policy": null,
+    "reason": "no clone column: declare one (strain_column in the campaign setup, or roles.strain) to see per-clone results",
+    "reference_level": null,
+    "refusals": [],
+    "source": null
+   },
    "target": "titer",
    "target_unit": {
     "header": "titer",
@@ -11428,6 +11537,7 @@
     "returned": 5
    },
    "best": 2.477,
+   "categorical_effects": null,
    "categorical_features": [],
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
@@ -11510,6 +11620,15 @@
     "n_units": 60,
     "unit": "recipe"
    },
+   "correlation_skipped": [],
+   "covariates": {
+    "columns": [],
+    "fitted": [],
+    "held": {},
+    "not_fitted": {},
+    "note": "covariates are recorded run properties: never proposed, never in a recipe",
+    "source": null
+   },
    "cv_ci95": [
     -0.675,
     0.254
@@ -11573,6 +11692,7 @@
     -0.211
    ],
    "cv_topk": {
+    "direction": "highest",
     "evaluable": true,
     "k": 5,
     "n": 60,
@@ -11649,6 +11769,7 @@
      "survives_fdr": false
     }
    ],
+   "drivers_skipped": [],
    "embedding": {
     "encoding": "standardized_continuous_one_hot_categorical",
     "method": "pca",
@@ -12137,7 +12258,7 @@
      "gp_intervals": "observation (latent + observation noise), one new measurement",
      "incumbent": "the value the proposal annotation compares against (best single measurement, or best replicate-averaged recipe mean when the replicate-aware surrogate proposed); analytic EI is reported for ranking context, the batch itself was chosen by qLogNEI",
      "note": "model-based, not held-out calibrated",
-     "p_improve": "latent mean (no observation noise)",
+     "p_improve": "latent mean (no observation noise): P(the model's mean beats the incumbent), not P(one new measurement beats it)",
      "quantiles": "observation (latent + observation noise), one new measurement"
     },
     "levels": [
@@ -12518,6 +12639,7 @@
      0.7388
     ]
    ],
+   "oof_levels": {},
    "orientation": null,
    "promotion": {
     "failures": [
@@ -12572,6 +12694,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 2.477,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -12675,6 +12798,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 2.477,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -12717,6 +12841,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 2.477,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -12820,6 +12945,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 2.477,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -12862,6 +12988,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 2.477,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -12965,6 +13092,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 2.477,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -13007,6 +13135,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 2.477,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -13110,6 +13239,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 2.477,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -13152,6 +13282,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 2.477,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -13255,6 +13386,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 2.477,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -15426,7 +15558,20 @@
      ]
     }
    ],
+   "slices_by_level": {},
+   "slices_by_level_skipped": {},
    "slices_skipped": [],
+   "strain_summary": {
+    "available": false,
+    "column": null,
+    "fixed_level": null,
+    "levels": [],
+    "policy": null,
+    "reason": "no clone column: declare one (strain_column in the campaign setup, or roles.strain) to see per-clone results",
+    "reference_level": null,
+    "refusals": [],
+    "source": null
+   },
    "target": "titer",
    "target_unit": {
     "header": "titer",
@@ -15649,6 +15794,7 @@
     "returned": 5
    },
    "best": 0.046,
+   "categorical_effects": null,
    "categorical_features": [],
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
@@ -15721,6 +15867,15 @@
     "n_units": 24,
     "unit": "recipe"
    },
+   "correlation_skipped": [],
+   "covariates": {
+    "columns": [],
+    "fitted": [],
+    "held": {},
+    "not_fitted": {},
+    "note": "covariates are recorded run properties: never proposed, never in a recipe",
+    "source": null
+   },
    "cv_ci95": [
     0.858,
     0.993
@@ -15784,6 +15939,7 @@
     0.963
    ],
    "cv_topk": {
+    "direction": "lowest",
     "evaluable": true,
     "k": 5,
     "n": 24,
@@ -15841,6 +15997,7 @@
      "survives_fdr": false
     }
    ],
+   "drivers_skipped": [],
    "embedding": {
     "encoding": "standardized_continuous_one_hot_categorical",
     "method": "pca",
@@ -16168,7 +16325,7 @@
      "gp_intervals": "observation (latent + observation noise), one new measurement",
      "incumbent": "the value the proposal annotation compares against (best single measurement, or best replicate-averaged recipe mean when the replicate-aware surrogate proposed); analytic EI is reported for ranking context, the batch itself was chosen by qLogNEI",
      "note": "model-based, not held-out calibrated",
-     "p_improve": "latent mean (no observation noise)",
+     "p_improve": "latent mean (no observation noise): P(the model's mean beats the incumbent), not P(one new measurement beats it)",
      "quantiles": "observation (latent + observation noise), one new measurement"
     },
     "levels": [
@@ -16404,6 +16561,7 @@
      7.2074
     ]
    ],
+   "oof_levels": {},
    "orientation": null,
    "promotion": {
     "failures": [],
@@ -16450,6 +16608,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.046,
       "incumbent_basis": "best_measured_single",
       "maximize": false,
@@ -16553,6 +16712,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.046,
       "incumbent_basis": "best_measured_single",
       "maximize": false,
@@ -16593,6 +16753,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.046,
       "incumbent_basis": "best_measured_single",
       "maximize": false,
@@ -16696,6 +16857,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.046,
       "incumbent_basis": "best_measured_single",
       "maximize": false,
@@ -16736,6 +16898,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.046,
       "incumbent_basis": "best_measured_single",
       "maximize": false,
@@ -16839,6 +17002,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.046,
       "incumbent_basis": "best_measured_single",
       "maximize": false,
@@ -16879,6 +17043,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.046,
       "incumbent_basis": "best_measured_single",
       "maximize": false,
@@ -16982,6 +17147,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.046,
       "incumbent_basis": "best_measured_single",
       "maximize": false,
@@ -17022,6 +17188,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 0.046,
       "incumbent_basis": "best_measured_single",
       "maximize": false,
@@ -17125,6 +17292,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 0.046,
       "incumbent_basis": "best_measured_single",
       "maximize": false,
@@ -18882,7 +19050,20 @@
      ]
     }
    ],
+   "slices_by_level": {},
+   "slices_by_level_skipped": {},
    "slices_skipped": [],
+   "strain_summary": {
+    "available": false,
+    "column": null,
+    "fixed_level": null,
+    "levels": [],
+    "policy": null,
+    "reason": "no clone column: declare one (strain_column in the campaign setup, or roles.strain) to see per-clone results",
+    "reference_level": null,
+    "refusals": [],
+    "source": null
+   },
    "target": "impurity_pct",
    "target_unit": {
     "header": "impurity_pct",
@@ -19024,6 +19205,49 @@
     "returned": 5
    },
    "best": 3.032,
+   "categorical_effects": {
+    "basis": "measured",
+    "effect_size": "epsilon_squared",
+    "fdr_method": "benjamini_hochberg",
+    "fdr_q": 0.05,
+    "features": [
+     {
+      "epsilon_sq": 0.88,
+      "h": 20.48,
+      "kind": "categorical",
+      "levels": [
+       {
+        "basis": "measured",
+        "level": "MedA",
+        "mean": 1.8275,
+        "n_recipes": 8
+       },
+       {
+        "basis": "measured",
+        "level": "MedB",
+        "mean": 2.3406,
+        "n_recipes": 8
+       },
+       {
+        "basis": "measured",
+        "level": "MedC",
+        "mean": 2.8255,
+        "n_recipes": 8
+       }
+      ],
+      "n_levels": 3,
+      "n_levels_tested": 3,
+      "n_units": 24,
+      "name": "medium",
+      "p": 3.6e-05,
+      "reason": null,
+      "survives_fdr": true
+     }
+    ],
+    "method": "kruskal_wallis",
+    "note": "association across levels in the measured data, not adjusted for the other inputs; for the clone see strain_summary.levels[].adjusted_effect",
+    "unit": "recipe"
+   },
    "categorical_features": [
     "medium"
    ],
@@ -19098,6 +19322,20 @@
     "n_units": 24,
     "unit": "recipe"
    },
+   "correlation_skipped": [
+    {
+     "feature": "medium",
+     "reason": "categorical: a signed rank correlation is not defined for unordered labels; see categorical_effects"
+    }
+   ],
+   "covariates": {
+    "columns": [],
+    "fitted": [],
+    "held": {},
+    "not_fitted": {},
+    "note": "covariates are recorded run properties: never proposed, never in a recipe",
+    "source": null
+   },
    "cv_ci95": [
     0.813,
     0.983
@@ -19156,6 +19394,7 @@
     0.945
    ],
    "cv_topk": {
+    "direction": "highest",
     "evaluable": true,
     "k": 5,
     "n": 24,
@@ -19211,6 +19450,12 @@
      "rho": 0.159,
      "significant": false,
      "survives_fdr": false
+    }
+   ],
+   "drivers_skipped": [
+    {
+     "feature": "medium",
+     "reason": "categorical: a signed rank correlation is not defined for unordered labels; see categorical_effects"
     }
    ],
    "embedding": {
@@ -19359,16 +19604,40 @@
     "medium"
    ],
    "gp_shapes": {
-    "available": false,
-    "features": [],
+    "available": true,
+    "features": [
+     {
+      "lengthscale": 0.2399,
+      "missed_by_spearman": false,
+      "name": "temp_C",
+      "optimum_at": null,
+      "peak_gain": null,
+      "peak_separation_sd": null,
+      "relevance": 0.5637,
+      "shape": "flat",
+      "spearman_rho": 0.4053
+     },
+     {
+      "lengthscale": 0.31,
+      "missed_by_spearman": true,
+      "name": "pH",
+      "optimum_at": 7.0206,
+      "peak_gain": 0.3001,
+      "peak_separation_sd": 2.663,
+      "relevance": 0.4363,
+      "shape": "interior_minimum",
+      "spearman_rho": 0.1591
+     }
+    ],
     "n_features": 2,
-    "reason": "posterior sweep failed: RuntimeError",
+    "reason": null,
     "swept_at": "incumbent",
     "unmodeled": [
      "causation (these are associations in an observational fit, not causal effects)",
      "the response away from the incumbent (each shape holds along one axis, with the other features fixed at the best observed run)",
      "combinations never actually observed together",
-     "scale-up transfer"
+     "scale-up transfer",
+     "the response at other levels of the unswept (categorical) inputs: each sweep holds them at the incumbent's level"
     ]
    },
    "group_col": null,
@@ -19517,7 +19786,7 @@
      "gp_intervals": "observation (latent + observation noise), one new measurement",
      "incumbent": "the value the proposal annotation compares against (best single measurement, or best replicate-averaged recipe mean when the replicate-aware surrogate proposed); analytic EI is reported for ranking context, the batch itself was chosen by qLogNEI",
      "note": "model-based, not held-out calibrated",
-     "p_improve": "latent mean (no observation noise)",
+     "p_improve": "latent mean (no observation noise): P(the model's mean beats the incumbent), not P(one new measurement beats it)",
      "quantiles": "observation (latent + observation noise), one new measurement"
     },
     "levels": [
@@ -19760,6 +20029,7 @@
      1.8801
     ]
    ],
+   "oof_levels": {},
    "orientation": null,
    "promotion": {
     "failures": [],
@@ -19806,6 +20076,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 3.032,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -19909,6 +20180,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 3.032,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -19950,6 +20222,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 3.032,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -20053,6 +20326,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 3.032,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -20094,6 +20368,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 3.032,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -20197,6 +20472,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 3.032,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -20238,6 +20514,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 3.032,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -20341,6 +20618,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 3.032,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -20382,6 +20660,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 3.032,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -20485,6 +20764,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 3.032,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -22237,12 +22517,25 @@
      ]
     }
    ],
+   "slices_by_level": {},
+   "slices_by_level_skipped": {},
    "slices_skipped": [
     {
      "feature": "medium",
      "reason": "categorical"
     }
    ],
+   "strain_summary": {
+    "available": false,
+    "column": null,
+    "fixed_level": null,
+    "levels": [],
+    "policy": null,
+    "reason": "no clone column: declare one (strain_column in the campaign setup, or roles.strain) to see per-clone results",
+    "reference_level": null,
+    "refusals": [],
+    "source": null
+   },
    "target": "titer_g_L",
    "target_unit": {
     "header": "titer_g_L",
@@ -22376,6 +22669,7 @@
     "returned": 5
    },
    "best": 6.64,
+   "categorical_effects": null,
    "categorical_features": [],
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
@@ -22458,6 +22752,15 @@
     "n_units": 20,
     "unit": "recipe"
    },
+   "correlation_skipped": [],
+   "covariates": {
+    "columns": [],
+    "fitted": [],
+    "held": {},
+    "not_fitted": {},
+    "note": "covariates are recorded run properties: never proposed, never in a recipe",
+    "source": null
+   },
    "cv_ci95": [
     -0.806,
     0.178
@@ -22516,6 +22819,7 @@
     -0.595
    ],
    "cv_topk": {
+    "direction": "highest",
     "evaluable": true,
     "k": 5,
     "n": 20,
@@ -22585,6 +22889,7 @@
      "survives_fdr": false
     }
    ],
+   "drivers_skipped": [],
    "embedding": {
     "encoding": "standardized_continuous_one_hot_categorical",
     "method": "pca",
@@ -22873,7 +23178,7 @@
      "gp_intervals": "observation (latent + observation noise), one new measurement",
      "incumbent": "the value the proposal annotation compares against (best single measurement, or best replicate-averaged recipe mean when the replicate-aware surrogate proposed); analytic EI is reported for ranking context, the batch itself was chosen by qLogNEI",
      "note": "model-based, not held-out calibrated",
-     "p_improve": "latent mean (no observation noise)",
+     "p_improve": "latent mean (no observation noise): P(the model's mean beats the incumbent), not P(one new measurement beats it)",
      "quantiles": "observation (latent + observation noise), one new measurement"
     },
     "levels": [
@@ -23096,6 +23401,7 @@
      4.9421
     ]
    ],
+   "oof_levels": {},
    "orientation": null,
    "promotion": {
     "failures": [
@@ -23147,6 +23453,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 6.64,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -23250,6 +23557,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 6.64,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -23292,6 +23600,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 6.64,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -23395,6 +23704,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 6.64,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -23437,6 +23747,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 6.64,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -23540,6 +23851,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 6.64,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -23582,6 +23894,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 6.64,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -23685,6 +23998,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 6.64,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -23727,6 +24041,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 6.64,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -23830,6 +24145,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 6.64,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -25801,7 +26117,20 @@
      ]
     }
    ],
+   "slices_by_level": {},
+   "slices_by_level_skipped": {},
    "slices_skipped": [],
+   "strain_summary": {
+    "available": false,
+    "column": null,
+    "fixed_level": null,
+    "levels": [],
+    "policy": null,
+    "reason": "no clone column: declare one (strain_column in the campaign setup, or roles.strain) to see per-clone results",
+    "reference_level": null,
+    "refusals": [],
+    "source": null
+   },
    "target": "titer",
    "target_unit": {
     "header": "titer",
@@ -25984,6 +26313,7 @@
     "returned": 5
    },
    "best": 5.523,
+   "categorical_effects": null,
    "categorical_features": [],
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
@@ -26056,6 +26386,15 @@
     "n_units": 24,
     "unit": "recipe"
    },
+   "correlation_skipped": [],
+   "covariates": {
+    "columns": [],
+    "fitted": [],
+    "held": {},
+    "not_fitted": {},
+    "note": "covariates are recorded run properties: never proposed, never in a recipe",
+    "source": null
+   },
    "cv_ci95": [
     0.94,
     0.999
@@ -26119,6 +26458,7 @@
     0.992
    ],
    "cv_topk": {
+    "direction": "highest",
     "evaluable": true,
     "k": 5,
     "n": 24,
@@ -26176,6 +26516,7 @@
      "survives_fdr": false
     }
    ],
+   "drivers_skipped": [],
    "embedding": {
     "encoding": "standardized_continuous_one_hot_categorical",
     "method": "pca",
@@ -26502,7 +26843,7 @@
      "gp_intervals": "observation (latent + observation noise), one new measurement",
      "incumbent": "the value the proposal annotation compares against (best single measurement, or best replicate-averaged recipe mean when the replicate-aware surrogate proposed); analytic EI is reported for ranking context, the batch itself was chosen by qLogNEI",
      "note": "model-based, not held-out calibrated",
-     "p_improve": "latent mean (no observation noise)",
+     "p_improve": "latent mean (no observation noise): P(the model's mean beats the incumbent), not P(one new measurement beats it)",
      "quantiles": "observation (latent + observation noise), one new measurement"
     },
     "levels": [
@@ -26738,6 +27079,7 @@
      0.0171
     ]
    ],
+   "oof_levels": {},
    "orientation": null,
    "promotion": {
     "failures": [],
@@ -26784,6 +27126,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 5.523,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -26887,6 +27230,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 5.523,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -26927,6 +27271,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 5.523,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -27030,6 +27375,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 5.523,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -27070,6 +27416,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 5.523,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -27173,6 +27520,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 5.523,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -27213,6 +27561,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 5.523,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -27316,6 +27665,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 5.523,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -27356,6 +27706,7 @@
     {
      "expected_improvement": {
       "basis": "model",
+      "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent",
       "incumbent": 5.523,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -27459,6 +27810,7 @@
      "p_feasible": null,
      "p_improve": {
       "basis": "model",
+      "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it",
       "incumbent": 5.523,
       "incumbent_basis": "best_measured_single",
       "maximize": true,
@@ -29200,7 +29552,20 @@
      ]
     }
    ],
+   "slices_by_level": {},
+   "slices_by_level_skipped": {},
    "slices_skipped": [],
+   "strain_summary": {
+    "available": false,
+    "column": null,
+    "fixed_level": null,
+    "levels": [],
+    "policy": null,
+    "reason": "no clone column: declare one (strain_column in the campaign setup, or roles.strain) to see per-clone results",
+    "reference_level": null,
+    "refusals": [],
+    "source": null
+   },
    "target": "lipase_titer",
    "target_unit": {
     "header": "lipase_titer",
