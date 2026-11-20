@@ -5,8 +5,8 @@ Every interval Kalos shows carries the basis of its coverage claim
 proposals are selected for high predicted values, and that selection lowers the
 coverage at the recipes the user actually runs. How much lower was MEASURED by
 `python -m kalos.bench.coverage_at_proposals` and is recorded here, so a client
-can show the measured number next to the nominal one instead of the word
-"calibrated".
+can show the measured number next to the nominal one instead of saying the
+band "is calibrated".
 
 The table is evidence, not a guarantee: synthetic simulators (Hartmann-6, the
 bioprocess simulator behind examples/synthetic_bioprocess, a heteroscedastic
@@ -127,26 +127,30 @@ def proposal_caveat(method: str, level: float) -> dict[str, Any]:
     rng = None if est is None else (
         f"{math.floor(est['measured_min'] * 100 + 1e-9)}-{math.floor(est['measured_max'] * 100 + 1e-9)}%")
     reached = est is not None and est["measured_min"] >= float(level)
+    # Wording rule (tests/test_interval_labels.py): say what the band was
+    # calibrated ON and what coverage was MEASURED at proposed recipes; never
+    # that a proposal's range "is calibrated".
     if method == "conformal_selection_aware":
-        lead = (f"This {pct}% range is calibrated on the held-out past runs the model ranked highest, "
-                "to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: ")
+        lead = (f"Based on held-out runs: this {pct}% range was sized on the held-out past runs the "
+                "model ranked highest, to mimic how proposals are chosen. ")
+        if est is None:
+            tail = "Its coverage at proposed recipes has not been measured."
+        elif reached:
+            tail = (f"At proposed recipes this {pct}% range covered {rng} in simulation "
+                    "(measured, not guaranteed).")
+        else:
+            tail = (f"At proposed recipes this {pct}% range covered {rng} in simulation, "
+                    f"below {pct}% in some cases (measured, not guaranteed).")
+        code = CAVEAT_CODE_MEASURED if reached else CAVEAT_CODE
+    else:
+        lead = ("Based on held-out runs similar to past runs. Proposals are chosen for high predicted "
+                "values, so coverage at proposed recipes is lower: ")
         if est is None:
             tail = "it has not been measured."
         elif reached:
-            tail = f"in simulation it contained the measured result for {rng} of proposals."
+            tail = f"in simulation this {pct}% range covered {rng}."
         else:
-            tail = (f"in simulation it contained the measured result for {rng} of proposals, "
-                    f"below {pct}% in some cases.")
-        code = CAVEAT_CODE_MEASURED if reached else CAVEAT_CODE
-    else:
-        lead = (f"This {pct}% range is calibrated on held-out runs similar to past runs. Proposals are "
-                "chosen for high predicted values, so coverage at proposals is lower: ")
-        if est is None:
-            tail = "its coverage at proposals has not been measured."
-        elif reached:
-            tail = f"in simulation it contained the measured result for {rng} of proposals."
-        else:
-            tail = f"in simulation it contained the measured result for only {rng} of proposals."
+            tail = f"in simulation this {pct}% range covered only {rng}."
         code = CAVEAT_CODE
     return {"code": code, "message": lead + tail, "coverage_at_proposals_estimate": est}
 

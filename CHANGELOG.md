@@ -21,8 +21,10 @@ Newest first.
 
 ### Changed - honest interval labels (F02, ML audit B1)
 
+- Proposal caveat wording: no text next to a proposal interval says it "is calibrated". It says what the band was calibrated on and the coverage measured at proposed recipes, e.g. "Based on held-out runs: ... At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)." (95%: 96-99%). Guarded by `tests/test_interval_labels.py`.
+
 - Every band carries `coverage_basis`: `held_out_past_runs` for the conformal bands, `model_based` for the GP's own bands and quantiles.
-- Each proposal interval carries `caveat` (`code: coverage_lower_at_proposals`, a plain message and `coverage_at_proposals_estimate` with its source): the band is calibrated on held-out runs similar to past runs, and at proposals it was measured lower in simulation (90%: 60-81%, 95%: 76-86%; `python -m kalos.bench.coverage_at_proposals`, VALIDATION.md).
+- Each proposal interval carries `caveat` (`code: coverage_lower_at_proposals`, a plain message and `coverage_at_proposals_estimate` with its source): the band is calibrated on held-out runs similar to past runs, and at proposals it was measured lower in simulation (90%: 60-81%, 95%: 75-85%; `python -m kalos.bench.coverage_at_proposals`, VALIDATION.md).
 - `conformal_caveat` (cherry-picked from `arch-safe-now` 47143f3) labels the global `conformal_q` band the same way (measured 68-83% at proposals).
 - No number changes; the fields are additive.
 

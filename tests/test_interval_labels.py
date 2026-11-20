@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 
 import numpy as np
 import pandas as pd
@@ -56,10 +57,48 @@ def test_caveat_states_the_measured_range_in_plain_words():
     assert cav["code"] == CAVEAT_CODE
     lo = math.floor(cav["coverage_at_proposals_estimate"]["measured_min"] * 100 + 1e-9)
     hi = math.floor(cav["coverage_at_proposals_estimate"]["measured_max"] * 100 + 1e-9)
-    assert "held-out runs similar to past runs" in cav["message"]
+    assert cav["message"].startswith("Based on held-out runs similar to past runs.")
     assert f"{lo}-{hi}%" in cav["message"] and "lower" in cav["message"]
     # an unmeasured method says so instead of inventing a number
     assert "not been measured" in proposal_caveat("no_such_method", 0.9)["message"]
+
+
+_CALIBRATED_CLAIM = re.compile(r"\b(is|are|was|were|been|be)\s+(well[- ])?calibrated\b", re.I)
+
+
+def _assert_honest_proposal_wording(message: str) -> None:
+    """No text next to a proposal interval says it 'is calibrated'; it says
+    what the band was calibrated on and what coverage was measured."""
+    assert not _CALIBRATED_CLAIM.search(message), message
+    assert "range is calibrated" not in message.lower(), message
+    assert message.startswith("Based on held-out runs"), message
+
+
+def test_no_proposal_caveat_says_the_range_is_calibrated():
+    methods = (*MEASURED, "no_such_method")
+    for method in methods:
+        for level in LEVELS:
+            _assert_honest_proposal_wording(proposal_caveat(method, level)["message"])
+    msg = conformal_band_caveat(0.1)["message"]
+    assert not _CALIBRATED_CLAIM.search(msg), msg
+    # The held-out-run wording for the global band stays: that coverage WAS
+    # measured on held-out past runs.
+    assert msg.startswith("The +/- conformal_q band's coverage was measured on held-out past runs.")
+
+
+def test_selection_aware_caveat_states_coverage_measured_at_proposed_recipes():
+    for level, pct in ((0.9, 90), (0.95, 95)):
+        cav = proposal_caveat("conformal_selection_aware", level)
+        est = cav["coverage_at_proposals_estimate"]
+        lo = math.floor(est["measured_min"] * 100 + 1e-9)
+        hi = math.floor(est["measured_max"] * 100 + 1e-9)
+        assert cav["code"] == CAVEAT_CODE_MEASURED
+        assert cav["message"].startswith("Based on held-out runs:")
+        assert f"At proposed recipes this {pct}% range covered {lo}-{hi}% in simulation" in cav["message"]
+        assert "not guaranteed" in cav["message"]
+    # The committed benchmark numbers (seeds 100-139): 90% -> 92-99%, 95% -> 96-99%.
+    assert "covered 92-99% in simulation" in proposal_caveat("conformal_selection_aware", 0.9)["message"]
+    assert "covered 96-99% in simulation" in proposal_caveat("conformal_selection_aware", 0.95)["message"]
 
 
 def test_every_proposal_interval_carries_its_basis_and_caveat():
@@ -132,6 +171,8 @@ def test_analysis_labels_every_band():
                    and iv["caveat"]["code"] in {CAVEAT_CODE, CAVEAT_CODE_MEASURED}
                    for iv in p["intervals"])
         assert all(g["coverage_basis"] == BASIS_MODEL for g in p["gp_intervals"])
+        for iv in p["intervals"]:
+            _assert_honest_proposal_wording(iv["caveat"]["message"])
 
 
 def test_evidence_table_matches_the_committed_benchmark_results():

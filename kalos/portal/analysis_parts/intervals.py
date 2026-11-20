@@ -28,7 +28,9 @@ for the GP's own bands. The conformal bands at proposals also carry a
 structured `caveat` (`code: "coverage_lower_at_proposals"`, a plain message and
 `coverage_at_proposals_estimate`, the coverage MEASURED at proposals in
 simulation with its source; `kalos/portal/analysis_parts/coverage_evidence.py`).
-A client must not write "calibrated" next to a proposal without that caveat.
+A client must not say a proposal's range "is calibrated": it shows the caveat,
+which names what the band was calibrated on and the coverage measured at
+proposed recipes.
 
 Torch-free: the surrogate is only ever called through its `posterior` method.
 """

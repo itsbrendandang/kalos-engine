@@ -13,7 +13,8 @@
   "F05: leak-free CV grouping (replicate clusters, batch/round/scale candidates, lowest score binds); batch columns not fitted",
   "F04: gates that gate (verdict withholds/labels proposals; floor needs CI>0 and n>=12; feasibility gates not applicable below 5 non-producers; cv_topk under minimize)",
   "F04 follow-up: reliability.verdict (not_judged below 12 runs / 3 groups; clears_floor null then)",
-  "F15: selection-aware per-proposal intervals (top-30% held-out runs per fold, pooled repeats, sd floored at the 90th percentile)"
+  "F15: selection-aware per-proposal intervals (top-30% held-out runs per fold, pooled repeats, sd floored at the 90th percentile)",
+  "Caveat wording: proposal caveats say what the band was calibrated on and the coverage measured at proposed recipes, never that the range 'is calibrated' (message text only; no number changed)"
  ],
  "sheets": {
   "batch_text": {
@@ -70,7 +71,7 @@
      }
     },
     "coverage_basis": "held_out_past_runs",
-    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 68-83% of proposals."
+    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 90% range covered only 68-83%."
    },
    "conformal_coverage": 0.9,
    "conformal_q": 1.8049,
@@ -588,7 +589,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
      },
      "0.95": {
       "code": "coverage_lower_at_proposals",
@@ -621,7 +622,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
+      "message": "Based on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 95% range covered only 75-85%."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -1142,7 +1143,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -1167,7 +1168,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
+        "message": "Based on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 95% range covered only 75-85%."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -1290,7 +1291,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -1315,7 +1316,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
+        "message": "Based on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 95% range covered only 75-85%."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -1438,7 +1439,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -1463,7 +1464,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
+        "message": "Based on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 95% range covered only 75-85%."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -1586,7 +1587,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -1611,7 +1612,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
+        "message": "Based on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 95% range covered only 75-85%."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -1734,7 +1735,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -1759,7 +1760,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
+        "message": "Based on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 95% range covered only 75-85%."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -4149,7 +4150,7 @@
      }
     },
     "coverage_basis": "held_out_past_runs",
-    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 68-83% of proposals."
+    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 90% range covered only 68-83%."
    },
    "conformal_coverage": 0.9,
    "conformal_q": 0.3937,
@@ -4591,7 +4592,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
      },
      "0.95": {
       "code": "coverage_measured_at_proposals",
@@ -4625,7 +4626,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -5070,7 +5071,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -5095,7 +5096,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -5215,7 +5216,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -5240,7 +5241,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -5360,7 +5361,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -5385,7 +5386,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -5505,7 +5506,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -5530,7 +5531,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -5650,7 +5651,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -5675,7 +5676,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -7905,7 +7906,7 @@
      }
     },
     "coverage_basis": "held_out_past_runs",
-    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 68-83% of proposals."
+    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 90% range covered only 68-83%."
    },
    "conformal_coverage": 0.9,
    "conformal_q": 1.8217,
@@ -8358,7 +8359,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
      },
      "0.95": {
       "code": "coverage_lower_at_proposals",
@@ -8391,7 +8392,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
+      "message": "Based on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 95% range covered only 75-85%."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -8852,7 +8853,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -8877,7 +8878,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
+        "message": "Based on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 95% range covered only 75-85%."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -8998,7 +8999,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -9023,7 +9024,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
+        "message": "Based on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 95% range covered only 75-85%."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -9144,7 +9145,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -9169,7 +9170,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
+        "message": "Based on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 95% range covered only 75-85%."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -9290,7 +9291,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -9315,7 +9316,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
+        "message": "Based on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 95% range covered only 75-85%."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -9436,7 +9437,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -9461,7 +9462,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 75-85% of proposals."
+        "message": "Based on held-out runs similar to past runs. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 95% range covered only 75-85%."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_past_runs",
@@ -11461,7 +11462,7 @@
      }
     },
     "coverage_basis": "held_out_past_runs",
-    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 68-83% of proposals."
+    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 90% range covered only 68-83%."
    },
    "conformal_coverage": 0.9,
    "conformal_q": 2.3638,
@@ -12031,7 +12032,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
      },
      "0.95": {
       "code": "coverage_measured_at_proposals",
@@ -12065,7 +12066,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -12631,7 +12632,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -12656,7 +12657,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -12776,7 +12777,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -12801,7 +12802,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -12921,7 +12922,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -12946,7 +12947,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -13066,7 +13067,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -13091,7 +13092,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -13211,7 +13212,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -13236,7 +13237,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -15682,7 +15683,7 @@
      }
     },
     "coverage_basis": "held_out_past_runs",
-    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 68-83% of proposals."
+    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 90% range covered only 68-83%."
    },
    "conformal_coverage": 0.9,
    "conformal_q": 1.2691,
@@ -16062,7 +16063,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
      },
      "0.95": {
       "code": "coverage_measured_at_proposals",
@@ -16096,7 +16097,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -16509,7 +16510,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -16534,7 +16535,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -16652,7 +16653,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -16677,7 +16678,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -16795,7 +16796,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -16820,7 +16821,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -16938,7 +16939,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -16963,7 +16964,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -17081,7 +17082,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -17106,7 +17107,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -19059,7 +19060,7 @@
      }
     },
     "coverage_basis": "held_out_past_runs",
-    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 68-83% of proposals."
+    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 90% range covered only 68-83%."
    },
    "conformal_coverage": 0.9,
    "conformal_q": 0.2267,
@@ -19411,7 +19412,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
      },
      "0.95": {
       "code": "coverage_measured_at_proposals",
@@ -19445,7 +19446,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -19865,7 +19866,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -19890,7 +19891,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -20009,7 +20010,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -20034,7 +20035,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -20153,7 +20154,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -20178,7 +20179,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -20297,7 +20298,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -20322,7 +20323,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -20441,7 +20442,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -20466,7 +20467,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -22409,7 +22410,7 @@
      }
     },
     "coverage_basis": "held_out_past_runs",
-    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 68-83% of proposals."
+    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 90% range covered only 68-83%."
    },
    "conformal_coverage": 0.9,
    "conformal_q": 2.1883,
@@ -22767,7 +22768,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
      },
      "0.95": {
       "code": "coverage_measured_at_proposals",
@@ -22801,7 +22802,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -23206,7 +23207,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -23231,7 +23232,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -23351,7 +23352,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -23376,7 +23377,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -23496,7 +23497,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -23521,7 +23522,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -23641,7 +23642,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -23666,7 +23667,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -23786,7 +23787,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -23811,7 +23812,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -26017,7 +26018,7 @@
      }
     },
     "coverage_basis": "held_out_past_runs",
-    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposals is lower: in simulation it contained the measured result for only 68-83% of proposals."
+    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 90% range covered only 68-83%."
    },
    "conformal_coverage": 0.9,
    "conformal_q": 0.2975,
@@ -26396,7 +26397,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
      },
      "0.95": {
       "code": "coverage_measured_at_proposals",
@@ -26430,7 +26431,7 @@
         "seeds_per_scenario": 40
        }
       },
-      "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
      }
     },
     "coverage_basis": "held_out_past_runs",
@@ -26843,7 +26844,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -26868,7 +26869,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -26986,7 +26987,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -27011,7 +27012,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -27129,7 +27130,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -27154,7 +27155,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -27272,7 +27273,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -27297,7 +27298,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -27415,7 +27416,7 @@
          "nominal": 0.9,
          "source": "interval_method.coverage_at_proposals.0.9"
         },
-        "message": "This 90% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 92-99% of proposals."
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.9,
        "coverage_basis": "held_out_top_ranked_runs",
@@ -27440,7 +27441,7 @@
          "nominal": 0.95,
          "source": "interval_method.coverage_at_proposals.0.95"
         },
-        "message": "This 95% range is calibrated on the held-out past runs the model ranked highest, to mimic how proposals are chosen. Its coverage at proposals is measured, not guaranteed: in simulation it contained the measured result for 96-99% of proposals."
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
        },
        "coverage": 0.95,
        "coverage_basis": "held_out_top_ranked_runs",

@@ -438,10 +438,15 @@ Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
     `quantiles` carry `coverage_basis: "model_based"`.
   - `proposals[].intervals[].caveat`: `{code: "coverage_lower_at_proposals",
     message, coverage_at_proposals_estimate}`. `message` is plain words for
-    display ("This 90% range is calibrated on held-out runs similar to past
-    runs. Proposals are chosen for high predicted values, so coverage at
-    proposals is lower: in simulation it contained the measured result for only
-    60-81% of proposals.").
+    display. It says what the band was calibrated on and the coverage measured
+    at proposed recipes, never that the range "is calibrated". Selection-aware
+    band (F15, `code: "coverage_measured_at_proposals"`): "Based on held-out
+    runs: this 90% range was sized on the held-out past runs the model ranked
+    highest, to mimic how proposals are chosen. At proposed recipes this 90%
+    range covered 92-99% in simulation (measured, not guaranteed)." Plain
+    fallback band: "Based on held-out runs similar to past runs. Proposals are
+    chosen for high predicted values, so coverage at proposed recipes is lower:
+    in simulation this 90% range covered only 60-81%."
   - `coverage_at_proposals_estimate` (per proposal, compact): `{nominal,
     measured_min, measured_max, basis: "simulation", source, benchmark}`, the
     coverage MEASURED at proposals by `python -m kalos.bench.coverage_at_proposals`
@@ -457,8 +462,8 @@ Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
   - `conformal_caveat` (top level, for `conformal_q`): `{code:
     "coverage_not_guaranteed", coverage_basis, message, caveat_code,
     coverage_at_proposals_estimate}`.
-  - Client rule: never write "calibrated" next to a proposal without the
-    caveat; show `measured_min`-`measured_max` next to the nominal level.
+  - Client rule: never say a proposal's range "is calibrated"; show the
+    caveat and `measured_min`-`measured_max` next to the nominal level.
 - `proposals[].gp_intervals[]` (always): `{coverage, method: "gp_posterior",
   posterior: "observation", note: "model-based, not held-out calibrated",
   available, lo, hi}`, Gaussian `pred +/- z * predictive_std`.
