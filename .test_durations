@@ -180,6 +180,7 @@
     "tests/test_assist_sop.py::test_fill_refuses_pipes_and_control_characters[Ana\\x00]": 0.028,
     "tests/test_assist_sop.py::test_fill_refuses_pipes_and_control_characters[Ana\\x07]": 0.031,
     "tests/test_assist_sop.py::test_fill_replaces_tokens_and_rejects_unknown_names_and_bad_values": 0.061,
+    "tests/test_assist_sop.py::test_letter_hex_ids_are_unique_valid_and_digit_free": 0.006205113000021356,
     "tests/test_assist_sop.py::test_markdown_uses_only_the_agreed_constructs[batch_recipe]": 0.017,
     "tests/test_assist_sop.py::test_markdown_uses_only_the_agreed_constructs[custom]": 0.017,
     "tests/test_assist_sop.py::test_markdown_uses_only_the_agreed_constructs[media_prep]": 0.016,
