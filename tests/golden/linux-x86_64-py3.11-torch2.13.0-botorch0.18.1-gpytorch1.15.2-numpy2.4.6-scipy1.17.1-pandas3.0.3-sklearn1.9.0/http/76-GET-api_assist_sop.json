@@ -1,0 +1,10 @@
+{
+ "request": "GET /api/assist/sop",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "drafts": []
+ }
+}

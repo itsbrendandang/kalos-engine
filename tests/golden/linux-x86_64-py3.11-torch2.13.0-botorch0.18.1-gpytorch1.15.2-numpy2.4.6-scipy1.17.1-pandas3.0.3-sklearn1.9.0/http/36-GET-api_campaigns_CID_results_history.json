@@ -1,0 +1,224 @@
+{
+ "request": "GET /api/campaigns/cmp_0000000000000000000000000000001e/results/history",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "campaign_id": "cmp_0000000000000000000000000000001e",
+  "limit": 100,
+  "results": {
+   "items": [
+    {
+     "id": 5,
+     "run_id": "00000000000000000000000000000050",
+     "version": 2,
+     "value": 1.008,
+     "previous_value": 1.008,
+     "reason": "re-assayed, dilution corrected",
+     "actor": "golden@lab",
+     "auth_method": "static",
+     "recorded_at": "<volatile>",
+     "is_correction": true,
+     "basis": "measured"
+    },
+    {
+     "id": 4,
+     "run_id": "00000000000000000000000000000051",
+     "version": 1,
+     "value": 0.138,
+     "previous_value": null,
+     "reason": null,
+     "actor": "golden@lab",
+     "auth_method": "static",
+     "recorded_at": "<volatile>",
+     "is_correction": false,
+     "basis": "measured"
+    },
+    {
+     "id": 3,
+     "run_id": "00000000000000000000000000000050",
+     "version": 1,
+     "value": 1.008,
+     "previous_value": null,
+     "reason": null,
+     "actor": "golden@lab",
+     "auth_method": "static",
+     "recorded_at": "<volatile>",
+     "is_correction": false,
+     "basis": "measured"
+    },
+    {
+     "id": 2,
+     "run_id": "00000000000000000000000000000039",
+     "version": 1,
+     "value": 0.469,
+     "previous_value": null,
+     "reason": null,
+     "actor": "golden@lab",
+     "auth_method": "static",
+     "recorded_at": "<volatile>",
+     "is_correction": false,
+     "basis": "measured"
+    },
+    {
+     "id": 1,
+     "run_id": "00000000000000000000000000000038",
+     "version": 1,
+     "value": 0.634,
+     "previous_value": null,
+     "reason": null,
+     "actor": "golden@lab",
+     "auth_method": "static",
+     "recorded_at": "<volatile>",
+     "is_correction": false,
+     "basis": "measured"
+    }
+   ],
+   "has_more": false,
+   "next_before_id": null
+  },
+  "audit": {
+   "items": [
+    {
+     "id": 23,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.reanalyze",
+     "campaign_id": "cmp_0000000000000000000000000000001e",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": null
+    },
+    {
+     "id": 22,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.result",
+     "campaign_id": "cmp_0000000000000000000000000000001e",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": "{\"actor\": \"golden@lab\", \"new_value\": 1.008, \"old_value\": 1.008, \"reason\": \"re-assayed, dilution corrected\", \"run_id\": \"00000000000000000000000000000050\", \"version\": 2}"
+    },
+    {
+     "id": 21,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.result",
+     "campaign_id": "cmp_0000000000000000000000000000001e",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": "{\"actor\": \"golden@lab\", \"new_value\": 0.138, \"old_value\": null, \"reason\": null, \"run_id\": \"00000000000000000000000000000051\", \"version\": 1}"
+    },
+    {
+     "id": 20,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.result",
+     "campaign_id": "cmp_0000000000000000000000000000001e",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": "{\"actor\": \"golden@lab\", \"new_value\": 1.008, \"old_value\": null, \"reason\": null, \"run_id\": \"00000000000000000000000000000050\", \"version\": 1}"
+    },
+    {
+     "id": 19,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.start",
+     "campaign_id": "cmp_0000000000000000000000000000001e",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": "runs=2"
+    },
+    {
+     "id": 18,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.reanalyze",
+     "campaign_id": "cmp_0000000000000000000000000000001e",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": null
+    },
+    {
+     "id": 17,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.result",
+     "campaign_id": "cmp_0000000000000000000000000000001e",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": "{\"actor\": \"golden@lab\", \"new_value\": 0.469, \"old_value\": null, \"reason\": null, \"run_id\": \"00000000000000000000000000000039\", \"version\": 1}"
+    },
+    {
+     "id": 16,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.result",
+     "campaign_id": "cmp_0000000000000000000000000000001e",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": "{\"actor\": \"golden@lab\", \"new_value\": 0.634, \"old_value\": null, \"reason\": null, \"run_id\": \"00000000000000000000000000000038\", \"version\": 1}"
+    },
+    {
+     "id": 15,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.start",
+     "campaign_id": "cmp_0000000000000000000000000000001e",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": "runs=2"
+    },
+    {
+     "id": 6,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.upload",
+     "campaign_id": "cmp_0000000000000000000000000000001e",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": null
+    },
+    {
+     "id": 5,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.create",
+     "campaign_id": "cmp_0000000000000000000000000000001e",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": null
+    }
+   ],
+   "has_more": false,
+   "next_before_id": null
+  },
+  "notes": {
+   "results": "append-only run_results rows; version 1 is the first value recorded, a row with previous_value is a correction; actor is shown as stored",
+   "audit": "audit_log rows for this campaign; subject and detail are shown as stored"
+  }
+ }
+}

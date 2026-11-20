@@ -1,0 +1,26 @@
+{
+ "request": "GET /api/jobs/job_0000000000000000000000000000005e",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "job": {
+   "id": "job_0000000000000000000000000000005e",
+   "campaign_id": "cmp_00000000000000000000000000000036",
+   "kind": "analysis",
+   "state": "cancelled",
+   "stage": "cancelled",
+   "progress": 0.0,
+   "attempts": 0,
+   "created_at": "<volatile>",
+   "started_at": null,
+   "finished_at": "<volatile>",
+   "updated_at": "<volatile>",
+   "cancel_requested": true,
+   "input_bytes": 424,
+   "error": null,
+   "campaign_generation": null
+  }
+ }
+}

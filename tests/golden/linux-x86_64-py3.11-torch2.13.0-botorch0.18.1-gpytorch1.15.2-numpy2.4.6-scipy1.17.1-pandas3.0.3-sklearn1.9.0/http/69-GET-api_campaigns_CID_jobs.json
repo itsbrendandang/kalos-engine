@@ -1,0 +1,28 @@
+{
+ "request": "GET /api/campaigns/cmp_00000000000000000000000000000036/jobs",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "jobs": [
+   {
+    "id": "job_0000000000000000000000000000005e",
+    "campaign_id": "cmp_00000000000000000000000000000036",
+    "kind": "analysis",
+    "state": "queued",
+    "stage": "queued",
+    "progress": 0.0,
+    "attempts": 0,
+    "created_at": "<volatile>",
+    "started_at": null,
+    "finished_at": null,
+    "updated_at": "<volatile>",
+    "cancel_requested": false,
+    "input_bytes": 424,
+    "error": null,
+    "campaign_generation": null
+   }
+  ]
+ }
+}
