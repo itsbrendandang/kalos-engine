@@ -70,7 +70,7 @@ removed one release after the last move.
 | `test_route_inventory.py` (`docs/routes.json`) | a route changed, disagrees with `docs/route-scopes.json`, or lives outside a router module |
 | `test_import_layers.py` (`scripts/import_layers.py`) | **report-only** for now: prints the edges that break the layer rules above against a baseline. Enforcing after the API move |
 | `test_module_aliases.py` (`kalos/_moved.py`) | a moved module's old path is not the very same module object |
-| golden oracle (`scripts/golden.py`, `.github/workflows/golden.yml`; landing before the first move) | any analysis or HTTP output differs byte for byte from `tests/golden/<platform+stack>/` |
+| golden oracle (`scripts/golden.py`, `.github/workflows/golden.yml`) | the engine's analysis or HTTP output on a fixed scenario differs byte for byte from the base commit's, computed on the same CI runner, and the PR does not declare the change in `tests/golden/CHANGES.md` (`scripts/golden.py record --reason`) |
 
 ## Moving code
 
