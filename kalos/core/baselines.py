@@ -53,6 +53,11 @@ MIN_SHARED_UNITS = 5
 MIN_BOOTSTRAP_CLUSTERS = 5
 """Fewer bootstrap clusters than this: report the point value, no CI, no verdict."""
 
+MIN_VERDICT_UNITS = 10
+"""Fewer paired units than this: the model comparison is reported, but
+`beats_carry_forward` is None (not judged). In a synthetic coverage check the
+paired-difference CI covered 0.85 at 5 units and 0.95 at 10 (see the PR)."""
+
 DEFAULT_N_BOOT = 1000
 CI_LEVEL = 0.95
 _MIN_VALID_BOOT_FRACTION = 0.5
@@ -163,7 +168,8 @@ def carry_forward_rank_agreement(
     exist, for Spearman and top-k, each with a paired cluster-bootstrap CI.
     `beats_carry_forward` is True only when the lower bound of the Spearman
     difference CI is above 0, False otherwise, and None (not judged) when
-    there is no CI. `verdict` states the result in one sentence.
+    there is no CI or fewer than `MIN_VERDICT_UNITS` (10) paired units (the
+    paired CI under-covers below that). `verdict` states the result in one sentence.
 
     Refusals (`evaluable=False`, with `code`, `reason`, `action`):
     `too_few_shared_units` (fewer than `min_units`, default 5),
@@ -324,6 +330,11 @@ def _judge_model(block: dict[str, Any], d_rho: list[float], d_tk: list[float], n
     block["top_k_difference_ci95"] = _ci(d_tk, n_boot)
     ci = block["spearman_difference_ci95"]
     diff = block["spearman_difference"]
+    if block["n_units"] < MIN_VERDICT_UNITS:
+        block["beats_carry_forward"] = None
+        block["verdict"] = (f"not judged: {block['n_units']} paired units; the paired confidence interval "
+                            f"is too unreliable below {MIN_VERDICT_UNITS}")
+        return
     if ci is None:
         block["beats_carry_forward"] = None
         block["verdict"] = (f"not judged: only {len(d_rho)} of {n_boot} bootstrap draws of the paired "
@@ -474,6 +485,7 @@ __all__ = [
     "DEFAULT_N_BOOT",
     "MIN_BOOTSTRAP_CLUSTERS",
     "MIN_SHARED_UNITS",
+    "MIN_VERDICT_UNITS",
     "FitPredict",
     "carry_forward_rank_agreement",
     "random_split_inflation",

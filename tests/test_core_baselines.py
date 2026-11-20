@@ -175,6 +175,15 @@ def test_model_with_real_signal_beats_carry_forward():
     assert "better than" in m["verdict"]
 
 
+def test_verdict_not_judged_below_ten_paired_units():
+    q, e, lt, ids = _units(9, seed=9, noise_earlier=1.0, noise_later=0.1)
+    r = carry_forward_rank_agreement(e, lt, ids, model_pred=q, n_boot=N_BOOT)
+    m = r["model"]
+    assert m["evaluable"] is True and m["spearman_difference_ci95"] is not None
+    assert m["beats_carry_forward"] is None
+    assert m["verdict"].startswith("not judged")
+
+
 def test_model_missing_predictions_is_not_judged():
     q, e, lt, ids = _units(10, seed=8)
     q = q.copy()
