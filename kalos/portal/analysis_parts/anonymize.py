@@ -7,6 +7,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable, Mapping, Sequence
 
+from kalos.analysis.viz_fields import anonymize_viz_fields
 from kalos.data.anonymizer import _hash
 from kalos.portal.analysis_parts.identifiers import _is_identifier_name
 from kalos.portal.analysis_parts.units import anonymize_target_unit
@@ -127,6 +128,13 @@ def _anonymize_result(
         out["response_surface"] = surf_out
     if isinstance(out.get("slices"), list):
         out["slices"] = [_alias_slice(sl, alias, alias_recipe) for sl in out["slices"]]
+    # E3/E12 additive keys: same aliasing as `response_surface` and the recipes;
+    # every label of an identifier or clone column is aliased, 0-run levels too.
+    out = anonymize_viz_fields(
+        out, alias=alias, alias_recipe=alias_recipe,
+        alias_value=lambda col, v: f"level_{_hash(col + chr(31) + v)[:8]}"
+        if isinstance(v, str) and (_is_identifier_name(col) or col in forced) else v,
+    )
     for key in ("drivers_skipped", "correlation_skipped"):
         if isinstance(out.get(key), list):
             out[key] = [

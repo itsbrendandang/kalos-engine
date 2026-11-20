@@ -47,6 +47,11 @@ FIXTURE = ROOT / "tests" / "fixtures" / "trust_golden.json"
 EXAMPLE = ROOT / "examples" / "synthetic_bioprocess" / "synthetic_bioprocess.csv"
 # Wall clock only; everything else is compared.
 VOLATILE = {"timestamp", "fit_seconds", "created_at"}
+# Not recorded: bulky viz-only keys that no trust number depends on. The extra
+# 21x21 grids of `response_surfaces` (VIZ_SPEC_V2 E3; ~1k lines per sheet) are
+# built by the same code as `response_surface`, which stays pinned here, and
+# are pinned by the R02 golden oracle and tests/test_viz_fields.py instead.
+NOT_RECORDED = {"response_surfaces"}  # top-level keys only
 ROUND_ATTR = "kalos_round_index"
 
 
@@ -185,6 +190,7 @@ def compute(names: list[str] | None = None) -> dict:
         df, kw = SHEETS[name]()
         target = kw.pop("target")
         res = _analyze(df, target=target, **kw)
+        res = {k: v for k, v in res.items() if k not in NOT_RECORDED}
         out[name] = json.loads(json.dumps(_strip(res), default=str))
     return out
 

@@ -15,7 +15,8 @@
   "F04 follow-up: reliability.verdict (not_judged below 12 runs / 3 groups; clears_floor null then)",
   "F15: selection-aware per-proposal intervals (top-30% held-out runs per fold, pooled repeats, sd floored at the 90th percentile)",
   "Caveat wording: proposal caveats say what the band was calibrated on and the coverage measured at proposed recipes, never that the range 'is calibrated' (message text only; no number changed)",
-  "Merge of main (#164 review fixes, #165 clones): additive fields only (cv_topk.direction, p_improve/expected_improvement.description, the strain blocks) plus the intended strain fix gp_shapes available on mixed fits (mixed_medium); no trust-layer number changed"
+  "Merge of main (#164 review fixes, #165 clones): additive fields only (cv_topk.direction, p_improve/expected_improvement.description, the strain blocks) plus the intended strain fix gp_shapes available on mixed fits (mixed_medium); no trust-layer number changed",
+  "VIZ_SPEC_V2 E3/E5/E12 (feat/viz-fields): additive keys only (correlation.n_matrix, categorical_levels, visualization_reasons.response_surfaces) plus the label fix correlation.unit recipe -> row; no number changed. Top-level response_surfaces is not recorded (NOT_RECORDED: viz-only grids, pinned by the R02 oracle and tests/test_viz_fields.py)"
  ],
  "sheets": {
   "batch_text": {
@@ -40,6 +41,7 @@
    "best": 0.8068,
    "categorical_effects": null,
    "categorical_features": [],
+   "categorical_levels": {},
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
     "code": "coverage_not_guaranteed",
@@ -117,9 +119,35 @@
       1.0
      ]
     ],
+    "n_matrix": [
+     [
+      48,
+      48,
+      48,
+      48
+     ],
+     [
+      48,
+      48,
+      48,
+      48
+     ],
+     [
+      48,
+      48,
+      48,
+      48
+     ],
+     [
+      48,
+      48,
+      48,
+      48
+     ]
+    ],
     "n_rows": 48,
     "n_units": 48,
-    "unit": "recipe"
+    "unit": "row"
    },
    "correlation_skipped": [],
    "covariates": {
@@ -4130,6 +4158,7 @@
     "correlation": null,
     "embedding": null,
     "response_surface": null,
+    "response_surfaces": null,
     "slices": null
    }
   },
@@ -4155,6 +4184,7 @@
    "best": 0.942,
    "categorical_effects": null,
    "categorical_features": [],
+   "categorical_levels": {},
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
     "code": "coverage_not_guaranteed",
@@ -4232,9 +4262,35 @@
       1.0
      ]
     ],
+    "n_matrix": [
+     [
+      30,
+      30,
+      30,
+      30
+     ],
+     [
+      30,
+      30,
+      30,
+      30
+     ],
+     [
+      30,
+      30,
+      30,
+      30
+     ],
+     [
+      30,
+      30,
+      30,
+      30
+     ]
+    ],
     "n_rows": 30,
     "n_units": 30,
-    "unit": "recipe"
+    "unit": "row"
    },
    "correlation_skipped": [],
    "covariates": {
@@ -7922,6 +7978,7 @@
     "correlation": null,
     "embedding": null,
     "response_surface": null,
+    "response_surfaces": null,
     "slices": null
    }
   },
@@ -7947,6 +8004,7 @@
    "best": 3.4698,
    "categorical_effects": null,
    "categorical_features": [],
+   "categorical_levels": {},
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
     "code": "coverage_not_guaranteed",
@@ -8014,9 +8072,26 @@
       1.0
      ]
     ],
+    "n_matrix": [
+     [
+      35,
+      35,
+      35
+     ],
+     [
+      35,
+      35,
+      35
+     ],
+     [
+      35,
+      35,
+      35
+     ]
+    ],
     "n_rows": 35,
     "n_units": 35,
-    "unit": "recipe"
+    "unit": "row"
    },
    "correlation_skipped": [],
    "covariates": {
@@ -11514,6 +11589,7 @@
     "correlation": null,
     "embedding": null,
     "response_surface": null,
+    "response_surfaces": "1 of 3 pairs returned: only 1 pair(s) from the continuous drivers",
     "slices": null
    }
   },
@@ -11539,6 +11615,7 @@
    "best": 2.477,
    "categorical_effects": null,
    "categorical_features": [],
+   "categorical_levels": {},
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
     "code": "coverage_not_guaranteed",
@@ -11616,9 +11693,35 @@
       1.0
      ]
     ],
+    "n_matrix": [
+     [
+      60,
+      60,
+      60,
+      60
+     ],
+     [
+      60,
+      60,
+      60,
+      60
+     ],
+     [
+      60,
+      60,
+      60,
+      60
+     ],
+     [
+      60,
+      60,
+      60,
+      60
+     ]
+    ],
     "n_rows": 60,
     "n_units": 60,
-    "unit": "recipe"
+    "unit": "row"
    },
    "correlation_skipped": [],
    "covariates": {
@@ -15771,6 +15874,7 @@
     "correlation": null,
     "embedding": null,
     "response_surface": null,
+    "response_surfaces": null,
     "slices": null
    }
   },
@@ -15796,6 +15900,7 @@
    "best": 0.046,
    "categorical_effects": null,
    "categorical_features": [],
+   "categorical_levels": {},
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
     "code": "coverage_not_guaranteed",
@@ -15863,9 +15968,26 @@
       1.0
      ]
     ],
+    "n_matrix": [
+     [
+      24,
+      24,
+      24
+     ],
+     [
+      24,
+      24,
+      24
+     ],
+     [
+      24,
+      24,
+      24
+     ]
+    ],
     "n_rows": 24,
     "n_units": 24,
-    "unit": "recipe"
+    "unit": "row"
    },
    "correlation_skipped": [],
    "covariates": {
@@ -19180,6 +19302,7 @@
     "correlation": null,
     "embedding": null,
     "response_surface": null,
+    "response_surfaces": "1 of 3 pairs returned: only 1 pair(s) from the continuous drivers",
     "slices": null
    }
   },
@@ -19251,6 +19374,13 @@
    "categorical_features": [
     "medium"
    ],
+   "categorical_levels": {
+    "medium": [
+     "MedA",
+     "MedB",
+     "MedC"
+    ]
+   },
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
     "code": "coverage_not_guaranteed",
@@ -19318,9 +19448,26 @@
       1.0
      ]
     ],
+    "n_matrix": [
+     [
+      24,
+      24,
+      24
+     ],
+     [
+      24,
+      24,
+      24
+     ],
+     [
+      24,
+      24,
+      24
+     ]
+    ],
     "n_rows": 24,
     "n_units": 24,
-    "unit": "recipe"
+    "unit": "row"
    },
    "correlation_skipped": [
     {
@@ -22646,6 +22793,7 @@
     "correlation": null,
     "embedding": null,
     "response_surface": null,
+    "response_surfaces": "1 of 3 pairs returned: only 1 pair(s) from the continuous drivers",
     "slices": null
    }
   },
@@ -22671,6 +22819,7 @@
    "best": 6.64,
    "categorical_effects": null,
    "categorical_features": [],
+   "categorical_levels": {},
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
     "code": "coverage_not_guaranteed",
@@ -22748,9 +22897,35 @@
       1.0
      ]
     ],
+    "n_matrix": [
+     [
+      20,
+      20,
+      20,
+      20
+     ],
+     [
+      20,
+      20,
+      20,
+      20
+     ],
+     [
+      20,
+      20,
+      20,
+      20
+     ],
+     [
+      20,
+      20,
+      20,
+      20
+     ]
+    ],
     "n_rows": 20,
     "n_units": 20,
-    "unit": "recipe"
+    "unit": "row"
    },
    "correlation_skipped": [],
    "covariates": {
@@ -26290,6 +26465,7 @@
     "correlation": null,
     "embedding": null,
     "response_surface": null,
+    "response_surfaces": null,
     "slices": null
    }
   },
@@ -26315,6 +26491,7 @@
    "best": 5.523,
    "categorical_effects": null,
    "categorical_features": [],
+   "categorical_levels": {},
    "conformal_caveat": {
     "caveat_code": "coverage_lower_at_proposals",
     "code": "coverage_not_guaranteed",
@@ -26382,9 +26559,26 @@
       1.0
      ]
     ],
+    "n_matrix": [
+     [
+      24,
+      24,
+      24
+     ],
+     [
+      24,
+      24,
+      24
+     ],
+     [
+      24,
+      24,
+      24
+     ]
+    ],
     "n_rows": 24,
     "n_units": 24,
-    "unit": "recipe"
+    "unit": "row"
    },
    "correlation_skipped": [],
    "covariates": {
@@ -29706,6 +29900,7 @@
     "correlation": null,
     "embedding": null,
     "response_surface": null,
+    "response_surfaces": "1 of 3 pairs returned: only 1 pair(s) from the continuous drivers",
     "slices": null
    }
   }

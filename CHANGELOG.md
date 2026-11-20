@@ -4,6 +4,10 @@ Newest first.
 
 ## Unreleased
 
+### Added - heat-map fields (VIZ_SPEC_V2 E3, E5, E12; additive, no number changes)
+
+- `correlation.unit` is `"row"` (was `"recipe"`; the matrix was always computed over rows, so only the label changes) and `correlation.n_matrix` gives the pairwise complete-case n. `categorical_levels` lists every label per categorical or clone column, including levels with 0 fitted runs. `response_surfaces[]` gives the GP mean/std grids for the top `KALOS_VIZ_SURFACE_PAIRS` (default 3) driver pairs and shares the `response_surface` builder and labels. Code: `kalos/analysis/viz_fields.py`; docs/CAMPAIGNS_API.md "Heat-map fields"; `docs/schemas/analysis.schema.json`. R02 golden oracle: only these keys changed.
+
 ### Changed - selection-aware proposal intervals (F15, ML audit B1 fix 2; interval numbers change)
 
 - `proposals[].intervals` are calibrated on the held-out runs each fold model ranked highest (top 30%, both CV repeats) with the proposal sd floored at the 90th percentile of held-out sds (`method: conformal_selection_aware`, `coverage_basis: held_out_top_ranked_runs`). Measured at proposals on fresh simulation seeds: 90% band 0.60-0.83 -> 0.92-0.99, 95% band 0.72-0.92 -> 0.96-0.99, at 2.5-3.2x the median width; in-box coverage 0.98-1.00 (conservative). Per-level fallback to the plain band with `selection_aware_unavailable` when too few runs are selected. VALIDATION.md has the table.
