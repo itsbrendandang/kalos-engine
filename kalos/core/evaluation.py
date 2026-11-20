@@ -31,7 +31,7 @@ def grouped_folds(groups: Sequence, n_splits: int = 5) -> Iterator[tuple[np.ndar
 
 def _oof(
     X, y, groups, n_splits, bounds, cat_dims=None, shuffle: bool = False, random_state: int = 42,
-    index_out: list[int] | None = None,
+    index_out: list[int] | None = None, fold_out: list[int] | None = None,
 ):
     """Pooled out-of-fold predictions under one fixed normalization box.
     Returns (pred, std, actual, group, n_folds).
@@ -81,6 +81,8 @@ def _oof(
         grp.extend(groups[te].tolist())
         if index_out is not None:
             index_out.extend(int(i) for i in te)
+        if fold_out is not None:
+            fold_out.extend([n_folds - 1] * len(te))
     return (
         np.asarray(pred),
         np.asarray(sd),
@@ -181,6 +183,7 @@ def grouped_cv_report(
     sds: list[np.ndarray] = []
     actuals: list[np.ndarray] = []
     grps: list[np.ndarray] = []
+    folds: list[list[int]] = []
     n_folds0 = 0
     index0: list[int] = []
     rng = np.random.default_rng(random_state)
@@ -189,8 +192,9 @@ def grouped_cv_report(
         if r == 0:
             # Unshuffled: the exact partition every existing caller already
             # gets, so the point estimate and OOF arrays are unchanged.
+            fold_r: list[int] = []
             pred, sd, actual, grp, n_folds = _oof(
-                X_arr, y, groups, n_splits, bounds, cat_dims=cat_dims, index_out=index0,
+                X_arr, y, groups, n_splits, bounds, cat_dims=cat_dims, index_out=index0, fold_out=fold_r,
             )
             n_folds0 = n_folds
         else:
@@ -199,14 +203,16 @@ def grouped_cv_report(
             # all that matters is each repeat draws a different shuffled
             # GroupKFold partition, reproducibly.
             seed_r = (int(random_state) + r) & 0x7FFFFFFF
+            fold_r = []
             pred, sd, actual, grp, _n_folds = _oof(
                 X_arr, y, groups, n_splits, bounds, cat_dims=cat_dims,
-                shuffle=True, random_state=seed_r,
+                shuffle=True, random_state=seed_r, fold_out=fold_r,
             )
         preds.append(pred)
         sds.append(sd)
         actuals.append(actual)
         grps.append(grp)
+        folds.append(fold_r)
 
         uniq = np.unique(grp)
         if len(uniq) >= 3 and len(pred) >= 3:
@@ -242,6 +248,14 @@ def grouped_cv_report(
         # the spread across partitions is visible on its own, not only folded
         # into the CI width. May contain NaN, same convention as `spearman`.
         "spearman_per_repeat": spearman_per_repeat,
+        # Every repeat's OOF with its fold id (repeat 0 first, the same arrays as
+        # oof_*). For calibrations that need more held-out points than one
+        # partition gives (the selection-aware interval, F15); the rows recur
+        # once per repeat with correlated errors, so they are NOT independent.
+        "oof_repeats": [
+            {"pred": p.tolist(), "std": sd_.tolist(), "actual": a.tolist(), "fold": list(f)}
+            for p, sd_, a, f in zip(preds, sds, actuals, folds)
+        ],
     }
 
 

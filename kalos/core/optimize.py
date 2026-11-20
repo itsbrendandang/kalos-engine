@@ -381,6 +381,8 @@ def propose(
     constraint_surrogate: Surrogate | None = None,
     constraint_floor: float | None = None,
     linear_constraints: list[tuple[list[int], list[float], float]] | None = None,
+    maximize: bool = True,
+    fixed_features: dict[int, float] | None = None,
 ) -> np.ndarray:
     """The proposed points only (`propose_batch(...).X`); see `propose_batch`.
 
@@ -402,6 +404,8 @@ def propose(
         constraint_surrogate=constraint_surrogate,
         constraint_floor=constraint_floor,
         linear_constraints=linear_constraints,
+        maximize=maximize,
+        fixed_features=fixed_features,
     ).X
 
 
@@ -421,6 +425,8 @@ def propose_batch(
     constraint_floor: float | None = None,
     min_separation: float = NEAR_DUPLICATE_TOL,
     linear_constraints: list[tuple[list[int], list[float], float]] | None = None,
+    maximize: bool = True,
+    fixed_features: dict[int, float] | None = None,
 ) -> ProposalBatch:
     """Propose up to `q` DISTINCT points maximizing qLogNEI, with an account of
     the batch's distinctness (`ProposalBatch`).
@@ -515,6 +521,28 @@ def propose_batch(
     candidate pool, and on every returned row, including rows refilled by the
     near-duplicate repair; a set that is infeasible within the box raises
     `ValueError` up front. Not supported together with categorical dimensions.
+
+    `maximize=False` proposes toward LOW target values: the acquisition's MC
+    objective negates the target samples (qLogNEI then improves on the lowest
+    baseline value). The surrogate itself is untouched, so every posterior read
+    off it stays in the target's own units and sign. `True` (the default) builds
+    exactly the historical acquisition.
+
+    `fixed_features` (`{dim: value}`) holds dimensions at one value in every
+    proposal: a declared clone held at its chosen level (strain policy `fixed`)
+    and covariates (passage, generation, PDL) held at a reference value. They stay
+    model inputs, so the GP still learns from their variation, but the
+    acquisition never moves them. Implemented by collapsing the box to
+    `[value, value]` on those dims (so the Sobol pool, the clip and the
+    near-duplicate repair all honor it) and passing them to BoTorch as
+    `fixed_features`. A fixed categorical dim is no longer enumerated, so with
+    every categorical dim fixed the continuous path runs, linear constraints
+    included (ML_AUDIT N2). With free categorical dims, linear constraints run
+    through the exact enumeration (`optimize_acqf_mixed` takes
+    `inequality_constraints` on the continuous dims) when the free combinations
+    number at most `MAX_MIXED_COMBOS`; above that (the alternating optimizer)
+    they are refused with `ValueError`, as before. `None` (the default) is the
+    historical call, unchanged.
     """
     assert surrogate.model is not None and surrogate._X is not None, "fit the surrogate first"
     if (constraint_surrogate is None) != (constraint_floor is None):
@@ -523,8 +551,30 @@ def propose_batch(
             "(a floor with no model, or a model with no floor, is not a constraint)"
         )
     lower, upper = sanitize_bounds(bounds)
-    if linear_constraints and cat_dims:
-        raise ValueError("linear_constraints are not supported together with categorical dimensions")
+    fixed = {int(k): float(v) for k, v in (fixed_features or {}).items()}
+    for j, v in fixed.items():
+        if not 0 <= j < len(lower):
+            raise ValueError("fixed_features names a dimension outside the design")
+        if not np.isfinite(v):
+            raise ValueError("fixed_features values must be finite")
+        if cat_dims and j in set(cat_dims):
+            v = float(np.rint(v))
+            fixed[j] = v
+        lower[j] = upper[j] = v
+    # Only categorical dims that the acquisition may still change are enumerated.
+    free_cats = [j for j in (cat_dims or []) if j not in fixed]
+    if linear_constraints and free_cats:
+        if cat_cardinalities is None or len(cat_cardinalities) != len(cat_dims or []):
+            raise ValueError(
+                "linear_constraints are not supported together with categorical dimensions"
+            )
+        free_card_list = [
+            int(k) for j, k in zip(cat_dims or [], cat_cardinalities) if j not in fixed
+        ]
+        if int(np.prod(free_card_list)) > MAX_MIXED_COMBOS:
+            raise ValueError(
+                "linear_constraints are not supported together with categorical dimensions"
+            )
     lin = _validate_linear_constraints(linear_constraints, lower, upper)
     ineq = [
         (torch.as_tensor(idx, dtype=torch.long), torch.as_tensor(coef, dtype=DTYPE), rhs)
@@ -571,12 +621,17 @@ def propose_batch(
             # constraint callable is satisfied (per qLogNEI's `constraints`
             # contract) where its output is < 0, i.e. constraint_floor - value <= 0
             # <=> value >= constraint_floor.
-            objective = GenericMCObjective(lambda Y, X=None: Y[..., 0])
+            objective = (
+                GenericMCObjective(lambda Y, X=None: Y[..., 0])
+                if maximize
+                else GenericMCObjective(lambda Y, X=None: -Y[..., 0])
+            )
             floor = float(constraint_floor)  # type: ignore[arg-type]
             constraints = [lambda Y: floor - Y[..., 1]]
         else:
             model = surrogate.model
-            objective = None
+            # Minimizing: negate the single output's samples (see `maximize`).
+            objective = None if maximize else GenericMCObjective(lambda Y, X=None: -Y[..., 0])
             constraints = None
         acq: AcquisitionFunction = qLogNoisyExpectedImprovement(
             model,
@@ -604,12 +659,34 @@ def propose_batch(
             out[:, j] = np.rint(out[:, j])
         return out
 
+    def _free_cards() -> list[int]:
+        return [
+            int(k) for j, k in zip(cat_dims or [], cat_cardinalities or []) if j not in fixed
+        ]
+
     def _run_acqf_optimization() -> torch.Tensor:
         acq = _build_acq(X_pending)
-        if cat_dims:
+        if free_cats:
+            if not fixed:
+                return _optimize_mixed(
+                    acq, b, q, num_restarts, raw_samples, cat_dims or [], cat_cardinalities or [],
+                    ineq=ineq,
+                )
             return _optimize_mixed(
-                acq, b, q, num_restarts, raw_samples, cat_dims, cat_cardinalities or []
+                acq, b, q, num_restarts, raw_samples, free_cats, _free_cards(),
+                fixed=fixed, ineq=ineq,
             )
+        if fixed:
+            candidates, _ = optimize_acqf(
+                acq_function=acq,
+                bounds=b,
+                q=q,
+                num_restarts=num_restarts,
+                raw_samples=raw_samples,
+                inequality_constraints=ineq,
+                fixed_features=fixed,
+            )
+            return candidates
         candidates, _ = optimize_acqf(
             acq_function=acq,
             bounds=b,
@@ -628,10 +705,15 @@ def propose_batch(
         cards = _resolve_cardinalities(cats, cat_cardinalities, lower, upper)
         cont = [j for j in range(d) if j not in set(cats)]
         parts: list[np.ndarray] = []
-        if cats:
+        if cats and not fixed:
             parts.append(
-                _finish(_optimize_mixed(acq, b, 1, num_restarts, raw_samples, cats, cards))
+                _finish(_optimize_mixed(acq, b, 1, num_restarts, raw_samples, cats, cards, ineq=ineq))
             )
+        elif free_cats:
+            parts.append(_finish(_optimize_mixed(
+                acq, b, 1, num_restarts, raw_samples, free_cats, _free_cards(),
+                fixed=fixed, ineq=ineq,
+            )))
         else:
             local, _ = optimize_acqf(
                 acq_function=acq,
@@ -641,6 +723,7 @@ def propose_batch(
                 raw_samples=raw_samples,
                 return_best_only=False,
                 inequality_constraints=ineq,
+                **({"fixed_features": fixed} if fixed else {}),
             )
             parts.append(_finish(local))
         n_combos = int(np.prod(cards)) if cats else 1
@@ -835,8 +918,17 @@ def _optimize_mixed(
     raw_samples: int,
     cat_dims: list[int],
     cat_cardinalities: list[int],
+    *,
+    fixed: dict[int, float] | None = None,
+    ineq: list | None = None,
 ) -> torch.Tensor:
     """Optimize a mixed continuous/categorical acquisition.
+
+    `cat_dims` are the categorical dims to ENUMERATE; `fixed` (held dims, e.g. a
+    fixed clone level or a covariate) is merged into every enumerated
+    assignment. `ineq` (linear constraints on continuous dims) is passed to the
+    exact enumeration; the alternating optimizer does not take them (the caller
+    refuses that combination before getting here).
 
     Enumerates every categorical assignment through `optimize_acqf_mixed` (exact:
     one continuous solve per combination) when the number of combinations is
@@ -849,9 +941,20 @@ def _optimize_mixed(
         n_combos *= k
     if n_combos <= MAX_MIXED_COMBOS:
         fixed_features_list = [
-            {dim: float(code) for dim, code in zip(cat_dims, combo)}
+            {**(fixed or {}), **{dim: float(code) for dim, code in zip(cat_dims, combo)}}
             for combo in itertools.product(*(range(k) for k in cardinalities))
         ]
+        if ineq:
+            candidates, _ = optimize_acqf_mixed(
+                acq_function=acq,
+                bounds=b,
+                q=q,
+                num_restarts=num_restarts,
+                raw_samples=raw_samples,
+                fixed_features_list=fixed_features_list,
+                inequality_constraints=ineq,
+            )
+            return candidates
         candidates, _ = optimize_acqf_mixed(
             acq_function=acq,
             bounds=b,
@@ -861,10 +964,23 @@ def _optimize_mixed(
             fixed_features_list=fixed_features_list,
         )
         return candidates
+    if ineq:  # guarded by propose_batch; never reached with constraints
+        raise ValueError("linear_constraints are not supported together with categorical dimensions")
     cat_map = {
         dim: [float(code) for code in range(k)]
         for dim, k in zip(cat_dims, cardinalities)
     }
+    if fixed:
+        candidates, _ = optimize_acqf_mixed_alternating(
+            acq_function=acq,
+            bounds=b,
+            cat_dims=cat_map,
+            q=q,
+            num_restarts=num_restarts,
+            raw_samples=raw_samples,
+            fixed_features=fixed,
+        )
+        return candidates
     candidates, _ = optimize_acqf_mixed_alternating(
         acq_function=acq,
         bounds=b,

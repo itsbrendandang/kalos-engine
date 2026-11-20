@@ -243,6 +243,7 @@ def gp_shape_report(
     feature_names: Sequence[str],
     cv_spearman: float | None = None,
     rho_floor: float = 0.20,
+    sweep_columns: Sequence[int] | None = None,
 ) -> GPShapeReport:
     """Per-feature ARD relevance and response shape, read off a FITTED surrogate.
 
@@ -257,6 +258,16 @@ def gp_shape_report(
     uses, so "missed by Spearman" means missed by the same standard applied
     elsewhere.
 
+    `sweep_columns` (mixed / partially swept designs): `X` is then the FULL
+    design matrix the surrogate was fit on, and `feature_names[k]` is swept along
+    column `sweep_columns[k]`; every other column (categorical level codes
+    included) is held at the incumbent row. Without it, `X` holds exactly the
+    swept columns, which is only valid for a surrogate fit on those columns
+    alone. Passing only the continuous slice of a mixed design used to hand the
+    GP a d_cont-wide sweep for a d-wide model, and every mixed fit came back
+    `posterior sweep failed: RuntimeError` (tensor size mismatch in the input
+    transform).
+
     Never raises on an unusable input: returns `available=False` with a reason,
     because a diagnostic that crashes on the data it is meant to describe is
     worse than one that declines.
@@ -269,7 +280,13 @@ def gp_shape_report(
 
     if Xa.ndim != 2 or Xa.shape[0] == 0:
         return GPShapeReport(False, "no rows to sweep", "incumbent", 0)
-    d = Xa.shape[1]
+    if sweep_columns is None:
+        cols = list(range(Xa.shape[1]))
+    else:
+        cols = [int(c) for c in sweep_columns]
+        if any(c < 0 or c >= Xa.shape[1] for c in cols):
+            return GPShapeReport(False, "sweep columns do not match X columns", "incumbent", len(cols))
+    d = len(cols)
     if d == 0 or len(names) != d:
         return GPShapeReport(False, "feature names do not match X columns", "incumbent", d)
     if getattr(surrogate, "model", None) is None:
@@ -321,8 +338,11 @@ def gp_shape_report(
     y_std = float(np.std(ya))
 
     shapes: list[FeatureShape] = []
+    if len(cols) < Xa.shape[1]:
+        unmodeled = (*unmodeled, "the response at other levels of the unswept (categorical) inputs: "
+                     "each sweep holds them at the incumbent's level")
     for j, name in enumerate(names):
-        col = Xa[:, j]
+        col = Xa[:, cols[j]]
         lo, hi = float(col.min()), float(col.max())
         if not np.isfinite([lo, hi]).all() or hi <= lo:
             # A constant feature has no axis to sweep.
@@ -338,7 +358,7 @@ def gp_shape_report(
 
         grid_vals = np.linspace(lo, hi, GRID_POINTS)
         sweep = np.tile(incumbent, (GRID_POINTS, 1))
-        sweep[:, j] = grid_vals
+        sweep[:, cols[j]] = grid_vals
         try:
             mean, sd = surrogate.posterior(sweep)
         except Exception as exc:  # a diagnostic must not take down the caller

@@ -27,6 +27,8 @@ class GatesConfig:
 
 
 NOT_ENOUGH_RUNS_FOR_CALIBRATION = "not enough runs to judge calibration"
+NOT_APPLICABLE_WHEN_MINIMIZING = "not applicable when minimizing"
+NOT_APPLICABLE_FEW_NON_PRODUCERS = "not applicable: too few non-producing runs"
 
 
 @dataclass
@@ -38,6 +40,18 @@ class PromotionResult:
     # Gates that were neither passed nor failed, with the reason (e.g. ECE on
     # fewer than `min_ece_n` runs).
     not_judged: list[str] = field(default_factory=list)
+    # Gates that blocked only because their metric could not be measured
+    # (missing/NaN), e.g. `feasibility_auc` on a sheet with no non-producers.
+    unmeasured: list[str] = field(default_factory=list)
+
+    @property
+    def status(self) -> str:
+        """`passed`, `failed` (a measured gate missed its floor or ceiling), or
+        `not_measurable` (every blocking gate was unmeasured). Same verdict as
+        `passed`; it only says why a `False` is false."""
+        if self.passed:
+            return "passed"
+        return "not_measurable" if len(self.unmeasured) == len(self.failures) else "failed"
 
 
 def _finite(x: Any) -> TypeGuard[float]:
@@ -52,6 +66,7 @@ def check_gates(stats: dict[str, Any], config: GatesConfig | None = None) -> Pro
 
     f: list[str] = []
     m: dict[str, float] = {}
+    unmeasured: list[str] = []
 
     def floor(key: str, lo: float) -> None:
         v = stats.get(key)
@@ -61,6 +76,7 @@ def check_gates(stats: dict[str, Any], config: GatesConfig | None = None) -> Pro
                 f.append(f"{key}={v:.3f} < min {lo}")
         else:
             f.append(f"{key} missing/NaN (unmeasured)")  # fail closed
+            unmeasured.append(key)
 
     def ceiling(key: str, hi: float) -> None:
         v = stats.get(key)
@@ -70,18 +86,26 @@ def check_gates(stats: dict[str, Any], config: GatesConfig | None = None) -> Pro
                 f.append(f"{key}={v:.3f} > max {hi}")
         else:
             f.append(f"{key} missing/NaN (unmeasured)")  # fail closed
+            unmeasured.append(key)
 
     not_judged: list[str] = []
     floor("surrogate_spearman", cfg.min_spearman)
-    floor("feasibility_auc", cfg.min_feasibility_auc)
-    ece_n = stats.get("ece_n")
-    if _finite(ece_n) and ece_n < cfg.min_ece_n:
-        not_judged.append(
-            f"ece: {NOT_ENOUGH_RUNS_FOR_CALIBRATION} (n={int(ece_n)}, need {cfg.min_ece_n})"
-        )
+    # The feasibility classifier scores P(y > 0), a maximize notion. When the
+    # caller says it does not apply (minimize), its three gates are reported as
+    # not judged with that reason instead of passing or failing.
+    feas_na = stats.get("feasibility_not_applicable")
+    if isinstance(feas_na, str) and feas_na:
+        not_judged.extend(f"{key}: {feas_na}" for key in ("feasibility_auc", "ece", "brier"))
     else:
-        ceiling("ece", cfg.max_ece)
-    ceiling("brier", cfg.max_brier)
+        floor("feasibility_auc", cfg.min_feasibility_auc)
+        ece_n = stats.get("ece_n")
+        if _finite(ece_n) and ece_n < cfg.min_ece_n:
+            not_judged.append(
+                f"ece: {NOT_ENOUGH_RUNS_FOR_CALIBRATION} (n={int(ece_n)}, need {cfg.min_ece_n})"
+            )
+        else:
+            ceiling("ece", cfg.max_ece)
+        ceiling("brier", cfg.max_brier)
     # Group-mean floor (compmodel PLAN E13): only when the caller passes the
     # paired comparison (`group_mean_margin` in kalos/core/evaluation.py).
     gm = stats.get("group_mean_margin")
@@ -101,7 +125,7 @@ def check_gates(stats: dict[str, Any], config: GatesConfig | None = None) -> Pro
     summary = "ALL GATES PASSED" if passed else "GATES FAILED: " + "; ".join(f)
     if not_judged:
         summary += " (not judged: " + "; ".join(not_judged) + ")"
-    return PromotionResult(passed, f, m, summary, not_judged)
+    return PromotionResult(passed, f, m, summary, not_judged, unmeasured)
 
 
-__all__ = ["NOT_ENOUGH_RUNS_FOR_CALIBRATION", "GatesConfig", "PromotionResult", "check_gates"]
+__all__ = ["NOT_APPLICABLE_FEW_NON_PRODUCERS", "NOT_APPLICABLE_WHEN_MINIMIZING", "NOT_ENOUGH_RUNS_FOR_CALIBRATION", "GatesConfig", "PromotionResult", "check_gates"]

@@ -22,7 +22,7 @@ from pathlib import Path
 from string import Template
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
@@ -46,6 +46,7 @@ from kalos.scale.readout import (
     build_readout,
 )
 from kalos.scale.readout import format_liters_plain as _format_liters_plain
+from kalos.scale.readout_json import compute_readout_id, readout_to_json
 
 log = logging.getLogger("kalos.portal")
 
@@ -479,17 +480,44 @@ def render_readout_html(readout: dict[str, Any]) -> str:
 # --- route -------------------------------------------------------------------- #
 
 
-@router.post("/api/scale/readout")
-async def scale_readout(
-    file: UploadFile = File(...),
-    target: str = Form(...),
-    principal: Principal = Depends(require_scope(WRITE)),
-) -> Response:
-    """Upload a multi-scale run sheet plus a target JSON, get back the
-    Scale-Up Readout as a single HTML page.
+_JSON_MEDIA = "application/json"
+_HTML_MEDIA = "text/html"
+_ERR_INVALID_FORMAT = "unsupported format; use 'json' or 'html'"
 
-    Stateless (D6): nothing is stored server-side, not even on success.
-    """
+
+def _accept_q(accept: str, media: str) -> float:
+    """The q-value `accept` gives exactly `media` (wildcards do not count:
+    only an explicit request for JSON switches the response away from the
+    HTML default). 0.0 when absent or unparseable."""
+    best = 0.0
+    for part in accept.split(","):
+        fields = [f.strip() for f in part.split(";")]
+        if fields[0].lower() != media:
+            continue
+        q = 1.0
+        for param in fields[1:]:
+            key, _, value = param.partition("=")
+            if key.strip().lower() == "q":
+                try:
+                    q = float(value.strip())
+                except ValueError:
+                    q = 0.0
+        best = max(best, q)
+    return best
+
+
+def _wants_json(accept: str | None) -> bool:
+    """JSON only when the client explicitly ranks `application/json` above
+    `text/html`; a tie, a wildcard, or no Accept header keeps HTML."""
+    if not accept:
+        return False
+    json_q = _accept_q(accept, _JSON_MEDIA)
+    return json_q > 0 and json_q > _accept_q(accept, _HTML_MEDIA)
+
+
+async def _readout_response(file: UploadFile, target: str, principal: Principal, *, as_json: bool) -> Response:
+    """Shared body of the HTML and JSON readout routes: identical parsing,
+    caps, analysis slot, and refusal envelopes; only the 200 body differs."""
     try:
         target_spec, target_column, process_columns, physics_overrides = _parse_target(target)
     except _TargetJsonError as exc:
@@ -534,7 +562,44 @@ async def scale_readout(
     if not readout["gate"]["passed"]:
         return _refusal(readout["gate"]["failed_check"], readout["gate"]["detail"])
 
+    if as_json:
+        readout_id = compute_readout_id(raw, target_column, target_spec, physics_overrides)
+        return JSONResponse(readout_to_json(readout, readout_id=readout_id), status_code=200)
     return HTMLResponse(render_readout_html(readout), status_code=200)
+
+
+@router.post("/api/scale/readout")
+async def scale_readout(
+    request: Request,
+    file: UploadFile = File(...),
+    target: str = Form(...),
+    format: str | None = Query(default=None),  # noqa: A002 - public query parameter name
+    principal: Principal = Depends(require_scope(WRITE)),
+) -> Response:
+    """Upload a multi-scale run sheet plus a target JSON, get back the
+    Scale-Up Readout: a single HTML page by default, or the JSON readout
+    with `?format=json` or `Accept: application/json` (see
+    `kalos.scale.readout_json`).
+
+    Stateless (D6): nothing is stored server-side, not even on success.
+    """
+    if format is not None and format not in ("json", "html"):
+        return JSONResponse({"error": _ERR_INVALID_FORMAT, "code": "invalid_format"}, status_code=400)
+    as_json = format == "json" or (format is None and _wants_json(request.headers.get("accept")))
+    response = await _readout_response(file, target, principal, as_json=as_json)
+    response.headers["Vary"] = "Accept"
+    return response
+
+
+@router.post("/api/scale/readout.json")
+async def scale_readout_json(
+    file: UploadFile = File(...),
+    target: str = Form(...),
+    principal: Principal = Depends(require_scope(WRITE)),
+) -> Response:
+    """The JSON readout at its own path (same inputs, scope, caps, slot, and
+    refusals as `POST /api/scale/readout`). Stateless (D6)."""
+    return await _readout_response(file, target, principal, as_json=True)
 
 
 __all__ = ["INTENDED_USE_STATEMENT", "render_readout_html", "router"]

@@ -1,0 +1,51 @@
+{
+ "clean": {
+  "clean_bioprocess160": [
+   "validation:outliers|physical_bounds",
+   "validation:units_consistency|outliers|physical_bounds"
+  ],
+  "clean_bioprocess30": [
+   "validation:outliers|physical_bounds",
+   "validation:units_consistency|outliers|physical_bounds"
+  ],
+  "clean_bioprocess60": [
+   "validation:outliers|physical_bounds",
+   "validation:units_consistency|outliers|physical_bounds"
+  ],
+  "clean_results_plain": [],
+  "clean_results_surprise": [],
+  "clean_scaleup90": [
+   "validation:outliers|physical_bounds",
+   "validation:units_consistency|outliers|physical_bounds"
+  ]
+ },
+ "faults": {
+  "constant_target": "caught",
+  "duplicate_run_id": "missed",
+  "duplicated_rows_exact": "caught",
+  "duplicated_rows_new_id": "noticed",
+  "fahrenheit_rows_bare": "caught",
+  "fahrenheit_rows_labeled": "caught",
+  "impossible_value": "missed",
+  "mixed_units_labeled": "caught",
+  "mixed_units_unlabeled": "caught",
+  "result_copy_paste": "missed",
+  "result_negative": "caught",
+  "result_x10": "missed",
+  "result_x1000": "missed",
+  "swapped_columns": "caught",
+  "swapped_levels": "noticed",
+  "too_few_rows_5": "caught",
+  "too_few_rows_8": "missed",
+  "transposed_sheet": "caught",
+  "transposed_sheet_no_id": "caught",
+  "typo_x1000_feature": "caught",
+  "typo_x1000_target": "caught",
+  "typo_x10_feature": "caught",
+  "typo_x10_target": "caught"
+ },
+ "note": "CI regression gate: fast tier, repo-only bases (Kaggle skipped). Regenerate with `python -m kalos.bench.faults all --tier fast --datasets /nonexistent --out DIR` then `... baseline --out DIR`; see docs/PLANTED_FAULTS.md.",
+ "protocol_version": "1",
+ "source_commit": "bdd2d974c372911246c0680c4d446ab9c00d101e",
+ "tier": "fast"
+}

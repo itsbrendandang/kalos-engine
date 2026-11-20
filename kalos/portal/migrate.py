@@ -40,6 +40,19 @@ the database level. No row changes when the triggers are created. `down` drops
 them (v4 -> v3); a v3 engine runs on the result. Its startup no longer deletes
 audit rows (see docs/HARDENING.md, "Audit retention").
 
+Schema v5 adds the append-only `run_results` history; v6 adds
+`campaign_settings` (one JSON document per campaign and kind) and the append-only
+`gate_decisions` registry. Both are additive; their `down` steps rename the new
+tables aside (`<name>_v5_rolledback`, `<name>_v6_rolledback`), never drop them.
+
+Schema v7 adds the label-only clone registry: `campaign_clones` (one row per
+campaign and clone label, allowlisted label fields only) and the append-only
+`clone_titer_history` (the same two-trigger guard as `run_results`). Additive;
+its `down` step renames both tables aside (`<name>_v7_rolledback`).
+
+Schema v8 is RESERVED for the Crux items (the planned result-check and decision-ledger work, tracked in the kalos-engine project);
+do not reuse v8 for anything else.
+
 This module is torch-free and FastAPI-free on purpose: the CLI must run on a
 box where the engine itself is stopped.
 """
@@ -63,15 +76,20 @@ from kalos.portal.tenancy import is_valid_tenant_id
 
 log = logging.getLogger("kalos.portal")
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 7
 V2 = 2  # the multi-campaign schema; v1 <-> v2 code below is keyed on it
 V3 = 3  # the background-job queue
 V4 = 4  # the append-only audit log
 V5 = 5  # the append-only result history
+V6 = 6  # campaign settings + scale-up stage gate decisions
+V7 = 7  # label-only clone registry + append-only clone titer history
+# V8 is RESERVED for the Crux items (the planned result-check and decision-ledger work, tracked in the kalos-engine project); never reuse it.
 V2_NAME = "multi-campaign storage"
 V3_NAME = "background jobs"
 V4_NAME = "append-only audit log"
 V5_NAME = "append-only result history"
+V6_NAME = "campaign settings and stage gate decisions"
+V7_NAME = "clone registry and clone titer history"
 BUSY_TIMEOUT_MS = 5000
 DB_FILENAME = "portal.db"
 
@@ -81,7 +99,10 @@ CAMPAIGN_ID_PATTERN = re.compile(r"cmp_[0-9a-f]{32}")
 
 # Tables that hold tenant data. Every statement the store issues against these
 # carries `tenant = ?` (tests/test_campaign_schema_v2.py enforces it).
-TENANT_TABLES = ("campaigns", "analyses", "tenant_defaults", "audit_log", "jobs", "run_results")
+TENANT_TABLES = (
+    "campaigns", "analyses", "tenant_defaults", "audit_log", "jobs", "run_results",
+    "campaign_settings", "gate_decisions", "campaign_clones", "clone_titer_history",
+)
 
 # A job id is `job_` + uuid4().hex (kalos/portal/jobs.py), validated the same way.
 JOB_ID_PATTERN = re.compile(r"job_[0-9a-f]{32}")
@@ -267,6 +288,124 @@ _V5_DDL: tuple[str, ...] = (
     CREATE TRIGGER run_results_no_delete BEFORE DELETE ON run_results
     BEGIN
         SELECT RAISE(ABORT, 'run_results is append-only: DELETE is rejected');
+    END
+    """,
+)
+# Schema v6: per-campaign settings and the scale-up stage gate registry. Additive.
+# `campaign_settings` holds one JSON document per (campaign, kind): kind 'setup'
+# (goal direction, user bounds, linear constraints, target unit) and kind
+# 'stages' (the campaign's editable stage definitions). Settings are NOT part of
+# the campaign state blob, so editing them never mints a campaign generation.
+# `gate_decisions` is the append-only record of HUMAN go/no-go decisions (the
+# same two-trigger guard as `audit_log`): the current decision of a gate is its
+# newest row. A decision always carries a non-empty note. Computed evidence is
+# never stored here; `evidence` only holds ids the decider chose to link.
+_V6_TABLES = ("campaign_settings", "gate_decisions")
+_V6_TRIGGERS = ("gate_decisions_no_update", "gate_decisions_no_delete")
+_V6_INDEXES = ("gate_decisions_campaign_idx",)
+_V6_DDL: tuple[str, ...] = (
+    """
+    CREATE TABLE campaign_settings (
+        campaign_id TEXT NOT NULL,
+        tenant TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('setup', 'stages')),
+        value TEXT NOT NULL,
+        updated_at REAL NOT NULL,
+        updated_by TEXT,
+        PRIMARY KEY (campaign_id, tenant, kind),
+        FOREIGN KEY (campaign_id, tenant) REFERENCES campaigns (id, tenant)
+    )
+    """,
+    """
+    CREATE TABLE gate_decisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant TEXT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        gate TEXT NOT NULL,
+        decision TEXT NOT NULL CHECK (decision IN ('go', 'no_go', 'pending')),
+        note TEXT NOT NULL CHECK (length(trim(note)) > 0),
+        evidence TEXT,
+        decided_by TEXT,
+        auth_method TEXT,
+        decided_at REAL NOT NULL,
+        FOREIGN KEY (campaign_id, tenant) REFERENCES campaigns (id, tenant)
+    )
+    """,
+    "CREATE INDEX gate_decisions_campaign_idx ON gate_decisions (tenant, campaign_id, gate, id)",
+    """
+    CREATE TRIGGER gate_decisions_no_update BEFORE UPDATE ON gate_decisions
+    BEGIN
+        SELECT RAISE(ABORT, 'gate_decisions is append-only: UPDATE is rejected');
+    END
+    """,
+    """
+    CREATE TRIGGER gate_decisions_no_delete BEFORE DELETE ON gate_decisions
+    BEGIN
+        SELECT RAISE(ABORT, 'gate_decisions is append-only: DELETE is rejected');
+    END
+    """,
+)
+# Schema v7: the label-only clone registry (docs/CLONES.md). Additive.
+# `campaign_clones` holds one row per (campaign, clone label): a status enum and
+# a JSON object of allowlisted LABEL fields (host, parent_cell_bank, construct_id,
+# ...). No sequence, map or structure is ever stored; the route refuses those keys.
+# Like settings, registry rows live outside the campaign state blob, so an edit
+# never mints a campaign generation. `clone_titer_history` is the append-only
+# record of MEASURED titer / qP / space-time-yield values per clone (the same
+# two-trigger guard as `run_results`); a correction is a new row naming the row
+# it supersedes (`previous_id`) with a non-empty `reason`.
+# Schema v8 is RESERVED for the Crux items (the planned result-check and decision-ledger work, tracked in the kalos-engine project);
+# do not reuse v8 for anything else.
+_V7_TABLES = ("campaign_clones", "clone_titer_history")
+_V7_TRIGGERS = ("clone_titer_history_no_update", "clone_titer_history_no_delete")
+_V7_INDEXES = ("clone_titer_history_label_idx",)
+_V7_DDL: tuple[str, ...] = (
+    """
+    CREATE TABLE campaign_clones (
+        tenant TEXT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        label TEXT NOT NULL CHECK (length(label) BETWEEN 1 AND 64),
+        fields TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('lead', 'backup', 'retired', 'candidate')),
+        updated_at REAL NOT NULL,
+        updated_by TEXT,
+        PRIMARY KEY (tenant, campaign_id, label),
+        FOREIGN KEY (campaign_id, tenant) REFERENCES campaigns (id, tenant)
+    )
+    """,
+    """
+    CREATE TABLE clone_titer_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant TEXT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        recorded_at REAL NOT NULL,
+        measured_on TEXT,
+        basis TEXT NOT NULL CHECK (basis IN ('harvest_titer', 'qP', 'space_time_yield')),
+        value REAL NOT NULL,
+        unit TEXT NOT NULL,
+        scale_label TEXT,
+        age_kind TEXT CHECK (age_kind IN ('passage', 'generation', 'pdl')),
+        age_value REAL,
+        source_note TEXT,
+        actor TEXT,
+        previous_id INTEGER,
+        reason TEXT,
+        CHECK (previous_id IS NULL OR (reason IS NOT NULL AND length(trim(reason)) > 0)),
+        FOREIGN KEY (campaign_id, tenant) REFERENCES campaigns (id, tenant)
+    )
+    """,
+    "CREATE INDEX clone_titer_history_label_idx ON clone_titer_history (tenant, campaign_id, label, id)",
+    """
+    CREATE TRIGGER clone_titer_history_no_update BEFORE UPDATE ON clone_titer_history
+    BEGIN
+        SELECT RAISE(ABORT, 'clone_titer_history is append-only: UPDATE is rejected');
+    END
+    """,
+    """
+    CREATE TRIGGER clone_titer_history_no_delete BEFORE DELETE ON clone_titer_history
+    BEGIN
+        SELECT RAISE(ABORT, 'clone_titer_history is append-only: DELETE is rejected');
     END
     """,
 )
@@ -489,6 +628,12 @@ def _assert_v2_shape(conn: sqlite3.Connection, version: int | None = None) -> No
     if v >= V5:
         missing += [t for t in _V5_TABLES if t not in tables]
         missing += [f"trigger {t}" for t in _V5_TRIGGERS if t not in triggers]
+    if v >= V6:
+        missing += [t for t in _V6_TABLES if t not in tables]
+        missing += [f"trigger {t}" for t in _V6_TRIGGERS if t not in triggers]
+    if v >= V7:
+        missing += [t for t in _V7_TABLES if t not in tables]
+        missing += [f"trigger {t}" for t in _V7_TRIGGERS if t not in triggers]
     cols = {str(r[1]) for r in _columns(conn, "campaigns")}
     missing_cols = sorted(_V2_CAMPAIGN_COLUMNS - cols)
     if missing or missing_cols:
@@ -621,6 +766,16 @@ class UpPlan:
                 lines.append("  triggers: audit_log rejects UPDATE and DELETE (append-only); no row changes")
             if self.from_version < V5:
                 lines.append("  create: run_results (append-only result history) with its UPDATE/DELETE triggers")
+            if self.from_version < V6:
+                lines.append(
+                    "  create: campaign_settings, and gate_decisions (append-only: UPDATE/DELETE "
+                    "triggers) (schema v6); no existing row changes"
+                )
+            if self.from_version < V7:
+                lines.append(
+                    "  create: campaign_clones (label-only clone registry), and clone_titer_history "
+                    "(append-only: UPDATE/DELETE triggers) (schema v7); no existing row changes"
+                )
             return "\n".join(lines)
         lines = [f"{self.db_path}: schema v{self.from_version} -> v{V2}"]
         if self.from_version > 0:
@@ -641,7 +796,7 @@ class UpPlan:
         for sk in self.latest_skipped:
             lines.append(f"  skip: latest/{sk.filename} ({sk.reason})")
         lines.append("  latest/ files are left in place")
-        lines.append(f"  then: schema v{V2} -> v{SCHEMA_VERSION} (create the jobs table; add the audit_log triggers; create run_results)")
+        lines.append(f"  then: schema v{V2} -> v{SCHEMA_VERSION} (create the jobs table; add the audit_log triggers; create run_results; create campaign_settings and gate_decisions; create campaign_clones and clone_titer_history)")
         return "\n".join(lines)
 
 
@@ -843,6 +998,23 @@ def _apply_v5_in_txn(conn: sqlite3.Connection) -> None:
     _record_version(conn, V5, V5_NAME)
 
 
+def _apply_v6_in_txn(conn: sqlite3.Connection) -> None:
+    """v5 -> v6, inside the caller's BEGIN IMMEDIATE: create `campaign_settings`
+    and `gate_decisions` (+ triggers). Additive; no existing row is read or changed."""
+    for ddl in _V6_DDL:
+        conn.execute(ddl)
+    _record_version(conn, V6, V6_NAME)
+
+
+def _apply_v7_in_txn(conn: sqlite3.Connection) -> None:
+    """v6 -> v7, inside the caller's BEGIN IMMEDIATE: create `campaign_clones` and
+    `clone_titer_history` (+ index and triggers). Additive; no existing row is read
+    or changed. (v8 is reserved for the Crux items; see the module docstring.)"""
+    for ddl in _V7_DDL:
+        conn.execute(ddl)
+    _record_version(conn, V7, V7_NAME)
+
+
 def _generation_of(state: str | None) -> str | None:
     parsed = _parse_state(state)
     gen = parsed.get("generation") if parsed else None
@@ -933,9 +1105,9 @@ def migrate_up(
     latest_dir: Path | str | None = None,
     dry_run: bool = False,
 ) -> MigrationResult:
-    """Bring `db_path` to the current schema (v5). Idempotent: a current database
-    is a no-op. v0/v1 go through the v1 -> v2 migration and then v2 -> v3 -> v4 in
-    the SAME transaction; a v2 or v3 database gets the remaining steps. The backup
+    """Bring `db_path` to the current schema (v7). Idempotent: a current database
+    is a no-op. v0/v1 go through the v1 -> v2 migration and then v2 -> ... -> v7 in
+    the SAME transaction; a v2..v6 database gets the remaining steps. The backup
     is labelled for the version it is taken FROM plus one (`pre-v2` from v1,
     `pre-v3` from v2, `pre-v4` from v3, ...).
 
@@ -1003,6 +1175,10 @@ def migrate_up(
                 _apply_v4_in_txn(conn)
             if now_version < V5:
                 _apply_v5_in_txn(conn)
+            if now_version < V6:
+                _apply_v6_in_txn(conn)
+            if now_version < V7:
+                _apply_v7_in_txn(conn)
             conn.execute("COMMIT")
         except BaseException:
             if conn.in_transaction:
@@ -1026,7 +1202,7 @@ def _refuse_newer(version: int) -> None:
 
 
 def ensure_schema(db_path: Path | str, *, latest_dir: Path | str | None = None) -> MigrationResult:
-    """Startup hook used by `CampaignStore`: migrate to v3 when needed, else verify."""
+    """Startup hook used by `CampaignStore`: migrate to SCHEMA_VERSION when needed, else verify."""
     return migrate_up(db_path, latest_dir=latest_dir)
 
 
@@ -1177,14 +1353,91 @@ def _down_v5_in_txn(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM schema_migrations WHERE version = ?", (V5,))
 
 
+def _down_v6_in_txn(conn: sqlite3.Connection) -> None:
+    """v6 -> v5 inside the caller's transaction: drop the gate_decisions triggers and
+    index, rename both v6 tables aside (`<name>_v6_rolledback`). Nothing is dropped."""
+    tables = _tables(conn)
+    for name in _V6_TRIGGERS:
+        conn.execute(f'DROP TRIGGER IF EXISTS "{name}"')
+    for idx in _V6_INDEXES:
+        conn.execute(f'DROP INDEX IF EXISTS "{idx}"')
+    for table in _V6_TABLES:
+        if table in tables:
+            new = _free_name(tables, f"{table}_v6_rolledback")
+            conn.execute(f'ALTER TABLE "{table}" RENAME TO "{new}"')
+            tables.add(new)
+    conn.execute("DELETE FROM schema_migrations WHERE version = ?", (V6,))
+
+
+def _down_v7_in_txn(conn: sqlite3.Connection) -> None:
+    """v7 -> v6 inside the caller's transaction: drop the clone_titer_history
+    triggers and index, rename both v7 tables aside (`<name>_v7_rolledback`).
+    Nothing is dropped."""
+    tables = _tables(conn)
+    for name in _V7_TRIGGERS:
+        conn.execute(f'DROP TRIGGER IF EXISTS "{name}"')
+    for idx in _V7_INDEXES:
+        conn.execute(f'DROP INDEX IF EXISTS "{idx}"')
+    for table in _V7_TABLES:
+        if table in tables:
+            new = _free_name(tables, f"{table}_v7_rolledback")
+            conn.execute(f'ALTER TABLE "{table}" RENAME TO "{new}"')
+            tables.add(new)
+    conn.execute("DELETE FROM schema_migrations WHERE version = ?", (V7,))
+
+
+def _render_down_v7(db_path: Path, conn: sqlite3.Connection) -> str:
+    """The v7 -> v6 step, naming the rename targets exactly as `_down_v7_in_txn`
+    computes them (an earlier rollback's name is never reused)."""
+    tables = _tables(conn)
+    lines = [
+        f"{db_path}: schema v{V7} -> v{V6}",
+        "  drop: clone_titer_history UPDATE/DELETE triggers and its index",
+    ]
+    for table in _V7_TABLES:
+        if table not in tables:
+            lines.append(f"  {table}: absent; nothing to rename")
+            continue
+        n = int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])  # noqa: S608 - module-constant table names
+        new = _free_name(tables, f"{table}_v7_rolledback")
+        tables.add(new)
+        lines.append(f"  rename: {table} -> {new} (kept, not dropped; {n} row(s))")
+    lines.append("  campaigns, analyses, jobs, audit_log, run_results, campaign_settings and "
+                 "gate_decisions: unchanged")
+    return "\n".join(lines)
+
+
+def _render_down_v6(db_path: Path, conn: sqlite3.Connection) -> str:
+    """The v6 -> v5 step. Names the tables each v6 table is renamed TO, computed
+    the same way `_down_v6_in_txn` does (an earlier rollback's
+    `<name>_v6_rolledback` is never reused: the next free `_2`, `_3`, ... is)."""
+    tables = _tables(conn)
+    lines = [
+        f"{db_path}: schema v{V6} -> v{V5}",
+        "  drop: gate_decisions UPDATE/DELETE triggers and its index",
+    ]
+    for table in _V6_TABLES:
+        if table not in tables:
+            lines.append(f"  {table}: absent; nothing to rename")
+            continue
+        n = int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])  # noqa: S608 - module-constant table names
+        new = _free_name(tables, f"{table}_v6_rolledback")
+        tables.add(new)
+        lines.append(f"  rename: {table} -> {new} (kept, not dropped; {n} row(s))")
+    lines.append("  campaigns, analyses, jobs, audit_log and run_results: unchanged")
+    return "\n".join(lines)
+
+
 def _render_down_v5(db_path: Path, conn: sqlite3.Connection) -> str:
     n = 0
-    if "run_results" in _tables(conn):
+    tables = _tables(conn)
+    if "run_results" in tables:
         n = int(conn.execute("SELECT COUNT(*) FROM run_results").fetchone()[0])
+    new = _free_name(tables, "run_results_v5_rolledback")
     return "\n".join([
         f"{db_path}: schema v{V5} -> v{V4}",
         "  drop: run_results UPDATE/DELETE triggers",
-        f"  rename: run_results -> run_results_v5_rolledback (kept, not dropped; {n} row(s))",
+        f"  rename: run_results -> {new} (kept, not dropped; {n} row(s))",
         "  the campaign state blob keeps each run's current value, so the v4 code still reads it",
     ])
 
@@ -1204,6 +1457,10 @@ def _down_goal(version: int, target: int | None) -> int | None:
 
 
 def _render_down_step(db_path: Path, conn: sqlite3.Connection, step_from: int) -> str:
+    if step_from == V7:
+        return _render_down_v7(db_path, conn)
+    if step_from == V6:
+        return _render_down_v6(db_path, conn)
     if step_from == V5:
         return _render_down_v5(db_path, conn)
     if step_from == V4:
@@ -1223,6 +1480,10 @@ def migrate_down(
     """Roll the database back, ONE version by default, or down to `target`
     (1 .. current - 1). Each step is listed in the plan:
 
+    v7 -> v6: drops the clone_titer_history triggers and index and renames
+    campaign_clones and clone_titer_history to `<name>_v7_rolledback` (kept).
+    v6 -> v5: drops the gate_decisions triggers and renames campaign_settings and
+    gate_decisions to `<name>_v6_rolledback` (kept).
     v5 -> v4: drops the run_results triggers and renames the table to
     `run_results_v5_rolledback` (kept). The campaign blobs keep current values.
     v4 -> v3: drops the two `audit_log` triggers. No row is touched.
@@ -1272,7 +1533,13 @@ def migrate_down(
         conn.execute("BEGIN IMMEDIATE")
         try:
             for step in range(version, goal, -1):
-                if step == V5:
+                if step == V7:
+                    parts.append(_render_down_v7(db, conn))
+                    _down_v7_in_txn(conn)
+                elif step == V6:
+                    parts.append(_render_down_v6(db, conn))
+                    _down_v6_in_txn(conn)
+                elif step == V5:
                     parts.append(_render_down_v5(db, conn))
                     _down_v5_in_txn(conn)
                 elif step == V4:
@@ -1413,7 +1680,7 @@ def _default_state_dir() -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m kalos.portal.migrate",
-        description="Inspect, apply or roll back the kalos portal.db schema migrations (v1 .. v5).",
+        description="Inspect, apply or roll back the kalos portal.db schema migrations (v1 .. v7).",
     )
     parser.add_argument("command", choices=["up", "down", "status"])
     parser.add_argument("--dry-run", action="store_true", help="print the plan; change nothing")
