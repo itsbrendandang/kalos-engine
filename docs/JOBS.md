@@ -1,7 +1,7 @@
 # Background analysis jobs (`/api/campaigns/{id}/jobs`, `/api/jobs/{id}`)
 
-A job is one upload analysis, run in the background instead of inside the
-request. A GP fit takes tens of seconds to minutes; a job lets the client
+A job is one upload analysis, or one campaign re-analysis (see "Re-analysis
+jobs"), run in the background instead of inside the request. A GP fit takes tens of seconds to minutes; a job lets the client
 submit, get a `202`, and poll, instead of holding a connection and a slot
 for the whole fit. Jobs survive a client disconnect and can be cancelled.
 
@@ -18,10 +18,12 @@ Implementation:
 | `kalos/portal/job_runner.py` | The scheduler, inside the engine process: admits jobs, supervises workers, enforces time limits and cancellation, recovers after a crash. |
 | `kalos/portal/job_worker.py` | Runs ONE job. Also the entry point of the worker process (`python -m kalos.portal.job_worker <job_id>`). |
 | `kalos/portal/pipeline.py` | The analysis and the publish, shared with the synchronous routes. |
+| `kalos/portal/reanalyze_job.py` | The re-analysis job body (plan the fold, analyze, commit), and `reanalyze_analysis_kwargs`, shared with the sync reanalyze routes. |
 | `kalos/portal/busy.py` | The admission limiter (global and per-tenant slots) that jobs and sync routes share. |
 
 Release-gate tests: `tests/test_jobs_api.py` (HTTP contract and cross-tenant
-isolation), `tests/test_jobs.py` (queue, worker, runner, crash recovery). The
+isolation), `tests/test_jobs.py` (queue, worker, runner, crash recovery),
+`tests/test_reanalyze_job.py` (re-analysis jobs). The
 runner's process handling is tested with real processes: a time-limit kill of a
 worker and its child that both ignore SIGTERM, and the exit-path group kill.
 
@@ -34,6 +36,7 @@ or headers.
 | Method and path | Scope | Result |
 |---|---|---|
 | `POST /api/campaigns/{id}/jobs` | `write` | `202` + `{"job": ...}`, `Location: /api/jobs/<id>`. Multipart: `file`, `target`, `anonymize`, `roles`, `sheet` (same fields as `/api/run`), and `replace` (`true` to confirm that the upload replaces the campaign's runs; see below). |
+| `POST /api/campaigns/{id}/reanalyze/jobs` | `write` | `202` + `{"job": ...}` (`kind: "reanalyze"`), `Location: /api/jobs/<id>`. No body. See "Re-analysis jobs". |
 | `GET /api/campaigns/{id}/jobs?limit=N` | `read` | `{"jobs": [...]}`, newest first, `N` 1-200 (default 50). |
 | `GET /api/jobs/{id}` | `read` | `{"job": ...}`. |
 | `POST /api/jobs/{id}/cancel` | `write` | `200` + `{"job": ...}`. Idempotent; a finished job is returned unchanged. |
@@ -60,6 +63,10 @@ or headers.
 }
 ```
 
+- `kind`: `"analysis"` (an upload) or `"reanalyze"`. Stored as `params.mode`
+  (the table's `kind` column is always `analysis`; rows without a mode are
+  uploads), and kept after the job finishes.
+- `input_bytes`: the stored upload's size; `null` for a re-analysis (no input).
 - `state`: `queued` -> `running` -> one of `succeeded`, `failed`, `cancelled`,
   `timed_out`. A queued job can also go straight to `cancelled`.
 - `stage` and `progress` (0-1): `parsing`, `fitting`, `calibrating`,
@@ -84,6 +91,8 @@ or headers.
 | `campaign_changed` | The campaign changed (a result, a start, another upload) between submission and publish. Nothing was published; the upload must be resubmitted. |
 | `campaign_has_runs` | The campaign has awaiting or measured runs and the upload was not confirmed with `replace=true`. Nothing was changed; resubmit with `replace=true` to replace them. |
 | `campaign_not_found`, `campaign_archived` | The campaign was removed or archived while the job waited. |
+| `conflict` | Re-analysis only: the campaign was written (an upload, a result, a start, another fold) between the job's fold plan and its commit. Nothing was folded or published; submit again. |
+| `nothing_to_fold`, `no_data` | Re-analysis only: at run time the campaign had no measured run to fold (e.g. a sync re-analysis folded them first), or no data. Nothing was changed. |
 | `input_unavailable` | The stored upload is missing or does not match its recorded checksum. |
 | `timeout` | Past `KALOS_JOB_TIMEOUT_S`; the worker was stopped. |
 | `worker_exited` | The worker process ended without recording an outcome (crash, OOM kill). |
@@ -110,8 +119,52 @@ envelope now, not a failed job later.
 | `408` | The upload body was not received within `KALOS_UPLOAD_READ_TIMEOUT_S` (default 60 s, overall, from the first byte the request sent). Nothing is queued. |
 | `429` | The tenant already has `KALOS_JOB_QUEUE_DEPTH` queued or running jobs, or the engine already has `KALOS_JOB_GLOBAL_QUEUE_DEPTH` (all tenants). Or the tenant already has `SUBMIT_PER_TENANT` (2) uploads being received. `Retry-After` is set. |
 | `409` | Also `/api/run` and `/api/campaigns/{id}/upload` (sync): `code: campaign_has_runs` when the campaign has awaiting or measured runs and `replace=true` was not sent. Nothing is changed. |
-| `409` | `code: upload_pending`: the campaign already has a queued or running upload (one pending upload per campaign). `code: campaign_has_runs`: the campaign has awaiting or measured runs and `replace=true` was not sent. Nothing is queued or written. |
+| `409` | `code: upload_pending`: the campaign already has a queued or running job, upload or re-analysis (one pending job per campaign). `code: campaign_has_runs`: the campaign has awaiting or measured runs and `replace=true` was not sent. Nothing is queued or written. |
 | `503` | Jobs are disabled (`KALOS_JOBS_ENABLED=0`), the job settings are malformed, every preflight slot is in use, or the engine already has `SUBMIT_TOTAL` (4) uploads being received. `Retry-After` is set on the last two. |
+
+## Re-analysis jobs
+
+`POST /api/campaigns/{id}/reanalyze/jobs` (scope `write`, no body) is the
+background form of `POST /api/campaigns/{id}/reanalyze`: fold every measured
+run into the campaign's base dataset, re-run the engine on the folded data,
+and publish the fold and the new analysis together. The sync routes
+(`/api/campaigns/{id}/reanalyze`, `/api/campaign/reanalyze`) are unchanged;
+both paths build the `_analyze` arguments with
+`kalos/portal/reanalyze_job.py` `reanalyze_analysis_kwargs` (the bioprocess
+profile, the awaiting recipes as `pending`, and the `anonymize` flag carried
+over from the analysis being replaced).
+
+**Refused before queueing** (cheap reads; nothing is written), in this order:
+
+| Status | `code` | When |
+|---|---|---|
+| `503` | `service_unavailable` / `jobs_misconfigured` | Jobs disabled / job settings malformed (a malformed id is a `404` before this). |
+| `404` | `not_found` | Malformed, missing, or another tenant's campaign id (byte-identical). |
+| `409` | `campaign_archived` | The campaign is archived. |
+| `409` | `job_pending` | The campaign already has a queued or running job (upload or re-analysis). One active job per campaign. |
+| `429` | `rate_limited` | Tenant or engine queue full. `Retry-After` set. |
+| `400` | `no_data` | The campaign was never seeded (no run sheet) or has no base rows. |
+| `400` | `nothing_to_fold` | No measured run to fold; the message is the store's (names no data). |
+
+(Scope: `401` without a token, `403` without `write`, both before the id is looked at.)
+An upload job submitted while a re-analysis is pending is refused with its
+historical `409 upload_pending`.
+
+**Run.** No input file is stored. The worker:
+
+1. `planning`: plans the fold from the campaign AS IT IS NOW (`plan_fold`);
+   `base_generation` only records the generation at submission;
+2. `fitting`, `calibrating`, `proposing`: `_analyze` on the folded data;
+3. `publishing`: `commit_fold` with a compare-and-swap on the plan's
+   generation, writing the fold, the analysis (with its `run.kind =
+   "reanalyze"` provenance) and the job's `succeeded` in ONE transaction.
+
+A write that lands on the campaign between steps 1 and 3 fails the job with
+`conflict` and writes nothing. A cancel is honored at every stage boundary
+and, until the commit, rolls everything back. On success `round` increments
+and `campaign_generation` is the new generation. Job outcomes are recorded on
+the job row (as for uploads); the submit writes the audit row
+`campaign.reanalyze.submit` (job id and outcome only).
 
 ## Lifecycle and guarantees
 
@@ -155,7 +208,9 @@ all; only its extension is (the parser uses it for format detection), so the
 worker sees a placeholder `upload<ext>`. The rule is the same for both modes:
 every terminal state (`succeeded`, `failed`, `cancelled`, `timed_out`) sets
 `params` to `{}` in the same transaction that sets the state, so the finished
-row no longer holds target, roles, sheet or filename.
+row no longer holds target, roles, sheet or filename. A re-analysis job's
+`params` is only `{"mode": "reanalyze"}` (no customer data), and that is what it
+keeps, so its `kind` still reads `reanalyze`.
 
 What this does NOT cover: while a job is queued or running, its row holds the
 target, roles and sheet names in the clear (the worker needs them), and the

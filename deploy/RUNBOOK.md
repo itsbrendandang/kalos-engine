@@ -3,14 +3,13 @@
 Covers the stack in `deploy/compose.yaml`: the kalos engine
 (FastAPI/uvicorn, `python -m kalos.portal`), kalos-web (Next.js), and a
 SQLite backup sidecar.
-Read `deploy/compose.yaml`'s header comment first if you have not -
-it explains why this stack has two host-published front doors instead of
-one, and why the engine needs real auth configured to start at all.
+Read `deploy/compose.yaml`'s header comment first if you have not. It
+explains the one front door (kalos-web), how the web proxy authenticates to
+the engine with per-request EdDSA engine tokens, and why the engine needs that
+auth configured to start at all.
 
-This is a v0 pack: builds are unverified (no image has actually been built
-- see "What was verified" at the bottom), and TLS termination is explicitly
-out of scope, delegated to a host-level reverse proxy placed in front of
-both published ports. Nothing here does TLS itself.
+TLS termination is out of scope: put a host-level reverse proxy in front of
+the one published port. Nothing here does TLS itself.
 
 
 ## Verified quickstart (first real deployment, 2026-09-10)
@@ -19,9 +18,13 @@ The whole stack, from a clean machine with Docker running:
 
 ```
 cd kalos/deploy
-cp .env.example .env        # fill in KALOS_AUTH_TOKENS, KALOS_ENGINE_TOKEN, KALOS_ANON_SALT
+cp .env.example .env        # at that time: KALOS_AUTH_TOKENS, KALOS_ENGINE_TOKEN, KALOS_ANON_SALT
 docker compose up -d --build
 ```
+
+That run used the static-token setup this stack had then. The current stack
+authenticates the web to the engine with EdDSA engine tokens instead (see
+"Keys" below); follow "Deploy" for a new installation.
 
 Then open http://localhost:3000 - the ONLY published port (bound to loopback by default; see "Who can reach the web app" below). Verified numbers
 from the reference run (M-series Mac, Docker VM 11 CPU / 8 GB): engine image
@@ -93,35 +96,96 @@ cd kalos/deploy
 
 # 1. Real environment, never committed.
 cp .env.example .env
-# Edit .env: fill in KALOS_AUTH_TOKENS, KALOS_ANON_SALT, KALOS_CORS_ORIGINS,
-# NEXT_PUBLIC_API_URL at minimum. See .env.example's inline comments for what
-# each does and how to generate a token/salt.
+# Edit .env: KALOS_ENGINE_JWT_KID, KALOS_ANON_SALT, BETTER_AUTH_SECRET,
+# BETTER_AUTH_URL, GOOGLE_CLIENT_ID/SECRET and AUTH_TRUSTED_PROXIES at minimum.
 
-# 2. The backup sidecar writes to a host-mounted directory (deliberately
-# outside the named `kalos-state` volume - see compose.yaml) that
-# Docker will otherwise auto-create as root-owned, which the backup
-# container (uid 10001, unprivileged) cannot then write into.
+# 2. The engine-token key pair, the engine's JWKS and an empty tenants map
+#    (see "Keys" for what each file is).
+mkdir -p secrets engine-config web-config
+# OpenSSL 1.1.1+ (`openssl genpkey -algorithm ed25519`) also works; macOS's
+# LibreSSL openssl does not support Ed25519, so this uses Node (needed anyway).
+node -e "process.stdout.write(require('crypto').generateKeyPairSync('ed25519') \
+  .privateKey.export({type: 'pkcs8', format: 'pem'}))" > secrets/engine-jwt-ed25519.pem
+KALOS_ENGINE_JWT_PRIVATE_KEY_FILE=secrets/engine-jwt-ed25519.pem \
+KALOS_ENGINE_JWT_KID="$(grep '^KALOS_ENGINE_JWT_KID=' .env | cut -d= -f2)" \
+  node ../../kalos-web/scripts/engine-jwks.mjs > engine-config/engine-jwks.json
+echo '{}' > web-config/tenants.json
+# Both containers run as uid 10001. The private key stays readable by the web
+# container only; the engine gets the public JWKS only.
+chmod 600 secrets/engine-jwt-ed25519.pem
+chown -R 10001:10001 secrets engine-config web-config   # or with sudo
+
+# 3. The backup sidecar writes to a host directory outside the named volumes,
+#    which Docker would otherwise create root-owned.
 mkdir -p backups
 chown -R 10001:10001 backups   # or: sudo chown -R 10001:10001 backups
 
-# 3. Build all three images.
+# 4. Check the configuration, build, create the web's auth database, start.
+docker compose config --quiet
 docker compose build
-
-# 4. Bring the stack up.
+docker compose run --rm --no-deps -e AUTH_MIGRATE=only web   # migrate, then exit
 docker compose up -d
 
-# 5. Confirm the engine actually started with auth enforced (it exits
-# non-zero instead if KALOS_AUTH_TOKENS/KALOS_ANON_SALT are missing - see
-# "Security checklist" below).
-docker compose logs engine | grep "security posture"
-# Expect: "kalos portal security posture: auth=enforced, cors=allowlist(1)"
-# auth=OPEN or cors=dev-localhost here means .env is not actually filled in.
+# 5. Confirm the engine enforces auth (it exits non-zero instead when the JWKS
+#    or KALOS_ANON_SALT is missing or malformed): an unauthenticated call must
+#    get 401, and the log must not say "auth is OPEN".
+docker compose exec engine python -c "import urllib.request as u, urllib.error as e
+try: u.urlopen('http://127.0.0.1:8050/api/campaigns'); print('OPEN: fix the JWKS')
+except e.HTTPError as x: print(x.code)"          # expect 401
+docker compose logs engine | grep -i "auth is OPEN"   # expect no output
 
 # 6. Health.
-docker compose ps                    # both engine and web should show "healthy"
-curl -f http://localhost:${KALOS_ENGINE_PORT:-8050}/healthz
+docker compose ps                    # engine and web should show "healthy"
 curl -f http://localhost:${KALOS_WEB_PORT:-3000}/
 ```
+
+Then onboard the first organization ("Onboarding" below).
+
+## Keys
+
+- `secrets/engine-jwt-ed25519.pem`: the Ed25519 private key (PKCS#8 PEM)
+  kalos-web signs a 60 s engine token with for every proxied request. Only the
+  web container mounts it (`KALOS_ENGINE_JWT_PRIVATE_KEY_FILE`). One key pair
+  per environment.
+- `engine-config/engine-jwks.json`: the matching PUBLIC key as a JWKS,
+  printed by kalos-web's `scripts/engine-jwks.mjs` (it never prints private
+  material, and the engine refuses a key that carries `d`). The engine reads it
+  from `KALOS_JWT_PUBLIC_KEYS_FILE` and verifies issuer, audience, expiry,
+  `kid`, tenant and scopes (`docs/ENGINE_TOKEN.md`). The `kid` must equal the
+  web's `KALOS_ENGINE_JWT_KID`.
+- The engine re-reads the JWKS when the file changes. Replace it atomically
+  (write a new file in `engine-config/`, then `mv` it over the old one); the
+  directory is mounted, so the rename is seen.
+- **Rotation**: generate a new key with a new kid; add its public key to the
+  JWKS next to the old one; switch the web to the new key and kid
+  (`docker compose up -d web`); wait at least 150 s (the engine's maximum
+  token lifetime plus leeway); remove the old key from the JWKS. On a
+  suspected compromise, remove the old public key first (engine calls fail
+  until the web is switched). Details: `docs/ENGINE_TOKEN.md`, "Key rotation".
+- **Service accounts** (scripts, CI) may use static bearer tokens instead:
+  hashed records in `KALOS_AUTH_TOKENS` (`.env.example` has the shape).
+  kalos-web never sends one, and the stack does not need any.
+
+## Onboarding
+
+kalos-web is invite-only. Each organization maps to one engine tenant through
+`web-config/tenants.json` (`{"<organization id>": "<tenant>"}`), which
+kalos-web's `scripts/create-org.mjs` writes and the web re-reads on change.
+An organization missing from the map gets 403. The tenant in every engine
+token comes from this map, and the engine keys all data by it.
+
+```bash
+cd kalos/deploy
+# web-config is mounted read-write at a second path for this one-shot job
+# (the server's /config mount stays read-only).
+docker compose run --rm --no-deps \
+  -v "$(pwd)/web-config:/onboard" \
+  web node scripts/create-org.mjs --tenant-map /onboard/tenants.json \
+  --name "Acme Bio" --slug acme --owner-email owner@acme.example --tenant acme
+```
+
+It prints an invitation link; send it to the owner, who signs in with Google
+and enrols TOTP. kalos-web's `docs/AUTH.md` covers invitations and roles.
 
 ## Upgrade
 
@@ -131,6 +195,7 @@ git -C .. pull                       # or however the engine repo updates
 git -C ../../kalos-web pull          # kalos-web separately
 
 docker compose build
+docker compose run --rm --no-deps -e AUTH_MIGRATE=only web   # web auth schema, if it changed
 docker compose up -d                 # recreates only the services whose image changed
 docker compose logs -f engine web    # watch both healthchecks go green
 ```
@@ -208,9 +273,15 @@ docker run --rm \
 # 3. Bring the engine back up and confirm the restored data is visible.
 docker compose start engine
 docker compose logs -f engine
-curl -sf -H "Authorization: Bearer <a real provisioned token>" \
-  http://localhost:${KALOS_ENGINE_PORT:-8050}/api/experiments | head -c 300
+docker compose exec engine python -c "import sqlite3; \
+  print(sqlite3.connect('/home/kalos/.kalos/portal.db').execute('select count(*) from campaigns').fetchone())"
 ```
+
+Then sign in to the web app and check that the campaigns are there.
+
+The web's own database (users, sessions, organizations; volume
+`kalos-web-data`) is not covered by this sidecar. Back it up with kalos-web's
+`scripts/auth-backup.sh` (kalos-web `docs/AUTH.md`).
 
 The `latest/*.json` per-tenant analysis cache is intentionally NOT part of
 this drill - it is explicitly best-effort persistence in the source itself
@@ -221,9 +292,12 @@ script still copies it opportunistically under
 
 ## Log locations
 
-- `docker compose logs engine` - uvicorn access/error output plus kalos's
-  own logger (`kalos.portal`), including the startup security-posture line
-  and the per-request "refused a remote request" warning if it ever fires.
+- `docker compose logs engine` - uvicorn errors (it runs at log level
+  `warning`) plus kalos's own warnings (`kalos.portal`): startup refusals,
+  "auth is OPEN" if no auth source is configured, and the per-request "refused
+  a remote request" warning if it ever fires. Per-token refusals
+  (`kalos auth: rejected jwt reason=...`) are logged at INFO, so they do not
+  appear at this level.
 - `docker compose logs web` - Next.js server output.
 - `docker compose logs backup` - one line per backup attempt (success with
   the file written and its size, or an explicit `FAILED` line that leaves
@@ -246,73 +320,49 @@ so it stays a pure liveness check. `docker compose ps` shows `healthy` /
 
 ## Security checklist
 
-- [ ] `KALOS_AUTH_TOKENS` (or `KALOS_AUTH_TOKENS_FILE`, if you switch to a
-      mounted file for rotation without an image rebuild) set to at least
-      one real, freshly generated token - not the placeholder hash.
-- [ ] `KALOS_ANON_SALT` set to a real random secret - not the placeholder.
-- [ ] `KALOS_CORS_ORIGINS` set to the exact origin(s) the browser loads
-      kalos-web from.
-- [ ] `docker compose logs engine | grep "security posture"` shows
-      `auth=enforced` and `cors=allowlist(N)`, not `OPEN` / `dev-localhost`.
-- [ ] TLS termination is delegated to a host-level reverse proxy (nginx,
-      Caddy, your cloud LB) placed in front of the single published port.
-      This compose stack serves plain HTTP on its front door; that is a
-      deliberate v0 scope cut, not an oversight - wiring TLS in is the
-      first thing to add before this stack sees a network it does not
-      fully trust.
-- [ ] **Who can reach the web app (user -> web is NOT authenticated).** The "web and
-      engine" item below only covers the service-to-service hop. kalos-web itself has no
-      login, and its proxy adds the engine bearer token to every request it forwards, so
-      anyone who can reach the web port can read and write campaign data. The compose
-      file therefore publishes the web port on 127.0.0.1 by default (`KALOS_WEB_BIND`).
-      For shared use put an authenticating reverse proxy (SSO / basic auth / VPN) in front
-      and only then set `KALOS_WEB_BIND=0.0.0.0`. Verify with `docker compose ps`: the
-      PORTS column must read `127.0.0.1:3000->3000/tcp` unless you deliberately changed it.
-      Origin/CORS settings are not authentication.
-- [x] **Auth between web and engine (service-to-service only) - closed in wave 2**: kalos-web now ships
-      a server-side proxy (`app/api/engine/[...path]/route.ts`). The browser
-      calls same-origin `/api/engine/...`; the Next server forwards to the
-      engine over the compose-internal network with `Authorization: Bearer
-      $KALOS_ENGINE_TOKEN`. The token is server-only env (never NEXT_PUBLIC_,
-      never in the client bundle), and the engine no longer publishes a host
-      port at all - one front door. Setup: mint a `KALOS_AUTH_TOKENS` entry
-      (subject e.g. "kalos-web-service") and set `KALOS_ENGINE_TOKEN` in
-      `deploy/.env` to its PLAINTEXT counterpart. (`.env.example` could not be
-      auto-edited - this workspace hard-denies `.env*` writes - add the
-      `KALOS_ENGINE_TOKEN=` line there by hand.) The old direct-browser mode
-      survives as an explicit dev escape hatch: set `NEXT_PUBLIC_API_URL` and
-      re-publish the engine port in the compose. The previous option of
-      `KALOS_ALLOW_OPEN_ACCESS=1` + network-perimeter control remains the
-      guard's own documented escape hatch for fully-controlled networks, but
-      is no longer needed to make the UI functional.
-- [ ] Only ONE port is published: `KALOS_WEB_PORT` (default 3000). The
-      engine is compose-internal only (wave 2 - the web server proxies to
-      it). Confirm with `docker compose ps` - no other service should show
-      a `PORTS` column entry.
-- [ ] Exactly one `engine` replica. `kalos/portal/engine_lock.py`'s
-      engine lock and the store's single-writer assumption are not safe under
-      `docker compose up --scale engine=N` for N>1. This compose file does
-      not set `deploy.replicas`, so this is the default, but it is worth
-      stating as a hard constraint rather than an accident of the current
-      config.
+- [ ] `engine-config/engine-jwks.json` holds only the public key(s) of the
+      web's signing key, and its kid equals `KALOS_ENGINE_JWT_KID`.
+- [ ] `secrets/engine-jwt-ed25519.pem` is mode 600, owned by uid 10001, and
+      mounted only into `web`. It is never committed (`deploy/secrets/` is
+      gitignored) and never placed in `.env`.
+- [ ] `KALOS_AUTH_TOKENS` is empty unless a service account needs it; each
+      record has `"service_account": true`, one tenant, and no `admin`.
+- [ ] `KALOS_ANON_SALT` is a real random secret, not the placeholder.
+- [ ] An unauthenticated engine call gets 401 and `docker compose logs engine`
+      has no "auth is OPEN" warning ("Deploy", step 5).
+- [ ] kalos-web's boot check passed (`docker compose logs web`): it exits 1 on
+      a missing or placeholder `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, Google
+      client, engine key or kid, or an invalid tenants map.
+- [ ] TLS is terminated by a host-level reverse proxy (nginx, Caddy, a cloud
+      load balancer) in front of the one published port, and that proxy's
+      address is in `AUTH_TRUSTED_PROXIES`. This stack serves plain HTTP.
+- [ ] Only ONE port is published: `KALOS_WEB_PORT` (default 3000, on
+      `KALOS_WEB_BIND`, default 127.0.0.1). The engine is compose-internal.
+      Confirm with `docker compose ps`.
+- [ ] Exactly one `engine` replica. The engine lock and the store's
+      single-writer assumption are not safe under
+      `docker compose up --scale engine=N` for N>1.
 
 ## Changing the engine URL
 
-Because `NEXT_PUBLIC_API_URL` is compiled into kalos-web's client bundle at
-build time (see `kalos-web/Dockerfile`), moving the engine to a new host/port
-means:
+The web reaches the engine at `KALOS_ENGINE_URL` (`http://engine:8050` in
+this stack), read at request time: change it in `compose.yaml` and run
+`docker compose up -d web`.
 
-```bash
-# edit NEXT_PUBLIC_API_URL in deploy/.env, then:
-docker compose build web
-docker compose up -d web
-```
-
-A plain `docker compose restart web` or `docker compose up -d` with only
-the environment changed does NOT pick this up - the value is already baked
-into the JS files on disk inside the image.
+Dev only: kalos-web can also be built with `NEXT_PUBLIC_API_URL` so the
+browser calls an engine directly. That bypasses sign-in and engine tokens, so
+it only works against an open local engine; never use it in this stack.
 
 ## What was verified vs. not
+
+**Engine-token setup (this revision):** `docker compose config` resolves the
+stack with a filled-in `.env`; a JWKS printed by kalos-web's
+`scripts/engine-jwks.mjs` from a fresh Ed25519 key was accepted by the
+engine, which then served a token signed with that key and refused an
+unsigned request (run outside Docker). No image was built and no container
+was run for this revision.
+
+**Earlier revisions:**
 
 **Verified:**
 - `deploy/compose.yaml` parses and resolves correctly:

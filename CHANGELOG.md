@@ -4,6 +4,53 @@ Newest first.
 
 ## Unreleased
 
+### Changed - selection-aware proposal intervals (F15, ML audit B1 fix 2; interval numbers change)
+
+- `proposals[].intervals` are calibrated on the held-out runs each fold model ranked highest (top 30%, both CV repeats) with the proposal sd floored at the 90th percentile of held-out sds (`method: conformal_selection_aware`, `coverage_basis: held_out_top_ranked_runs`). Measured at proposals on fresh simulation seeds: 90% band 0.60-0.83 -> 0.92-0.99, 95% band 0.72-0.92 -> 0.96-0.99, at 2.5-3.2x the median width; in-box coverage 0.98-1.00 (conservative). Per-level fallback to the plain band with `selection_aware_unavailable` when too few runs are selected. VALIDATION.md has the table.
+
+### Changed - trust gates that gate (F04, ML audit B3; proposals change)
+
+- One `verdict` (reliable / not_yet / refused, cherry-picked from `arch-safe-now`) from the leak-free CV acts on the batch: `refused` (fewer than 3 CV groups, or the held-out score's 95% interval at or below 0) withholds the proposals with a `refusal`; `not_yet` labels every proposal `trust.status: exploration_untrusted`; `reliable` labels them `trusted`. `proposal_trust` says what happened.
+- `reliability.clears_floor` needs the interval's lower end above 0, at least 12 runs and 3 CV groups; below that it is `null` with `reliability.verdict: not_judged` (`judged`, `not_judged_reason`), and the model verdict carries `too_few_rows_to_judge`.
+- The promotion gate can pass on an ordinary target: feasibility gates are not judged below 5 non-producing runs or when minimizing; `promotion.status`. `cv_topk` respects minimize. `cv_ci95` is null instead of NaN below 3 groups.
+
+### Changed - leak-free cross-validation grouping (F05, ML audit B2; numbers change)
+
+- As-run replicates (settings within 0.05 of each input's range) are held out together; batch, lot, plate, block, round, date and week columns are no longer fitted or proposed and, with scale columns and campaign rounds (now carried by the fold), are cross-validated as groups. The lowest held-out score drives `cv_spearman`, the conformal calibration and the verdict; `cv_grouping` reports every candidate and warnings.
+- False trust on sheets with no input signal (`python -m kalos.bench.trust_leaks`, 20 seeds): text/numeric batch column 1.00 -> 0.10, campaign rounds 0.95 -> 0.10, as-run replicates 1.00 -> 0.15. Batch columns are no longer proposed (1.00 -> 0.00).
+
+### Changed - honest interval labels (F02, ML audit B1)
+
+- Proposal caveat wording: no text next to a proposal interval says it "is calibrated". It says what the band was calibrated on and the coverage measured at proposed recipes, e.g. "Based on held-out runs: ... At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)." (95%: 96-99%). Guarded by `tests/test_interval_labels.py`.
+- Every band carries `coverage_basis`: `held_out_past_runs` for the conformal bands, `model_based` for the GP's own bands and quantiles.
+- Each proposal interval carries `caveat` (`code: coverage_lower_at_proposals`, a plain message and `coverage_at_proposals_estimate` with its source): the band is calibrated on held-out runs similar to past runs, and at proposals it was measured lower in simulation (90%: 60-81%, 95%: 75-85%; `python -m kalos.bench.coverage_at_proposals`, VALIDATION.md).
+- `conformal_caveat` (cherry-picked from `arch-safe-now` 47143f3) labels the global `conformal_q` band the same way (measured 68-83% at proposals).
+- No number changes; the fields are additive.
+
+### Added - production clones and strains (schema v7, `docs/CLONES.md`)
+
+- A clone / strain column is always an unordered label, even when numeric (no more `clone: 329.44` proposals). Declare it with setup `strain_column` (policy `fixed`, the default, holds every proposal at one clone; `factor` lets proposals choose) or upload `roles.strain`; with no roles a `clone` / `strain` / `cell line` column is detected and reported.
+- Covariates (passage, generation, PDL, thaw, vial, cell bank) are never proposed: numeric ones stay model inputs held at a reference value (`proposals[].held`).
+- New analysis blocks: `strain_summary` (per-clone measured stats with n and a 95% t-interval only for n >= 3, process-adjusted clone effect with empirical-Bayes shrinkage and data weight, GP prediction at one reference process, balance / confounding flags, clone x input interaction screen, leave-one-clone-out, refusals), `slices_by_level`, `oof_levels`, `covariates`, `categorical_effects`, `drivers_skipped`, `correlation_skipped`.
+- Label-only clone registry and append-only titer history (schema v7, five routes under `/api/campaigns/{id}/clones`). Schema v8 is reserved for the Crux items.
+
+### Fixed - mixed (categorical) fits
+
+- `gp_shapes` no longer fails on a mixed fit ("posterior sweep failed: RuntimeError"): the sweep passed only the continuous columns to a GP fit on continuous + categorical columns.
+- A clone column plus a linear constraint no longer withholds every proposal (ML_AUDIT N2): a fixed clone is held, and in `factor` mode the constraints run through the exact mixed enumeration. Campaigns with categorical inputs and no clone column are unchanged (still `constraints_with_categoricals`).
+- Analyses of sheets without a clone or covariate column are byte-identical (`tests/test_strain_golden_no_clone.py`).
+
+### Added - ESMC protein embeddings and an open-source catalog
+
+- `kalos.features.ESMCEmbedder` embeds a protein sequence with ESMC (ESM Cambrian), the current ESM model from Biohub (MIT). The default is `biohub/ESMC-300M` (960 dimensions), pinned to commit `96a2d8d6`, loaded with transformers' native `esmc` model. Both embedders now load with `trust_remote_code=False` and `use_safetensors=True`, so a checkpoint can neither run its own Python nor load pickled weights.
+- The `protein` extra now installs torch (the same pin as `ml`), so `pip install -e ".[protein]"` alone runs the embedders, and needs `transformers>=5.16`, the first release with ESMC; the lockfile resolves 5.23.0.
+- `docs/OPEN_SOURCE.md` lists the open-source models, libraries and public data sources Kalos uses or can use, with licenses and what each would add.
+
+### Fixed - verify kalos-web's per-user engine tokens
+
+- Restore EdDSA JWT verification, trusted-key rotation, deny-list checks and tenant-scoped principals for kalos-web's signed engine requests. Static service-account tokens remain supported; production still refuses unusable authentication configuration and published test keys.
+- Restore JWT and cross-tenant HTTP tests using kalos-web's shared token vectors. Document the proxy's route-specific scopes and signing contract in `docs/ENGINE_TOKEN.md` and correct the README's static-only authentication description.
+
 ### Changed - audit trail and recorded results (schema v5, `docs/MIGRATIONS.md`)
 
 - **Recorded results are append-only.** A re-submitted campaign result is a new `run_results` row (value, value replaced, reason, actor, server time). A correction needs a `reason` (`400 reason_required` without one). The run's current value is the latest. Response fields are added (`result_version`, `previous_result`, `result_reason`, `result_actor`, `result_recorded_at`); none is removed.

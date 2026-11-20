@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Demo: embed product proteins with ESM-2 and build a surrogate feature table.
+"""Demo: embed product proteins with ESM-2 or ESMC and build a surrogate feature table.
 
-Run:  python examples/run_protein_embed.py   (downloads a small ESM-2 model once)
+Run:  python examples/run_protein_embed.py          (ESM-2, ~30 MB download once)
+      python examples/run_protein_embed.py --esmc   (ESMC-300M, ~1.2 GB download once)
 Needs the protein extra:  pip install -e ".[protein]"
 """
 from __future__ import annotations
@@ -13,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # run without inst
 
 import numpy as np
 
-from kalos.features import ESM2Embedder, build_feature_table
+from kalos.features import ESM2Embedder, ESMCEmbedder, build_feature_table
 
 # illustrative product protein fragments (public sequences)
 PRODUCTS = {
@@ -24,8 +25,8 @@ PRODUCTS = {
 
 
 def main() -> int:
-    emb = ESM2Embedder()
-    print(f"ESM-2 {emb.model_name} on {emb.device} (dim {emb.dim})")
+    emb = ESMCEmbedder() if "--esmc" in sys.argv[1:] else ESM2Embedder()
+    print(f"{emb.model_name} on {emb.device} (dim {emb.dim})")
     table = build_feature_table(PRODUCTS, emb)
     print("\nprotein feature table (first 5 of", emb.dim, "dims):")
     print(table.iloc[:, :6].round(3).to_string(index=False))

@@ -280,6 +280,12 @@ _POOL_SEEDS = range(12)
 _POOL_N_INIT, _POOL_BUDGET = 6, 16
 
 
+# The two tests that share `pool_trials` (minutes of paired BO runs) carry one
+# xdist group, so under `pytest -n ... --dist loadgroup` (CI) the module fixture
+# is built once, on one worker, instead of once per worker.
+_POOL_TRIALS = pytest.mark.xdist_group("feasibility_pool_trials")
+
+
 @pytest.fixture(scope="module")
 def pool_trials() -> dict:
     """THE BENCH TIE-IN. Paired retrospective runs through the PRODUCTION
@@ -368,6 +374,7 @@ def pool_trials() -> dict:
 
 
 @pytest.mark.slow
+@_POOL_TRIALS
 def test_gated_vs_ungated_best_found_so_far_not_worse_on_zero_inflated_pool(pool_trials):
     """Guard: gating must not trade away the optimum. Count the runs whose
     best-found-so-far is near-optimal: within 2 assay-noise SDs (0.1) of the
@@ -403,6 +410,7 @@ def test_gated_vs_ungated_best_found_so_far_not_worse_on_zero_inflated_pool(pool
     )
 
 
+@_POOL_TRIALS
 def test_gated_runs_pick_fewer_true_non_producers_than_ungated_on_zero_inflated_pool(
     pool_trials,
 ):

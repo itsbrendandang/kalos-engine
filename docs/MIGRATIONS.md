@@ -3,7 +3,8 @@
 `<KALOS_STATE_DIR>/portal.db` (default `~/.kalos/portal.db`) holds the campaign
 loop: campaigns, their published analyses, the tenant's default campaign, and
 an audit log. Its schema is versioned in `schema_migrations`. The code is
-`kalos/portal/migrate.py`; the tests are `tests/test_campaign_schema_v2.py`.
+`kalos/portal/migrate.py`; the tests are `tests/test_campaign_schema_v2.py` and,
+for v6, `tests/test_schema_v6.py`, and for v7, `tests/test_schema_v7.py`.
 
 | Version | Shape | Code |
 | --- | --- | --- |
@@ -11,7 +12,12 @@ an audit log. Its schema is versioned in `schema_migrations`. The code is
 | v2 | `schema_migrations`, `campaigns`, `analyses`, `tenant_defaults`, `audit_log` (below) | `feat/campaign-schema-v2` |
 | v3 | adds the `jobs` table (background jobs, `docs/JOBS.md`) | `feat/background-jobs` |
 | v4 | adds two triggers on `audit_log` that reject UPDATE and DELETE (append-only; below) | `SCHEMA_VERSION = 4` |
-| v5 | adds `run_results` (append-only result history) with UPDATE/DELETE triggers | current (`SCHEMA_VERSION = 5`) |
+| v5 | adds `run_results` (append-only result history) with UPDATE/DELETE triggers | `SCHEMA_VERSION = 5` |
+| v6 | adds `campaign_settings` and `gate_decisions` (append-only stage gate decisions; below) | `SCHEMA_VERSION = 6` |
+| v7 | adds `campaign_clones` (label-only clone registry) and `clone_titer_history` (append-only; below) | current (`SCHEMA_VERSION = 7`) |
+| v8 | **reserved** for the Crux items | not yet written |
+
+Schema v8 is reserved for the Crux items (the planned result-check and decision-ledger work, tracked in the kalos-engine project); do not reuse v8 for anything else.
 
 A v1 database has no `schema_migrations` table.
 
@@ -102,6 +108,64 @@ recovery. Nothing is repaired automatically. Recovery, with the engine stopped:
 2. **Or start from a fresh state directory** (`KALOS_STATE_DIR` set to a new empty
    directory) and import the campaign data. There is no import command yet: read
    the rows from the `campaigns_backup_N` table with `sqlite3` and re-enter them.
+
+## Schema v7: clone registry and clone titer history
+
+Schema v7 adds two tables (docs/CLONES.md). Both carry
+`FOREIGN KEY (campaign_id, tenant)` to `campaigns (id, tenant)`.
+
+- `campaign_clones(tenant, campaign_id, label, fields, status, updated_at,
+  updated_by)`, `PRIMARY KEY (tenant, campaign_id, label)`. `label` is 1..64
+  characters (CHECK); `status IN ('lead', 'backup', 'retired', 'candidate')`;
+  `fields` is a JSON object of allowlisted LABELS only (host, parent cell bank,
+  construct id, phenotype, product, passage at banking, note). Like
+  `campaign_settings`, it lives outside the campaign state blob, so an edit never
+  mints a campaign generation. Accessor: `kalos/portal/clone_registry.py`.
+- `clone_titer_history(id, tenant, campaign_id, label, recorded_at, measured_on,
+  basis, value, unit, scale_label, age_kind, age_value, source_note, actor,
+  previous_id, reason)`: append-only measured values per clone. `basis IN
+  ('harvest_titer', 'qP', 'space_time_yield')`, `age_kind IN ('passage',
+  'generation', 'pdl')`; a row with `previous_id` (a correction) must carry a
+  non-blank `reason` (CHECK). The same two-trigger guard as `run_results` rejects
+  UPDATE and DELETE (`clone_titer_history is append-only: ...`). Index
+  `clone_titer_history_label_idx (tenant, campaign_id, label, id)`.
+- `up` from v6 takes a `pre-v7-<ts>` backup and creates both tables, the index and
+  the triggers in one transaction. No existing row is read or changed.
+- `down` (v7 -> v6) takes a `pre-down-<ts>` backup, drops the two triggers and the
+  index, and renames the tables to `campaign_clones_v7_rolledback` and
+  `clone_titer_history_v7_rolledback` with every row kept. A v6 engine runs on the
+  result. A later `up` creates fresh, empty v7 tables (rows are not merged back); a
+  second `down` renames to `<name>_v7_rolledback_2`, and so on.
+- Schema v8 is reserved for the Crux items (the planned result-check and decision-ledger work, tracked in the kalos-engine project); do
+  not reuse v8 for anything else.
+
+## Schema v6: campaign settings and stage gate decisions
+
+Schema v6 adds two tables. Both carry `FOREIGN KEY (campaign_id, tenant)` to
+`campaigns (id, tenant)`, so a row can only point at a campaign of its own tenant.
+
+- `campaign_settings(campaign_id, tenant, kind, value, updated_at, updated_by)`,
+  `PRIMARY KEY (campaign_id, tenant, kind)`, `kind IN ('setup', 'stages')`. One JSON
+  document per campaign and kind (goal and boundaries; editable stage definitions).
+  It lives outside the campaign state blob, so editing it never mints a new campaign
+  generation. Accessor: `kalos/portal/campaign_settings.py` (tenant-scoped; a
+  foreign or missing campaign is `CampaignNotFound`, an archived one refuses writes,
+  a document over 64 KiB of JSON is refused).
+- `gate_decisions(id, tenant, campaign_id, gate, decision, note, evidence,
+  decided_by, auth_method, decided_at)`: the append-only record of HUMAN go/no-go
+  decisions. `decision IN ('go', 'no_go', 'pending')`; `note` is NOT NULL and must
+  not be blank (CHECK). The same two-trigger guard as `audit_log` rejects UPDATE and
+  DELETE (`gate_decisions is append-only: ...`); a gate's current decision is its
+  newest row. Index `gate_decisions_campaign_idx (tenant, campaign_id, gate, id)`.
+- `up` from v5 takes a `pre-v6-<ts>` backup and creates both tables, the index and
+  the triggers in one transaction. No existing row is read or changed.
+- `down` (v6 -> v5) takes a `pre-down-<ts>` backup, drops the two triggers and the
+  index, and renames the tables to `campaign_settings_v6_rolledback` and
+  `gate_decisions_v6_rolledback` with every row kept (the dry-run plan prints the
+  row counts). A v5 engine runs on the result; nothing it reads changed.
+- A later `up` creates fresh, empty v6 tables; the rolled-back rows are not merged
+  back (copy them by hand if needed). A second `down` never reuses a name: it
+  renames to `<name>_v6_rolledback_2`, `_3`, and so on, as the plan shows.
 
 ## Schema v5: append-only result history
 
@@ -239,10 +303,10 @@ explicitly with the engine stopped:
 
 ```sh
 python -m kalos.portal.migrate up
-python -m kalos.portal.migrate status    # expect: schema version: v5; journal_mode=wal
+python -m kalos.portal.migrate status    # expect: schema version: v7; journal_mode=wal
 ```
 
-Keep the `portal.db.pre-v2-<ts>` ... `pre-v5-<ts>` copy (whichever apply) until the release is accepted.
+Keep the `portal.db.pre-v2-<ts>` ... `pre-v7-<ts>` copy (whichever apply) until the release is accepted.
 
 ### Verify
 

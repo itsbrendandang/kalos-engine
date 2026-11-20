@@ -43,13 +43,23 @@ from pydantic import Strict as _Strict
 from starlette.concurrency import run_in_threadpool
 
 from kalos.assist.hooks import after_write as _assist_after_write
-from kalos.portal.auth import ADMIN, READ, WRITE, Principal, require_scope
+from kalos.portal.auth import (
+    ADMIN,
+    READ,
+    WRITE,
+    Principal,
+    conditional_scope,
+    require_scope,
+)
 from kalos.portal.campaign import (
     CampaignError,
     CampaignNotFound,
     CampaignStore,
     get_campaign_store,
 )
+from kalos.portal.campaign_list import DEFAULT_LIMIT as DEFAULT_SUMMARY_LIMIT
+from kalos.portal.campaign_list import MAX_LIMIT as MAX_SUMMARY_LIMIT
+from kalos.portal.campaign_list import InvalidCursor, list_campaign_summaries
 from kalos.portal.campaign_routes import (
     _reanalyze,
     _StartBody,
@@ -114,7 +124,7 @@ def _valid_campaign_id(campaign_id: str) -> bool:
 
 
 def _auth_method(principal: Principal) -> str:
-    # `auth_method` on Principal: 'anonymous' (open mode) or 'static' bearer token.
+    # `auth_method` on Principal: 'anonymous', 'static', or 'jwt'.
     method = getattr(principal, "auth_method", None)
     if isinstance(method, str) and method:
         return method
@@ -206,10 +216,35 @@ class _RunResultBody(BaseModel):
 @router.get("/api/campaigns")
 def list_campaigns(
     include_archived: bool = Query(default=False),
+    summary: bool = Query(default=False),
+    limit: int | None = Query(default=None, ge=1, le=MAX_SUMMARY_LIMIT),
+    cursor: str | None = Query(default=None, max_length=256),
     principal: Principal = Depends(require_scope(READ)),
     store: CampaignStore = Depends(get_campaign_store),
-) -> dict[str, Any]:
-    """The caller's tenant's campaigns, newest first."""
+) -> Any:
+    """The caller's tenant's campaigns, newest first.
+
+    `summary=true` adds the per-campaign card fields and paginates
+    (`limit` 1..200, default 50; `cursor` = the previous page's `next_cursor`);
+    see `kalos.portal.campaign_list` and docs/CAMPAIGNS_API.md. Without it the
+    response is the unpaginated info list, unchanged; `limit`/`cursor` without
+    `summary=true` are refused (400 `invalid_query`) rather than ignored."""
+    if summary:
+        try:
+            return list_campaign_summaries(
+                store, tenant=principal.tenant, include_archived=include_archived,
+                limit=limit if limit is not None else DEFAULT_SUMMARY_LIMIT, cursor=cursor,
+            )
+        except InvalidCursor:
+            return JSONResponse(
+                {"error": "invalid cursor; pass the next_cursor of a previous page",
+                 "code": "invalid_cursor"}, status_code=400,
+            )
+    if limit is not None or cursor is not None:
+        return JSONResponse(
+            {"error": "limit and cursor apply only with summary=true", "code": "invalid_query"},
+            status_code=400,
+        )
     return {
         "campaigns": store.list_campaigns(
             tenant=principal.tenant, include_archived=include_archived
@@ -255,6 +290,7 @@ def get_campaign(
 
 
 @router.patch("/api/campaigns/{campaign_id}")
+@conditional_scope(ADMIN, "body sets 'archived' (archive/unarchive)")
 def update_campaign(
     campaign_id: str,
     body: _PatchBody,

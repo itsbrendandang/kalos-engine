@@ -1,5 +1,6 @@
-"""Kalos portal - the background-job worker: runs ONE queued analysis
-(docs/JOBS.md, "The worker").
+"""Kalos portal - the background-job worker: runs ONE queued analysis, an
+upload or a campaign re-analysis (kalos.portal.reanalyze_job), (docs/JOBS.md,
+"The worker").
 
 The runner (kalos.portal.job_runner) starts this module in its own process
 (`python -m kalos.portal.job_worker <job_id>`), so a GP fit that runs for
@@ -46,6 +47,7 @@ from kalos.portal.campaign import (
 )
 from kalos.portal.migrate import JOB_ID_PATTERN
 from kalos.portal.pipeline import compute_upload_analysis, publish_upload_analysis
+from kalos.portal.setup_settings import with_campaign_setup
 from kalos.portal.uploads import UploadRejected
 
 log = logging.getLogger("kalos.portal")
@@ -82,6 +84,32 @@ def classify(exc: BaseException) -> tuple[str, str]:
     if isinstance(exc, (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError, UnicodeError)):
         return "parse_error", _ERR_PARSE_TEXT
     return "analysis_failed", "could not analyze the uploaded data"
+
+
+def classify_reanalyze(exc: BaseException) -> tuple[str, str]:
+    """(error_code, safe message) for a failed re-analysis job. Mirrors the sync
+    `_reanalyze` (kalos/portal/campaign_routes.py): a concurrent write is
+    `conflict`; an engine refusal keeps its code and message; anything else is a
+    generic `analysis_failed` (never the exception text)."""
+    from kalos.portal.reanalyze_job import ReanalyzeRefused
+
+    if isinstance(exc, CampaignConflict):
+        return "conflict", jobs.ERROR_MESSAGES["conflict"]
+    if isinstance(exc, ReanalyzeRefused):
+        return exc.code, str(exc)
+    if isinstance(exc, CampaignNotFound):
+        return "campaign_not_found", "campaign not found"
+    if isinstance(exc, CampaignArchived):
+        return "campaign_archived", str(exc)
+    if isinstance(exc, CampaignError):
+        return "campaign_error", str(exc)
+    if isinstance(exc, UploadRejected):
+        return exc.code or "upload_rejected", exc.message
+    from kalos.core.surrogate import FitError  # deferred: pulls in torch
+
+    if isinstance(exc, FitError):
+        return "fit_failed", _ERR_FIT_TEXT
+    return "analysis_failed", "could not analyze the campaign data"
 
 
 def _engine_is_gone() -> bool:
@@ -127,36 +155,25 @@ def run_job(
             raise jobs.JobCancelled()
         jobs.set_progress(store, tenant=tenant, job_id=job_id, stage=stage, progress=fraction)
 
+    commit = functools.partial(_commit, tenant=tenant, job_id=job_id)
+    reanalyze = jobs.job_kind(row) == jobs.REANALYZE_MODE
     try:
-        params = jobs.job_params(row)
-        if not params.get("replace"):
-            # The publish replaces the campaign's runs: refuse before any work, unless the
-            # submit confirmed it (replace=true). Nothing is changed on refusal.
-            awaiting, measured = jobs.run_counts(store, tenant=tenant, campaign_id=campaign_id)
-            if awaiting or measured:
-                raise jobs.CampaignHasRuns(awaiting, measured)
-        raw = jobs.read_input(store, row)
-        filename = jobs.job_filename(params)
-        df, result = compute_upload_analysis(
-            raw, params.get("target") or None, bool(params.get("anonymize")),
-            filename, str(params.get("roles") or ""),
-            sheet=params.get("sheet"), progress=progress, analyze=analyze,
-        )
-        progress("publishing", 0.95)
-        publish_upload_analysis(
-            store, result, filename,
-            tenant=tenant, campaign_id=campaign_id, df=df,
-            expected_generation=row["base_generation"],
-            on_commit=functools.partial(_commit, tenant=tenant, job_id=job_id),
-            fallback_unstamped=False,
-        )
+        if reanalyze:
+            # A campaign re-analysis (kalos/portal/reanalyze_job.py): no input file;
+            # the fold is planned now and committed with a compare-and-swap.
+            from kalos.portal.reanalyze_job import run_reanalysis
+
+            run_reanalysis(store, tenant=tenant, campaign_id=campaign_id, progress=progress,
+                           on_commit=commit, analyze=analyze)
+        else:
+            _run_upload(store, row, progress=progress, on_commit=commit, analyze=analyze)
     except jobs.JobStopped:
         return "stopped"  # the runner that stopped us records the outcome
     except jobs.JobCancelled:
         jobs.finish(store, tenant=tenant, job_id=job_id, state="cancelled")
         return "cancelled"
     except Exception as exc:  # noqa: BLE001 - every failure becomes the job's recorded outcome
-        code, message = classify(exc)
+        code, message = classify_reanalyze(exc) if reanalyze else classify(exc)
         if code in {"analysis_failed", "parse_error", "fit_failed"}:
             _log_analysis_failure(code, exc)
         else:
@@ -165,6 +182,38 @@ def run_job(
         return "failed"
     jobs.purge_input(store, row["input_path"])
     return "succeeded"
+
+
+def _run_upload(
+    store: Any, row: dict[str, Any], *, progress: Callable[[str, float], None],
+    on_commit: Callable[[Any, str], None], analyze: Callable[..., dict] | None,
+) -> None:
+    """An upload-analysis job: parse the stored input, analyze, seed and publish."""
+    tenant = str(row["tenant"])
+    campaign_id = str(row["campaign_id"])
+    params = jobs.job_params(row)
+    if not params.get("replace"):
+        # The publish replaces the campaign's runs: refuse before any work, unless the
+        # submit confirmed it (replace=true). Nothing is changed on refusal.
+        awaiting, measured = jobs.run_counts(store, tenant=tenant, campaign_id=campaign_id)
+        if awaiting or measured:
+            raise jobs.CampaignHasRuns(awaiting, measured)
+    raw = jobs.read_input(store, row)
+    filename = jobs.job_filename(params)
+    df, result = compute_upload_analysis(
+        raw, params.get("target") or None, bool(params.get("anonymize")),
+        filename, str(params.get("roles") or ""),
+        sheet=params.get("sheet"), progress=progress,
+        analyze=with_campaign_setup(analyze, store, tenant=tenant, campaign_id=campaign_id),
+    )
+    progress("publishing", 0.95)
+    publish_upload_analysis(
+        store, result, filename,
+        tenant=tenant, campaign_id=campaign_id, df=df,
+        expected_generation=row["base_generation"],
+        on_commit=on_commit,
+        fallback_unstamped=False,
+    )
 
 
 def _log_analysis_failure(code: str, exc: BaseException) -> None:
