@@ -1,0 +1,22 @@
+Kalos
+Copyright the Kalos authors. Licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+This product includes work adapted from the following sources.
+
+-------------------------------------------------------------------------------
+Lab-file parsers: dispense (Bioqore lab analyses; idea credit)
+-------------------------------------------------------------------------------
+
+Source: github.com/Bioqore/ad_hoc_data_analyses (commit 82e6ae0, 2026-06-24),
+the lab's media-experiment analyses.
+
+Idea credit; re-implemented, no code copied. The ideas: a media sheet whose
+input columns are dispense volumes ("uL to add") must not be read as
+concentrations; converting volumes to final concentrations by C1V1 = C2V2 from
+declared stock concentrations and the final volume; expanding a master mix into
+its components so that no component is counted twice. Used in
+kalos/ingest/dispense.py.
+
+No data from that repository is included. The test fixtures are synthetic and
+copy only the header layout of the lab's files.
