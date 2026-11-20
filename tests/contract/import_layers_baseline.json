@@ -1,0 +1,12 @@
+{
+ "about": "Known import-layer violations (module edges), seeded from main. Report-only until R14; may only shrink after that. Regenerate: scripts/import_layers.py --write-baseline",
+ "violations": [
+  "kalos.assist.state -> kalos.portal.jobs",
+  "kalos.portal.campaign_list -> kalos.portal.jobs",
+  "kalos.portal.config -> kalos.normalize.config",
+  "kalos.portal.pipeline -> kalos.portal.campaign",
+  "kalos.portal.setup_settings -> kalos.portal.campaign",
+  "kalos.portal.setup_settings -> kalos.portal.campaign_settings",
+  "kalos.portal.setup_settings -> kalos.portal.clone_registry"
+ ]
+}
