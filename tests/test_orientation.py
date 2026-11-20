@@ -337,3 +337,86 @@ def test_id_gate_does_not_eat_a_genuinely_transposed_sheet():
     report = detect_orientation(df)
     assert report.orientation == "transposed"
     assert report.normalized_frame is not None
+
+
+# --- composite run ids and wide, sparse funnel sheets ------------------------ #
+# A clone screening funnel is often kept transposed: one row per measurement,
+# one column per clone, with composite clone ids (campaign + clone number) in
+# the header and many blank cells for clones that did not advance. Synthetic
+# values and invented id shapes ("B1R1", "B2R17"); no real sheet is used.
+
+
+def _wide_funnel_frame() -> pd.DataFrame:
+    rng = np.random.default_rng(42)
+    ids = [f"B{c}R{i}" for c in (1, 2) for i in range(1, 41)]
+    n = len(ids)
+    rows = [
+        ["confluence_frac_384w", *np.round(rng.uniform(0.05, 0.6, n), 3).tolist()],
+        ["days_cultured_384w", *([10] * 40 + [14] * 40)],
+        ["medium_384w", *(["MediumA"] * 40 + ["MediumB"] * 40)],
+        ["titer_signal_96w", *np.round(rng.uniform(1000, 5000, n), 0).tolist()],
+        ["rank_96w", *(list(range(1, 41)) * 2)],
+        ["titer_signal_24w", *[round(float(v)) if i % 3 == 0 else None for i, v in enumerate(rng.uniform(1000, 5000, n))]],
+        ["viability_pct_24w", *[round(float(v), 1) if i % 3 == 0 else None for i, v in enumerate(rng.uniform(60, 99, n))]],
+        ["medium_flask", *["MediumC" if i % 9 == 0 else None for i in range(n)]],
+        ["titer_mgL_flask", *[float(v) if i % 9 == 0 else None for i, v in enumerate(rng.integers(100, 2000, n))]],
+    ]
+    return pd.DataFrame(rows, columns=["clone", *ids])
+
+
+def test_wide_sparse_sheet_with_composite_id_headers_is_transposed():
+    df = _wide_funnel_frame()
+    report = detect_orientation(df)
+    assert report.orientation == "transposed"
+    assert report.confidence >= 0.6
+    assert report.signals.get("header_run_ids", 0) > 0
+    assert "shape_ratio" not in report.signals  # the wide-shape penalty is dropped
+    out = report.normalized_frame
+    assert out is not None and len(out) == 80
+    assert out["run"].tolist()[:2] == ["B1R1", "B1R2"]  # ids kept
+    assert out["medium_384w"].tolist()[:1] == ["MediumA"]  # text rows kept
+    assert out["titer_mgL_flask"].notna().sum() == 9  # sparse rows kept, blanks stay blank
+
+
+def test_first_column_of_composite_ids_stays_standard():
+    rng = np.random.default_rng(1)
+    df = pd.DataFrame(
+        {
+            "clone": [f"B{c}R{i}" for c in (1, 2) for i in range(1, 11)],
+            "titer": rng.uniform(1, 3, 20).round(2),
+            "temperature": rng.uniform(30, 37, 20).round(1),
+            "ph": rng.uniform(6.8, 7.2, 20).round(2),
+        }
+    )
+    report = detect_orientation(df)
+    assert report.orientation == "standard"
+    assert report.signals == {"first_column_id_rate": 1.0}
+
+
+@pytest.mark.parametrize("value", ["s1n1", "s2n17", "b2r07", "p3-c12", "clone12-7"])
+def test_composite_ids_count_as_run_ids(value):
+    from kalos.normalize.orientation import _is_run_id
+
+    assert _is_run_id(value)
+
+
+@pytest.mark.parametrize("value", ["temperature_c", "titer_signal_96w", "medium_384w", "ph", "feed rate"])
+def test_parameter_names_are_not_run_ids(value):
+    from kalos.normalize.orientation import _is_run_id
+
+    assert not _is_run_id(value)
+
+
+def test_generic_feature_headers_without_parameter_names_are_not_transposed():
+    # x1..x4 headers look like ids, but the first column holds sample names,
+    # not parameter names: no label signal, so never transposed.
+    df = pd.DataFrame(
+        {
+            "sample": ["alpha", "beta", "gamma", "delta", "epsilon"],
+            "x1": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "x2": [2.0, 1.0, 0.5, 3.0, 4.0],
+            "x3": [0.1, 0.2, 0.3, 0.4, 0.5],
+            "x4": [9.0, 8.0, 7.0, 6.0, 5.0],
+        }
+    )
+    assert detect_orientation(df).orientation != "transposed"
