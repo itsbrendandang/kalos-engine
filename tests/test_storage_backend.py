@@ -305,15 +305,24 @@ def test_upgrade_needs_a_verified_backup(pg_schema_dsn, monkeypatch, tmp_path):
 
 
 @pg
-def test_verified_pg_dump_backup(pg_schema_dsn, tmp_path):
+def test_verified_pg_dump_backup(pg_schema_dsn, tmp_path, monkeypatch):
+    import os
     import shutil
+    import stat
 
     if not (shutil.which("pg_dump") and shutil.which("pg_restore")):
+        if os.environ.get("KALOS_REQUIRE_PG_TOOLS") == "1":  # CI: a missing pg_dump is a failure
+            pytest.fail("pg_dump/pg_restore are required here (KALOS_REQUIRE_PG_TOOLS=1)")
         pytest.skip("pg_dump/pg_restore not on PATH")
     pg_runner.ensure_schema(pg_schema_dsn)
+    monkeypatch.setenv("KALOS_STATE_DIR", str(tmp_path / "state"))
+    backup_dir = pg_runner.default_backup_dir()
+    assert backup_dir == tmp_path / "state" / "pg-backups"
     path = pg_runner.take_verified_backup(
-        pg_schema_dsn, tmp_path, label="pre-v10", expect_tables=pg_runner.BASELINE_TABLES)
-    assert path.exists() and path.stat().st_size > 0 and oct(path.stat().st_mode)[-3:] == "600"
+        pg_schema_dsn, backup_dir, label="pre-v10", expect_tables=pg_runner.BASELINE_TABLES)
+    assert path.exists() and path.stat().st_size > 0
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(backup_dir.stat().st_mode) == 0o700
     with pytest.raises(pg_runner.PgMigrationError, match="could not be verified"):
         pg_runner.take_verified_backup(pg_schema_dsn, tmp_path, label="x", expect_tables=("not_a_table",))
 

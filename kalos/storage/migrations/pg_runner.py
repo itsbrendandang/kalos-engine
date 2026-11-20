@@ -265,27 +265,65 @@ def ensure_schema(dsn: str) -> PgMigrationResult:
 # --- verified backup --------------------------------------------------------------- #
 
 
-def _split_password(dsn: str) -> tuple[str, str | None]:
-    """The DSN without its password, and the password (for PGPASSWORD)."""
-    parts = urlsplit(dsn)
-    if parts.password is None:
-        return dsn, None
-    user = parts.username or ""
-    host = parts.netloc.rsplit("@", 1)[1]
-    return urlunsplit((parts.scheme, f"{user}@{host}", parts.path, parts.query, parts.fragment)), parts.password
+# libpq connection parameters -> the pg_dump/pg_restore option or PG* variable
+# that carries each one. The password only ever travels in PGPASSWORD (never in
+# argv, where `ps` shows it). A parameter not listed here is refused rather than
+# dropped, so the dump never connects somewhere other than the engine does.
+_PG_ARGS = {"host": "--host", "port": "--port", "user": "--username", "dbname": "--dbname"}
+_PG_ENV = {
+    "password": "PGPASSWORD", "hostaddr": "PGHOSTADDR", "sslmode": "PGSSLMODE",
+    "sslrootcert": "PGSSLROOTCERT", "sslcert": "PGSSLCERT", "sslkey": "PGSSLKEY",
+    "sslcrl": "PGSSLCRL", "sslnegotiation": "PGSSLNEGOTIATION", "options": "PGOPTIONS",
+    "connect_timeout": "PGCONNECT_TIMEOUT", "application_name": "PGAPPNAME",
+    "target_session_attrs": "PGTARGETSESSIONATTRS", "channel_binding": "PGCHANNELBINDING",
+    "gssencmode": "PGGSSENCMODE", "krbsrvname": "PGKRBSRVNAME", "service": "PGSERVICE",
+    "passfile": "PGPASSFILE", "require_auth": "PGREQUIREAUTH",
+    "load_balance_hosts": "PGLOADBALANCEHOSTS",
+}
+
+
+def pg_tool_invocation(dsn: str) -> tuple[list[str], dict[str, str]]:
+    """The connection arguments and environment for pg_dump/pg_restore, from
+    libpq's own parse of `dsn` (`conninfo_to_dict`): host, port, user and
+    database as `--host/--port/--username/--dbname`, the password (as parsed,
+    unquoted) in `PGPASSWORD`, every other parameter in its `PG*` variable."""
+    params = conninfo(dsn)
+    if params is None:
+        raise PgMigrationError(
+            f"{DATABASE_URL_ENV} could not be parsed as a PostgreSQL connection URL; nothing was migrated")
+    unknown = sorted(k for k in params if k not in _PG_ARGS and k not in _PG_ENV)
+    if unknown:
+        raise PgMigrationError(
+            f"the database URL has parameters this tool cannot pass to pg_dump safely ({', '.join(unknown)}); "
+            "take the backup yourself and re-run with --confirm-backup")
+    args = [f"{flag}={params[k]}" for k, flag in _PG_ARGS.items() if params.get(k)]
+    env = {k: v for k, v in os.environ.items()
+           if k not in (DATABASE_URL_ENV, MIGRATE_URL_ENV) and k not in _PG_ENV.values()}
+    env.update({var: params[k] for k, var in _PG_ENV.items() if params.get(k)})
+    return args, env
+
+
+def default_backup_dir() -> Path:
+    """`<KALOS_STATE_DIR>/pg-backups` (default `~/.kalos/pg-backups`)."""
+    state = os.environ.get("KALOS_STATE_DIR", "").strip()
+    return (Path(state) if state else Path.home() / ".kalos") / "pg-backups"
 
 
 def take_verified_backup(dsn: str, backup_dir: Path, *, label: str, expect_tables: tuple[str, ...]) -> Path:
     """`pg_dump --format=custom` of the engine's schema into `backup_dir`, then `pg_restore --list` must
-    read the file back and list every table in `expect_tables`. Raises
-    `PgMigrationError` (and removes a partial file) otherwise."""
+    read the file back and list every table in `expect_tables`. The directory is
+    created 0700 and the dump written under umask 077 (owner-only from its first
+    byte). Raises `PgMigrationError` (and removes a partial file) otherwise."""
     pg_dump, pg_restore = shutil.which("pg_dump"), shutil.which("pg_restore")
     if not pg_dump or not pg_restore:
         raise PgMigrationError(
             "pg_dump/pg_restore are not on the PATH, so this tool cannot take and verify the "
             "backup itself; take a pg_dump of the database and re-run with --confirm-backup"
         )
-    backup_dir.mkdir(parents=True, exist_ok=True)
+    conn_args, env = pg_tool_invocation(dsn)
+    if not backup_dir.exists():
+        backup_dir.mkdir(parents=True, mode=0o700)
+        os.chmod(backup_dir, 0o700)  # mkdir's mode is masked by the umask
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     path = backup_dir / f"kalos-pg.{label}-{stamp}.dump"
     conn = pg_connect(dsn)
@@ -293,17 +331,13 @@ def take_verified_backup(dsn: str, backup_dir: Path, *, label: str, expect_table
         (schema,) = conn.execute("SELECT current_schema()").fetchone()
     finally:
         conn.raw.close()
-    url, password = _split_password(dsn)
-    env = {k: v for k, v in os.environ.items() if k != DATABASE_URL_ENV}
-    if password is not None:
-        env["PGPASSWORD"] = password
+    old_umask = os.umask(0o077)
     try:
-        subprocess.run(  # noqa: S603 - fixed argv; the URL carries no password
-            [pg_dump, "--format=custom", "--no-owner", f"--schema={schema}", f"--file={path}",
-             f"--dbname={url}"],
+        subprocess.run(  # noqa: S603 - fixed argv; the password is only in PGPASSWORD (env)
+            [pg_dump, "--format=custom", "--no-owner", f"--schema={schema}", f"--file={path}", *conn_args],
             env=env, check=True, capture_output=True, timeout=3600,
         )
-        listing = subprocess.run(  # noqa: S603 - fixed argv
+        listing = subprocess.run(  # noqa: S603 - fixed argv, a local file path only
             [pg_restore, "--list", str(path)], env=env, check=True, capture_output=True,
             timeout=600, text=True,
         ).stdout
@@ -313,6 +347,8 @@ def take_verified_backup(dsn: str, backup_dir: Path, *, label: str, expect_table
             f"the backup of {redact_dsn(dsn)} failed or could not be read back "
             f"({type(exc).__name__}); nothing was migrated"
         ) from None
+    finally:
+        os.umask(old_umask)
     listed = set(re.findall(r"\bTABLE \S+ (\S+) ", listing))
     missing = [t for t in expect_tables if t not in listed]
     if missing or path.stat().st_size == 0:
@@ -347,7 +383,7 @@ def migrate_up(
         if version > 0 and not confirm_backup:
             expect = tuple(t for s in STEPS if s.version <= version for t in s.tables)
             backup = take_verified_backup(
-                dsn, backup_dir or Path.cwd(), label=f"pre-v{steps[0].version}", expect_tables=expect,
+                dsn, backup_dir or default_backup_dir(), label=f"pre-v{steps[0].version}", expect_tables=expect,
             )
         _begin_locked(conn)
         try:
