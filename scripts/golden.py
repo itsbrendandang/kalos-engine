@@ -1,29 +1,37 @@
 #!/usr/bin/env python3
 """Golden oracle (reorg guard R02): record and check the engine's output.
 
-    python scripts/golden.py check                       # compare with tests/golden/<env key>/
-    python scripts/golden.py check --require --actual D  # CI: missing goldens fail; keep the actual output in D
+Two checks, both byte-exact:
+
+    python scripts/golden.py differential --base-tree DIR   # CI gate: this tree vs DIR, same machine
+    python scripts/golden.py check                          # this tree vs tests/golden/<env key>/
+
+`differential` is the merge gate (.github/workflows/golden.yml). It runs the
+same scenario (this tree's harness) on the base commit and on the PR head, on
+the SAME runner, and compares the outputs byte for byte. CI runners are not
+all the same CPU, and float results move with the CPU even with every BLAS and
+torch kernel pinned (measured: AMD EPYC 9V74, 9V45 and Intel Xeon 8573C gave
+three different sets of proposals for identical code), so committed linux
+records cannot gate merges; a same-machine comparison can. A difference fails
+the gate unless the PR DECLARES it: it edits tests/golden/ (a new line in
+tests/golden/CHANGES.md, written by `record --reason`). The diff is printed and
+uploaded as an artifact either way.
+
+`check` compares with committed records for THIS machine's platform and pinned
+stack (tests/golden/<env key>/), a fast local check before pushing a move:
+
+    python scripts/golden.py check                       # compare
     python scripts/golden.py diff                        # show every changed leaf
-    python scripts/golden.py record --reason "F04: ..."  # (re)record for THIS platform and stack
-    python scripts/golden.py record --reason "..." --from D   # adopt a CI run's output (artifact `golden-actual`)
+    python scripts/golden.py record --reason "F04: ..."  # (re)record this env and log the reason
 
-The scenario (tests/golden/oracle.py) runs in a FRESH interpreter (one torch
-thread, a temporary state directory, deterministic ids) and its records are
-compared byte for byte with `tests/golden/<env key>/`. A behaviour-preserving
-change (every reorg move) must leave them identical. A change that is meant to
-move numbers or wording records new goldens with `--reason`, and the reason is
-appended to the manifest's change log, so the diff and the why ship together.
-
-Records are valid only for the platform and pinned stack in the env key
-(decision D7: byte-exact, no tolerance). CI's linux key gates merges
-(.github/workflows/golden.yml); a developer machine may keep its own key for a
-fast local check. To refresh CI's records: run the `golden` workflow (it runs
-on every PR), download its `golden-actual` artifact, and `record --from` it.
+The scenario (tests/golden/oracle.py) always runs in a fresh interpreter: one
+torch thread, a temporary state directory, deterministic ids.
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import platform
@@ -36,31 +44,32 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 GOLDEN_DIR = ROOT / "tests" / "golden"
+CHANGES = GOLDEN_DIR / "CHANGES.md"
 MANIFEST = "MANIFEST.json"
+# The harness files copied onto the base tree, so both sides run the same scenario.
+HARNESS = ("scripts/golden.py", "tests/golden/oracle.py", "tests/golden/assist_docs")
 
-# CI runners are not all the same CPU, and the BLAS/LAPACK and torch kernels
-# pick code paths by CPU (AVX-512 vs AVX2), which moves the last float digit
-# and from there a proposal. Two CI runs of identical code gave different
-# proposals before these pins. They select one code path that every x86-64 CI
-# CPU has (AVX2); arm64 (Apple) ignores them. Applied to the oracle's process
-# only; the engine itself is unchanged.
+# Pin the BLAS/LAPACK and torch kernel paths to one every x86-64 CPU has (AVX2):
+# this removes the run-to-run differences on one runner (memory alignment, MKL
+# dispatch), though not the cross-CPU ones (see the module docstring). arm64
+# ignores them. Applied to the oracle's process only; the engine is unchanged.
 KERNEL_PINS = {
-    "MKL_CBWR": "AVX2,STRICT",  # MKL reproducibility, independent of CPU and memory alignment
+    "MKL_CBWR": "AVX2,STRICT",
     "MKL_ENABLE_INSTRUCTIONS": "AVX2",
-    "OPENBLAS_CORETYPE": "Haswell",  # numpy/scipy's OpenBLAS kernel (Haswell = AVX2)
-    "ATEN_CPU_CAPABILITY": "avx2",  # torch's own vectorized CPU kernels
+    "OPENBLAS_CORETYPE": "Haswell",
+    "ATEN_CPU_CAPABILITY": "avx2",
 } if platform.machine().lower() in ("x86_64", "amd64") else {}
 
 
-def _oracle() -> Any:
+def _oracle(root: Path = ROOT) -> Any:
     """tests/golden/oracle.py, loaded by path (tests/ is not a package)."""
     import importlib.util
 
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
     if "kalos_golden_oracle" in sys.modules:
         return sys.modules["kalos_golden_oracle"]
-    spec = importlib.util.spec_from_file_location("kalos_golden_oracle", GOLDEN_DIR / "oracle.py")
+    spec = importlib.util.spec_from_file_location("kalos_golden_oracle", root / "tests" / "golden" / "oracle.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules["kalos_golden_oracle"] = module
@@ -68,23 +77,29 @@ def _oracle() -> Any:
     return module
 
 
-def compute(out: Path) -> None:
-    """Run the scenario in a fresh interpreter and write one file per case."""
+def compute(out: Path, root: Path = ROOT) -> None:
+    """Run the scenario on the engine in `root`, in a fresh interpreter."""
     out.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "PYTHONHASHSEED": "0", "KALOS_TORCH_THREADS": "1", "OMP_NUM_THREADS": "1",
-           "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", **KERNEL_PINS}
-    proc = subprocess.run([sys.executable, str(Path(__file__).resolve()), "_compute", str(out)], cwd=ROOT,  # noqa: S603 - this script, by path
+           "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "PYTHONPATH": str(root), **KERNEL_PINS}
+    script = root / "scripts" / "golden.py"
+    proc = subprocess.run([sys.executable, str(script), "_compute", str(out)], cwd=root,  # noqa: S603 - fixed argv
                           env=env, check=False)
     if proc.returncode != 0:
-        raise SystemExit(f"the golden scenario failed (exit {proc.returncode})")
+        raise SystemExit(f"the golden scenario failed on {root} (exit {proc.returncode})")
 
 
 def _compute_here(out: Path) -> None:
-    oracle = _oracle()
-    records = oracle.run_scenario()
-    cases: dict[str, str] = {}
     import hashlib
 
+    import kalos
+
+    oracle = _oracle()
+    engine_root = Path(kalos.__file__).resolve().parents[1]
+    if engine_root != ROOT:
+        raise SystemExit(f"imported kalos from {engine_root}, expected {ROOT}")
+    records = oracle.run_scenario()
+    cases: dict[str, str] = {}
     for name, text in oracle.iter_cases(records):
         path = out / f"{name}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -122,26 +137,23 @@ def _leaf_diff(old: Any, new: Any, path: str = "", out: list[str] | None = None,
     return out
 
 
-def compare(expected: Path, actual: Path, *, verbose: bool, summary: dict[str, Any] | None = None) -> int:
+def compare(expected: Path, actual: Path, *, verbose: bool, summary: dict[str, Any] | None = None,
+            label: str = "") -> int:
     exp, act = _load(expected), _load(actual)
     if exp["env"]["key"] != act["env"]["key"]:
-        print(f"env key differs: recorded {exp['env']['key']}, current {act['env']['key']}")
+        print(f"env key differs: {exp['env']['key']} vs {act['env']['key']}")
         return 1
     names = sorted(set(exp["cases"]) | set(act["cases"]))
-    bad = 0
     summary = {} if summary is None else summary
     summary.update({"changed": [], "new": [], "missing": []})
     for name in names:
         if name not in act["cases"]:
-            print(f"MISSING  {name} (the scenario no longer produces it)")
+            print(f"MISSING  {name}")
             summary["missing"].append(name)
-            bad += 1
         elif name not in exp["cases"]:
-            print(f"NEW      {name} (not recorded)")
+            print(f"NEW      {name}")
             summary["new"].append(name)
-            bad += 1
         elif exp["cases"][name] != act["cases"][name]:
-            bad += 1
             summary["changed"].append(name)
             print(f"CHANGED  {name}")
             if verbose:
@@ -149,9 +161,19 @@ def compare(expected: Path, actual: Path, *, verbose: bool, summary: dict[str, A
                 new = json.loads((actual / f"{name}.json").read_text(encoding="utf-8"))
                 for line in _leaf_diff(old, new):
                     print(f"    {line}")
-    print(f"golden oracle: {len(names) - bad}/{len(names)} cases byte-identical ({exp['env']['key']})")
+    bad = len(summary["changed"]) + len(summary["new"]) + len(summary["missing"])
+    print(f"golden oracle{label}: {len(names) - bad}/{len(names)} cases byte-identical ({act['env']['key']})")
     summary.update({"total": len(names), "identical": len(names) - bad})
     return 1 if bad else 0
+
+
+def _log_change(reason: str, key: str) -> None:
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
+    head = CHANGES.read_text(encoding="utf-8") if CHANGES.exists() else (
+        "# Golden output changes\n\nOne line per intended change to the engine's output (scripts/golden.py "
+        "record --reason). A PR whose output differs from its base must add a line here; the CI gate "
+        "(golden.yml) fails an undeclared difference.\n\n")
+    CHANGES.write_text(head.rstrip("\n") + f"\n- {stamp} ({key}): {reason}\n", encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -159,13 +181,20 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     for name in ("check", "diff"):
         p = sub.add_parser(name)
-        p.add_argument("--require", action="store_true", help="fail when no goldens exist for this env")
+        p.add_argument("--require", action="store_true", help="fail when no records exist for this env")
         p.add_argument("--actual", type=Path, help="keep the computed output here")
-        p.add_argument("--summary-json", type=Path, help="also write {env_key, total, identical, changed, new, "
-                       "missing, recorded_for_env} here (for the scoreboard)")
+        p.add_argument("--summary-json", type=Path, help="also write {env_key, recorded_for_env, total, "
+                       "identical, changed, new, missing} here (for the scoreboard)")
+    dif = sub.add_parser("differential")
+    dif.add_argument("--base-tree", type=Path, required=True, help="a checkout of the base commit")
+    dif.add_argument("--actual", type=Path, required=True, help="outputs go to <actual>/{base,head}")
+    dif.add_argument("--declared", action="store_true", help="the PR declares an output change (edits tests/golden/)")
+    dif.add_argument("--summary-json", type=Path)
     rec = sub.add_parser("record")
-    rec.add_argument("--reason", required=True, help="why the goldens change (kept in the manifest)")
-    rec.add_argument("--from", dest="src", type=Path, help="adopt this computed output (a CI artifact)")
+    rec.add_argument("--reason", required=True, help="why the output changes (logged in tests/golden/CHANGES.md)")
+    rec.add_argument("--from", dest="src", type=Path, help="adopt this computed output instead of computing")
+    rec.add_argument("--log-only", action="store_true",
+                     help="only log the reason (no records for this machine's stack)")
     internal = sub.add_parser("_compute")
     internal.add_argument("out", type=Path)
     args = parser.parse_args(argv)
@@ -175,12 +204,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "record":
-        if not args.reason.strip():
-            parser.error("--reason must say why the goldens change")
-        if args.src is not None:
-            src = args.src
-        else:
-            src = Path(tempfile.mkdtemp(prefix="kalos-golden-out-"))
+        reason = args.reason.strip()
+        if not reason:
+            parser.error("--reason must say why the output changes")
+        if args.log_only:
+            _log_change(reason, "no local record")
+            return 0
+        src = args.src if args.src is not None else Path(tempfile.mkdtemp(prefix="kalos-golden-out-"))
+        if args.src is None:
             compute(src)
         manifest = _load(src)
         dest = GOLDEN_DIR / manifest["env"]["key"]
@@ -188,10 +219,40 @@ def main(argv: list[str] | None = None) -> int:
         if dest.exists():
             shutil.rmtree(dest)
         shutil.copytree(src, dest)
-        manifest["reasons"] = [*reasons, args.reason.strip()]
+        manifest["reasons"] = [*reasons, reason]
         (dest / MANIFEST).write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
+        _log_change(reason, manifest["env"]["key"])
         print(f"recorded {len(manifest['cases'])} cases in {dest.relative_to(ROOT)}")
         return 0
+
+    if args.cmd == "differential":
+        base = args.base_tree.resolve()
+        for rel in HARNESS:  # the same scenario on both sides
+            src, dst = ROOT / rel, base / rel
+            if dst.is_dir():
+                shutil.rmtree(dst)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            (shutil.copytree if src.is_dir() else shutil.copy2)(src, dst)
+        out_base, out_head = args.actual / "base", args.actual / "head"
+        for d in (out_base, out_head):
+            if d.exists():
+                shutil.rmtree(d)
+        compute(out_base, base)
+        compute(out_head, ROOT)
+        summary: dict[str, Any] = {"env_key": _load(out_head)["env"]["key"], "mode": "differential"}
+        code = compare(out_base, out_head, verbose=True, summary=summary, label=" (head vs base, same machine)")
+        summary["declared"] = bool(args.declared)
+        if code and args.declared:
+            print("output differs from the base and the PR declares it (tests/golden/ edited): allowed. "
+                  "Review the diff above.")
+            code = 0
+        elif code:
+            print("output differs from the base and the PR does not declare it. A move must leave every byte "
+                  "unchanged; an intended change logs its reason: scripts/golden.py record --reason '...' "
+                  "(or --log-only).")
+        if args.summary_json is not None:
+            args.summary_json.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
+        return code
 
     actual = args.actual or Path(tempfile.mkdtemp(prefix="kalos-golden-out-"))
     if actual.exists():
@@ -199,11 +260,10 @@ def main(argv: list[str] | None = None) -> int:
     compute(actual)
     key = _load(actual)["env"]["key"]
     expected = GOLDEN_DIR / key
-    summary: dict[str, Any] = {"env_key": key, "recorded_for_env": (expected / MANIFEST).exists()}
+    summary = {"env_key": key, "recorded_for_env": (expected / MANIFEST).exists()}
     if not summary["recorded_for_env"]:
         recorded = sorted(p.name for p in GOLDEN_DIR.iterdir() if (p / MANIFEST).exists())
-        print(f"no goldens recorded for {key} (recorded: {recorded}). The computed output is in {actual};"
-              " adopt it with: scripts/golden.py record --reason '...' --from <that dir>")
+        print(f"no records for {key} (recorded: {recorded}). The computed output is in {actual}.")
         code = 1 if args.require else 0
     else:
         code = compare(expected, actual, verbose=args.cmd == "diff" or args.actual is not None, summary=summary)

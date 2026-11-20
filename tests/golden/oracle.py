@@ -21,9 +21,11 @@ identical runs are scrubbed (wall-clock times, durations, content hashes of
 time-stamped bodies). Ids are deterministic (uuid4 / token_hex are replaced by
 counters before the engine is imported), so ids are compared too.
 
-Byte-identical on the SAME pinned stack and platform only (decision D7): the
-records live under `tests/golden/<env key>/`, and the CI image's key is the one
-that gates merges (.github/workflows/golden.yml). See scripts/golden.py.
+Byte-identical on the same machine and pinned stack only (decision D7). The
+merge gate runs this scenario on the base and on the PR head on the same CI
+runner and compares them (.github/workflows/golden.yml): CI runners differ in
+CPU, and floats move with the CPU. Committed records under
+`tests/golden/<env key>/` serve the local check. See scripts/golden.py.
 """
 from __future__ import annotations
 

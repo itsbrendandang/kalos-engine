@@ -1,9 +1,9 @@
 """Reorg guard R02: the golden oracle (tests/golden/oracle.py, scripts/golden.py).
 
 - the full check: the scenario's records equal tests/golden/<env key>/ byte for
-  byte. Runs here when goldens exist for this machine's env key; on GitHub
-  Actions it runs in its own workflow (.github/workflows/golden.yml), not in
-  the serial pytest job, so it is not run twice;
+  byte. Runs here when records exist for this machine's env key. On GitHub
+  Actions the gate is the same-machine base-vs-head comparison in
+  .github/workflows/golden.yml, not this test;
 - fast unit checks of the canonical form (scrubbing, shapes, slugs) and of the
   recorded goldens themselves (manifest hashes match the files, every recorded
   env has a change log).
@@ -83,6 +83,12 @@ def test_recorded_goldens_are_consistent() -> None:
         for name, digest in manifest["cases"].items():
             text = (env_dir / f"{name}.json").read_text(encoding="utf-8")
             assert hashlib.sha256(text.encode()).hexdigest() == digest, name
+
+
+def test_changes_log_exists() -> None:
+    text = (GOLDEN / "CHANGES.md").read_text(encoding="utf-8")
+    assert text.startswith("# Golden output changes")
+    assert "\n- " in text, "the log has at least the initial recording"
 
 
 def test_record_refuses_an_empty_reason() -> None:
