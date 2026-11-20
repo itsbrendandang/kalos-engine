@@ -151,6 +151,22 @@
   },
   {
     "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/analyses",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/analyses/{snapshot_id}",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
     "path": "/api/campaigns/{campaign_id}/analysis",
     "scopes": [
       "read"
@@ -294,6 +310,14 @@
     "auth": "required"
   },
   {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/runs/{run_id}/history",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
     "method": "POST",
     "path": "/api/campaigns/{campaign_id}/runs/{run_id}/result",
     "scopes": [
@@ -330,6 +354,22 @@
     "path": "/api/campaigns/{campaign_id}/stages",
     "scopes": [
       "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/track-record",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/track-record/runs",
+    "scopes": [
+      "read"
     ],
     "auth": "required"
   },
