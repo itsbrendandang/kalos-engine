@@ -96,6 +96,14 @@ def audit_retention_days() -> int | None:
     return env_int(AUDIT_RETENTION_VAR, 1, minimum=1, maximum=AUDIT_RETENTION_MAX_DAYS)
 
 
+def _scale_readout_checks() -> bool:
+    """`KALOS_SCALE_READOUT_CHECKS` (kalos/scale/settings.py), imported late to
+    keep this module light."""
+    from kalos.scale.settings import readout_checks_enabled
+
+    return readout_checks_enabled()
+
+
 def check_env_settings() -> None:
     """Validate every enum-valued and bounded `KALOS_*` setting read at startup.
 
@@ -109,6 +117,7 @@ def check_env_settings() -> None:
     validation_mode_setting()
     audit_retention_days()
     provider_setting()
+    _scale_readout_checks()
 
 
 def is_production() -> bool:

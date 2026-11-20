@@ -4,6 +4,14 @@ Newest first.
 
 ## Unreleased
 
+### Changed - scale readout honesty: assay-method confound, no silent LOSO drop, labelled plate/flask volumes (readout decisions can change)
+
+- The scale readout checks text columns that name an assay or quantification method (and any listed in the target's new `assay_columns`) against scale and outcome. When the outcome tracks the method and the method changes with scale, it says "outcome tracks assay method; effects confounded" and downgrades: NUMBER becomes NUMBER_WITH_WARNING, and a method that changes at every scale step refuses. New field `assay_confound`; the predicted number itself never changes.
+- `kalos.scale.evaluation.leave_one_scale_out_report` raises `ValueError` naming the missing columns (the default physics feature set without `agitation_rpm`/`airflow_L_per_min`, or an absent target/scale column) or the columns that left no finite row, instead of returning `n_rows_used: 0`. The readout already picked `scale_only` for such sheets and is unaffected.
+- `scale_L` may hold plate/flask labels (`384w`, `96w`, `24w`, `SF125`). Each becomes a nominal working volume printed as an assumption in `physics_assumptions` and `working_volumes`, with a reason line; default-table volumes downgrade NUMBER to NUMBER_WITH_WARNING; the target's new `working_volume_overrides` replaces them. Unknown labels are a `422 scale_labels_unresolved` naming them (before: the text column was dropped and the readout refused with "missing required column(s): ['scale_L']").
+- `readout_id` is unchanged for requests without the new keys.
+- All three are behind `KALOS_SCALE_READOUT_CHECKS` (`on` by default; `off` restores the earlier decisions and reasons; unknown values refuse to start). `scripts/scale_readout_honesty_probe.py` prints before (`off`) and after (`on`) on synthetic sheets.
+
 ### Changed - selection-aware proposal intervals (F15, ML audit B1 fix 2; interval numbers change)
 
 - `proposals[].intervals` are calibrated on the held-out runs each fold model ranked highest (top 30%, both CV repeats) with the proposal sd floored at the 90th percentile of held-out sds (`method: conformal_selection_aware`, `coverage_basis: held_out_top_ranked_runs`). Measured at proposals on fresh simulation seeds: 90% band 0.60-0.83 -> 0.92-0.99, 95% band 0.72-0.92 -> 0.96-0.99, at 2.5-3.2x the median width; in-box coverage 0.98-1.00 (conservative). Per-level fallback to the plain band with `selection_aware_unavailable` when too few runs are selected. VALIDATION.md has the table.

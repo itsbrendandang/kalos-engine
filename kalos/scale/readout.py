@@ -83,13 +83,21 @@ from kalos.normalize import NormalizationPlan, apply_plan, offline_plan
 from kalos.normalize.units import base_unit_label, canonical_suffix
 from kalos.versions import library_versions
 
+from .assay_confound import assay_method_confound
 from .evaluation import leave_one_scale_out_report
 from .features import GeometryAssumptions, PowerNumberAssumption, VantRietParams
+from .settings import READOUT_CHECKS_VAR, readout_checks_enabled
 from .transfer import (
     DEFAULT_SCALE_FEATURE_CONFIG,
     ScaleFeatureConfig,
     ScaleUpTransferModel,
     build_feature_matrix,
+)
+from .working_volume import (
+    NOMINAL_WORKING_VOLUME_L,
+    VolumeResolution,
+    assumption_sentence,
+    resolve_scale_labels,
 )
 
 # --- named constants (every one of these is printed in the readout's ----- #
@@ -1010,6 +1018,68 @@ def _unit_label_or_none(plan: NormalizationPlan, raw_name: str) -> str | None:
     return None
 
 
+# --- measured-data checks applied on top of the ladder decision --------------- #
+
+
+def _resolve_working_volumes(
+    df: pd.DataFrame, overrides: dict[str, float] | None
+) -> tuple[pd.DataFrame, VolumeResolution | None]:
+    """Replace plate/flask format labels in the scale column with nominal
+    working volumes (see `kalos.scale.working_volume`). Returns `df` itself and
+    None when the column is absent or already all numbers/blanks, so numeric
+    sheets go through byte-identical."""
+    col = DEFAULT_SCALE_FEATURE_CONFIG.scale_column
+    if col not in df.columns:
+        return df, None
+    resolution = resolve_scale_labels(df[col].tolist(), overrides)
+    if not resolution.assumptions and not resolution.unresolved:
+        return df, None
+    out = df.copy()
+    if not resolution.unresolved:
+        out[col] = pd.to_numeric(pd.Series(resolution.values, index=df.index, dtype=object), errors="coerce")
+    return out, resolution
+
+
+def _checks_off_confound() -> dict[str, Any]:
+    """The `assay_confound` block when `KALOS_SCALE_READOUT_CHECKS=off`: says
+    the check did not run, never that it found nothing."""
+    return {
+        "code": "assay_method_confound",
+        "columns": [],
+        "skipped": [{"column": None, "reason": f"check not run: {READOUT_CHECKS_VAR}=off"}],
+        "severity": None,
+        "reasons": [],
+        "what_would_fix_it": None,
+        "rule": None,
+        "n_rows": 0,
+    }
+
+
+def _apply_measured_checks(
+    decision_result: DecisionResult,
+    confound: dict[str, Any],
+    volumes: VolumeResolution | None,
+    extra_reasons: list[str],
+) -> DecisionResult:
+    """Downgrade the ladder's decision for the assay-method confound and for
+    assumed plate/flask volumes; never upgrade it. Every finding's sentence is
+    appended to the reasons, whatever the decision."""
+    if not extra_reasons:
+        return decision_result
+    decision = decision_result.decision
+    if confound["severity"] == "refuse":
+        decision = REFUSAL
+    elif decision == NUMBER and (confound["severity"] == "warn" or (volumes is not None and volumes.used_defaults)):
+        decision = NUMBER_WITH_WARNING
+    return DecisionResult(
+        decision=decision,
+        reasons=[*decision_result.reasons, *extra_reasons],
+        reference_ratio=decision_result.reference_ratio,
+        requested_ratio=decision_result.requested_ratio,
+        out_of_range_params=decision_result.out_of_range_params if decision != REFUSAL else [],
+    )
+
+
 # --- orchestration ------------------------------------------------------------ #
 
 
@@ -1067,6 +1137,8 @@ def build_readout(
     physics_overrides: dict[str, float] | None = None,
     raw_bytes: bytes | None = None,
     seed: int = 0,
+    assay_columns: Sequence[str] = (),
+    working_volume_overrides: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Orchestrate gate -> ladder -> decide -> final fit -> predict ->
     interval, and return a JSON-serializable dict with every section the
@@ -1099,7 +1171,43 @@ def build_readout(
     provenance. `seed` is recorded in provenance for reproducibility, even
     though nothing in this pipeline currently draws randomness (the GP fit
     and the ladder's leave-one-scale-out splits are both deterministic).
+
+    PLATE AND FLASK FORMATS (`kalos.scale.working_volume`). When the scale
+    column holds vessel-format labels ("384w", "96w", "24w", "SF125") the
+    label is replaced by a nominal working volume in liters, either from
+    `working_volume_overrides` or from the default table. Every volume used is
+    listed in `working_volumes` and in `physics_assumptions` as an assumption,
+    and a default-table volume turns NUMBER into NUMBER_WITH_WARNING. A label
+    the table does not know refuses (`scale_labels_unresolved`) by name; it is
+    never dropped or guessed. Sheets with numeric `scale_L` are untouched.
+
+    ASSAY METHOD (`kalos.scale.assay_confound`). Text columns whose name reads
+    like an assay or quantification method, plus `assay_columns`, are checked
+    against scale and outcome on the raw upload (the normalize plan drops text
+    columns). A `warn` finding turns NUMBER into NUMBER_WITH_WARNING, a
+    `refuse` finding turns any decision into REFUSAL; the sentence is added to
+    `reasons` either way and the full finding is in `assay_confound`.
     """
+    checks_on = readout_checks_enabled()  # KALOS_SCALE_READOUT_CHECKS, default on
+    if checks_on:
+        df, volumes = _resolve_working_volumes(df, working_volume_overrides)
+        confound = assay_method_confound(
+            df,
+            target_column,
+            DEFAULT_SCALE_FEATURE_CONFIG.scale_column,
+            exclude=[
+                *process_columns,
+                DEFAULT_SCALE_FEATURE_CONFIG.agitation_column,
+                DEFAULT_SCALE_FEATURE_CONFIG.airflow_column,
+            ],
+            declared=assay_columns,
+        )
+    else:
+        volumes = None
+        confound = _checks_off_confound()
+    extra_reasons = list(confound["reasons"])
+    if volumes is not None and volumes.assumptions:
+        extra_reasons.append(assumption_sentence(volumes.assumptions))
     working_df, plan, normalized_csv, plan_json = _normalize_provenance(df, target_column)
 
     missing_physics_inputs = [
@@ -1114,7 +1222,28 @@ def build_readout(
 
     working_config, physics_assumptions = _build_physics_config(physics_overrides, feature_set=feature_set)
 
-    gate_result = gate(working_df, target_column, process_columns, target, config=working_config)
+    if volumes is not None and volumes.unresolved:
+        gate_result = GateResult(
+            passed=False,
+            failed_check="scale_labels_unresolved",
+            detail=(
+                f"{working_config.scale_column} holds vessel label(s) with no known working volume: "
+                f"{volumes.unresolved}. Give the volume in liters, or pass working_volume_overrides "
+                "naming each label (the default table covers "
+                f"{', '.join(sorted(NOMINAL_WORKING_VOLUME_L))})."
+            ),
+            n_rows_dropped=0,
+            dropped_fraction=0.0,
+            target_ratio=None,
+        )
+    else:
+        gate_result = gate(working_df, target_column, process_columns, target, config=working_config)
+    if volumes is not None:
+        for name, info in volumes.assumptions.items():
+            physics_assumptions[f"nominal_working_volume_L[{name}]"] = {
+                "value": info["value"],
+                "source": info["source"],
+            }
 
     provenance: dict[str, Any] = {
         "engine_version": ENGINE_VERSION,
@@ -1132,6 +1261,9 @@ def build_readout(
         "target_column_unit": _unit_label_or_none(plan, target_column),
         "feature_set": feature_set,
         "missing_physics_inputs": missing_physics_inputs,
+        "readout_checks": "on" if checks_on else "off",
+        "assay_columns_declared": list(assay_columns),
+        "working_volume_overrides": dict(working_volume_overrides or {}),
         "constants": dict(CONSTANTS),
     }
 
@@ -1166,6 +1298,15 @@ def build_readout(
         "backtest": None,
         "divergence": None,
         "interval_half_width": None,
+        # measured-data checks that can downgrade the decision (see docstring)
+        "assay_confound": confound,
+        "working_volumes": {
+            "applied": bool(volumes is not None and volumes.assumptions),
+            "assumptions": {} if volumes is None else volumes.assumptions,
+            "unresolved": [] if volumes is None else volumes.unresolved,
+            "default_table_L": dict(NOMINAL_WORKING_VOLUME_L),
+            "basis": "assumption",
+        },
         "gate": {
             "passed": gate_result.passed,
             "failed_check": gate_result.failed_check,
@@ -1177,7 +1318,7 @@ def build_readout(
 
     if not gate_result.passed:
         base["decision"] = REFUSAL
-        base["reasons"] = [gate_result.detail]
+        base["reasons"] = [gate_result.detail, *extra_reasons]
         return base
 
     assert gate_result.clean_df is not None
@@ -1200,6 +1341,7 @@ def build_readout(
         col: (float(clean_df[col].min()), float(clean_df[col].max())) for col in process_columns
     }
     decision_result = decide(ladder_result, target_ratio, target.process_params, trained_param_ranges)
+    decision_result = _apply_measured_checks(decision_result, confound, volumes, extra_reasons)
 
     base["decision"] = decision_result.decision
     base["reasons"] = decision_result.reasons
@@ -1222,6 +1364,8 @@ def build_readout(
 
     if decision_result.decision in (REFUSAL, NUMBER_WITH_WARNING):
         base["data_plan"] = _build_data_plan(ladder_result, decision_result, target.scale_L, clean_df, working_config)
+        if confound["what_would_fix_it"]:
+            base["data_plan"].append(confound["what_would_fix_it"])
 
     if decision_result.decision == REFUSAL:
         return base

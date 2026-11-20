@@ -88,7 +88,9 @@ def _refusal(check: str, detail: str) -> JSONResponse:
     )
 
 
-def _parse_target(raw: str) -> tuple[TargetSpec, str, list[str], dict[str, float] | None]:
+def _parse_target(
+    raw: str,
+) -> tuple[TargetSpec, str, list[str], dict[str, float] | None, dict[str, Any]]:
     """Parse the `target` form field into `(TargetSpec, target_column,
     process_columns, physics_overrides)`.
 
@@ -99,8 +101,14 @@ def _parse_target(raw: str) -> tuple[TargetSpec, str, list[str], dict[str, float
           "airflow_L_per_min": 300.0,
           "target_column": "titer_g_per_L",
           "process_params": {"ph_setpoint": 7.0, "temperature_C": 37.0},
-          "physics_overrides": {"power_number": 6.0}   // optional
+          "physics_overrides": {"power_number": 6.0},  // optional
+          "assay_columns": ["titer_method"],            // optional
+          "working_volume_overrides": {"SF125": 0.025}  // optional, liters
         }
+
+    The fifth return value holds the optional readout checks
+    (`assay_columns`, `working_volume_overrides`), passed to `build_readout`
+    as keyword arguments; it only carries keys the caller supplied.
 
     `agitation_rpm`/`airflow_L_per_min` are OPTIONAL keys: whether they are
     actually required depends on the uploaded sheet, not the target JSON -
@@ -144,9 +152,27 @@ def _parse_target(raw: str) -> tuple[TargetSpec, str, list[str], dict[str, float
     except (TypeError, ValueError) as exc:
         raise _TargetJsonError(f"{_ERR_INVALID_TARGET}: {exc}") from exc
 
+    checks: dict[str, Any] = {}
+    assay_columns = data.get("assay_columns")
+    if assay_columns is not None:
+        if not isinstance(assay_columns, list) or not all(isinstance(c, str) for c in assay_columns):
+            raise _TargetJsonError(f"{_ERR_INVALID_TARGET}: 'assay_columns' must be a list of column names")
+        if assay_columns:
+            checks["assay_columns"] = list(assay_columns)
+    volume_overrides = data.get("working_volume_overrides")
+    if volume_overrides is not None:
+        if not isinstance(volume_overrides, dict):
+            raise _TargetJsonError(f"{_ERR_INVALID_TARGET}: 'working_volume_overrides' must be an object")
+        try:
+            parsed = {str(k): float(v) for k, v in volume_overrides.items()}
+        except (TypeError, ValueError) as exc:
+            raise _TargetJsonError(f"{_ERR_INVALID_TARGET}: 'working_volume_overrides': {exc}") from exc
+        if parsed:
+            checks["working_volume_overrides"] = parsed
+
     target_column = str(data["target_column"])
     process_columns = list(target.process_params)
-    return target, target_column, process_columns, physics_overrides
+    return target, target_column, process_columns, physics_overrides, checks
 
 
 # --- HTML rendering ----------------------------------------------------------- #
@@ -379,6 +405,36 @@ def _physics_section(readout: dict[str, Any]) -> str:
     return f'<h2>Physics assumptions</h2><div class="grid">{rows}</div>{note}'
 
 
+def _assay_section(readout: dict[str, Any]) -> str:
+    """The assay-method check, shown only when a method column was checked:
+    each column's association with scale and the outcome's between-method
+    share (measured values), with n and the permutation p."""
+    confound = readout.get("assay_confound") or {}
+    cols = [c for c in confound.get("columns") or [] if "skipped" not in c]
+    if not cols:
+        return ""
+    rows = []
+    for c in cols:
+        v = c.get("cramers_v_scale")
+        share = c.get("target_share")
+        p = c.get("target_share_p")
+        rows.append(
+            "<tr>"
+            f"<td>{_esc(c['column'])}</td><td>{c['n']}</td>"
+            f"<td>{_esc('n/a' if v is None else f'{v:.2f}')}</td>"
+            f"<td>{_esc('n/a' if share is None else f'{share:.2f}')}</td>"
+            f"<td>{_esc('n/a' if p is None else f'{p:.3g}')}</td>"
+            f"<td>{_esc(c.get('severity') or 'none')}</td>"
+            "</tr>"
+        )
+    head = (
+        "<tr><th>Method column</th><th>n</th><th>Cramer's V with scale</th>"
+        "<th>Outcome share between methods</th><th>Permutation p</th><th>Finding</th></tr>"
+    )
+    rule = f'<p class="unused-note">Rule: {_esc(confound.get("rule", ""))}</p>'
+    return f"<h2>Assay method check</h2><table>{head}{''.join(rows)}</table>{rule}"
+
+
 def _format_const_value(value: Any) -> str:
     if isinstance(value, bool) or not isinstance(value, float):
         return str(value)
@@ -464,6 +520,7 @@ def render_readout_html(readout: dict[str, Any]) -> str:
             _ratio_section(readout),
             _baseline_section(readout),
             _data_plan_section(readout),
+            _assay_section(readout),
             _physics_section(readout),
             _provenance_section(readout),
         )
@@ -519,7 +576,7 @@ async def _readout_response(file: UploadFile, target: str, principal: Principal,
     """Shared body of the HTML and JSON readout routes: identical parsing,
     caps, analysis slot, and refusal envelopes; only the 200 body differs."""
     try:
-        target_spec, target_column, process_columns, physics_overrides = _parse_target(target)
+        target_spec, target_column, process_columns, physics_overrides, checks = _parse_target(target)
     except _TargetJsonError as exc:
         return _refusal("invalid_target", str(exc))
 
@@ -547,6 +604,7 @@ async def _readout_response(file: UploadFile, target: str, principal: Principal,
                 target_spec,
                 physics_overrides=physics_overrides,
                 raw_bytes=raw,
+                **checks,
             ),
             tenant=principal.tenant,
         )
@@ -563,7 +621,7 @@ async def _readout_response(file: UploadFile, target: str, principal: Principal,
         return _refusal(readout["gate"]["failed_check"], readout["gate"]["detail"])
 
     if as_json:
-        readout_id = compute_readout_id(raw, target_column, target_spec, physics_overrides)
+        readout_id = compute_readout_id(raw, target_column, target_spec, physics_overrides, checks=checks)
         return JSONResponse(readout_to_json(readout, readout_id=readout_id), status_code=200)
     return HTMLResponse(render_readout_html(readout), status_code=200)
 

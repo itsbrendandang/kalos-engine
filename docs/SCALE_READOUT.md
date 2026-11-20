@@ -19,6 +19,7 @@ Not validated under 21 CFR Part 11.
 - `target`: JSON with `scale_L`, `target_column`, `process_params` (a dict whose keys are the process columns), optional `physics_overrides` (any `ScaleFeatureConfig` field), and optional `agitation_rpm` / `airflow_L_per_min`.
   Whether `agitation_rpm` and `airflow_L_per_min` are actually required depends on the sheet, not the target JSON: see "Scale-only fallback" below.
   When they are required and missing, the response is a `422` `invalid_target` naming which one.
+  Two more optional keys: `assay_columns` (a list of column names to treat as assay or quantification methods, see "Assay method check") and `working_volume_overrides` (an object mapping a vessel format such as `"SF125"`, or a label exactly as written, to liters, see "Plate and flask formats").
 
 Responses:
 
@@ -50,6 +51,45 @@ How it is chosen: automatically, from the sheet, never from the target JSON.
 In scale_only mode, `agitation_rpm` and `airflow_L_per_min` in the target are optional.
 A value supplied anyway is accepted but ignored, since the sheet gives the model nothing to relate it to, and the page marks it "ignored: sheet does not record them" (or "not recorded" when the field was left unset).
 The physics assumptions section only reports the assumptions scale_only actually uses (the geometry fields `log_volume_ratio` and `hydrostatic_pressure_mmHg` need, plus `reference_scale_L`); the power-number and van't Riet kLa constants are marked "not used (scale-only)".
+
+### Switching the checks off
+
+The plate/flask volumes, the assay method check below and the `leave_one_scale_out_report` refusal are on by default. `KALOS_SCALE_READOUT_CHECKS=off` restores the earlier decisions, reasons and numbers (the readout then says `provenance.readout_checks: "off"` and `assay_confound.skipped` says the check did not run). It is there for comparison and rollback, not as a recommended setting. `python scripts/scale_readout_honesty_probe.py`, run once with each value, prints the difference on synthetic sheets.
+
+### Plate and flask formats
+
+`scale_L` may hold vessel-format labels instead of liters: `384w`, `96w`, `24w` (and spellings such as `384-well`, `24 deep well`, `SF-125`, `125 mL shake flask`).
+Each label is replaced by a nominal working volume, and every volume used is an **assumption**, printed as one:
+
+| format | liters | note |
+|---|---|---|
+| `384w` | 5e-5 (50 uL) | typical 30-80 uL |
+| `96w` | 2e-4 (200 uL) | standard plate, not deep-well |
+| `24w` | 2e-3 (2 mL) | assumes a deep-well plate; a shallow 24-well plate holds about 1 mL |
+| `SF125` | 0.03 (30 mL) | 125 mL is the flask size, not the liquid; typical 25-30 mL |
+
+- `physics_assumptions` gains one entry per format used, `nominal_working_volume_L[<format>]`, with `source` `assumption (default table)` or `assumption (user-supplied)`; `working_volumes` lists each format's liters, the labels as written, the row count, and the default table.
+- A sentence naming every assumed volume is added to `reasons`. A number that rests on a default-table volume is issued as *with warnings*; volumes from `working_volume_overrides` are labelled user-supplied and do not downgrade.
+- A label the table does not know (a 96 deep-well plate, a 250 mL flask) is never guessed or dropped: the response is a `422` `scale_labels_unresolved` naming the label and the override that would resolve it.
+- Sheets whose `scale_L` is already numeric are unchanged.
+
+### Assay method check
+
+The ladder cannot tell "the scale changed the titer" from "the assay changed the number".
+Before the gate, the readout checks every text column whose name reads like a method (`method`, `assay`, `quantif...`, `analytic`, `instrument`, `technique`, `measured_by`, `detection`) plus the columns in `assay_columns`, on the raw upload (the normalize step drops text columns, so this is the only place they are seen).
+A blank method cell is its own level, "not recorded". For each column it reports, on the rows with a finite target and scale:
+
+- `cramers_v_scale`: Cramer's V between method and scale level;
+- `target_share`: the share of the outcome's variance between method levels (eta squared, measured values) with `target_share_p`, an exact (n <= 8) or seeded Monte Carlo permutation p-value, because at small n the share is large by chance;
+- `target_separates_completely`, `every_step_changes_method`, `target_by_method` (n, min, max, mean per method, `basis: "measured"`).
+
+Severity (`assay_confound.rule`):
+
+- **refuse**: V = 1, the outcome tracks the method (share >= 0.5 or complete separation), and every scale step changes the method. The readout becomes a refusal with the reason "outcome tracks assay method; effects confounded: ..." and a data-plan line.
+- **warn**: V >= 0.8 and the outcome tracks the method; or the method is not tied to scale but the outcome differs by method beyond chance (share >= 0.5 or complete separation, permutation p <= 0.05). A prediction becomes *with warnings* and the reason is added.
+
+The finding never upgrades a decision and never changes the predicted number; it only adds reasons and downgrades.
+On a gate failure the reasons are still listed in the readout dict (the 422 body carries only the gate's detail).
 
 ## How the decision is made
 
@@ -104,6 +144,8 @@ Every number is the engine's own; non-finite values are `null`, never a placehol
 | `interval`, `interval_half_width` | `[lo, hi]` = prediction +/- the split-conformal half-width, `null` on a refusal |
 | `interval_coverage`, `interval_method`, `interval_label` | nominal `1 - ALPHA` (0.9), `"split_conformal_ladder_residuals"`, and the honest wording: approximate, nominal, not calibrated at the target scale. `null` coverage/method on a refusal |
 | `rungs[]`, `skipped_rungs[]`, `reference_ratio`, `requested_ratio`, `out_of_range_params[]`, `baseline_comparison`, `data_plan[]`, `target_inputs`, `target_column`, `target_column_unit`, `feature_set`, `missing_physics_inputs`, `physics_assumptions`, `provenance` | exactly the fields the HTML page renders |
+| `assay_confound` | the assay method check above: `columns[]` (one finding per checked column), `skipped[]`, `severity` (`refuse`, `warn` or `null`), `reasons[]`, `what_would_fix_it`, `rule`, `n_rows` |
+| `working_volumes` | `{applied, assumptions{format: {value, unit, source, basis: "assumption", note, labels_as_written, n_rows}}, unresolved[], default_table_L, basis: "assumption"}` |
 | `scale_points[]` | one per measured row, ascending by scale: `{scale_L, actual, basis: "measured", oof_pred, oof_pred_basis}`. `oof_pred` is the ladder backtest prediction for that row (model fit only on strictly smaller scales; `oof_pred_basis: "predicted"`), `null` where the scale was never held out (the smallest two scales, skipped rungs) |
 | `backtest` | `{method: "nested_leave_last_scale_out", method_description, per_scale[], skipped[], pooled}`: each rung's `n`, `mae`, `naive_mean_mae`, `naive_nn_mae`, `beats_both`, `too_few_to_judge`, `in_license_window`, `step_ratio`, plus `measured_mean` and `backtest_pred_mean`; `pooled` has the pooled MAEs, `beats_both`, `n_residuals`, `too_few_to_judge` (< `MIN_RESIDUALS`) |
 | `divergence` | `{computed: true, rule, flags[{scale_L, codes}], per_scale[]}` or `{computed: false, reason, rule}` when no rung exists. A held-out scale is flagged `did_not_beat_baselines` (>= 3 runs and its backtest MAE does not beat both baselines) and/or `outside_backtest_band` (its measured mean is outside the mean backtest prediction +/- a split-conformal half-width built from the residuals of strictly smaller held-out scales only, with at least `MIN_RESIDUALS` of them; otherwise `outside_band: null` and `band_unavailable_reason`) |

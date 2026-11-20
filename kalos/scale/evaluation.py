@@ -74,6 +74,7 @@ from kalos.core.evaluation import logo_report
 from kalos.core.surrogate import Surrogate
 
 from .candidates import ScaleCandidateModel
+from .settings import readout_checks_enabled
 from .transfer import (
     DEFAULT_SCALE_FEATURE_CONFIG,
     ScaleFeatureConfig,
@@ -170,6 +171,33 @@ def _bucket_metrics(
     return out
 
 
+def _refuse_missing_inputs(df: pd.DataFrame, target_column: str, config: ScaleFeatureConfig) -> None:
+    """Raise `ValueError` naming every absent column instead of letting the
+    no-imputation row filter drop every row.
+
+    Before this check, a sheet without `agitation_rpm`/`airflow_L_per_min`
+    under the default `feature_set="physics"` produced all-NaN physics
+    features, so every row was dropped and the report came back with
+    `n_rows_used: 0` and no error. `kalos.scale.readout.build_readout` picks
+    `"scale_only"` for such sheets itself; direct callers must choose.
+    """
+    missing = [c for c in (target_column, config.scale_column) if c not in df.columns]
+    if config.feature_set == "physics":
+        missing += [c for c in (config.agitation_column, config.airflow_column) if c not in df.columns]
+    if missing:
+        hint = (
+            " The physics feature set needs agitation and airflow; pass "
+            "config=ScaleFeatureConfig(feature_set='scale_only') to evaluate on scale_L alone."
+            if config.feature_set == "physics"
+            and (config.agitation_column in missing or config.airflow_column in missing)
+            else ""
+        )
+        raise ValueError(
+            f"leave_one_scale_out_report: missing column(s) {missing}; refusing rather than "
+            f"dropping every row.{hint}"
+        )
+
+
 def leave_one_scale_out_report(
     df: pd.DataFrame,
     target_column: str,
@@ -213,7 +241,11 @@ def leave_one_scale_out_report(
 
     Rows with a non-finite feature, target, or `scale_L` are dropped up
     front (`n_rows_dropped`), matching `ScaleUpTransferModel.fit`'s
-    no-imputation contract.
+    no-imputation contract. It never returns a report over zero rows:
+    `ValueError` (naming the columns) when the target, `scale_L` or - under
+    `feature_set="physics"` - `agitation_rpm`/`airflow_L_per_min` is absent,
+    or when no row survives the filter (with `KALOS_SCALE_READOUT_CHECKS=off`
+    it returns the report over zero rows, as before the check existed).
 
     `bounds`: the SAME `(2, d)` box is used for every held-out scale's GP
     fit (default: the min/max of ALL surviving rows, train and held-out
@@ -279,6 +311,9 @@ def leave_one_scale_out_report(
     - both meant for pathologically small inputs, not the 5-replicates-per-
     scale shape this module targets.
     """
+    checks = readout_checks_enabled()  # KALOS_SCALE_READOUT_CHECKS (kalos/scale/settings.py)
+    if checks:
+        _refuse_missing_inputs(df, target_column, config)
     X, names = build_feature_matrix(df, process_columns, config)
     y = df[target_column].to_numpy(dtype=float)
     scale = df[config.scale_column].to_numpy(dtype=float)
@@ -286,6 +321,17 @@ def leave_one_scale_out_report(
 
     finite = np.isfinite(X).all(axis=1) & np.isfinite(y) & np.isfinite(scale)
     n_dropped = int((~finite).sum())
+    if checks and len(df) and not finite.any():
+        # Never a report over zero rows: name the columns that left nothing.
+        bad = [
+            name for name, col in zip(names, X.T) if not np.isfinite(col).any()
+        ] + [c for c, v in ((target_column, y), (config.scale_column, scale)) if not np.isfinite(v).any()]
+        raise ValueError(
+            f"leave_one_scale_out_report: all {len(df)} rows have a non-finite value in a required "
+            f"column, so there is nothing to evaluate. Columns with no finite value: {bad or 'none'}; "
+            "every row is missing at least one of the target, scale_L, the process columns or the "
+            "physics features."
+        )
     X, y, scale = X[finite], y[finite], scale[finite]
     # Group scales by ROUNDED value, matching the replicate-matching convention
     # `kalos.core.replicates.aggregate_replicates` uses (round to 6 places).

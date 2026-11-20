@@ -61,13 +61,18 @@ def compute_readout_id(
     physics_overrides: dict[str, Any] | None,
     *,
     engine_version: str = ENGINE_VERSION,
+    checks: dict[str, Any] | None = None,
 ) -> str:
     """Deterministic 64-hex SHA-256 of (raw sheet bytes, canonical target,
     engine version). Whitespace/key order in the caller's target JSON does
     not change the id; any change to the sheet, the target values, or the
-    engine version does."""
+    engine version does. `checks` (`assay_columns`, `working_volume_overrides`)
+    enters the hash only when non-empty, so ids for requests without them are
+    unchanged."""
+    extra = {k: v for k, v in sorted((checks or {}).items()) if v}
     canonical_target = json.dumps(
         {
+            **extra,
             "target_column": target_column,
             "scale_L": target.scale_L,
             "agitation_rpm": target.agitation_rpm,
@@ -146,6 +151,8 @@ def readout_to_json(readout: dict[str, Any], *, readout_id: str) -> dict[str, An
         "feature_set": readout.get("feature_set"),
         "missing_physics_inputs": list(readout.get("missing_physics_inputs") or []),
         "physics_assumptions": readout.get("physics_assumptions"),
+        "assay_confound": readout.get("assay_confound"),
+        "working_volumes": readout.get("working_volumes"),
         "scale_points": list(readout.get("scale_points") or []),
         "backtest": readout.get("backtest") or {"method": BACKTEST_METHOD, "per_scale": [], "skipped": []},
         "divergence": readout.get("divergence")
