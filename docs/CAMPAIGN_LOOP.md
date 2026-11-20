@@ -199,6 +199,16 @@ for an awaiting run, a caller-predicted run or a legacy run. `inside_band` is al
 no interval was recorded. The fold (`plan_fold`/`commit_fold`) only reads `recipe` and
 `result`, so none of these keys ever becomes a dataset column.
 
+Since schema v8 the same transaction also appends the prediction to `run_predictions`
+(with the per-proposal 90%/95% intervals read from the published proposal itself, not the
+size-capped copy above, plus the analysis's sha256 and snapshot id), every publish appends
+the analysis to `analysis_snapshots`, and `commit_fold` appends one `run_folds` row per
+folded run (the value and `run_results` version written into `base_rows`). A folded run
+leaves `pending` but keeps its id, prediction and band in those append-only tables; the
+cross-round track record reads them (`GET /api/campaigns/{id}/track-record`,
+docs/CAMPAIGNS_API.md, "Prediction history and track record"). `seed()` writes a random
+`seed_id` into the state on every upload, so a round is identified by `(seed_id, round)`.
+
 ## Analysis/campaign coherence
 
 The campaign and `/api/latest` used to be **separate** resources: separate locks, separate persistence (`portal.db` vs `latest/<tenant>.json`). Since schema v2 both live in `portal.db`, and the normal paths write them in one transaction (below), but the stamp still matters for the best-effort fallback.

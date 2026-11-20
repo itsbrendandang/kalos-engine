@@ -81,8 +81,8 @@ def _populate(state: Path) -> tuple[CampaignStore, dict[str, str]]:
 
 def _make_v5(state: Path) -> tuple[Path, dict[str, str]]:
     """A v5 database as a v5 engine leaves it: populated through the store, rolled
-    back to v5 (through v7 -> v6), and the (empty) renamed-aside v6 and v7 tables
-    dropped so no v6/v7 trace remains."""
+    back to v5 (through v8 -> v7 -> v6), and the renamed-aside v6, v7 and v8 tables
+    dropped so no v6/v7/v8 trace remains."""
     store, ids = _populate(state)
     store.close()
     db = state / "portal.db"
@@ -91,7 +91,9 @@ def _make_v5(state: Path) -> tuple[Path, dict[str, str]]:
         b.unlink()
     conn = sqlite3.connect(str(db))
     for t in ("campaign_settings_v6_rolledback", "gate_decisions_v6_rolledback",
-              "campaign_clones_v7_rolledback", "clone_titer_history_v7_rolledback"):
+              "campaign_clones_v7_rolledback", "clone_titer_history_v7_rolledback",
+              "analysis_snapshots_v8_rolledback", "run_predictions_v8_rolledback",
+              "run_folds_v8_rolledback"):
         conn.execute(f'DROP TABLE "{t}"')
     conn.commit()
     conn.close()
@@ -139,7 +141,7 @@ def test_v5_to_v6_keeps_every_row_and_takes_a_verified_backup(tmp_path):
     assert len(before["run_results"]) == 4 and len(before["audit_log"]) >= 2 and before["jobs"]
 
     plan = migrate.migrate_up(db, dry_run=True).plan_text
-    assert "schema v5 -> v7" in plan and "campaign_settings" in plan and "gate_decisions" in plan
+    assert f"schema v5 -> v{migrate.SCHEMA_VERSION}" in plan and "campaign_settings" in plan and "gate_decisions" in plan
     assert "pre-v6" in plan and "jobs table" not in plan  # only the remaining step is listed
     assert _snapshot(db) == before  # dry run changed nothing
 
@@ -151,10 +153,12 @@ def test_v5_to_v6_keeps_every_row_and_takes_a_verified_backup(tmp_path):
     after = _snapshot(db)
     schema_rows = after.pop("schema_migrations")
     before_schema = before.pop("schema_migrations")
-    assert [r[0] for r in schema_rows] == [2, 3, 4, 5, 6, 7]
+    assert [r[0] for r in schema_rows] == list(range(2, migrate.SCHEMA_VERSION + 1))
     assert schema_rows[:4] == before_schema
     assert after.pop("campaign_settings") == [] and after.pop("gate_decisions") == []
     assert after.pop("campaign_clones") == [] and after.pop("clone_titer_history") == []
+    for t in ("analysis_snapshots", "run_predictions", "run_folds"):  # v8, tests/test_schema_v8.py
+        after.pop(t)
     after.pop("sqlite_sequence", None)
     before.pop("sqlite_sequence", None)
     assert after == before
@@ -183,7 +187,7 @@ def test_plan_text_from_v1_mentions_the_v6_tables(tmp_path):
     conn.commit()
     conn.close()
     plan = migrate.migrate_up(db, dry_run=True).plan_text
-    assert "v2 -> v7" in plan and "campaign_settings and gate_decisions" in plan
+    assert f"v2 -> v{migrate.SCHEMA_VERSION}" in plan and "campaign_settings and gate_decisions" in plan
 
 
 # --- constraints --------------------------------------------------------------- #
@@ -267,7 +271,7 @@ def test_down_renames_both_tables_aside_and_re_up_is_clean(tmp_path):
     blob_before = _q(db, "SELECT state FROM campaigns WHERE id = ?", (cid,))
 
     dry = migrate.migrate_down(db, dry_run=True, target=5).plan_text
-    assert "schema v7 -> v6" in dry and "schema v6 -> v5" in dry
+    assert "schema v8 -> v7" in dry and "schema v7 -> v6" in dry and "schema v6 -> v5" in dry
     assert "campaign_settings -> campaign_settings_v6_rolledback (kept, not dropped; 1 row(s))" in dry
     assert "gate_decisions -> gate_decisions_v6_rolledback (kept, not dropped; 1 row(s))" in dry
     assert "schema v5 -> v4" not in dry  # stops at the target
@@ -328,10 +332,11 @@ def test_status_shows_v6_and_pending_from_v5(tmp_path):
     state = tmp_path / "s"
     db, _ = _make_v5(state)
     report, healthy = migrate.status_report(db)
-    assert healthy and "schema version: v5 (this code: v7)" in report and "schema v5 -> v7" in report
+    v = migrate.SCHEMA_VERSION
+    assert healthy and f"schema version: v5 (this code: v{v})" in report and f"schema v5 -> v{v}" in report
     migrate.migrate_up(db)
     report, healthy = migrate.status_report(db)
-    assert healthy and "schema version: v7" in report and "shape check: ok" in report
+    assert healthy and f"schema version: v{v}" in report and "shape check: ok" in report
 
 
 # --- shape check ----------------------------------------------------------------- #

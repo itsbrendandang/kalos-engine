@@ -4,7 +4,8 @@
 loop: campaigns, their published analyses, the tenant's default campaign, and
 an audit log. Its schema is versioned in `schema_migrations`. The code is
 `kalos/portal/migrate.py`; the tests are `tests/test_campaign_schema_v2.py` and,
-for v6, `tests/test_schema_v6.py`, and for v7, `tests/test_schema_v7.py`.
+for v6, `tests/test_schema_v6.py`, for v7, `tests/test_schema_v7.py`, and for v8,
+`tests/test_schema_v8.py` (run on a copy of a real v7 database).
 
 | Version | Shape | Code |
 | --- | --- | --- |
@@ -14,10 +15,11 @@ for v6, `tests/test_schema_v6.py`, and for v7, `tests/test_schema_v7.py`.
 | v4 | adds two triggers on `audit_log` that reject UPDATE and DELETE (append-only; below) | `SCHEMA_VERSION = 4` |
 | v5 | adds `run_results` (append-only result history) with UPDATE/DELETE triggers | `SCHEMA_VERSION = 5` |
 | v6 | adds `campaign_settings` and `gate_decisions` (append-only stage gate decisions; below) | `SCHEMA_VERSION = 6` |
-| v7 | adds `campaign_clones` (label-only clone registry) and `clone_titer_history` (append-only; below) | current (`SCHEMA_VERSION = 7`) |
-| v8 | **reserved** for the Crux items | not yet written |
+| v7 | adds `campaign_clones` (label-only clone registry) and `clone_titer_history` (append-only; below) | `SCHEMA_VERSION = 7` |
+| v8 | adds `analysis_snapshots`, `run_predictions` and `run_folds` (append-only prediction history, BRE-32; below) | current (`SCHEMA_VERSION = 8`) |
 
-Schema v8 is reserved for the Crux items (the planned result-check and decision-ledger work, tracked in the kalos-engine project); do not reuse v8 for anything else.
+Schema v8 carries the prediction history and track record (BRE-32, Crux Rank 2).
+The remaining Crux items (result check, decision ledger) take v9 or later.
 
 A v1 database has no `schema_migrations` table.
 
@@ -109,6 +111,78 @@ recovery. Nothing is repaired automatically. Recovery, with the engine stopped:
    directory) and import the campaign data. There is no import command yet: read
    the rows from the `campaigns_backup_N` table with `sqlite3` and re-enter them.
 
+## Schema v8: prediction history
+
+Before v8 a started run's recorded prediction lived only in the campaign state
+blob, and a fold (`commit_fold`) drops measured runs from `pending`: the run lost
+its prediction, its band and its run id, and `analyses` kept only the newest
+analysis. Schema v8 adds three append-only tables, each with the same
+two-trigger guard as `gate_decisions` (`<table> is append-only: UPDATE is
+rejected`, and DELETE), and each with `FOREIGN KEY (campaign_id, tenant)` to
+`campaigns (id, tenant)`. Code: `kalos/portal/prediction_history.py`; routes:
+`kalos/portal/history_api.py` (docs/CAMPAIGNS_API.md, "Prediction history and
+track record").
+
+- `analysis_snapshots(id, tenant, campaign_id, round, kind, campaign_generation,
+  analysis_sha256, provenance_sha256, input_sha256, engine_version, dataset,
+  n_rows, n_proposals, analysis_bytes, analysis, created_at)`: every published
+  analysis, stored byte for byte with its sha256. `kind IN ('upload',
+  'reanalyze', 'publish', 'migrated_v7')`. Written in the transaction that
+  publishes the analysis (`CampaignStore._write_analysis`), so a rolled-back
+  publish leaves no snapshot. Index `analysis_snapshots_campaign_idx (tenant,
+  campaign_id, id)`.
+- `run_predictions(id, tenant, campaign_id, run_id, round, seed_id, source,
+  pred_source, recipe, available, unavailable_reason, pred, std, lo_90, hi_90,
+  method_90, basis_90, lo_95, hi_95, method_95, basis_95, band_lo, band_hi,
+  band_coverage, band_method, model_version, provenance_sha256,
+  analysis_generation, proposal_index, analysis_sha256, analysis_snapshot_id,
+  recorded_at)`: one row per started run (`UNIQUE (tenant, campaign_id,
+  run_id)`), written in the transaction that starts it. The mean and sd, the
+  per-proposal 90% and 95% intervals with their method and coverage basis, the
+  global conformal band, the engine version, the round, the upload it belongs
+  to (`seed_id`, a random id each upload writes into the campaign state; a
+  re-upload restarts the round count) and the sha256 and snapshot id of the
+  analysis it was read from. CHECKs: an `available` row has a mean; an
+  unavailable row (the recipe is not a published proposal, or the run predates
+  predictions at start) has a non-blank reason; an interval has both ends or
+  neither. `source IN ('start', 'migrated_v7_state')`. Index
+  `run_predictions_campaign_idx (tenant, campaign_id, round, id)`.
+- `run_folds(id, tenant, campaign_id, run_id, round_started, folded_in_round,
+  result_version, value, measured_at, analysis_snapshot_id, folded_at)`: one
+  row per run a fold wrote into `base_rows`: the value, and the `run_results`
+  version it came from (`UNIQUE (tenant, campaign_id, run_id)`).
+- Result versions and corrections stay in `run_results` (v5): append-only, a
+  correction needs a reason. v8 does not copy them; `run_predictions` and
+  `run_folds` tie each version to its run, round and prediction after the fold.
+
+`up` from v7 takes a `pre-v8-<ts>` backup and, in one `BEGIN IMMEDIATE`
+transaction, creates the tables, indexes and triggers and then COPIES what v7
+still holds. Rows are read; none is changed:
+
+- each campaign's published analysis becomes one snapshot (`kind =
+  'migrated_v7'`), with the round of the in-flight runs that record they were
+  started from it (else round NULL);
+- each in-flight run (`pending`) becomes one `run_predictions` row (`source =
+  'migrated_v7_state'`) carrying the block v7 recorded at start and that block's
+  own `recorded_at`, never the migration time. A run started before predictions
+  were recorded gets `available = 0` with the reason;
+- runs v7 already folded lost their predictions: nothing is invented for them.
+  The track record lists those rounds under `rounds_without_record`;
+- a campaign state that is not valid JSON is skipped with a warning.
+
+`down` (v8 -> v7) takes a `pre-down-<ts>` backup, drops the six triggers and two
+indexes, and renames the tables to `<name>_v8_rolledback` with every row kept. A
+v7 engine runs on the result (the `seed_id` key in the campaign state is
+ignored by v7), and drops predictions again at its next fold. A later `up`
+creates fresh tables and copies the then in-flight runs again; a second `down`
+renames to `<name>_v8_rolledback_2`, and so on.
+
+The v7 -> v8 step is tested on a copy of a real v7 database
+(`tests/fixtures/portal_v7.db`, produced by running the v7 engine over HTTP;
+`tests/fixtures/make_portal_v7_db.py`): backup verified, every v7 row unchanged,
+the copied rows match the state blobs, down/up/down, and the engine keeping a
+migrated run's prediction through its next fold.
+
 ## Schema v7: clone registry and clone titer history
 
 Schema v7 adds two tables (docs/CLONES.md). Both carry
@@ -136,8 +210,6 @@ Schema v7 adds two tables (docs/CLONES.md). Both carry
   `clone_titer_history_v7_rolledback` with every row kept. A v6 engine runs on the
   result. A later `up` creates fresh, empty v7 tables (rows are not merged back); a
   second `down` renames to `<name>_v7_rolledback_2`, and so on.
-- Schema v8 is reserved for the Crux items (the planned result-check and decision-ledger work, tracked in the kalos-engine project); do
-  not reuse v8 for anything else.
 
 ## Schema v6: campaign settings and stage gate decisions
 
@@ -303,10 +375,10 @@ explicitly with the engine stopped:
 
 ```sh
 python -m kalos.portal.migrate up
-python -m kalos.portal.migrate status    # expect: schema version: v7; journal_mode=wal
+python -m kalos.portal.migrate status    # expect: schema version: v8; journal_mode=wal
 ```
 
-Keep the `portal.db.pre-v2-<ts>` ... `pre-v7-<ts>` copy (whichever apply) until the release is accepted.
+Keep the `portal.db.pre-v2-<ts>` ... `pre-v8-<ts>` copy (whichever apply) until the release is accepted.
 
 ### Verify
 
