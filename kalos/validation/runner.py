@@ -29,6 +29,7 @@ from .checks import (
     check_constant_columns,
     check_constant_within_group,
     check_controls_present,
+    check_duplicate_ids,
     check_duplicate_rows,
     check_informative_missingness,
     check_missingness,
@@ -97,6 +98,7 @@ def validate_frame(
     run("units_consistency", run_units)
     run("physical_bounds", lambda: check_physical_bounds(df))
     run("duplicate_rows", lambda: check_duplicate_rows(df, outcome_hint=profile.outcome_hint))
+    run("duplicate_ids", lambda: check_duplicate_ids(df))
     run("missingness", lambda: check_missingness(df))
     outcome_columns = [
         str(c) for c in df.columns

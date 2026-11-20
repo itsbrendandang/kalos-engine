@@ -227,6 +227,8 @@ ENGINE_ONLY: dict[str, str] = {
     'result_physically_impossible': 'A result that cannot physically happen is a typo or a unit mix-up; if the next round learns from it, every suggestion after it bends toward a run that never happened.',
     'result_magnitude_jump': 'A result ten or a thousand times away from everything measured so far is most often a unit or decimal slip; check it before the next round learns from it.',
     'result_duplicate_entry': 'Two runs with exactly the same precise result are often one value pasted twice, which hides what the second run really gave.',
+    # Sheet check
+    'duplicate_ids': 'Two runs under one id cannot be told apart, so a surprising result cannot be traced back to the run that gave it.',
 }
 
 # The desktop engine names the verdict states reliable / not_yet / refused; the

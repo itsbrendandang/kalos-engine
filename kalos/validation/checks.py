@@ -51,6 +51,7 @@ __all__ = [
     "check_constant_columns",
     "check_constant_within_group",
     "check_controls_present",
+    "check_duplicate_ids",
     "check_duplicate_rows",
     "check_informative_missingness",
     "check_missingness",
@@ -339,18 +340,25 @@ _SUFFIX_DIMENSION = {
 # --- 3. duplicate rows -------------------------------------------------------- #
 
 
-def check_duplicate_rows(df: pd.DataFrame, *, outcome_hint: Pattern[str]) -> list[Finding]:
-    """Flag exact duplicate rows (WARNING) and outcome-only-differing rows (INFO).
+def _identifier_columns(df: pd.DataFrame) -> list:
+    """Columns that name a run rather than describe it (run_id, sample_id,
+    batch_no, ...), by the provenance check's `_RUN_ID_RE`."""
+    return [c for c in df.columns if _RUN_ID_RE.match(str(c).strip())]
 
-    An exact duplicate (every column equal) is very likely a copy-paste or
-    export bug - two "different" measurements cannot be bit-for-bit
-    identical across every column including any id/date column, so this is
-    a WARNING, not an INFO. Rows equal on every column EXCEPT the ones
-    `outcome_hint` matches are a different, benign thing: a genuine
-    replicate of the same recipe with a different measured result, which is
-    INFO, not a defect. `outcome_hint` is passed in (rather than
-    hardcoded) so the caller's `DomainProfile` stays the single source of
-    truth for what counts as an outcome column.
+
+def check_duplicate_rows(df: pd.DataFrame, *, outcome_hint: Pattern[str]) -> list[Finding]:
+    """Flag repeated rows: exact copies (WARNING), copies under a new run id
+    (WARNING), and replicates that differ only in the outcome (INFO).
+
+    - Exact duplicate (every column equal): a copy-paste or export bug; two
+      different measurements are not identical across every column.
+    - BRE-116: identical on every column EXCEPT the identifier columns (run id,
+      sample id, batch number: `_RUN_ID_RE`): the same run pasted again under a
+      new id. Comparing the id column too hid exactly this case, since a pasted
+      row usually gets the next free id.
+    - Equal on every column except the outcome columns (`outcome_hint`, passed
+      in by the caller's `DomainProfile`): a replicate of the same condition
+      with a different measured result. INFO, not a defect.
     """
     findings: list[Finding] = []
     if df.empty:
@@ -364,17 +372,44 @@ def check_duplicate_rows(df: pd.DataFrame, *, outcome_hint: Pattern[str]) -> lis
             Finding(
                 check="duplicate_rows",
                 severity="warning",
-                message="exact duplicate rows found (identical across every column)",
+                message=(
+                    f"{total} rows are exact copies of another row (identical in every column): "
+                    "a run entered twice counts twice. Keep one copy unless they are separate runs."
+                ),
                 rows=capped,
                 detail={"n_rows_affected": total},
             )
         )
 
+    ids = _identifier_columns(df)
+    non_id = [c for c in df.columns if c not in ids]
+    new_id_mask = pd.Series(False, index=df.index)
+    if ids and non_id:
+        new_id_mask = df.duplicated(subset=non_id, keep=False) & ~full_dup_mask
+        if new_id_mask.any():
+            rows = sorted(int(i) for i in df.index[new_id_mask])
+            capped, total = cap_rows(rows)
+            id_names = [str(c) for c in ids]
+            findings.append(
+                Finding(
+                    check="duplicate_rows",
+                    severity="warning",
+                    message=(
+                        f"{total} rows are identical to another row in every column except "
+                        f"{', '.join(repr(n) for n in id_names)}, results included: the same run "
+                        "pasted again under a new id would look like this. Check the lab record; "
+                        "if they are separate runs that gave the same numbers, keep both."
+                    ),
+                    rows=capped,
+                    detail={"identifier_columns": id_names, "n_rows_affected": total},
+                )
+            )
+
     outcome_cols = [c for c in df.columns if outcome_hint.search(str(c))]
-    compare_cols = [c for c in df.columns if c not in outcome_cols]
-    if compare_cols:
+    compare_cols = [c for c in non_id if c not in outcome_cols]
+    if compare_cols and outcome_cols:
         subset_dup_mask = df.duplicated(subset=compare_cols, keep=False)
-        replicate_only_mask = subset_dup_mask & ~full_dup_mask
+        replicate_only_mask = subset_dup_mask & ~full_dup_mask & ~new_id_mask
         if replicate_only_mask.any():
             rows = sorted(int(i) for i in df.index[replicate_only_mask])
             capped, total = cap_rows(rows)
@@ -394,6 +429,63 @@ def check_duplicate_rows(df: pd.DataFrame, *, outcome_hint: Pattern[str]) -> lis
                 )
             )
 
+    return findings
+
+
+def check_duplicate_ids(df: pd.DataFrame) -> list[Finding]:
+    """BRE-116: flag a run identifier used by more than one row.
+
+    Only a column that names runs one-to-one is checked: an identifier-named
+    column (`_RUN_ID_RE`) with at least 5 values, at least 90 % of them unique.
+    (A `batch` or `vessel` column legitimately repeats; it fails the 90 % test
+    and is left alone.) Rows sharing an id that DIFFER are two runs under one
+    name: their results cannot be traced to a physical run. Rows sharing an id
+    that are identical are a run pasted twice (also reported by
+    `duplicate_rows`). WARNING, one finding per id column.
+    """
+    findings: list[Finding] = []
+    for col in _identifier_columns(df):
+        labels = df[col][_nonblank_mask(df[col])].astype(str).str.strip()
+        if len(labels) < 5 or labels.nunique() < 0.9 * len(labels):
+            continue
+        dup_mask = labels.duplicated(keep=False)
+        if not dup_mask.any():
+            continue
+        name = str(col)
+        rows = sorted(_row_index(i) for i in labels.index[dup_mask])
+        groups = labels[dup_mask].groupby(labels[dup_mask]).groups
+        others = [c for c in df.columns if c != col]
+        differing: list[str] = []
+        identical: list[str] = []
+        for label, idx in groups.items():
+            block = df.loc[list(idx), others].astype(str)
+            (identical if len(block.drop_duplicates()) == 1 else differing).append(str(label))
+        capped, total = cap_rows(rows)
+        parts = []
+        if differing:
+            parts.append(
+                f"{len(differing)} id(s) are shared by rows that differ (e.g. '{differing[0]}'): two runs "
+                "under one name, so a result cannot be traced to its run"
+            )
+        if identical:
+            parts.append(f"{len(identical)} id(s) are shared by identical rows (the same run pasted twice)")
+        findings.append(
+            Finding(
+                check="duplicate_ids",
+                severity="warning",
+                message=(
+                    f"column '{name}': {'; '.join(parts)}. Give each run its own id, or remove the "
+                    "extra copy. Nothing was changed."
+                ),
+                column=name,
+                rows=capped,
+                detail={
+                    "shared_by_different_rows": differing[:20],
+                    "shared_by_identical_rows": identical[:20],
+                    "n_rows_affected": total,
+                },
+            )
+        )
     return findings
 
 

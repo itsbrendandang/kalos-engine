@@ -9,9 +9,9 @@
  },
  "faults": {
   "constant_target": "caught",
-  "duplicate_run_id": "missed",
+  "duplicate_run_id": "caught",
   "duplicated_rows_exact": "caught",
-  "duplicated_rows_new_id": "missed",
+  "duplicated_rows_new_id": "caught",
   "fahrenheit_rows_bare": "caught",
   "fahrenheit_rows_labeled": "caught",
   "impossible_value": "caught",
@@ -34,6 +34,6 @@
  },
  "note": "CI regression gate: fast tier, repo-only bases (Kaggle skipped). Regenerate with `python -m kalos.bench.faults all --tier fast --datasets /nonexistent --out DIR` then `... baseline --out DIR`; see docs/PLANTED_FAULTS.md.",
  "protocol_version": "1",
- "source_commit": "dae7b2cee148847da3543d95f264f10bf9f622e6",
+ "source_commit": "0bd4288daefa401fc5e6e74458881504090bff92",
  "tier": "fast"
 }
