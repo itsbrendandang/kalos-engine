@@ -4,6 +4,11 @@ Newest first.
 
 ## Unreleased
 
+### Changed - faster analyses, identical results (BRE-98 follow-up: BRE-100, BRE-101, BRE-102, BRE-105)
+
+- The independent CPU work of an analysis runs in a pool of worker processes (`kalos/core/parallel.py`): the grouped-CV fold fits (both repeats, LOGO, log-scale CV), the proposal fit's extra starting points, and the per-level L-BFGS solves of the mixed (categorical) acquisition (`kalos/core/mixed_parallel.py`). `KALOS_ANALYSIS_WORKERS` (default `auto` = `cpus // KALOS_JOB_WORKERS`, at most 5; `1` = serial). The full response is byte-identical to the serial run (`tests/test_parallel_identity.py`; docs/PERFORMANCE.md). The 160-row example: 150 s -> 67 s on a loaded M4 Max.
+- `KALOS_TORCH_THREADS` defaults to 1 on bare metal (was `min(4, cpus)`): faster on these small matrices, and the same numbers (measured on macOS; only `run.torch_threads` and the provenance hashes that include it change). The pool is used only at 1 thread. Containers keep `0` (unpinned), which leaves the pool off.
+
 ### Changed - selection-aware proposal intervals (F15, ML audit B1 fix 2; interval numbers change)
 
 - `proposals[].intervals` are calibrated on the held-out runs each fold model ranked highest (top 30%, both CV repeats) with the proposal sd floored at the 90th percentile of held-out sds (`method: conformal_selection_aware`, `coverage_basis: held_out_top_ranked_runs`). Measured at proposals on fresh simulation seeds: 90% band 0.60-0.83 -> 0.92-0.99, 95% band 0.72-0.92 -> 0.96-0.99, at 2.5-3.2x the median width; in-box coverage 0.98-1.00 (conservative). Per-level fallback to the plain band with `selection_aware_unavailable` when too few runs are selected. VALIDATION.md has the table.

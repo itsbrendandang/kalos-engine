@@ -287,6 +287,21 @@ def _randomize_hyperparameters(model, gen: torch.Generator) -> None:
         lik.noise = torch.exp(np.log(1e-3) + u * (np.log(0.3) - np.log(1e-3)))
 
 
+def _fit_start(pristine, seed: int, k: int) -> tuple[dict | None, float | None, object]:
+    """One extra start of `_multi_start_fit` on a copy of `pristine`: (record,
+    marginal log likelihood, fitted model), or (None, None, None) when the fit fails
+    numerically. Module-level so `kalos.core.parallel` can run it in a worker; there
+    `pristine` arrives pickled, which is a deep copy, as here."""
+    cand = copy.deepcopy(pristine)
+    cand_mll = ExactMarginalLogLikelihood(cand.likelihood, cand)
+    _randomize_hyperparameters(cand, torch.Generator().manual_seed(seed + k))
+    try:
+        rec = dict(_fit_mll_with_retry(cand_mll))
+    except FitError:
+        return None, None, None
+    return rec, _mll_value(cand_mll), cand
+
+
 def _multi_start_fit(mll, *, restarts: int, seed: int) -> tuple[dict, object]:
     """Fit from the default start, then from `restarts - 1` seeded random starts;
     keep the highest marginal log likelihood (a restart must beat the incumbent
@@ -299,10 +314,18 @@ def _multi_start_fit(mll, *, restarts: int, seed: int) -> tuple[dict, object]:
     touched.) The extra starts also run inside `fork_rng` with the numpy state
     restored, so the global RNGs after this call match a one-start fit. A
     restart that fails numerically is skipped and recorded as None; the default
-    start failing raises as before."""
+    start failing raises as before.
+
+    The extra starts are submitted to the analysis worker pool (when it is in
+    use) before the default start is fit here, so they run at the same time;
+    `kalos.core.parallel` returns exactly what the serial loop computes (a model
+    returned from a worker is unpickled, i.e. a deep copy of the fitted object)."""
+    from . import parallel
+
     model = mll.model
     pristine = copy.deepcopy(model)
     t0 = time.perf_counter()
+    extra = parallel.submit(_fit_start, [(pristine, seed, k) for k in range(1, restarts)])
     best = dict(_fit_mll_with_retry(mll))
     best_val = _mll_value(mll)
     best_model = model
@@ -310,16 +333,10 @@ def _multi_start_fit(mll, *, restarts: int, seed: int) -> tuple[dict, object]:
     chosen = 0
     np_state = np.random.get_state()
     with torch.random.fork_rng():
-        for k in range(1, restarts):
-            cand = copy.deepcopy(pristine)
-            cand_mll = ExactMarginalLogLikelihood(cand.likelihood, cand)
-            _randomize_hyperparameters(cand, torch.Generator().manual_seed(seed + k))
-            try:
-                rec = dict(_fit_mll_with_retry(cand_mll))
-            except FitError:
+        for k, (rec, val, cand) in enumerate(extra.collect(), start=1):
+            if rec is None or val is None:
                 values.append(None)
                 continue
-            val = _mll_value(cand_mll)
             values.append(round(val, 6))
             if val > best_val + 1e-6:
                 best, best_val, chosen, best_model = rec, val, k, cand

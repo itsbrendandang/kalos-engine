@@ -86,6 +86,7 @@ Follow-up: a secrets-provider abstraction so `KALOS_*` secrets can come from a f
 | `KALOS_MAX_REQUEST_BYTES` | Body-size cap, in bytes, for every non-upload route (the JSON `/api/campaign/*` bodies). Upload routes (`/api/run`, `/api/scale/readout`) are capped at `KALOS_MAX_UPLOAD_MB` + 1 MiB multipart allowance instead. Must be a positive integer. | `1048576` (1 MiB) |
 | `KALOS_JOBS_ENABLED` | `0` turns the background-job queue off: `POST /api/campaigns/{id}/jobs` answers 503 and nothing runs. Job status still reads. (docs/JOBS.md) | `1` |
 | `KALOS_JOB_WORKERS` | Analyses running at once in this engine, sync and background together. Must be >= 1. (docs/JOBS.md) | `2` |
+| `KALOS_ANALYSIS_WORKERS` | Worker processes per analysis (CV fold fits, the proposal fit's extra starts, the per-level acquisition solves). `auto` = `cpus // KALOS_JOB_WORKERS`, at most 5; `0` or `1` = serial. Results are byte-identical to serial (docs/PERFORMANCE.md). Used only when `KALOS_TORCH_THREADS=1`. A malformed value refuses to start. | `auto` |
 | `KALOS_JOB_PER_TENANT` | Analyses one tenant may run at once. With the default one tenant can never hold every slot. Must be >= 1. | `1` |
 | `KALOS_JOB_QUEUE_DEPTH` | Queued + running jobs one tenant may hold; more answers 429. Must be >= 1. | `8` |
 | `KALOS_JOB_GLOBAL_QUEUE_DEPTH` | Queued + running jobs all tenants may hold together; more answers 429. Must be >= 1. (docs/JOBS.md) | `64` |

@@ -37,7 +37,10 @@ Env knobs that exist because this deployment found the need for them:
   120000. The original 30s guess 502'd mid-fit on a cold container.
 - `KALOS_TORCH_THREADS` (engine) - the compose passes 0 (= do not pin) by
   default: the bare-metal 4-thread pin measured a >12x pathological slowdown
-  (47s -> 600s+) on this image's linux-aarch64 torch/OpenBLAS build.
+  (47s -> 600s+) on this image's linux-aarch64 torch/OpenBLAS build. With 0 the
+  analysis worker pool (`KALOS_ANALYSIS_WORKERS`, docs/PERFORMANCE.md) stays off:
+  it runs only when the engine is pinned to 1 thread. Setting
+  `KALOS_TORCH_THREADS=1` turns it on; that has not been measured in this image yet.
 - One analysis at a time is enforced engine-side (HTTP 503 + Retry-After when
   busy; kalos/portal/busy.py): a client that gives up cannot stack orphaned
   fits against its own retry.

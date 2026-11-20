@@ -75,12 +75,16 @@ def _refuse_several_processes() -> None:
 
 def check_startup_config() -> None:
     """Refuse, before the engine serves a request, a configuration that cannot run:
-    a malformed `KALOS_JOB*` value (ValueError naming the variable), always; and,
+    a malformed `KALOS_JOB*` or `KALOS_ANALYSIS_WORKERS` value (ValueError naming
+    the variable), always; and,
     when jobs are enabled, a platform or process layout that cannot take the runner
     lock (RunnerLocked). `python -m kalos.portal` calls it before uvicorn starts,
     and the app lifespan calls it too."""
+    from kalos.core import parallel  # torch-free
+
     settings = jobs.job_settings()  # ValueError, naming the variable
     busy.validate_env()
+    parallel.validate_env()  # ValueError, naming KALOS_ANALYSIS_WORKERS
     upload_read_timeout_s()  # ValueError, naming KALOS_UPLOAD_READ_TIMEOUT_S
     if not settings.enabled:
         return

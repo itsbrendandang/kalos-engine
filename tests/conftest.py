@@ -211,6 +211,10 @@ def real_state_guard(_real_state_dir_guard: _Guard) -> _Guard:
 # is imported before any test module imports kalos.portal). One vs four threads
 # gives identical analysis output (measured; see also tests/test_golden_determinism.py).
 os.environ.setdefault("KALOS_TORCH_THREADS", "1")
+# The same reasoning for the analysis worker pool (kalos/core/parallel.py): under
+# xdist every worker would start its own pool. Tests run serially unless the
+# caller sets the variable; tests/test_parallel_identity.py sets it per test.
+os.environ.setdefault("KALOS_ANALYSIS_WORKERS", "1")
 _TEST_TORCH_THREADS = int(os.environ["KALOS_TORCH_THREADS"].strip() or 0)
 
 
