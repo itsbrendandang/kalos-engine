@@ -72,9 +72,24 @@ _RUN_CSV = (
 
 
 @pytest.fixture(scope="module")
-def analyze_response() -> dict:
-    client = TestClient(app)
-    resp = client.post("/api/run", files={"file": ("runs.csv", _RUN_CSV, "text/csv")})
+def analyze_response(tmp_path_factory) -> dict:
+    """One /api/run shared by the module, against a PRIVATE store.
+
+    Module-scoped fixtures run before conftest's function-scoped isolation, so
+    this one pins its own `KALOS_STATE_DIR` and store singleton (restored on
+    exit) instead of reaching whatever `get_campaign_store()` would build."""
+    from kalos.portal import campaign
+
+    state = tmp_path_factory.mktemp("web-contract-state")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("KALOS_STATE_DIR", str(state))
+        store = campaign.CampaignStore(state)
+        mp.setattr(campaign, "_STORE", store)
+        try:
+            resp = TestClient(app).post(
+                "/api/run", files={"file": ("runs.csv", _RUN_CSV, "text/csv")})
+        finally:
+            store.close()
     assert resp.status_code == 200, resp.text
     return resp.json()
 

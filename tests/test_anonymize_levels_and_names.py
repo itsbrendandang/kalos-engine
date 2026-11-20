@@ -18,7 +18,7 @@ import pytest
 pytest.importorskip("torch")
 
 from kalos.domains import ColumnRoles
-from kalos.portal.analysis import _analyze, is_identifier_name
+from kalos.portal.analysis import is_identifier_name
 
 _PEOPLE_COLUMNS = ["Donor_Name_1", "Operator", "Analyst", "Technician", "Lab_Tech", "email"]
 _NAMES = ["Jane Smith 0", "alice_secret_op", "Bob Jones 1", "carol_secret_op"]
@@ -51,13 +51,14 @@ def _people_sheet() -> pd.DataFrame:
     })
 
 
-def test_no_identifier_name_or_level_value_appears_in_an_anonymized_response():
+@pytest.mark.xdist_group("anonymize_people_sheet")  # shares one analysis (conftest)
+def test_no_identifier_name_or_level_value_appears_in_an_anonymized_response(shared_analysis):
     roles = ColumnRoles.from_dict({
         "target": "lipase_titer",
         "features": ["Methanol", "pH"],
         "categoricals": ["Donor_Name_1"],
     })
-    out = _analyze(_people_sheet(), target="lipase_titer", roles=roles, anonymize=True)
+    out = shared_analysis(_people_sheet(), target="lipase_titer", roles=roles, anonymize=True)
     blob = json.dumps(out, default=str)
     for name in _NAMES:
         assert name not in blob, f"level value {name!r} leaked"
@@ -68,13 +69,14 @@ def test_no_identifier_name_or_level_value_appears_in_an_anonymized_response():
     assert "Methanol" in out["features"]
 
 
-def test_the_recipes_carry_pseudonyms_not_the_level_values():
+@pytest.mark.xdist_group("anonymize_people_sheet")  # shares one analysis (conftest)
+def test_the_recipes_carry_pseudonyms_not_the_level_values(shared_analysis):
     roles = ColumnRoles.from_dict({
         "target": "lipase_titer",
         "features": ["Methanol", "pH"],
         "categoricals": ["Donor_Name_1"],
     })
-    out = _analyze(_people_sheet(), target="lipase_titer", roles=roles, anonymize=True)
+    out = shared_analysis(_people_sheet(), target="lipase_titer", roles=roles, anonymize=True)
     for row in out["proposals"]:
         for _key, value in row["recipe"].items():
             if isinstance(value, str):

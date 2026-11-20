@@ -210,3 +210,32 @@ def test_upload_and_reanalyze_apply_the_stored_setup(tmp_path, monkeypatch):
         assert tc.get(f"/api/campaigns/{cid}/setup").json()["settings_in_sync"] is True
     finally:
         app.dependency_overrides.pop(get_campaign_store, None)
+
+
+def test_cv_topk_ranks_the_best_runs_for_the_goal(baseline, minimized):
+    """E-S2: cv_topk asks "did the model pick the k recipes I would advance?".
+    Under goal=minimize those are the k LOWEST, not the k highest."""
+    from kalos.core.evaluation import top_k_overlap
+
+    assert baseline["cv_topk"]["direction"] == "highest"
+    assert minimized["cv_topk"]["direction"] == "lowest"
+    for out, sign in ((baseline, 1.0), (minimized, -1.0)):
+        oof = np.asarray(out["oof"], float)
+        k = out["cv_topk"]["k"]
+        expected = top_k_overlap(sign * oof[:, 0], sign * oof[:, 1], k)
+        assert out["cv_topk"]["overlap"] == round(expected["overlap"], 3)
+
+
+def test_cv_topk_under_minimize_is_not_the_maximize_number():
+    """A sheet whose high end is learnable but whose low end is a noisy floor: the
+    model picks the 5 highest perfectly and the 5 lowest poorly. Before the fix a
+    minimize campaign was shown the highest-first overlap (1.0)."""
+    rng = np.random.default_rng(6)
+    a = rng.uniform(0, 10, 24)
+    b = rng.uniform(0, 10, 24)
+    y = np.maximum(0, 3 * a - 15) + 5 + rng.normal(0, 0.3, 24)
+    df = pd.DataFrame({"a": a.round(3), "b": b.round(3), "titer": y.round(3)})
+    hi = _analyze(df, "titer", setup=_setup(goal="maximize"))["cv_topk"]
+    lo = _analyze(df, "titer", setup=_setup(goal="minimize"))["cv_topk"]
+    assert hi["direction"] == "highest" and hi["overlap"] == 1.0
+    assert lo["direction"] == "lowest" and lo["overlap"] <= 0.4

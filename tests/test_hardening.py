@@ -292,15 +292,17 @@ def test_same_upload_yields_identical_proposals():
     assert a["best"] == b["best"]
 
 
-def test_audit_fields_present():
-    out = portal._analyze(_good_sheet())
+@pytest.mark.xdist_group("hardening_good_sheet")  # shares one analysis (conftest)
+def test_audit_fields_present(shared_analysis):
+    out = shared_analysis(_good_sheet())
     assert isinstance(out["seed"], int)
     assert isinstance(out["timestamp"], int) and out["timestamp"] > 0
     assert isinstance(out["engine_version"], str) and out["engine_version"]
 
 
-def test_response_contract_fields_preserved():
-    out = portal._analyze(_good_sheet())
+@pytest.mark.xdist_group("hardening_good_sheet")  # shares one analysis (conftest)
+def test_response_contract_fields_preserved(shared_analysis):
+    out = shared_analysis(_good_sheet())
     required = {
         "target", "targets", "features", "best", "n", "d", "group_col",
         "cv_spearman", "cv_ci95", "cv_n_groups", "drivers", "proposal_features",

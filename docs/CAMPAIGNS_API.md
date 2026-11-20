@@ -74,7 +74,9 @@ started before the field existed).
 `GET /api/campaigns?summary=true` (scope `read`) returns one page of the tenant's
 campaigns, newest-updated first, each a superset of the campaign object:
 
-`has_data` (base rows > 0), `target`, `n_base`, `round`, `n_awaiting`, `n_measured`,
+`has_data` (base rows > 0), `target`, `target_unit` (`{unit, source: user|header|none,
+header, note}`, the "Target unit" rule below applied to the raw `target` and the setup's
+`target_unit`; a display label, nothing is converted), `n_base`, `round`, `n_awaiting`, `n_measured`,
 `goal` `{direction: maximize|minimize, source: setup|default}` (from settings kind
 `setup`, `value.goal`; anything else is `maximize` with `source: default`),
 `best_measured` `{value, basis: "measured", direction: max|min, reason?}` (best MEASURED
@@ -367,6 +369,14 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
   `judgeable`, `judgement` (`"not enough runs to judge calibration"` when
   10 <= n < 20, else `null`) and `judge_min_n` (20). It is still shown from 10.
 
+### Top-k overlap follows the goal (additive)
+
+- `cv_topk` = |true top-k INTERSECT predicted top-k| / k over the pooled
+  out-of-fold predictions, where "top" means the k BEST runs for the campaign
+  goal: the k highest for maximize, the k LOWEST for minimize.
+  `cv_topk.direction` (`"highest"` | `"lowest"`) says which; analyses stored
+  before this field always ranked highest-first.
+
 ### Distance to data (additive)
 
 - `proposals[].nearest_training_distance`: distance from the proposed recipe to
@@ -432,8 +442,14 @@ Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
 - `proposals[].quantiles`: `{basis: "gp_posterior", posterior: "observation",
   note, p05, p25, p50, p75, p95}` of the same Gaussian.
 - `proposals[].expected_improvement` / `p_improve`: `{value, incumbent,
-  incumbent_basis, maximize, basis: "model", method, posterior: "latent", note}`.
-  Analytic EI / P(f > incumbent) of the LATENT posterior (`pred`, `std`).
+  incumbent_basis, maximize, basis: "model", method, posterior: "latent", note,
+  description}`. Analytic EI / P(f > incumbent) of the LATENT posterior (`pred`, `std`).
+  **`p_improve` (the "chance to beat" the best) is the probability that the
+  model's latent MEAN at the recipe beats the incumbent, not the probability
+  that one new measurement does**: a single run adds assay noise, which pulls
+  the chance toward 0.5 (a mean 1 latent sd above the incumbent gives 0.84; with
+  observation noise equal to the latent sd, one run beats it with probability
+  0.76). `description` states this on every value.
   `incumbent` is the value the proposal annotation compares against:
   `best_measured_single` (`best`) or `best_reproducible_mean`
   (`noise.best_reproducible`, replicate-aware path). The batch itself is

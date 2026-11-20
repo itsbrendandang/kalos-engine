@@ -164,6 +164,31 @@ def test_runs_and_minimize_goal(env):
     assert c["analysis"]["in_sync"] is False
 
 
+def test_target_unit_follows_the_analysis_rule(env):
+    """NIT: cards carry the target's display unit: setup as typed > header > none."""
+    tc, store = env
+    plain = _seeded(store, name="plain")  # header "titer" states no unit
+    cid = store.create_campaign(tenant="acme", name="unit")["id"]
+    store.seed(DF.rename(columns={"titer": "titer_g_L"}), "titer_g_L", ["x"], tenant="acme",
+               campaign_id=cid, dataset="d.csv")
+    empty = store.create_campaign(tenant="acme", name="empty")["id"]
+    items = _by_id(_summary(tc))
+    assert items[plain]["target_unit"]["unit"] is None
+    assert items[plain]["target_unit"]["source"] == "none"
+    assert items[cid]["target_unit"] == {"unit": "g/L", "source": "header", "header": "titer_g_L",
+                                         "note": "parsed from the target column header"}
+    assert items[empty]["target_unit"]["unit"] is None
+    put_setting(store, tenant="acme", campaign_id=cid, kind="setup",
+                value={"goal": "maximize", "target_unit": "mg/mL"}, updated_by="x")
+    put_setting(store, tenant="acme", campaign_id=empty, kind="setup",
+                value={"target_unit": "U/mL"}, updated_by="x")
+    items = _by_id(_summary(tc))
+    assert items[cid]["target_unit"]["unit"] == "mg/mL"
+    assert items[cid]["target_unit"]["source"] == "user"
+    assert "g/L" in items[cid]["target_unit"]["note"]  # the header's hint is kept in the note
+    assert items[empty]["target_unit"]["unit"] == "U/mL"
+
+
 def test_unknown_goal_falls_back_to_max_and_says_so(env):
     tc, store = env
     cid = _seeded(store)
