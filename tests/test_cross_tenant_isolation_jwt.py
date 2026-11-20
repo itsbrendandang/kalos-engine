@@ -766,7 +766,7 @@ def test_production_serves_no_interactive_docs(main, path):
 
 
 @pytest.mark.parametrize("path", ["/api/single", "/api/multi"])
-def test_production_does_not_register_demo_routes_even_with_a_valid_token(main, path):
+def test_production_removed_demo_routes_are_404_even_with_a_valid_token(main, path):
     r = main.request("GET", path, auth=ACME, params={"rounds": 1, "q": 1})
     assert r.status_code == 404
 

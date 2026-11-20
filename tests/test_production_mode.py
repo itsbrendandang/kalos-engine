@@ -90,7 +90,7 @@ def test_unknown_kalos_env_refuses_to_start(tmp_path):
     assert "Accepted values: 'development', 'production'" in r.stderr
 
 
-def test_production_disables_docs_and_demo_routes(tmp_path):
+def test_production_disables_docs_and_the_removed_demo_routes_are_404(tmp_path):
     r = _run(_PROBE, tmp_path, KALOS_ENV="production", KALOS_AUTH_TOKENS=_TOKENS)
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout.strip().splitlines()[-1])

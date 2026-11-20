@@ -121,7 +121,6 @@ Every refusal the engine sends has the same body: `{"error": "<what went wrong a
 | 429 | `rate_limited` | queue depth or rate limit |
 | 500 | `internal_error` | an unanticipated failure; the traceback is logged server-side only |
 | 503 | `engine_busy`, `service_unavailable`, `auth_not_configured` | analysis slot busy, or the portal is not configured for this request |
-| 504 | `engine_timeout` | a demo computation exceeded its wall clock |
 
 A 422 from body or parameter validation also carries `detail`: a list of `{"loc", "msg", "type"}` objects. The submitted values are not echoed. `/api/campaign*` answers 400 `invalid_body` for the same failures, with the field named in `error`.
 

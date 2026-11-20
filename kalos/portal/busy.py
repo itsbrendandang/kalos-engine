@@ -1,5 +1,5 @@
 """Heavy-work admission: a global cap plus a per-tenant cap, shared by every
-analysis path (sync routes, background jobs, demo routes).
+analysis path (sync routes and background jobs).
 
 WHY THIS EXISTS, from the first real containerized run (2026-09-10): a full
 `_analyze` is CPU-bound for tens of seconds, `run_in_threadpool` cannot be
@@ -209,7 +209,7 @@ def reset_limiter(total: int | None = None, per_tenant: int | None = None) -> An
 class Exclusive:
     """A wrapped analysis call holding one slot. Calling it runs the work and
     releases the slot in the worker thread; `abandon()` releases the slot only
-    for a call that never started (see `run_in_slot` and the demo route).
+    for a call that never started (see `run_in_slot`).
 
     Started and abandoned are decided under one lock, so the two can never both
     win: once the work has started, `abandon()` is a no-op and the thread alone

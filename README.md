@@ -109,7 +109,7 @@ and is enough for the `kalos.kit` helpers.
 | --- | --- | --- |
 | `KALOS_STATE_DIR` | `~/.kalos` | SQLite database and caches |
 | `KALOS_HOST` / `KALOS_PORT` | `127.0.0.1` / `8050` | Bind address |
-| `KALOS_ENV` | `development` | `production` removes demo routes and `/docs`, and requires auth and a CORS allowlist |
+| `KALOS_ENV` | `development` | `production` removes `/docs`, and requires auth and a CORS allowlist |
 | `KALOS_JWT_PUBLIC_KEYS_FILE` | unset | Ed25519 JWKS for per-user tokens from kalos-web; issuer, audience and TTL knobs in [`docs/ENGINE_TOKEN.md`](docs/ENGINE_TOKEN.md) |
 | `KALOS_AUTH_TOKENS` / `KALOS_AUTH_TOKENS_FILE` | unset | Hashed static tokens for service accounts |
 | `KALOS_CORS_ORIGINS` | localhost | Browser origins allowed to call the engine |
