@@ -26,6 +26,13 @@ def withheld_batch(plan: SetupPlan, *, q: int, d: int) -> Any:
     )
 
 
+def resolved_propose_kwargs(plan: SetupPlan | None, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """The `propose_batch` keywords `_propose_with_setup` calls with (no side effects)."""
+    if plan is None:
+        return dict(kwargs)
+    return {**kwargs, "bounds": plan.bounds, **plan.propose_kwargs()}
+
+
 def _propose_with_setup(
     propose_batch: Callable[..., Any], plan: SetupPlan | None, kwargs: dict[str, Any], *, d: int,
 ) -> Any:
@@ -36,7 +43,7 @@ def _propose_with_setup(
     are withheld rather than produced without a constraint."""
     if plan is None:
         return propose_batch(**kwargs)
-    call = {**kwargs, "bounds": plan.bounds, **plan.propose_kwargs()}
+    call = resolved_propose_kwargs(plan, kwargs)
     if not plan.linear_constraints:
         return propose_batch(**call)
     try:
@@ -53,4 +60,4 @@ def _propose_with_setup(
         return withheld_batch(plan, q=int(kwargs.get("q", 5)), d=d)
 
 
-__all__ = ["_propose_with_setup", "withheld_batch"]
+__all__ = ["_propose_with_setup", "resolved_propose_kwargs", "withheld_batch"]

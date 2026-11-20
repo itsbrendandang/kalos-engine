@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 from kalos.data.anonymizer import _hash
 from kalos.portal.analysis_parts.identifiers import _is_identifier_name
@@ -29,6 +30,46 @@ def _alias_cv_grouping(block: dict, alias: Callable[[str], str]) -> dict:
     for key in ("candidates", "warnings"):
         if isinstance(out.get(key), list):
             out[key] = [col(e) for e in out[key]]
+    return out
+
+
+def _alias_second_opinion(block: dict, alias: Any) -> dict:
+    """Identifier-like input names inside `driver_second_opinion`, including the
+    names quoted in its `detail` text."""
+    names: set[str] = set()
+    for f in block.get("features", []) or []:
+        if isinstance(f, dict) and "name" in f:
+            names.add(str(f["name"]))
+    renames = {n: alias(n) for n in names if alias(n) != n}
+    if not renames:
+        return block
+
+    def a(n: Any) -> Any:
+        return renames.get(str(n), n)
+
+    def text(t: Any) -> Any:
+        if not isinstance(t, str):
+            return t
+        for old in sorted(renames, key=len, reverse=True):
+            t = t.replace(old, renames[old])
+        return t
+
+    out = dict(block)
+    out["features"] = [
+        {**f, "name": a(f["name"]), "collinear_with": [a(x) for x in f.get("collinear_with", [])]}
+        for f in block.get("features", [])
+    ]
+    out["disagreements"] = [
+        {**d, "name": a(d["name"]), "detail": text(d.get("detail"))}
+        for d in block.get("disagreements", [])
+    ]
+    col = dict(block.get("collinearity") or {})
+    col["pairs"] = [{**p, "a": a(p["a"]), "b": a(p["b"])} for p in col.get("pairs", [])]
+    col["vif"] = {a(k): v for k, v in (col.get("vif") or {}).items()}
+    for key in ("vif_perfect", "flagged"):
+        col[key] = [a(x) for x in col.get(key, [])]
+    col["groups"] = [[a(x) for x in g] for g in col.get("groups", [])]
+    out["collinearity"] = col
     return out
 
 
@@ -103,6 +144,8 @@ def _anonymize_result(
                 for f in shapes["features"]
             ],
         }
+    if isinstance(out.get("driver_second_opinion"), dict):
+        out["driver_second_opinion"] = _alias_second_opinion(out["driver_second_opinion"], alias)
     if isinstance(out.get("drivers"), list):
         out["drivers"] = [
             {**d, "name": alias(str(d["name"]))} if isinstance(d, dict) and "name" in d else d

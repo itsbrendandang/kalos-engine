@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/itsbrendandang/kalos-engine/docs/schemas/analysis-robustness.schema.json",
+  "title": "Kalos analysis response: robustness blocks",
+  "description": "The robustness fields of the analysis response (docs/CAMPAIGNS_API.md, 'Proposal stability' and 'Driver second opinion'). `proposal_stability` and `proposals[].stability` are present only when the stability check is enabled (KALOS_PROPOSAL_STABILITY_SEEDS >= 2); `driver_second_opinion` is always present on a fitted analysis. Enforced by tests/test_robustness.py.",
+  "type": "object",
+  "properties": {
+    "proposal_stability": {"$ref": "#/$defs/proposal_stability"},
+    "proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {"stability": {"$ref": "#/$defs/proposal_stability_entry"}}
+      }
+    },
+    "driver_second_opinion": {"$ref": "#/$defs/driver_second_opinion"}
+  },
+  "$defs": {
+    "unit_interval_or_null": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "pair_or_null": {
+      "type": ["array", "null"],
+      "items": {"type": "number"},
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "proposal_stability": {
+      "type": "object",
+      "required": [
+        "enabled", "available", "reason", "n_seeds", "seeds", "served_seed", "varied", "held_fixed",
+        "tolerance", "distance", "unstable_below", "what_it_measures", "batch_stability",
+        "n_unstable", "n_reruns_compared", "n_reruns_failed", "per_proposal", "seconds", "workers"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean", "enum": [true]},
+        "available": {"type": "boolean"},
+        "reason": {"type": ["string", "null"]},
+        "n_seeds": {"type": "integer", "minimum": 2, "maximum": 10},
+        "seeds": {"type": "array", "items": {"type": "integer"}},
+        "served_seed": {"type": "integer"},
+        "varied": {
+          "type": "array",
+          "items": {"type": "string", "enum": ["acquisition_optimizer_seed", "gp_hyperparameter_restart_seed"]}
+        },
+        "held_fixed": {"type": "array", "items": {"type": "string"}},
+        "tolerance": {"type": "number", "minimum": 0},
+        "distance": {"type": "string", "enum": ["range_normalized_chebyshev"]},
+        "unstable_below": {"type": "number", "minimum": 0, "maximum": 1},
+        "what_it_measures": {"type": "string"},
+        "batch_stability": {"$ref": "#/$defs/unit_interval_or_null"},
+        "n_unstable": {"type": "integer", "minimum": 0},
+        "n_reruns_compared": {"type": "integer", "minimum": 0},
+        "n_reruns_failed": {"type": "integer", "minimum": 0},
+        "per_proposal": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "index", "agreement", "seeds_matched", "seeds_compared", "nearest_distance_per_seed",
+              "median_nearest_distance", "unstable", "label"
+            ],
+            "properties": {
+              "index": {"type": "integer", "minimum": 0},
+              "agreement": {"$ref": "#/$defs/unit_interval_or_null"},
+              "seeds_matched": {"type": "integer", "minimum": 0},
+              "seeds_compared": {"type": "integer", "minimum": 0},
+              "nearest_distance_per_seed": {"type": "array", "items": {"type": ["number", "null"]}},
+              "median_nearest_distance": {"type": ["number", "null"], "minimum": 0},
+              "unstable": {"type": "boolean"},
+              "label": {"type": ["string", "null"], "enum": ["unstable across seeds", null]}
+            }
+          }
+        },
+        "seconds": {"type": "number", "minimum": 0},
+        "workers": {"type": "integer", "minimum": 1}
+      }
+    },
+    "proposal_stability_entry": {
+      "type": "object",
+      "required": ["agreement", "seeds_matched", "seeds_compared", "median_nearest_distance", "unstable", "label"],
+      "properties": {
+        "agreement": {"$ref": "#/$defs/unit_interval_or_null"},
+        "seeds_matched": {"type": "integer", "minimum": 0},
+        "seeds_compared": {"type": "integer", "minimum": 0},
+        "median_nearest_distance": {"type": ["number", "null"], "minimum": 0},
+        "unstable": {"type": "boolean"},
+        "label": {"type": ["string", "null"], "enum": ["unstable across seeds", null]}
+      }
+    },
+    "driver_second_opinion": {
+      "type": "object",
+      "required": [
+        "available", "reason", "what_it_measures", "not_causal", "gp", "features", "disagreements", "collinearity"
+      ],
+      "properties": {
+        "available": {"type": "boolean"},
+        "reason": {"type": ["string", "null"]},
+        "what_it_measures": {
+          "type": "object",
+          "required": ["rank", "gp_relevance", "gp_status"],
+          "properties": {
+            "rank": {"type": "string"},
+            "gp_relevance": {"type": "string"},
+            "gp_status": {"type": "string"}
+          }
+        },
+        "not_causal": {"type": "string"},
+        "gp": {
+          "type": "object",
+          "required": [
+            "available", "reason", "method", "level", "n_subsamples", "n_fits_used", "fraction", "source",
+            "relevant_max_lengthscale", "negligible_min_lengthscale", "units"
+          ],
+          "properties": {
+            "available": {"type": "boolean"},
+            "reason": {"type": ["string", "null"]},
+            "method": {"type": ["string", "null"], "enum": ["recipe_subsample_refit", null]},
+            "level": {"type": ["number", "null"]},
+            "n_subsamples": {"type": ["integer", "null"]},
+            "n_fits_used": {"type": ["integer", "null"]},
+            "fraction": {"type": ["number", "null"]},
+            "source": {"type": "string"},
+            "relevant_max_lengthscale": {"type": "number"},
+            "negligible_min_lengthscale": {"type": "number"},
+            "units": {"type": "string"}
+          }
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name", "rank_rho", "rank_ci95", "rank_significant", "gp_relevance", "gp_relevance_ci95",
+              "gp_lengthscale", "gp_lengthscale_ci95", "gp_status", "collinear_with", "flags"
+            ],
+            "properties": {
+              "name": {"type": "string"},
+              "rank_rho": {"type": ["number", "null"]},
+              "rank_ci95": {"$ref": "#/$defs/pair_or_null"},
+              "rank_significant": {"type": "boolean"},
+              "gp_relevance": {"$ref": "#/$defs/unit_interval_or_null"},
+              "gp_relevance_ci95": {"$ref": "#/$defs/pair_or_null"},
+              "gp_lengthscale": {"type": ["number", "null"]},
+              "gp_lengthscale_ci95": {"$ref": "#/$defs/pair_or_null"},
+              "gp_status": {"type": "string", "enum": ["relevant", "negligible", "unclear", "not_judged"]},
+              "collinear_with": {"type": "array", "items": {"type": "string"}},
+              "flags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "strong by rank, irrelevant to the GP",
+                    "relevant to the GP, missed by rank",
+                    "collinear: effects cannot be separated"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "disagreements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "kind", "label", "detail"],
+            "properties": {
+              "name": {"type": "string"},
+              "kind": {"type": "string", "enum": ["rank_only", "gp_only", "collinear"]},
+              "label": {"type": "string"},
+              "detail": {"type": "string"}
+            }
+          }
+        },
+        "collinearity": {
+          "type": "object",
+          "required": [
+            "method", "pair_threshold", "vif_threshold", "label", "pairs", "vif", "vif_perfect", "vif_reason",
+            "flagged", "groups"
+          ],
+          "properties": {
+            "method": {"type": "string"},
+            "pair_threshold": {"type": "number"},
+            "vif_threshold": {"type": "number"},
+            "label": {"type": "string", "enum": ["collinear: effects cannot be separated"]},
+            "pairs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["a", "b", "r"],
+                "properties": {
+                  "a": {"type": "string"},
+                  "b": {"type": "string"},
+                  "r": {"type": "number", "minimum": -1, "maximum": 1}
+                }
+              }
+            },
+            "vif": {"type": "object", "additionalProperties": {"type": ["number", "null"]}},
+            "vif_perfect": {"type": "array", "items": {"type": "string"}},
+            "vif_reason": {"type": ["string", "null"]},
+            "flagged": {"type": "array", "items": {"type": "string"}},
+            "groups": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}
+          }
+        }
+      }
+    }
+  }
+}
