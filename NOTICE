@@ -1,0 +1,37 @@
+Kalos
+Copyright the Kalos authors. Licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+This product includes work adapted from the following sources.
+
+-------------------------------------------------------------------------------
+Voyager ML pipeline (Bioqore): seed sweeps and decision agreement
+-------------------------------------------------------------------------------
+
+Source:
+  - github.com/Bioqore/voyager-ml-pipeline (commit 4649115, 2026-08-05)
+    ensemble_method/ensemble_ml_libraries/seed_sweep.py (run_seed_sweep,
+    compute_decision_stability, compute_per_sample_variance: rerun the whole
+    pipeline with N seeds and report, per sample, how many seeds agree on the
+    decision, plus an overall agreement rate), and
+    ensemble_method/ensemble_ml_libraries/driver_analysis_and_interpretability/
+    drivers.py (Spearman drivers with bootstrap summaries).
+
+Authors (from the repository's history): Tim (timbioqore, tlorgeree),
+Kai Suematsu (ks-bio).
+
+Permission: the owner of the repository authorized taking its ideas and code
+into Kalos on 2026-11-20 ("take everything"). The repository carries no license
+file; it is used here under that permission.
+
+What was adapted (idea credit; re-implemented, no source file copied):
+  - the seed sweep with per-item agreement and an overall agreement rate,
+    re-implemented for batch proposals as the opt-in proposal stability check:
+    kalos/core/stability.py and kalos/portal/analysis_parts/stability.py
+    (agreement = the fraction of rerun seeds whose batch contains a recipe
+    within the optimizer's near-duplicate tolerance; served batch unchanged);
+  - a second reading of the drivers next to the Spearman panel, here as GP
+    relevance with a recipe-subsample interval and a collinearity check:
+    kalos/core/gp_relevance.py, kalos/core/collinearity.py and
+    kalos/portal/analysis_parts/driver_opinion.py.
+Kalos's own Spearman driver panel (kalos/core/drivers.py) predates this port.

@@ -104,11 +104,13 @@ def check_env_settings() -> None:
     one the running engine performs, so a value accepted here is accepted there.
     """
     from kalos.normalize.config import provider_setting  # deferred: keep config light
+    from kalos.portal.analysis_parts.stability import configured_seeds
 
     deployment_env()
     validation_mode_setting()
     audit_retention_days()
     provider_setting()
+    configured_seeds()
 
 
 def is_production() -> bool:
