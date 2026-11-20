@@ -520,3 +520,19 @@ def test_auth_failures_are_401_without_detail(records_env, header, method, path)
     r = records_env.tc.request(method, path, headers=header, json={})
     assert r.status_code == 401
     assert set(r.json()) == {"error", "code"}
+
+
+def test_a_campaign_that_can_no_longer_be_read_can_still_be_detached(records_env):
+    """N4: detaching does not look the campaign up, so a campaign deleted from
+    the campaign store (here: its row removed) does not stay counted forever."""
+    env = records_env
+    pid, cid = _pid(env), env.campaign()
+    env.tc.put(f"/api/projects/{pid}/campaigns/{cid}", headers=H("a-write"))
+    with env.store._txn(write=True) as conn:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("DELETE FROM campaigns WHERE id = ?", (cid,))
+    got = env.tc.get(f"/api/projects/{pid}", headers=H("a-read")).json()
+    assert got["campaigns"][0]["available"] is False
+    r = env.tc.delete(f"/api/projects/{pid}/campaigns/{cid}", headers=H("a-write"))
+    assert r.status_code == 200 and r.json()["attached"] is False
+    assert env.tc.get(f"/api/projects/{pid}", headers=H("a-read")).json()["campaigns"] == []

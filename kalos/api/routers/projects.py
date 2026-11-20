@@ -42,6 +42,7 @@ from kalos.api.routers._records_common import (
 )
 from kalos.api.schemas.records import FactorPut, ProjectCreate, ProjectUpdate
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
+from kalos.portal.campaigns_api import _valid_campaign_id
 from kalos.records import factors as factors_rules
 from kalos.records import lineage as lineage_rules
 from kalos.records import outcomes as outcome_rules
@@ -240,11 +241,14 @@ def detach_campaign(
     rec: Records = Depends(get_records),
 ) -> JSONResponse:
     """Remove a campaign from the project. The campaign and its data are
-    untouched; lineage links that involve it are kept."""
+    untouched; lineage links that involve it are kept. The campaign itself is
+    not looked up, so a campaign that was deleted or can no longer be read can
+    still be detached; the membership row is tenant-scoped, so another tenant's
+    id answers the same 404 `not_attached` as an id that was never attached."""
     action = "project.campaign.detach"
     if not project_rules.valid_project_id(project_id):
         return not_found_project()
-    if campaign_info(rec.store, principal.tenant, campaign_id) is None:
+    if not _valid_campaign_id(campaign_id):
         from kalos.portal.campaign_routes import campaign_not_found_response
 
         return campaign_not_found_response()
