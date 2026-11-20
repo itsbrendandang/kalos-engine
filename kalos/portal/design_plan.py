@@ -49,6 +49,8 @@ DEFAULT_METHOD = "sobol"
 DEFAULT_N = 12
 API_METHODS = ("sobol", "lhs_maximin")
 MAX_DESIGN_ROWS = 96
+# Rows in the analysis's `exploration_design`: the size of the batch it stands in for.
+ANALYSIS_DESIGN_ROWS = 5
 MAX_CENTRE_POINTS = 8
 MAX_REPLICATE_SLOTS = 16
 MIN_UPLOAD_ROWS = 6  # kalos.portal.uploads: a run sheet needs at least 6 runs
@@ -570,6 +572,37 @@ def analysis_design(
                 "reason": f"the exploration design could not be built ({type(exc).__name__})"}
 
 
+def attach_exploration_design(
+    result: dict[str, Any],
+    *,
+    strain: Any,
+    names: Sequence[str],
+    categorical: Mapping[str, Sequence[str]],
+    bounds: np.ndarray,
+    X: np.ndarray,
+    setup: Mapping[str, Any] | None,
+    verdict: Mapping[str, Any],
+    n_measured: int,
+) -> None:
+    """The analysis hook (F04 small-sample path). When `proposal_trust` is not
+    `trusted` (the batch is withheld, or labelled exploration and
+    `reliability.space_filling_advice` applies), add `exploration_design`: 5
+    gap-filling rows. Additive only, with its own seeded RNG, so every other
+    field stays byte-identical. `strain` is the analysis's `StrainState`: a
+    fixed clone level and held covariates are held, as proposals hold them."""
+    trust = result.get("proposal_trust") or {}
+    if trust.get("status") == "trusted":
+        return
+    held: dict[str, Any] = {k: v["value"] for k, v in strain.held_info.items()}
+    if strain.fixed_level is not None and strain.plan.column is not None:
+        held[strain.plan.column] = strain.fixed_level
+    result["exploration_design"] = analysis_design(
+        names=names, categorical=categorical, bounds=bounds, X=X, setup=setup, held=held,
+        n=ANALYSIS_DESIGN_ROWS, analysis_view={"proposal_trust": trust, "verdict": verdict},
+        n_measured=n_measured,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # CSV (run-sheet template)
 # --------------------------------------------------------------------------- #
@@ -635,6 +668,6 @@ def design_csv(design: Mapping[str, Any]) -> str:
 
 __all__ = [
     "API_METHODS", "DEFAULT_METHOD", "DEFAULT_N", "FORBIDDEN_ROW_KEYS", "KIND", "LABEL",
-    "MAX_DESIGN_ROWS", "analysis_design", "build_spec", "campaign_design", "design_csv",
+    "MAX_DESIGN_ROWS", "analysis_design", "attach_exploration_design", "build_spec", "campaign_design", "design_csv",
     "model_not_used", "physical_check", "template_columns",
 ]

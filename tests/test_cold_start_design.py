@@ -499,3 +499,51 @@ def test_route_is_in_the_scope_manifest():
     hit = [e for e in entries if e["path"] == "/api/campaigns/{campaign_id}/design"]
     assert hit == [{"method": "POST", "path": "/api/campaigns/{campaign_id}/design",
                     "scopes": ["write"], "auth": "required"}]
+
+
+def test_a_design_row_started_as_a_run_carries_no_engine_prediction(env):
+    tc, store = env
+    cid = _seeded(store)
+    row = _post(tc, cid, {"n": 1}).json()["design"]["rows"][0]
+    r = tc.post(f"/api/campaigns/{cid}/runs", headers=H("a-write"), json={"recipes": [
+        {"recipe": row["recipe"], "mode": "exploration_design", "reason": row["label"]}]})
+    assert r.status_code == 200, r.text
+    run = r.json()["started"][0]
+    assert run["pred"] is None and run["std"] is None and run["pred_source"] == "caller"
+    assert run["prediction_at_start"]["available"] is False
+
+
+@pytest.mark.slow
+def test_the_csv_template_uploads_back_once_the_target_is_filled(env):
+    tc, store = env
+    cid = _empty(store)
+    text = _post(tc, cid, {**COLD_BODY, "format": "csv"}).text
+    df = pd.read_csv(io.StringIO(text))
+    rng = np.random.default_rng(0)
+    df["titer_g_L"] = (2.0 - (df["pH"] - 6.9) ** 2 + 0.02 * df["glucose_gL"] + rng.normal(0, 0.05, len(df))).round(3)
+    buf = io.StringIO()
+    df.to_csv(buf, index=False)
+    r = tc.post(f"/api/campaigns/{cid}/upload", files={"file": ("plan.csv", buf.getvalue(), "text/csv")},
+                data={"target": "titer_g_L"}, headers=H("a-write"))
+    assert r.status_code == 200, r.text
+    prov = {p["name"]: p["status"] for p in r.json()["provenance"]}
+    assert prov["run_id"] == "dropped_id" and prov["titer_g_L"] == "target"
+    assert prov["pH"] == "kept_feature" and prov["temperature_C"] == "kept_feature"
+
+
+def test_anonymized_analysis_aliases_the_exploration_design():
+    from kalos.portal.analysis_parts.anonymize import _anonymize_result
+    from kalos.portal.design_plan import analysis_design
+
+    X = np.array([[6.5, 0.0], [7.0, 1.0], [6.8, 0.0]])
+    block = analysis_design(
+        names=["pH", "clone"], categorical={"clone": ["CL-SECRET-1", "CL-SECRET-2"]},
+        bounds=np.array([[6.0, 0.0], [7.5, 1.0]]), X=X, setup=None, held={}, n=4,
+        analysis_view={"proposal_trust": {"status": "exploration_untrusted"}}, n_measured=3,
+    )
+    assert block["available"] is True and "CL-SECRET-1" in json.dumps(block)
+    out = _anonymize_result({"exploration_design": block, "provenance": []},
+                            categorical_levels={"clone": ["CL-SECRET-1", "CL-SECRET-2"]},
+                            label_columns=["clone"])
+    text = json.dumps(out["exploration_design"])
+    assert "CL-SECRET" not in text and "level_" in text

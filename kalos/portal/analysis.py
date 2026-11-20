@@ -141,7 +141,7 @@ from kalos.portal.cells import (
     classify_cells,
     is_null_label,
 )
-from kalos.portal.design_plan import analysis_design
+from kalos.portal.design_plan import attach_exploration_design
 from kalos.portal.setup_settings import plan_setup
 from kalos.portal.uploads import (
     _ERR_TOO_MANY_FIT_ROWS,
@@ -1918,21 +1918,13 @@ def _analyze_body(
     # every proposal says whether it is model-guided (trusted) or exploration.
     result["proposal_trust"] = proposal_trust(verdict, n_returned=len(result["proposals"]), n_requested=5)
     result["proposals"] = label_proposals(result["proposals"], result["proposal_trust"])
-    # Cold start (docs/COLD_START_DESIGN.md): when the verdict withholds the batch
-    # or labels it exploration (so `reliability.space_filling_advice` or the
-    # `model_refused` notice applies), a concrete space-filling plan comes with
-    # it. Additive key only: no model is used for it (no predicted values), and
-    # its own seeded RNG leaves every other field byte-identical (goldens).
-    if result["proposal_trust"]["status"] != "trusted":
-        held: dict[str, Any] = {k: v["value"] for k, v in strain.held_info.items()}
-        if strain.fixed_level is not None and strain.plan.column is not None:
-            held[strain.plan.column] = strain.fixed_level
-        result["exploration_design"] = analysis_design(
-            names=list(design.names), categorical={str(c): list(cat_dims_map[c]) for c in kept_cats},
-            bounds=bounds, X=X, setup=setup, held=held, n=5,
-            analysis_view={"proposal_trust": result["proposal_trust"], "verdict": verdict},
-            n_measured=len(y),
-        )
+    # Cold start (docs/COLD_START_DESIGN.md): additive `exploration_design` when
+    # the verdict withholds or labels the batch exploration (design_plan).
+    attach_exploration_design(
+        result, strain=strain, names=list(design.names),
+        categorical={str(c): list(cat_dims_map[c]) for c in kept_cats},
+        bounds=bounds, X=X, setup=setup, verdict=verdict, n_measured=len(y),
+    )
     if anonymize:
         result = _anonymize_result(
             result,
