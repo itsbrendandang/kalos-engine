@@ -45,6 +45,10 @@ _WEB_ANALYZE_FIELDS: frozenset[str] = frozenset({
     "seed", "engine_version",
     # Web redesign APIs (docs: ENGINE_API_V2): R6 unit, R4 per-proposal intervals, R2 slices.
     "target_unit", "interval_levels", "interval_method", "slices", "slices_skipped",
+    # Trust layer (F02/F04/F05/F15): the verdict and what it did to the batch,
+    # the refusal (null unless refused), the CV grouping used, and the caveat on
+    # the global conformal band.
+    "verdict", "proposal_trust", "refusal", "cv_grouping", "conformal_caveat",
 })
 
 # Per-proposal fields the redesign reads (R4): each proposal carries its own
@@ -155,6 +159,48 @@ def test_proposals_and_surface_carry_the_redesign_fields(analyze_response: dict)
     if analyze_response["slices"] is not None:
         for sl in analyze_response["slices"]:
             assert sl["band_method"] == "gp_posterior" and sl["coverage"] == 0.9
+
+
+@pytest.mark.slow
+def test_trust_layer_fields_the_web_reads(analyze_response: dict) -> None:
+    """The trust blocks the web renders: verdict -> proposal_trust (with every
+    proposal labeled), refusal (null unless refused), cv_grouping (which
+    grouping the CV used and why) and conformal_caveat (basis + coverage
+    measured at proposals, never a bare 'calibrated')."""
+    r = analyze_response
+    verdict = r["verdict"]
+    assert verdict["state"] in {"reliable", "not_yet", "refused"}
+    assert verdict["code"] and verdict["headline"] and isinstance(verdict["reasons"], list)
+    assert all(reason["code"] and reason["plain"] for reason in verdict["reasons"])
+
+    trust = r["proposal_trust"]
+    assert trust["verdict"] == verdict["state"]
+    assert trust["status"] in {"trusted", "exploration_untrusted", "withheld"}
+    assert trust["withheld"] is (trust["status"] == "withheld")
+    assert trust["gated"] is (trust["status"] != "trusted")
+    assert trust["n_returned"] == len(r["proposals"]) and trust["message"]
+    assert isinstance(trust["reasons"], list)
+    for p in r["proposals"]:
+        assert p["trust"]["status"] == trust["status"] and p["trust"]["message"]
+
+    refusal = r["refusal"]
+    if verdict["state"] == "refused":
+        assert refusal["code"] and refusal["plain"] and refusal["what_would_help"]
+        assert r["proposals"] == [] and trust["withheld"] is True
+    else:
+        assert refusal is None
+
+    grouping = r["cv_grouping"]
+    assert grouping["used"]["basis"] and grouping["used"]["n_groups"] == r["cv_n_groups"]
+    assert grouping["rule"] and isinstance(grouping["warnings"], list)
+    assert any(c["used"] for c in grouping["candidates"])
+
+    caveat = r["conformal_caveat"]
+    assert caveat["code"] == "coverage_not_guaranteed"
+    assert caveat["coverage_basis"] == "held_out_past_runs"
+    assert caveat["message"] and "is calibrated" not in caveat["message"]
+    est = caveat["coverage_at_proposals_estimate"]
+    assert est["basis"] == "simulation" and 0 <= est["measured_min"] <= est["measured_max"] <= 1
 
 
 _CAMPAIGN_CSV = "glucose,temperature,titer_g_L\n" + "".join(
