@@ -2,13 +2,15 @@
 
 The guard that stops a crafted `.xlsx` (small real content, enormous DECLARED
 `<dimension>`, or a sparse cell planted far down a sheet) from being handed to
-`pd.read_excel` is security-critical, but every existing test that exercises it
-imports `kalos.portal.app`, which transitively pulls in gpytorch/torch. So on a
-checkout without the heavy `ml` extra the guard has no coverage at all.
+`pd.read_excel` is security-critical. tests/test_upload_codes.py already covers
+its refusal codes without torch (honest workbooks over monkeypatched caps), but
+the two crafted-bomb paths, the declared-`<dimension>` check and the
+real-extent scan for a sheet with no `<dimension>`, had no torch-free coverage:
+the tests that build those bombs import `kalos.portal.app`, which pulls in
+gpytorch/torch.
 
 This module imports ONLY `kalos.portal.uploads` (no torch) and calls the guard
-directly, so the pre-materialization ceiling is pinned in the lean test tier
-too. It is the regression net for issue #14 (declared-dimension bomb slipping
+directly, so it runs on a checkout without the `ml` extra. It is the regression net for issue #14 (declared-dimension bomb slipping
 past the guard under openpyxl 3.1.5): the declared shape is read straight from
 the sheet XML, independent of openpyxl's lazy `max_row` / `max_column`.
 """
@@ -81,7 +83,7 @@ def test_missing_dimension_sparse_bomb_rejected():
 
     with pytest.raises(UploadRejected) as exc:
         uploads._reject_oversized_xlsx(_xlsx(strip_dimension_and_plant_far_cell))
-    assert exc.value.code in {"too_many_cells", "too_many_columns"}
+    assert exc.value.code == "too_many_cells"
 
 
 def test_honest_small_xlsx_accepted():
