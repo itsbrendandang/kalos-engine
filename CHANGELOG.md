@@ -4,6 +4,10 @@ Newest first.
 
 ## Unreleased
 
+### Added - `kalos.core.resolution` (BIOQORE_PORT item 1, PR 1 of 3; no behaviour change)
+
+- `round_to_resolution(x, factors, bounds, constraints)`: rounds one proposed recipe per input to its declared `step` or `levels` (a factor read structurally, the cold-start design's step/levels model) or to 4 significant figures, toward the feasible side of the bounds and linear constraints; returns a `rounding_infeasible` refusal (reason, what would fix it) when no nearby recipe is feasible. Pure function with unit tests (`tests/test_resolution.py`); nothing calls it yet, so no prediction, interval or proposal changes. Proposals still round to 3 decimals until PR 2 (flagged, re-predicts at the rounded recipe).
+
 ### Changed - selection-aware proposal intervals (F15, ML audit B1 fix 2; interval numbers change)
 
 - `proposals[].intervals` are calibrated on the held-out runs each fold model ranked highest (top 30%, both CV repeats) with the proposal sd floored at the 90th percentile of held-out sds (`method: conformal_selection_aware`, `coverage_basis: held_out_top_ranked_runs`). Measured at proposals on fresh simulation seeds: 90% band 0.60-0.83 -> 0.92-0.99, 95% band 0.72-0.92 -> 0.96-0.99, at 2.5-3.2x the median width; in-box coverage 0.98-1.00 (conservative). Per-level fallback to the plain band with `selection_aware_unavailable` when too few runs are selected. VALIDATION.md has the table.
