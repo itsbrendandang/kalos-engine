@@ -239,6 +239,16 @@ def ensure_schema(dsn: str) -> PgMigrationResult:
             version = current_version(conn)
             _refuse_newer(version)
             if version == 0:
+                (can_create,) = conn.execute(
+                    "SELECT has_schema_privilege(current_schema(), 'CREATE')").fetchone()
+                if not can_create:
+                    raise PgMigrationError(
+                        "the PostgreSQL schema is empty and this role cannot create tables in "
+                        "it (a runtime role, as it should be): create the schema once with the "
+                        f"owner role: {MIGRATE_URL_ENV}=<owner url> python -m "
+                        "kalos.storage.migrations.pg_runner up, then grant the runtime role "
+                        "(deploy/postgres/grants.sql)"
+                    )
                 to = _apply_steps(conn, 0)
                 assert_shape(conn, to)
                 conn.execute("COMMIT")
@@ -418,20 +428,24 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m kalos.storage.migrations.pg_runner",
         description=f"Kalos schema on PostgreSQL (v{BASELINE_VERSION}..v{LATEST}). The database "
-        f"comes from {DATABASE_URL_ENV}; it is never taken from the command line.",
+        f"comes from {MIGRATE_URL_ENV} (the schema OWNER role) when set, else {DATABASE_URL_ENV}; "
+        "it is never taken from the command line.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", help="print the recorded schema version")
     up = sub.add_parser("up", help="upgrade to this code's version (verified pg_dump first)")
     up.add_argument("--dry-run", action="store_true")
-    up.add_argument("--backup-dir", type=Path, default=None)
+    up.add_argument("--backup-dir", type=Path, default=None,
+                    help="where the verified pg_dump goes (default: <KALOS_STATE_DIR>/pg-backups, mode 0700)")
     up.add_argument("--confirm-backup", action="store_true",
                     help="you took and checked a pg_dump yourself (no pg_dump on this box)")
     args = parser.parse_args(argv)
     try:
-        cfg = backend_from_env()
+        owner_url = os.environ.get(MIGRATE_URL_ENV, "").strip()
+        cfg = backend_from_env({DATABASE_URL_ENV: owner_url} if owner_url else None)
         if not cfg.is_postgres:
-            raise StorageConfigError(f"{DATABASE_URL_ENV} is not a postgresql:// URL; nothing to do")
+            raise StorageConfigError(
+                f"neither {MIGRATE_URL_ENV} nor {DATABASE_URL_ENV} is a postgresql:// URL; nothing to do")
         dsn = cfg.dsn or ""
         if args.cmd == "status":
             print(status(dsn))
@@ -444,6 +458,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except (PgMigrationError, StorageConfigError) as exc:
         print(f"kalos pg migrate: {exc}", file=sys.stderr)
+        return 2
+    except DB_ERRORS as exc:  # a server error (e.g. permission denied): its type and code only
+        code = getattr(getattr(exc, "diag", None), "sqlstate", None) or "-"
+        print(f"kalos pg migrate: database error {type(exc).__name__} (SQLSTATE {code}); "
+              "nothing was migrated", file=sys.stderr)
         return 2
 
 

@@ -341,3 +341,85 @@ def test_cli_reads_the_url_from_the_environment_only(pg_schema_dsn, monkeypatch,
         assert password not in out
     monkeypatch.delenv("KALOS_DATABASE_URL")
     assert pg_runner.main(["status"]) == 2
+
+
+def _grants_sql(schema: str, role: str) -> list[str]:
+    """deploy/postgres/grants.sql with its psql variables filled in, as statements."""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[1] / "deploy" / "postgres" / "grants.sql").read_text()
+    body = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("--"))
+    body = body.replace(':"schema"', f'"{schema}"').replace(':"runtime_role"', f'"{role}"')
+    return [stmt.strip() for stmt in body.split(";") if stmt.strip()]
+
+
+def _with_user(dsn: str, user: str, password: str) -> str:
+    from urllib.parse import quote, urlsplit, urlunsplit
+
+    parts = urlsplit(dsn)
+    netloc = f"{quote(user)}:{quote(password, safe='')}@{parts.netloc.rsplit('@', 1)[-1]}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+@pg
+def test_engine_runs_as_a_non_owner_runtime_role(pg_schema_dsn):
+    """N2: the owner creates the schema (pg_runner) and applies grants.sql; the
+    engine's runtime role can read and write records but cannot change history
+    or the schema, and cannot create an empty schema itself."""
+    import uuid
+
+    import psycopg
+    from psycopg import sql
+
+    from kalos.storage import records_repo
+
+    pg_runner.ensure_schema(pg_schema_dsn)  # as the owner
+    role, password = "kalos_rt_" + uuid.uuid4().hex[:8], "rt-" + uuid.uuid4().hex
+    empty_schema = "kt_empty_" + uuid.uuid4().hex[:8]
+    owner = psycopg.connect(pg_schema_dsn, autocommit=True)
+    try:
+        (schema,) = owner.execute("SELECT current_schema()").fetchone()
+        owner.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(
+            sql.Identifier(role), sql.Literal(password)))
+        for stmt in _grants_sql(schema, role):
+            owner.execute(stmt)
+        rt = _with_user(pg_schema_dsn, role, password)
+        assert pg_runner.ensure_schema(rt).action == "noop"  # the runtime role can verify
+        b = sb.Backend(sb.BackendConfig(sb.POSTGRES, rt))
+        try:
+            with b.txn(write=True) as conn:
+                records_repo.insert_project(conn, tenant="acme", project_id="prj_" + "a" * 32, name="P",
+                                            objective="o", status="drafting", sponsor=None, actor="s", now=1.0)
+                lid = records_repo.insert_link(conn, tenant="acme", parent_campaign_id="cmp_a", parent_run_id="",
+                                               child_campaign_id="cmp_b", child_run_id="", relation="scale_up",
+                                               parent_stage=None, child_stage=None, note=None, actor="s", now=1.0)
+                records_repo.insert_audit(conn, tenant="acme", action="t", outcome="ok", subject="s",
+                                          auth_method="static", now=1.0)
+            assert lid >= 1
+            for stmt in ("UPDATE lineage_links SET relation = 'derived'", "DELETE FROM audit_log",
+                         "DROP TRIGGER lineage_links_no_update ON lineage_links",
+                         "ALTER TABLE lineage_links DISABLE TRIGGER ALL", "CREATE TABLE x (i int)"):
+                with pytest.raises(psycopg.Error), b.txn(write=True) as conn:
+                    conn.execute(stmt)
+        finally:
+            b.close()
+        # An EMPTY schema the runtime role may use but not create in: startup refuses.
+        owner.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(empty_schema)))
+        owner.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+            sql.Identifier(empty_schema), sql.Identifier(role)))
+        rt_empty = records_helpers.dsn_with_schema(rt, empty_schema)
+        with pytest.raises(pg_runner.PgMigrationError, match="KALOS_DATABASE_MIGRATE_URL"):
+            pg_runner.ensure_schema(rt_empty)
+    finally:
+        owner.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(empty_schema)))
+        owner.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
+        owner.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
+        owner.close()
+
+
+@pg
+def test_cli_prefers_the_owner_url(pg_schema_dsn, monkeypatch, capsys):
+    monkeypatch.setenv("KALOS_DATABASE_URL", "postgresql://nobody@127.0.0.1:1/nothing")
+    monkeypatch.setenv("KALOS_DATABASE_MIGRATE_URL", pg_schema_dsn)
+    assert pg_runner.main(["up"]) == 0
+    assert "schema v9" in pg_runner.status(pg_schema_dsn)
