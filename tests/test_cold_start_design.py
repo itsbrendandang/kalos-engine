@@ -550,3 +550,17 @@ def test_anonymized_analysis_aliases_the_exploration_design():
                             label_columns=["clone"])
     text = json.dumps(out["exploration_design"])
     assert "CL-SECRET" not in text and "level_" in text
+
+
+@pytest.mark.parametrize(("lo", "hi", "step", "want"), [
+    (4.984, 7.3, 1.0, [5.0, 6.0, 7.0]),          # WS-A finding: never 4.98 (< lo) or 5.98
+    (6.02, 6.3, 0.05, [6.05, 6.1, 6.15, 6.2, 6.25, 6.3]),
+    (0.0003, 0.0011, 0.0002, [0.0004, 0.0006, 0.0008, 0.001]),
+    (-1.25, 1.0, 0.5, [-1.0, -0.5, 0.0, 0.5, 1.0]),
+])
+def test_step_grid_is_absolute_and_inside_the_bounds(lo, hi, step, want):
+    f = ContinuousFactor("x", lo, hi, step=step)
+    g = f.grid()
+    assert g.tolist() == want
+    assert all(lo <= v <= hi for v in g)
+    assert f.snap(np.array([lo, hi, (lo + hi) / 2])).tolist() == [want[0], want[-1], f.snap(np.array([(lo + hi) / 2]))[0]]
