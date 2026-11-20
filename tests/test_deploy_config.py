@@ -25,13 +25,19 @@ COMPOSE_PATH = DEPLOY_DIR / "compose.yaml"
 ENV_EXAMPLE_PATH = DEPLOY_DIR / ".env.example"
 
 # Every env var this deploy pack treats as REQUIRED - i.e. the stack starts
-# wrong (or, for the security three, refuses to start at all per
-# kalos/portal/config.py's assert_safe_exposure) without a real value here.
+# wrong or refuses to start without a real value here: the engine refuses a
+# non-loopback bind without KALOS_ANON_SALT (kalos/portal/config.py
+# assert_safe_exposure), and kalos-web's production boot check exits on a
+# missing or placeholder engine-token kid, Better Auth secret/URL, Google
+# client or trusted-proxy list.
 REQUIRED_ENV_KEYS = [
-    "KALOS_AUTH_TOKENS",
+    "KALOS_ENGINE_JWT_KID",
     "KALOS_ANON_SALT",
-    "KALOS_CORS_ORIGINS",
-    "NEXT_PUBLIC_API_URL",
+    "BETTER_AUTH_SECRET",
+    "BETTER_AUTH_URL",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "AUTH_TRUSTED_PROXIES",
 ]
 
 
@@ -67,14 +73,37 @@ def test_compose_publishes_only_the_web_front_door():
     assert "ports" not in services["backup"]
 
 
+def _env_names(service: dict) -> set[str]:
+    env = service.get("environment", [])
+    if isinstance(env, dict):
+        return set(env)
+    return {e.split("=", 1)[0] for e in env}
+
+
 def test_compose_web_carries_the_proxy_env():
-    """The proxy needs both server-side vars; a compose without them ships a
-    web container whose every engine call 401s or 502s."""
+    """The proxy signs a per-request EdDSA engine token: it needs the engine
+    URL, the signing key file and its kid, and the tenants map that names the
+    token's tenant. kalos-web never sends a static engine token, so the compose
+    must not pretend to configure one."""
     doc = _load_compose()
-    env = doc["services"]["web"].get("environment", [])
-    joined = " ".join(env) if isinstance(env, list) else " ".join(f"{k}={v}" for k, v in env.items())
-    assert "KALOS_ENGINE_URL" in joined
-    assert "KALOS_ENGINE_TOKEN" in joined
+    names = _env_names(doc["services"]["web"])
+    assert {"KALOS_ENGINE_URL", "KALOS_ENGINE_JWT_PRIVATE_KEY_FILE", "KALOS_ENGINE_JWT_KID",
+            "KALOS_TENANT_MAP_FILE"} <= names
+    assert "KALOS_ENGINE_TOKEN" not in names
+
+
+def test_compose_engine_trusts_the_web_jwks_and_only_web_holds_the_private_key():
+    """The engine verifies engine tokens against a read-only, mounted JWKS of
+    public keys; the Ed25519 private key is mounted into `web` only."""
+    doc = _load_compose()
+    engine, web = doc["services"]["engine"], doc["services"]["web"]
+    assert "KALOS_JWT_PUBLIC_KEYS_FILE=/config/engine-jwks.json" in engine["environment"]
+    assert "./engine-config:/config:ro" in engine["volumes"]
+    key_target = next(e.split("=", 1)[1] for e in web["environment"]
+                      if e.startswith("KALOS_ENGINE_JWT_PRIVATE_KEY_FILE="))
+    assert any(v.endswith(f":{key_target}:ro") for v in web["volumes"])
+    for name in ("engine", "backup"):
+        assert not any(key_target in v or "secrets" in v for v in doc["services"][name].get("volumes", []))
 
 
 def test_compose_engine_has_no_replicas_override():
@@ -138,9 +167,12 @@ def test_compose_engine_auth_and_salt_env_are_wired_from_env_file():
     doc = _load_compose()
     engine_env = doc["services"]["engine"]["environment"]
     assert "KALOS_HOST=0.0.0.0" in engine_env
-    assert any(e.startswith("KALOS_AUTH_TOKENS=") for e in engine_env)
+    assert any(e.startswith("KALOS_JWT_PUBLIC_KEYS_FILE=") for e in engine_env)
     assert any(e.startswith("KALOS_ANON_SALT=") for e in engine_env)
-    assert any(e.startswith("KALOS_CORS_ORIGINS=") for e in engine_env)
+    # Optional pass-throughs: service-account static tokens and the CORS list
+    # for the direct-browser dev escape hatch.
+    assert "KALOS_AUTH_TOKENS=${KALOS_AUTH_TOKENS:-}" in engine_env
+    assert "KALOS_CORS_ORIGINS=${KALOS_CORS_ORIGINS:-}" in engine_env
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker CLI not installed")
