@@ -63,7 +63,7 @@ def categorical_effects(
             by_level.setdefault(level_of[k], []).append(float(np.mean(vals)))
         levels = sorted(by_level)
         per_level = [
-            {"level": lv, "n_recipes": len(by_level[lv]), "mean": _r(np.mean(by_level[lv])),
+            {"level": lv, "n_recipes": len(by_level[lv]), "mean": _r(float(np.mean(by_level[lv]))),
              "basis": "measured"}
             for lv in levels
         ]
