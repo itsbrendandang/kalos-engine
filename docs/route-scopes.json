@@ -1,0 +1,388 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/assist/ask",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/assist/index/rebuild",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/assist/index/status",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/assist/next",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/assist/sop",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/assist/sop/draft",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/assist/sop/{draft_id}",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/assist/sop/{draft_id}/export",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/assist/sop/{draft_id}/fill",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/assist/sop/{draft_id}/revise",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaign",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaign/reanalyze",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaign/result",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaign/start",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/campaigns/{campaign_id}",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "conditional_scopes": [
+      {
+        "scope": "admin",
+        "when": "body sets 'archived' (archive/unarchive)"
+      }
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/analysis",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/export/rows",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/gates",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/campaigns/{campaign_id}/gates/{gate}",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/gates/{gate}/history",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/jobs",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/jobs",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/operating-ranges",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/operating-ranges",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/reanalyze",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/reanalyze/jobs",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/results/history",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/runs",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/runs/{run_id}/result",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/setup",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/campaigns/{campaign_id}/setup",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/stages",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/campaigns/{campaign_id}/stages",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/upload",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/jobs/{job_id}",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/jobs/{job_id}/cancel",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/latest",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/multi",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/providers",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/run",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/scale/readout",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/scale/readout.json",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/single",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/healthz",
+    "scopes": [],
+    "auth": "public"
+  },
+  {
+    "method": "GET",
+    "path": "/readyz",
+    "scopes": [],
+    "auth": "public"
+  }
+]

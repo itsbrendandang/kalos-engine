@@ -5,6 +5,10 @@ analysis jobs (docs/JOBS.md, "HTTP API").
   analysis. The same pre-fit refusals as `/api/run` run BEFORE the job is
   queued (`preflight_upload`), so a bad file is a 400 right away, not a failed
   job. 202 with the job; `Location` points at its status.
+- `POST /api/campaigns/{id}/reanalyze/jobs` (write): queue a re-analysis of the
+  campaign (fold measured runs, re-run the engine, publish), the background form
+  of `POST /api/campaigns/{id}/reanalyze`. No body. 202 with the job (`kind:
+  "reanalyze"`); refusals that are cheap to know run before it is queued.
 - `GET /api/campaigns/{id}/jobs` (read): the campaign's recent jobs.
 - `GET /api/jobs/{id}` (read): one job's status: state, stage, progress, the
   error code and message if it did not succeed, and the published campaign
@@ -39,6 +43,7 @@ from kalos.portal import jobs
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
 from kalos.portal.busy import RETRY_AFTER_SECONDS
 from kalos.portal.campaign import (
+    CampaignArchived,
     CampaignError,
     CampaignNotFound,
     CampaignStore,
@@ -231,7 +236,7 @@ def _job_error_response(exc: CampaignError) -> JSONResponse:
         return _job_not_found()
     if isinstance(exc, jobs.JobsDisabled):
         return JSONResponse({"error": str(exc), "code": "service_unavailable"}, status_code=503)
-    if isinstance(exc, (jobs.UploadPending, jobs.CampaignHasRuns)):
+    if isinstance(exc, (jobs.UploadPending, jobs.JobPending, jobs.CampaignHasRuns)):
         return JSONResponse({"error": str(exc), "code": exc.code}, status_code=409)
     if isinstance(exc, (jobs.QueueFull, jobs.EngineQueueFull)):
         return JSONResponse(
@@ -361,6 +366,70 @@ async def _read_and_queue(
             target=target, anonymize=anonymize, roles=roles, sheet=sheet,
             requested_by=principal.subject, replace=replace,
         )
+    except CampaignError as exc:
+        return _job_error_response(exc), None
+    response = JSONResponse(
+        {"job": job}, status_code=202, headers={"Location": f"/api/jobs/{job['id']}"},
+    )
+    return response, str(job["id"])
+
+
+@router.post("/api/campaigns/{campaign_id}/reanalyze/jobs", status_code=202)
+def submit_reanalyze_job(
+    campaign_id: str,
+    principal: Principal = Depends(require_scope(WRITE)),
+    store: CampaignStore = Depends(get_campaign_store),
+) -> JSONResponse:
+    """Queue a re-analysis of this campaign. 202 + the job; `Location` is its status."""
+    job_id: str | None = None
+    if not _valid_campaign_id(campaign_id):
+        response = campaign_not_found_response()
+    else:
+        response, job_id = _submit_reanalyze(campaign_id, principal, store)
+    _audit(store, principal, "campaign.reanalyze.submit", response.status_code,
+           campaign_id=campaign_id, job_id=job_id)
+    return response
+
+
+def _submit_reanalyze(
+    campaign_id: str, principal: Principal, store: CampaignStore,
+) -> tuple[JSONResponse, str | None]:
+    """The re-analysis submit steps in order (each a cheap read; nothing is written
+    until `enqueue_reanalyze`, which repeats the state checks in its transaction)."""
+    from kalos.portal.reanalyze_job import ReanalyzeRefused, plan_reanalysis
+
+    tenant = principal.tenant
+    try:
+        settings = jobs.job_settings()
+    except ValueError:
+        log.exception("background job settings are invalid")
+        return JSONResponse({"error": "background jobs are misconfigured", "code": "jobs_misconfigured"}, status_code=503), None
+    if not settings.enabled:
+        return _job_error_response(jobs.JobsDisabled()), None
+    try:
+        info = store.campaign_info(tenant=tenant, campaign_id=campaign_id)
+    except CampaignError as exc:
+        return campaign_error_response(exc), None
+    if info["archived"]:
+        return JSONResponse(
+            {"error": "the campaign is archived; it can be read but not changed", "code": "campaign_archived"}, status_code=409,
+        ), None
+    try:
+        jobs.check_no_pending_job(store, tenant=tenant, campaign_id=campaign_id)
+        jobs.check_queue_capacity(store, tenant=tenant)
+        plan_reanalysis(store, tenant=tenant, campaign_id=campaign_id)
+    except ReanalyzeRefused as exc:
+        return JSONResponse({"error": str(exc), "code": exc.code}, status_code=400), None
+    except CampaignError as exc:
+        return _job_error_response(exc), None
+    try:
+        job = jobs.enqueue_reanalyze(
+            store, tenant=tenant, campaign_id=campaign_id, requested_by=principal.subject,
+        )
+    except CampaignArchived:  # archived between the check above and the insert
+        return JSONResponse(
+            {"error": "the campaign is archived; it can be read but not changed", "code": "campaign_archived"}, status_code=409,
+        ), None
     except CampaignError as exc:
         return _job_error_response(exc), None
     response = JSONResponse(

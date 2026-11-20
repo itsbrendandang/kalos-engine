@@ -1,7 +1,9 @@
 """Kalos portal - background jobs: the persistent queue behind
 `POST /api/campaigns/{id}/jobs` (docs/JOBS.md).
 
-A job is one upload analysis, queued instead of run inside the request. This
+A job is one upload analysis, or one campaign re-analysis (`params.mode =
+"reanalyze"`, `POST /api/campaigns/{id}/reanalyze/jobs`, kalos.portal.reanalyze_job),
+queued instead of run inside the request. This
 module owns the `jobs` table (schema v3, kalos/portal/migrate.py) and every
 state transition on it; the scheduler is `kalos.portal.job_runner`, the work
 itself is `kalos.portal.job_worker`, and the HTTP surface is
@@ -90,6 +92,10 @@ ERROR_MESSAGES = {
     "campaign_changed": (
         "the campaign changed while this job ran, so nothing was published; resubmit the upload"
     ),
+    "conflict": (
+        "the campaign changed while this re-analysis ran (a new upload or result landed), so "
+        "nothing was folded or published; submit the re-analysis again"
+    ),
     "campaign_has_runs": (
         "the campaign has awaiting or measured runs that this upload would replace, and the "
         "upload was not confirmed with replace=true; nothing was changed"
@@ -138,6 +144,20 @@ class UploadPending(JobError):
     def __init__(self) -> None:
         super().__init__(
             "an upload for this campaign is already queued or running; wait for it to finish"
+        )
+
+
+class JobPending(JobError):
+    """The campaign already has a queued or running job (an upload or a re-analysis).
+    One active job per campaign: the second would only fail its compare-and-swap after
+    its full fit, once the first publishes. The re-analysis submit answers this code;
+    the upload submit keeps its historical `upload_pending` (UploadPending)."""
+
+    code = "job_pending"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "a job for this campaign is already queued or running; wait for it to finish"
         )
 
 
@@ -298,6 +318,35 @@ def _one(conn: sqlite3.Connection, tenant: str, job_id: str) -> dict[str, Any] |
     return found[0] if found else None
 
 
+# The job's mode lives in `params` (the table's `kind` column only allows 'analysis' and
+# the schema is not changed for it). Rows without a mode are upload analyses.
+REANALYZE_MODE = "reanalyze"
+JOB_KINDS_PUBLIC = ("analysis", REANALYZE_MODE)
+
+
+def _mode_of(params_text: Any) -> str:
+    try:
+        data = json.loads(params_text or "{}")
+    except (TypeError, ValueError):
+        return "analysis"
+    if isinstance(data, dict) and data.get("mode") == REANALYZE_MODE:
+        return REANALYZE_MODE
+    return "analysis"
+
+
+def job_kind(row: dict[str, Any]) -> str:
+    """`'reanalyze'` or `'analysis'`, from the row's `params.mode` (older rows: analysis)."""
+    return _mode_of(row.get("params"))
+
+
+def _terminal_params(params_text: Any) -> str:
+    """What a finished job keeps of its `params`: nothing, except the (non-sensitive)
+    mode marker of a re-analysis, so `kind` still reads right after it finished."""
+    if _mode_of(params_text) == REANALYZE_MODE:
+        return json.dumps({"mode": REANALYZE_MODE})
+    return "{}"
+
+
 def job_view(row: dict[str, Any]) -> dict[str, Any]:
     """The public shape of a job (GET /api/jobs/{id} and friends). No input
     path, parameters, runner or pid: those are internal."""
@@ -308,7 +357,7 @@ def job_view(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row["id"],
         "campaign_id": row["campaign_id"],
-        "kind": row["kind"],
+        "kind": job_kind(row),
         "state": state,
         "stage": row["stage"],
         "progress": row["progress"],
@@ -452,11 +501,60 @@ def enqueue(
     return job
 
 
+def check_no_pending_job(store: CampaignStore, *, tenant: str, campaign_id: str) -> None:
+    """Refuse with `JobPending` if the campaign has any queued or running job."""
+    with store._txn(write=False) as conn:
+        if _has_pending_upload(conn, tenant, campaign_id):
+            raise JobPending()
+
+
+def enqueue_reanalyze(
+    store: CampaignStore, *, tenant: str, campaign_id: str, requested_by: str | None,
+) -> dict[str, Any]:
+    """Queue one re-analysis of `campaign_id` (`params.mode = "reanalyze"`, no input
+    file). The fold is planned by the worker at run time, from the campaign as it is
+    then, and committed with a compare-and-swap on that plan's generation;
+    `base_generation` only records the generation at submission. Refusals: JobsDisabled,
+    CampaignNotFound, CampaignArchived, JobPending (one active job per campaign),
+    QueueFull / EngineQueueFull. Returns the job view."""
+    settings = job_settings()
+    if not settings.enabled:
+        raise JobsDisabled()
+    validate_tenant_id(tenant)
+    validate_campaign_id(campaign_id)
+    job_id = "job_" + uuid.uuid4().hex
+    with store._txn(write=True) as conn:
+        campaign = store._resolve(conn, tenant, campaign_id, create=False)
+        if campaign is None:
+            raise CampaignNotFound()
+        if campaign.archived_at is not None:
+            raise CampaignArchived()
+        if _has_pending_upload(conn, tenant, campaign_id):
+            raise JobPending()
+        if _active_depth(conn, tenant) >= settings.queue_depth:
+            raise QueueFull(settings.queue_depth)
+        if _active_total(conn) >= settings.global_queue_depth:
+            raise EngineQueueFull(settings.global_queue_depth)
+        now = time.time()
+        conn.execute(
+            "INSERT INTO jobs (id, tenant, campaign_id, kind, state, created_at, updated_at, "
+            "progress, stage, attempts, input_path, input_sha256, input_bytes, params, "
+            "base_generation, requested_by, cancel_requested) "
+            "VALUES (?, ?, ?, 'analysis', 'queued', ?, ?, 0, 'queued', 0, NULL, NULL, NULL, ?, ?, ?, 0)",
+            (job_id, tenant, campaign_id, now, now, json.dumps({"mode": REANALYZE_MODE}),
+             campaign.generation, _clip(requested_by)),
+        )
+    job = get_job(store, tenant=tenant, job_id=job_id)
+    assert job is not None
+    return job
+
+
 # What the stored `params` keep of a job's form fields, and when (docs/JOBS.md,
 # "Privacy"). `params` is JSON on the job row. Under `anonymize` the filename is
 # never stored: the worker only needs its extension (format detection), so only
 # that is kept. Every terminal state (succeeded, failed, cancelled, timed_out)
-# clears `params` entirely (to '{}'), in the same transaction that sets the state.
+# clears `params` (to '{}', or to '{"mode": "reanalyze"}' for a re-analysis, which
+# holds nothing else), in the same transaction that sets the state.
 _EXT_RE = re.compile(r"\.[a-z0-9]{1,8}")
 
 
@@ -544,9 +642,9 @@ def request_cancel(store: CampaignStore, *, tenant: str, job_id: str) -> dict[st
         if row["state"] == "queued":
             conn.execute(
                 "UPDATE jobs SET state = 'cancelled', stage = 'cancelled', cancel_requested = 1, "
-                "finished_at = ?, updated_at = ?, input_purged_at = ?, params = '{}' "
+                "finished_at = ?, updated_at = ?, input_purged_at = ?, params = ? "
                 "WHERE id = ? AND tenant = ? AND state = 'queued'",
-                (now, now, now, job_id, tenant),
+                (now, now, now, _terminal_params(row["params"]), job_id, tenant),
             )
             purge = row["input_path"]
         elif row["state"] == "running":
@@ -655,9 +753,10 @@ def finish(
         cur = conn.execute(
             "UPDATE jobs SET state = ?, stage = ?, error_code = ?, error_message = ?, "
             "finished_at = ?, updated_at = ?, worker_pid = NULL, input_purged_at = ?, "
-            "params = '{}' "
+            "params = ? "
             "WHERE id = ? AND tenant = ? AND state IN ('queued', 'running')",
-            (state, state, code, message, now, now, now, job_id, tenant),
+            (state, state, code, message, now, now, now, _terminal_params(row["params"]),
+             job_id, tenant),
         )
         changed = cur.rowcount == 1
     if changed:
@@ -672,12 +771,16 @@ def mark_succeeded(conn: sqlite3.Connection, *, tenant: str, job_id: str, genera
     rolls the publish back) if a cancel was requested or the job is no longer
     running, e.g. it timed out while the analysis was finishing."""
     now = time.time()
+    found = conn.execute(
+        "SELECT params FROM jobs WHERE id = ? AND tenant = ?", (job_id, tenant)
+    ).fetchone()
+    kept = _terminal_params(found[0] if found is not None else None)
     cur = conn.execute(
         "UPDATE jobs SET state = 'succeeded', stage = 'succeeded', progress = 1, "
         "result_ref = ?, finished_at = ?, updated_at = ?, worker_pid = NULL, "
-        "error_code = NULL, error_message = NULL, input_purged_at = ?, params = '{}' "
+        "error_code = NULL, error_message = NULL, input_purged_at = ?, params = ? "
         "WHERE id = ? AND tenant = ? AND state = 'running' AND cancel_requested = 0",
-        (generation, now, now, now, job_id, tenant),
+        (generation, now, now, now, kept, job_id, tenant),
     )
     if cur.rowcount != 1:
         raise JobCancelled()

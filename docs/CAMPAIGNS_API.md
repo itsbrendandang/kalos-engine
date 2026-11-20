@@ -49,6 +49,7 @@ below), which the first legacy upload creates. A campaign made with
 | Method | Path | Scope | Purpose |
 |---|---|---|---|
 | GET | `/api/campaigns?include_archived=false` | read | List the tenant's campaigns, newest first: `{"campaigns": [<campaign>...]}`. |
+| GET | `/api/campaigns?summary=true&limit=50&cursor=...` | read | The same list with per-campaign card fields, paginated (see "Campaigns list summary"). |
 | POST | `/api/campaigns` | write | Create a campaign. Body: `{"name": str}`. `201` and the campaign. |
 | GET | `/api/campaigns/{id}` | read | `{"campaign": <campaign>, "summary": <loop summary>}`. The summary has the same shape as `GET /api/campaign`, scoped to this campaign, including `analysis_in_sync`, `stage` and `next_action` (see "Stage" below). |
 | PATCH | `/api/campaigns/{id}` | write (+admin for `archived`) | Body: `{"name"?: str, "archived"?: bool}`, at least one of the two. Returns the campaign. |
@@ -67,6 +68,38 @@ and its own published analysis, never from another campaign or the tenant's defa
 A campaign that was created but never uploaded reads `stage.current: "setup"`.
 Each pending run carries `round`, the 0-based round it was started in (`null` for runs
 started before the field existed).
+
+### Campaigns list summary
+
+`GET /api/campaigns?summary=true` (scope `read`) returns one page of the tenant's
+campaigns, newest-updated first, each a superset of the campaign object:
+
+`has_data` (base rows > 0), `target`, `target_unit` (`{unit, source: user|header|none,
+header, note}`, the "Target unit" rule below applied to the raw `target` and the setup's
+`target_unit`; a display label, nothing is converted), `n_base`, `round`, `n_awaiting`, `n_measured`,
+`goal` `{direction: maximize|minimize, source: setup|default}` (from settings kind
+`setup`, `value.goal`; anything else is `maximize` with `source: default`),
+`best_measured` `{value, basis: "measured", direction: max|min, reason?}` (best MEASURED
+target over the base rows, i.e. uploaded rows plus folded results; measured runs not yet
+folded by a reanalyze are not included; `reason` explains a `null` value),
+`analysis` (`{present: false}`, or `{present: true, updated, in_sync, engine_version,
+cv_spearman, conformal_q, conformal_coverage, reliability: {clears_floor, ci_excludes_zero,
+spearman, ci95, spearman_floor, producer_clears_floor}, n_proposals}`, values copied as
+stored, `null` when the stored analysis predates a field), `current_stage` (settings kind
+`stages`, `value.current_stage`, as stored), `latest_gate_decision` (`{gate, decision,
+decided_at}` of the newest gate_decisions row, or `null`), `active_job` (`{id, kind, state,
+progress, stage}` of the newest queued/running job, or `null`).
+
+Pagination: `limit` 1..200 (default 50), `cursor` = the previous page's `next_cursor`
+(opaque; `null` on the last page). Ordering is `(updated_at desc, id)`; the cursor is a
+keyset position, so a campaign updated while a client pages moves to the front and can be
+missed or repeated by that walk: restart from the first page to refresh. A malformed
+cursor is `400 {"code": "invalid_cursor"}`; a `limit` out of range is `400 invalid_body`;
+`limit` or `cursor` without `summary=true` is `400 {"code": "invalid_query"}`. Without
+`summary=true` the response is exactly the unpaginated list above.
+
+The page costs a constant number of SQL statements (SQLite JSON functions read the few
+fields from the stored blobs); every statement is tenant-scoped.
 
 ### Name validation
 
@@ -336,6 +369,14 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
   `judgeable`, `judgement` (`"not enough runs to judge calibration"` when
   10 <= n < 20, else `null`) and `judge_min_n` (20). It is still shown from 10.
 
+### Top-k overlap follows the goal (additive)
+
+- `cv_topk` = |true top-k INTERSECT predicted top-k| / k over the pooled
+  out-of-fold predictions, where "top" means the k BEST runs for the campaign
+  goal: the k highest for maximize, the k LOWEST for minimize.
+  `cv_topk.direction` (`"highest"` | `"lowest"`) says which; analyses stored
+  before this field always ranked highest-first.
+
 ### Distance to data (additive)
 
 - `proposals[].nearest_training_distance`: distance from the proposed recipe to
@@ -345,6 +386,75 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
   training row. A number only: the engine applies no threshold and no label.
 - `training_nn_distance_median`: the same metric between training rows (median
   distance from each row to its nearest other row), for scale.
+
+### Target unit (additive)
+
+Analyses computed after this change carry `target_unit`:
+`{"unit": str|null, "source": "user"|"header"|"none", "header": str|null, "note": str}`.
+`user` = the unit from the campaign setup, as typed (wins over the header). `header` =
+parsed from the target column header for well-defined patterns only (`titer (g/L)`,
+`titer [mg/mL]`, `Titer g/L`, `titer_g_L`, `titer_g_per_L`, `yield_pct`); ambiguous bare
+suffixes (`_L`, `_C`, `_min`, `od600`) give `unit: null`, `source: "none"`. Display label
+only; values are never converted. With `anonymize=True` and a pseudonymized target header,
+`header` is the alias and a header-derived unit is dropped (`source: "none"`). Older
+stored analyses lack the field.
+
+### Per-proposal intervals, quantiles, EI (additive; analyses computed after this change)
+
+Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
+(`normalized_scores`, `normalized_conformal_quantile`), levels in
+`analysis_parts/policy.py` `INTERVAL_LEVELS = (0.9, 0.95)`. The legacy
+`conformal_q` / `conformal_coverage` (one global 90% half-width) are unchanged.
+
+- `interval_levels`: `[0.9, 0.95]`.
+- `interval_method`: how `proposals[].intervals` were built. `method`
+  `"conformal_normalized"`, `calibrated_on` `"grouped_cv_oof"` (the same
+  repeat-0 out-of-fold set as `oof` and `conformal_q`), `score`
+  `abs(y - mu_oof) / sigma_oof`, `quantile` (k-th smallest score,
+  `k = ceil((n+1) * coverage)`, an order statistic), `sigma_source`,
+  `n_calibration`, `coverage_guarantee` (approximate: OOF scores come from fold
+  models), and `levels[]` with per level `coverage`, `available`; when
+  available `q_norm`, `rank`, `n_calibration`, `empirical_oof_coverage`,
+  `n_inside`, `coverage_by_sigma_half{low_sigma,high_sigma:{n,coverage}}`; when
+  refused `code`, `reason`, `what_would_fix_it` (plus `rank`, `min_n` for
+  `too_few_calibration_points`). `empirical_oof_coverage` is in-sample (the
+  same scores set `q_norm`, so it is >= rank/n by construction); the sigma-half
+  split is the informative part.
+- Refusal codes (per level): `too_few_calibration_points` (rank > n: 0.90 needs
+  9 held-out points, 0.95 needs 19), `degenerate_sigma` (an OOF sd is
+  non-finite, <= 0, or < 1e-6 x the median sd; points are never dropped),
+  `no_calibration_points`, `nonfinite_oof`. Per proposal also
+  `degenerate_proposal_sigma`.
+- Which posterior: `sigma_oof` is the fold GP's PREDICTIVE sd (latent +
+  fitted observation noise). The proposal's `predictive_std` matches it: the
+  surrogate's `observation_noise=True` sd (`sigma_source:
+  "surrogate_fitted_noise"`), or, when the replicate-aware surrogate (fixed
+  noise per recipe mean) proposed, `sqrt(latent_sd^2 + noise.noise_sd^2)` for one
+  new single measurement (`"latent_plus_assay_noise_floor"`). `proposals[].std`
+  stays the LATENT sd, unchanged.
+- `proposals[].intervals[]`: `{coverage, method: "conformal_normalized",
+  calibrated_on: "grouped_cv_oof", n_calibration, available, lo, hi, q_norm,
+  empirical_oof_coverage}`; `lo = pred - q_norm * predictive_std`. Refused: `lo`
+  / `hi` null plus `code`, `reason`, `what_would_fix_it`.
+- `proposals[].gp_intervals[]` (always): `{coverage, method: "gp_posterior",
+  posterior: "observation", note: "model-based, not held-out calibrated",
+  available, lo, hi}`, Gaussian `pred +/- z * predictive_std`.
+- `proposals[].quantiles`: `{basis: "gp_posterior", posterior: "observation",
+  note, p05, p25, p50, p75, p95}` of the same Gaussian.
+- `proposals[].expected_improvement` / `p_improve`: `{value, incumbent,
+  incumbent_basis, maximize, basis: "model", method, posterior: "latent", note,
+  description}`. Analytic EI / P(f > incumbent) of the LATENT posterior (`pred`, `std`).
+  **`p_improve` (the "chance to beat" the best) is the probability that the
+  model's latent MEAN at the recipe beats the incumbent, not the probability
+  that one new measurement does**: a single run adds assay noise, which pulls
+  the chance toward 0.5 (a mean 1 latent sd above the incumbent gives 0.84; with
+  observation noise equal to the latent sd, one run beats it with probability
+  0.76). `description` states this on every value.
+  `incumbent` is the value the proposal annotation compares against:
+  `best_measured_single` (`best`) or `best_reproducible_mean`
+  (`noise.best_reproducible`, replicate-aware path). The batch itself is
+  chosen by qLogNEI, not by this EI. `maximize` is false when the campaign
+  setup goal is minimize (then EI / p_improve are for going BELOW the incumbent).
 
 ## Not in this slice
 

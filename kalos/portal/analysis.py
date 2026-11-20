@@ -58,6 +58,12 @@ from kalos.portal.analysis_parts.identifiers import (
     identifier_pattern,
     is_identifier_name,
 )
+from kalos.portal.analysis_parts.intervals import (
+    calibrate_normalized,
+    interval_method_summary,
+    proposal_interval_fields,
+    proposal_predictive_std,
+)
 from kalos.portal.analysis_parts.noise_blocks import (
     _alternative_scale_block,
     _noise_block,
@@ -73,6 +79,7 @@ from kalos.portal.analysis_parts.policy import (
     DRIVER_TOP_K,
     GATE_MIN_N_INFEASIBLE,
     GROUP_MEAN_BASELINE_MIN_GROUPS,
+    INTERVAL_LEVELS,
     LOGO_MAX_GROUPS,
     RELIABILITY_SPEARMAN_FLOOR,
     validation_mode,
@@ -93,6 +100,8 @@ from kalos.portal.analysis_parts.refusals import (
     _too_few_rows,
     _validate_constraint,
 )
+from kalos.portal.analysis_parts.setup_apply import _propose_with_setup, withheld_batch
+from kalos.portal.analysis_parts.units import target_unit_block
 from kalos.portal.cells import (
     BLANK,
     CENSORED,
@@ -105,6 +114,7 @@ from kalos.portal.cells import (
     classify_cells,
     is_null_label,
 )
+from kalos.portal.setup_settings import plan_setup
 from kalos.portal.uploads import (
     _ERR_TOO_MANY_FIT_ROWS,
     MAX_FIT_ROWS,
@@ -196,6 +206,8 @@ def _analyze(
     constraint: Mapping[str, Any] | None = None,
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
+    user_target_unit: str | None = None,
+    setup: Mapping[str, Any] | None = None,
 ) -> dict:
     """See `_analyze_body`. Every fitting analysis runs inside `_seeded_analysis`,
     so its proposals depend only on its inputs, not on other analyses in flight."""
@@ -203,7 +215,10 @@ def _analyze(
     kwargs: dict[str, Any] = dict(
         anonymize=anonymize, roles=roles, profile=profile, pending=pending,
         constraint=constraint, progress=progress, preflight_only=preflight_only,
+        user_target_unit=user_target_unit,
     )
+    if setup is not None:
+        kwargs["setup"] = setup
     if preflight_only:
         return _analyze_body(df, target, **kwargs)
     with _seeded_analysis(ANALYZE_SEED):
@@ -221,6 +236,8 @@ def _analyze_body(
     constraint: Mapping[str, Any] | None = None,
     progress: Callable[[str, float], None] | None = None,
     preflight_only: bool = False,
+    user_target_unit: str | None = None,
+    setup: Mapping[str, Any] | None = None,
 ) -> dict:
     """Run the engine on an arbitrary run sheet: pick the target (the value to
     maximize), use the process INPUTS as features (other measured outputs are
@@ -269,7 +286,13 @@ def _analyze_body(
     fit (shape, target, constant target, process inputs, row caps), then
     returns `{}` - without importing torch, seeding any RNG, or fitting. The
     job API uses it to refuse bad input with the sync route's 400 BEFORE
-    queueing; it is the same code, stopped early, so the two cannot drift."""
+    queueing; it is the same code, stopped early, so the two cannot drift.
+
+    `setup` is the campaign setup (`kalos.portal.setup_settings.analysis_setup`:
+    goal, user bounds, linear constraints, user target unit, hash). None (the
+    default) is today's behavior, byte-identical. Given, proposals honor it
+    (`setup_settings.plan_setup`), `best`/the incumbent follow the goal, and the
+    result gains `goal` and a `setup` block."""
     if not preflight_only:
         # Deferred: these transitively import torch/botorch/gpytorch (see the
         # module-level note above). This is the one place in this module that
@@ -603,6 +626,12 @@ def _analyze_body(
     bounds = design.bounds()
     cat_dims = design.cat_dims or None
     cat_cardinalities = design.cat_cardinalities or None
+    # Campaign setup (goal, user bounds, linear constraints): None = today's path.
+    setup_plan = None if setup is None else plan_setup(
+        setup, names=design.names, categorical=[str(c) for c in kept_cats], bounds=bounds,
+        target=str(target), converted=[str(c.column) for c in validation.conversions],
+    )
+    _minimize = setup_plan is not None and setup_plan.minimize
 
     # PART 2: constrained single-objective proposals. Fit a SECOND `Surrogate`
     # over the constraint column, on the SAME design/bounds/cat_dims the target
@@ -724,6 +753,8 @@ def _analyze_body(
     # which is often overconfident on small bioprocess datasets.
     resid = np.asarray(oof_a, float) - np.asarray(oof_p, float)
     conformal_q = round(q_from_residuals(resid, alpha=CONFORMAL_ALPHA), 4) if len(resid) else None
+    # Per-proposal normalized conformal (R4), same OOF set: analysis_parts/intervals.py.
+    interval_cal = calibrate_normalized(oof_a, oof_p, oof_s, INTERVAL_LEVELS)
 
     # Honest reliability verdict: only what this path can actually assess. The
     # spearman floor mirrors GatesConfig.min_spearman (kalos/core/gates.py); we do
@@ -882,6 +913,9 @@ def _analyze_body(
             else f"feasibility CV AUC too low to trust: auc={feas_auc:.3f} < {_gate_auc_floor}"
         )
     gated = feas_clf.fitted and n_infeasible >= GATE_MIN_N_INFEASIBLE and _auc_ok
+    if _minimize:  # the gate treats zero as failure: the wrong direction for a minimized target
+        _gate_fail_reasons.append("not applied: goal is minimize (the gate favors non-zero targets)")
+        gated = False
     gate_reason = (
         "; ".join(_gate_fail_reasons)
         if _gate_fail_reasons
@@ -1013,12 +1047,17 @@ def _analyze_body(
     # advance", not "how well-ranked is the whole held-out set" - Spearman can
     # look fine while the model gets exactly the recipes that matter out of
     # order (see `top_k_overlap`'s docstring). Computed on the same repeat-0
-    # pooled OOF everything else in this function reads off.
-    topk = top_k_overlap(oof_a, oof_p, CV_TOPK_K)
+    # pooled OOF everything else in this function reads off. The k recipes a
+    # client advances are the BEST ones for the goal: `top_k_overlap` ranks
+    # highest-first, so under goal=minimize both sides are negated (the k lowest).
+    _topk_sign = -1.0 if _minimize else 1.0
+    topk = top_k_overlap(_topk_sign * np.asarray(oof_a, float), _topk_sign * np.asarray(oof_p, float),
+                         CV_TOPK_K)
     cv_topk: dict[str, Any] = {
         "overlap": None if not topk["evaluable"] else round(float(topk["overlap"]), 3),
         "k": topk["k"],
         "n": topk["n"],
+        "direction": "lowest" if _minimize else "highest",
         "evaluable": bool(topk["evaluable"]),
         "reason": topk["reason"],
     }
@@ -1168,7 +1207,7 @@ def _analyze_body(
     # diagnostic only: nothing is transformed here, because silently changing the
     # target's scale would change every number the engine reports.
     het = heteroscedasticity_report(X, y, groups=recipe_key)
-    best_single = float(y.max())
+    best_single = float(y.min() if _minimize else y.max())
     best_reproducible: float | None = None
     replicate_aware = False
     incumbent = best_single
@@ -1178,7 +1217,7 @@ def _analyze_body(
     X_fit, y_fit = X, y
     if nr["n_replicated"] >= 1:
         Xf, yf, _yvar_g, n_reps_g = aggregate_replicates(X, y, groups=recipe_key)
-        best_reproducible = float(yf.max())
+        best_reproducible = float(yf.min() if _minimize else yf.max())
         sigma2 = nr["noise_var"]
         # Only swap in the reproducible objective when there are enough distinct
         # recipes to fit a meaningful GP and a real, positive noise floor to feed;
@@ -1215,9 +1254,12 @@ def _analyze_body(
     # `propose_batch` never returns two near-duplicate recipes (see its
     # docstring); on a design space with fewer than q distinct candidates the
     # batch comes back SHORT, and `proposal_notice` below says so.
-    proposal = propose_batch(
-        s,
-        bounds,
+    if setup_plan is not None and setup_plan.refused:
+        proposal = withheld_batch(setup_plan, q=5, d=X.shape[1])
+    else:
+        proposal = _propose_with_setup(propose_batch, setup_plan, dict(
+        surrogate=s,
+        bounds=bounds,
         q=5,
         cat_dims=cat_dims,
         cat_cardinalities=cat_cardinalities,
@@ -1232,13 +1274,21 @@ def _analyze_body(
         # PART 2: only ever passed when the constraint model actually fit.
         constraint_surrogate=constraint_surrogate if constraint_applied else None,
         constraint_floor=constraint_floor_val if constraint_applied else None,
-    )
-    batch = proposal.X
+    ), d=X.shape[1])
+    batch = proposal.X if setup_plan is None else setup_plan.post_check(proposal.X)
     show = [d["name"] for d in drv[:4]]
     show_idx = [d["_idx"] for d in drv[:4]]  # carry the feature index, not a name lookup
     for d in drv:
         d.pop("_idx", None)  # internal-only; not part of the returned API surface
-    p_mean, p_std = s.posterior(batch)
+    p_mean, p_std = s.posterior(batch) if len(batch) else (np.empty(0), np.empty(0))
+    if len(batch):
+        p_std_obs, sigma_source = proposal_predictive_std(
+            s, batch, p_std, float(nr["noise_var"]) if replicate_aware else None)
+    else:  # no proposals (e.g. a refused setup): nothing to put an interval on
+        p_std_obs = np.empty(0)
+        sigma_source = (
+            "latent_plus_assay_noise_floor" if replicate_aware else "surrogate_fitted_noise"
+        )
 
     # PART 1 per-proposal P(feasible), read off the SAME classifier that gated
     # (or did not gate) the batch above - `feas_clf` was fit on the full sheet
@@ -1246,14 +1296,16 @@ def _analyze_body(
     # was actually active (see `_annotate`'s docstring for why the ungated case
     # is `nan` here rather than a value nobody asked to trust).
     p_feasible_arr = (
-        feas_clf.predict_proba(batch) if gated else np.full(len(batch), np.nan)
+        feas_clf.predict_proba(batch) if gated and len(batch) else np.full(len(batch), np.nan)
     )
     # PART 2 predicted constraint value +/- sd for each proposed recipe, read
     # off the constraint surrogate before it is released below - `None` (both
     # here and in `_annotate`) unless the constraint was actually applied.
     constraint_pred: tuple[str, np.ndarray, np.ndarray] | None = None
     if constraint_applied and constraint_surrogate is not None:
-        c_mean, c_std = constraint_surrogate.posterior(batch)
+        c_mean, c_std = (
+            constraint_surrogate.posterior(batch) if len(batch) else (np.empty(0), np.empty(0))
+        )
         assert constraint_col is not None  # constraint_applied implies this was set
         constraint_pred = (constraint_col, c_mean, c_std)
 
@@ -1336,6 +1388,15 @@ def _analyze_body(
             viz_reasons["response_surface"] = _surf["reason"]
         else:
             response_surface = _surf
+
+    # R2: 1D slices of the same GP through the same reference point as the
+    # surface (kalos/portal/analysis_parts/slices.py). Model-only, gp_posterior band.
+    from kalos.portal.analysis_parts.slices import compute_slices
+    _sl = compute_slices(
+        s, X_fit, y_fit, cont_feats, kept_cats, cat_dims_map or {}, bounds, drv, replicate_aware,
+        incumbent=incumbent,
+    )
+    viz_reasons["slices"] = _sl["reason"]
 
     # Release the fitted GP(s) (hold torch/gpytorch tensors + parameter/prior
     # back-references that can form reference cycles refcounting alone won't
@@ -1443,6 +1504,8 @@ def _analyze_body(
         "conformal_q": conformal_q,
         # The band's ACTUAL coverage, so no consumer has to hardcode it.
         "conformal_coverage": round(1.0 - CONFORMAL_ALPHA, 4),
+        "interval_levels": [float(c) for c in INTERVAL_LEVELS],
+        "interval_method": interval_method_summary(interval_cal, sigma_source),
         # How the driver panel was selected and corrected, so the client can see
         # that many features were tested and only the strongest are shown.
         "driver_selection": {
@@ -1523,8 +1586,12 @@ def _analyze_body(
         "batch_diversity": proposal.diversity_report(),
         "proposals": _annotate(
             batch, p_mean, p_std, incumbent, cols=show_idx, design=design,
-            p_feasible=p_feasible_arr, constraint=constraint_pred,
+            p_feasible=p_feasible_arr, constraint=constraint_pred, minimize=_minimize,
             distance=nearest_training_distance(batch, X, bounds, cat_dims),
+            interval_fields=proposal_interval_fields(
+                p_mean, p_std, p_std_obs, interval_cal, INTERVAL_LEVELS, incumbent,
+                "best_reproducible_mean" if replicate_aware else "best_measured_single",
+                maximize=not _minimize),
         ),
         # Context for `proposals[].nearest_training_distance` (same metric): the
         # median distance from each training row to its nearest other row.
@@ -1553,6 +1620,8 @@ def _analyze_body(
         "embedding": embedding,
         "correlation": correlation,
         "response_surface": response_surface,
+        "slices": _sl["slices"],
+        "slices_skipped": _sl["slices_skipped"],
         "visualization_reasons": viz_reasons,
         # Numerical record of the proposal surrogate's fit (kalos/core/surrogate.py
         # `Surrogate.fit_diagnostics`): the Cholesky jitter rung and the largest
@@ -1561,7 +1630,15 @@ def _analyze_body(
         "seed": ANALYZE_SEED,
         "timestamp": int(time.time()),
         "engine_version": ENGINE_VERSION,
+        # Display unit of the target (VIZ_SPEC R6): user setup > header > none.
+        "target_unit": target_unit_block(
+            str(target),
+            user_target_unit if user_target_unit is not None
+            else (setup or {}).get("user_target_unit"),
+        ),
     }
+    if setup_plan is not None:
+        result.update(setup_plan.result_fields())  # `goal` + the `setup` block
     if anonymize:
         result = _anonymize_result(
             result,

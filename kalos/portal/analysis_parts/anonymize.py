@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping, Sequence
 
 from kalos.data.anonymizer import _hash
 from kalos.portal.analysis_parts.identifiers import _is_identifier_name
+from kalos.portal.analysis_parts.units import anonymize_target_unit
 from kalos.portal.uploads import ParsedUpload, UploadRejected, clip_name
 
 
@@ -54,6 +55,8 @@ def _anonymize_result(
         out["group_col"] = alias(out["group_col"])
     if isinstance(out.get("target"), str):
         out["target"] = alias(out["target"])
+    if isinstance(out.get("target_unit"), dict):
+        out["target_unit"] = anonymize_target_unit(out["target_unit"], alias)
     for key in ("targets", "features", "categorical_features", "proposal_features"):
         if isinstance(out.get(key), list):
             out[key] = [alias(str(c)) for c in out[key]]
@@ -91,6 +94,13 @@ def _anonymize_result(
         if isinstance(surf_out.get("fixed_recipe"), dict):
             surf_out["fixed_recipe"] = alias_recipe(surf_out["fixed_recipe"])
         out["response_surface"] = surf_out
+    if isinstance(out.get("slices"), list):
+        out["slices"] = [_alias_slice(sl, alias, alias_recipe) for sl in out["slices"]]
+    if isinstance(out.get("slices_skipped"), list):
+        out["slices_skipped"] = [
+            {**e, "feature": alias(str(e["feature"]))} if isinstance(e, dict) and "feature" in e else e
+            for e in out["slices_skipped"]
+        ]
     out["provenance"] = [
         {**row, "name": alias(row["name"])} for row in out.get("provenance", [])
     ]
@@ -112,6 +122,10 @@ def _anonymize_result(
     out["design_box_exclusions"] = [
         _alias_named_row(e, alias) for e in out.get("design_box_exclusions", [])
     ]
+    if isinstance(out.get("setup"), dict):
+        from kalos.portal.setup_settings import anonymize_setup_block
+
+        out["setup"] = anonymize_setup_block(out["setup"], alias)
     if isinstance(out.get("auto_categorical"), list):
         out["auto_categorical"] = [alias(str(c)) for c in out["auto_categorical"]]
     drops = out.get("data_drops")
@@ -190,6 +204,21 @@ def anonymize_rejection(rej: UploadRejected) -> UploadRejected:
         if aliased != name:
             message = message.replace(repr(clip_name(name)), repr(aliased))
     return UploadRejected(message, code=rej.code, context=context)
+
+
+def _alias_slice(
+    sl: object, alias: Callable[[str], str], alias_recipe: Callable[[object], object]
+) -> object:
+    """Alias a `slices[]` entry: its `feature` and its `reference.recipe`."""
+    if not isinstance(sl, dict):
+        return sl
+    out = dict(sl)
+    if isinstance(out.get("feature"), str):
+        out["feature"] = alias(out["feature"])
+    ref = out.get("reference")
+    if isinstance(ref, dict):
+        out["reference"] = {**ref, "recipe": alias_recipe(ref.get("recipe"))}
+    return out
 
 
 def _alias_named_row(row: dict, alias: Callable[[str], str]) -> dict:

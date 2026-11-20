@@ -273,9 +273,9 @@ async def reanalyze_campaign(
 async def _reanalyze(
     store: CampaignStore, principal: Principal, campaign_id: str | None = None
 ) -> JSONResponse:
-    from kalos.domains import BIOPROCESS_PROFILE
     from kalos.portal.app import _analyze
     from kalos.portal.pipeline import attach_reanalyze_run
+    from kalos.portal.reanalyze_job import reanalyze_analysis_kwargs
 
     tenant = principal.tenant
     # Transactional re-analyze (docs/CAMPAIGN_LOOP.md): plan the fold in memory,
@@ -293,16 +293,9 @@ async def _reanalyze(
         log.warning("reanalyze rejected: %s", exc)
         return JSONResponse({"error": str(exc), "code": "invalid_request"}, status_code=400)
 
-    # Runs still in the incubator. They have no outcome to fold, so they never
-    # reach `df`; passed separately they keep the next batch from re-proposing an
-    # experiment already underway.
-    awaiting = store.awaiting_recipes(tenant=tenant, campaign_id=campaign_id)
-    # Privacy setting: a re-analysis keeps the anonymize setting of the analysis
-    # it replaces (the campaign does not store the flag itself). Without this a
-    # re-analysis of an anonymized upload would publish the real column names.
-    previous = store.load_analysis(tenant=tenant, campaign_id=campaign_id) or {}
-    previous_run = previous.get("run")
-    anonymize = bool(isinstance(previous_run, dict) and previous_run.get("anonymize"))
+    # profile, the awaiting recipes (`pending`) and the carried-over `anonymize`
+    # flag: built in one place for this route and the background job.
+    analysis_kwargs = reanalyze_analysis_kwargs(store, tenant, campaign_id)
 
     if df.empty:
         log.warning("reanalyze rejected: campaign has no base rows to analyze")
@@ -313,10 +306,7 @@ async def _reanalyze(
         # reanalyze racing an upload - or another reanalyze - gets an honest
         # 503 instead of contending for the CPU with an unfinished fit.
         result = await run_in_slot(
-            functools.partial(
-                _analyze, df, target, profile=BIOPROCESS_PROFILE, pending=awaiting,
-                anonymize=anonymize,
-            ),
+            functools.partial(_analyze, df, target, **analysis_kwargs),
             tenant=tenant,
         )
     except AnalysisBusy as busy:
@@ -343,7 +333,10 @@ async def _reanalyze(
 
     # The provenance block (kind=reanalyze): the same fields an upload gets, so
     # the record of a campaign's current analysis says what produced it.
-    result = attach_reanalyze_run(df, result, anonymize=anonymize, pending_runs=len(awaiting))
+    result = attach_reanalyze_run(
+        df, result, anonymize=analysis_kwargs["anonymize"],
+        pending_runs=len(analysis_kwargs["pending"]),
+    )
 
     try:
         # The fold and the analysis that describes it, in one transaction.
