@@ -239,6 +239,23 @@ def _store_error(exc: CampaignError) -> JSONResponse:
     return campaign_error_response(exc)
 
 
+def _resolve_for_audit(
+    store: CampaignStore, principal: Principal, action: str, campaign_id: str,
+) -> JSONResponse | None:
+    """Resolve the campaign BEFORE anything is audited under its id: a refusal
+    for a missing or foreign campaign is audited with `campaign_id=None`, so
+    probe input never lands in this tenant's audit log (the
+    `kalos.portal.campaigns_api._audit` rule). Returns the error response, or
+    None when the id is one of the caller's campaigns."""
+    try:
+        store.campaign_info(tenant=principal.tenant, campaign_id=campaign_id)
+    except CampaignError as exc:
+        response = _store_error(exc)
+        _audit(store, principal, action, response.status_code, None)
+        return response
+    return None
+
+
 # --- routes ------------------------------------------------------------------- #
 
 
@@ -272,6 +289,8 @@ def put_stages(
     if not _valid_campaign_id(campaign_id):
         _audit(store, principal, action, 404, None)
         return campaign_not_found_response()
+    if (refused := _resolve_for_audit(store, principal, action, campaign_id)) is not None:
+        return refused
     try:
         doc = validate_stages([s.model_dump() for s in body.stages], body.current_stage)
     except StageValidationError as exc:
@@ -352,6 +371,8 @@ def put_gate_decision(
     if not _valid_campaign_id(campaign_id):
         _audit(store, principal, action, 404, None)
         return campaign_not_found_response()
+    if (refused := _resolve_for_audit(store, principal, action, campaign_id)) is not None:
+        return refused
     try:
         recorded = record_decision(
             store, tenant=principal.tenant, campaign_id=campaign_id, gate=gate,

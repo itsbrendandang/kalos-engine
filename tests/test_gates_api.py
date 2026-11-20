@@ -614,3 +614,27 @@ def test_stage_label_format_characters_refused(env, label):
     assert r.status_code == 400 and r.json()["code"] == "invalid_label"
     assert label not in r.text
     assert tc.get(f"/api/campaigns/{cid}/stages", headers=H("a-read")).json()["source"] == "default"
+
+
+def test_refusals_before_the_campaign_resolves_never_audit_its_id(env):
+    """NIT: a 400 for a body that fails validation used to be audited with the
+    caller-supplied campaign id before the campaign was resolved, so a foreign
+    or missing id landed in this tenant's audit log. The campaign is resolved
+    first: foreign/missing answers 404 audited with campaign_id NULL; only an
+    own campaign's refusals carry its id."""
+    tc, store = env
+    own = _cid(store)
+    b_cid = _cid(store, "globex", B_SECRET)
+    missing = "cmp_" + uuid.uuid4().hex
+    bad_stages = _stages_body(current_stage="NOPE")
+    for cid in (b_cid, missing):
+        r = tc.put(f"/api/campaigns/{cid}/stages", headers=H("a-write"), json=bad_stages)
+        assert r.status_code == 404 and r.json() == {"error": "campaign not found", "code": "not_found"}
+        r = _decide(tc, cid, note="bidi \u202e override")  # refused by the handler (N5)
+        assert r.status_code == 404, r.text
+    rows = [a for a in _audit_rows(store, "acme") if a[0].startswith("campaign.")]
+    assert rows and all(a[4] is None for a in rows), rows
+    assert tc.put(f"/api/campaigns/{own}/stages", headers=H("a-write"), json=bad_stages).status_code == 400
+    assert _audit_rows(store, "acme")[-1][1:5:3] == ("http_400", own)
+    assert _decide(tc, own, note="bidi \u202e override").status_code == 400
+    assert _audit_rows(store, "acme")[-1][1:5:3] == ("http_400", own)

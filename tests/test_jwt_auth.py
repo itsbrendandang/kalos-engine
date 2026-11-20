@@ -510,7 +510,10 @@ def test_jwks_file_is_not_reparsed_when_unchanged(keys, monkeypatch):
     assert calls == []
 
 
-_K = _jwk(Ed25519PrivateKey.generate(), "kx")
+# A fixed key, not a random one: the parameter values below become test ids, and
+# pytest-xdist workers must all collect the same ids (a key generated at import
+# differs per worker and aborts `pytest -n` at collection).
+_K = _jwk(Ed25519PrivateKey.from_private_bytes(bytes(range(32))), "kx")
 
 
 @pytest.mark.parametrize("bad", [

@@ -209,7 +209,7 @@
     "method": "GET",
     "path": "/api/campaigns/{campaign_id}/operating-ranges",
     "scopes": [
-      "read"
+      "write"
     ],
     "auth": "required"
   },
