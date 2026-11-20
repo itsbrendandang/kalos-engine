@@ -1,0 +1,11 @@
+{
+ "request": "GET /api/campaigns/cmp_00000000000000000000000000000000",
+ "status": 404,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "error": "campaign not found",
+  "code": "not_found"
+ }
+}

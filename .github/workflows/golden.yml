@@ -1,0 +1,87 @@
+name: golden oracle
+
+# Reorg guard R02 (scripts/golden.py, tests/golden/oracle.py). The engine's
+# output on a fixed scenario (analysis, campaign fold, scale readout, ~70 HTTP
+# calls) is computed for the BASE commit and for this commit on the SAME runner
+# and compared byte for byte. Same-runner because CI runners differ in CPU, and
+# float results move with the CPU even with the BLAS and torch kernels pinned.
+# A behaviour-preserving change (every reorg move) leaves every byte as it is.
+# A change meant to move numbers or wording DECLARES it in the same PR by
+# editing tests/golden/ (scripts/golden.py record --reason "...", which logs the
+# reason in tests/golden/CHANGES.md); the diff is printed either way and
+# uploaded as the `golden-diff` artifact.
+on:
+  push:
+    branches: [main]
+    paths-ignore: &docs-only
+      - "BENCHMARK.md"
+      - "CHANGELOG.md"
+      - "SECURITY.md"
+      - "TODOS.md"
+      - "VALIDATION.md"
+      - "LICENSE"
+  pull_request:
+    paths-ignore: *docs-only
+  workflow_dispatch:
+
+concurrency:
+  group: golden-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  OMP_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  KALOS_TORCH_THREADS: "1"
+  UV_TORCH_BACKEND: cpu
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  golden:
+    name: golden oracle (byte-identical to base)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          prune-cache: false
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+      - name: Create a venv and install the locked versions (same as ci.yml)
+        run: |
+          uv venv --python "$PYTHON_VERSION" .venv
+          uv export --frozen --extra ml --extra portal --extra bench --extra dev \
+            --no-emit-project --no-hashes -o "$RUNNER_TEMP/constraints.txt"
+          uv pip install -e ".[ml,portal,bench,dev]" -c "$RUNNER_TEMP/constraints.txt"
+          uv pip show torch numpy botorch | grep -E '^(Name|Version)'
+      - name: Check out the base commit
+        id: base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          base="$BASE_SHA"
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then base="$(git rev-parse HEAD^1)"; fi
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+          if git diff --name-only "$base" HEAD -- tests/golden/ | grep -q .; then
+            echo "declared=--declared" >> "$GITHUB_OUTPUT"
+            echo "this change edits tests/golden/: an output change is declared"
+          fi
+      - name: golden check (base ${{ steps.base.outputs.sha }} vs head, this runner)
+        run: >
+          uv run --no-sync python scripts/golden.py differential
+          --base-tree "$RUNNER_TEMP/base" --actual "$RUNNER_TEMP/golden-diff"
+          --summary-json "$RUNNER_TEMP/golden-diff/SUMMARY.json" ${{ steps.base.outputs.declared }}
+      - name: Upload both outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-diff
+          path: ${{ runner.temp }}/golden-diff
+          if-no-files-found: ignore
+          retention-days: 14

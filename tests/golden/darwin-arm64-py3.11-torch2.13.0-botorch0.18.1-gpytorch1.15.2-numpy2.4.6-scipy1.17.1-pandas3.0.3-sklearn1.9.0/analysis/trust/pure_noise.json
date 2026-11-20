@@ -1,0 +1,3644 @@
+{
+ "n": 20,
+ "d": 3,
+ "target": "titer",
+ "group_col": null,
+ "targets": [
+  "titer"
+ ],
+ "features": [
+  "feed_a",
+  "feed_b",
+  "temp_offset"
+ ],
+ "categorical_features": [],
+ "n_dropped_incomplete": 0,
+ "n_censored_excluded": 0,
+ "data_drops": {
+  "rows_dropped": 0,
+  "censored_rows_excluded": 0,
+  "cells_by_reason": {
+   "missing": 0,
+   "non_numeric": 0,
+   "censored": 0
+  },
+  "cells_by_column": {},
+  "blank_cells_as_absent": {}
+ },
+ "auto_categorical": [],
+ "header_row": null,
+ "proposal_optimizer": "continuous",
+ "n_pending_considered": 0,
+ "n_pending_dropped": 0,
+ "cv_spearman": -0.248,
+ "cv_ci95": [
+  -0.806,
+  0.178
+ ],
+ "cv_n_groups": 20,
+ "cv_grouping": {
+  "used": {
+   "basis": "replicate_clusters",
+   "column": null,
+   "n_groups": 20
+  },
+  "candidates": [
+   {
+    "basis": "replicate_clusters",
+    "column": null,
+    "n_groups": 20,
+    "evaluable": true,
+    "spearman": -0.248,
+    "ci95": [
+     -0.806,
+     0.178
+    ],
+    "reason": null,
+    "used": true
+   }
+  ],
+  "rule": "every evaluable grouping (replicate clusters or the declared group, plus batch, lot, plate, date, round and scale columns and campaign rounds) is cross-validated; the lowest held-out Spearman drives cv_spearman, the reliability verdict and the conformal calibration",
+  "replicate_tolerance": 0.05,
+  "n_exact_recipes": 20,
+  "n_replicate_clusters": 20,
+  "min_groups": 3,
+  "warnings": []
+ },
+ "cv_n_repeats": 2,
+ "cv_spearman_per_repeat": [
+  -0.248,
+  -0.595
+ ],
+ "conformal_q": 2.1883,
+ "conformal_coverage": 0.9,
+ "interval_levels": [
+  0.9,
+  0.95
+ ],
+ "interval_method": {
+  "method": "conformal_selection_aware",
+  "method_by_level": {
+   "0.9": "conformal_selection_aware",
+   "0.95": "conformal_selection_aware"
+  },
+  "selection_aware": {
+   "method": "conformal_selection_aware",
+   "top_fraction": 0.3,
+   "sigma_floor_quantile": 0.9,
+   "sigma_floor": 1.0965,
+   "n_selected": 20,
+   "n_pooled": 40,
+   "levels": [
+    {
+     "coverage": 0.9,
+     "n_selected": 20,
+     "n_pooled": 40,
+     "available": true,
+     "q_sel": 3.1954,
+     "rank": 19
+    },
+    {
+     "coverage": 0.95,
+     "n_selected": 20,
+     "n_pooled": 40,
+     "available": true,
+     "q_sel": 3.8988,
+     "rank": 20
+    }
+   ],
+   "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+   "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+   "selection": "in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the fold model ranked best (highest prediction; lowest when minimizing)",
+   "coverage_guarantee": "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are correlated; the coverage at proposals is measured in simulation and shipped with the band"
+  },
+  "calibrated_on": "grouped_cv_oof",
+  "coverage_basis": "held_out_past_runs",
+  "coverage_at_proposals": {
+   "0.9": {
+    "code": "coverage_measured_at_proposals",
+    "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed).",
+    "coverage_at_proposals_estimate": {
+     "nominal": 0.9,
+     "measured_min": 0.92,
+     "measured_max": 0.99,
+     "by_scenario": {
+      "hartmann6_n30": 0.935,
+      "hartmann6_n80": 0.94,
+      "bioprocess_n40": 0.92,
+      "bioprocess_n100": 0.99,
+      "heteroscedastic_n40": 0.96
+     },
+     "basis": "simulation",
+     "source": {
+      "kind": "simulation",
+      "benchmark": "python -m kalos.bench.coverage_at_proposals",
+      "results": "benchmarks/results/coverage_at_proposals_after.json",
+      "doc": "VALIDATION.md#interval-coverage-at-proposals",
+      "scenarios": [
+       "hartmann6_n30",
+       "hartmann6_n80",
+       "bioprocess_n40",
+       "bioprocess_n100",
+       "heteroscedastic_n40"
+      ],
+      "seeds_per_scenario": 40,
+      "proposals_per_seed": 5,
+      "measurement": "one fresh simulated measurement per proposal",
+      "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)"
+     }
+    }
+   },
+   "0.95": {
+    "code": "coverage_measured_at_proposals",
+    "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed).",
+    "coverage_at_proposals_estimate": {
+     "nominal": 0.95,
+     "measured_min": 0.965,
+     "measured_max": 0.995,
+     "by_scenario": {
+      "hartmann6_n30": 0.97,
+      "hartmann6_n80": 0.97,
+      "bioprocess_n40": 0.965,
+      "bioprocess_n100": 0.995,
+      "heteroscedastic_n40": 0.995
+     },
+     "basis": "simulation",
+     "source": {
+      "kind": "simulation",
+      "benchmark": "python -m kalos.bench.coverage_at_proposals",
+      "results": "benchmarks/results/coverage_at_proposals_after.json",
+      "doc": "VALIDATION.md#interval-coverage-at-proposals",
+      "scenarios": [
+       "hartmann6_n30",
+       "hartmann6_n80",
+       "bioprocess_n40",
+       "bioprocess_n100",
+       "heteroscedastic_n40"
+      ],
+      "seeds_per_scenario": 40,
+      "proposals_per_seed": 5,
+      "measurement": "one fresh simulated measurement per proposal",
+      "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)"
+     }
+    }
+   }
+  },
+  "gp_coverage_at_proposals": {
+   "0.9": {
+    "nominal": 0.9,
+    "measured_min": 0.5,
+    "measured_max": 0.725,
+    "by_scenario": {
+     "hartmann6_n30": 0.5,
+     "hartmann6_n80": 0.57,
+     "bioprocess_n40": 0.635,
+     "bioprocess_n100": 0.725,
+     "heteroscedastic_n40": 0.53
+    },
+    "basis": "simulation",
+    "source": {
+     "kind": "simulation",
+     "benchmark": "python -m kalos.bench.coverage_at_proposals",
+     "results": "benchmarks/results/coverage_at_proposals_before.json",
+     "doc": "VALIDATION.md#interval-coverage-at-proposals",
+     "scenarios": [
+      "hartmann6_n30",
+      "hartmann6_n80",
+      "bioprocess_n40",
+      "bioprocess_n100",
+      "heteroscedastic_n40"
+     ],
+     "seeds_per_scenario": 40,
+     "proposals_per_seed": 5,
+     "measurement": "one fresh simulated measurement per proposal"
+    }
+   },
+   "0.95": {
+    "nominal": 0.95,
+    "measured_min": 0.525,
+    "measured_max": 0.775,
+    "by_scenario": {
+     "hartmann6_n30": 0.525,
+     "hartmann6_n80": 0.61,
+     "bioprocess_n40": 0.655,
+     "bioprocess_n100": 0.775,
+     "heteroscedastic_n40": 0.585
+    },
+    "basis": "simulation",
+    "source": {
+     "kind": "simulation",
+     "benchmark": "python -m kalos.bench.coverage_at_proposals",
+     "results": "benchmarks/results/coverage_at_proposals_before.json",
+     "doc": "VALIDATION.md#interval-coverage-at-proposals",
+     "scenarios": [
+      "hartmann6_n30",
+      "hartmann6_n80",
+      "bioprocess_n40",
+      "bioprocess_n100",
+      "heteroscedastic_n40"
+     ],
+     "seeds_per_scenario": 40,
+     "proposals_per_seed": 5,
+     "measurement": "one fresh simulated measurement per proposal"
+    }
+   }
+  },
+  "score": "abs(y - mu_oof) / sigma_oof",
+  "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
+  "sigma": "gp_predictive_sd",
+  "sigma_source": "surrogate_fitted_noise",
+  "n_calibration": 20,
+  "coverage_guarantee": "approximate: out-of-fold scores come from grouped-CV fold models and are not exactly exchangeable with a proposal from the full-data model",
+  "empirical_oof_coverage_note": "in-sample: counted on the same scores that set q_norm, so it is >= rank / n by construction; coverage_by_sigma_half shows whether the band adapts to the model's sd",
+  "levels": [
+   {
+    "coverage": 0.9,
+    "available": true,
+    "q_norm": 2.5819,
+    "rank": 19,
+    "n_calibration": 20,
+    "empirical_oof_coverage": 0.95,
+    "n_inside": 19,
+    "coverage_by_sigma_half": {
+     "low_sigma": {
+      "n": 10,
+      "coverage": 0.9
+     },
+     "high_sigma": {
+      "n": 10,
+      "coverage": 1.0
+     }
+    }
+   },
+   {
+    "coverage": 0.95,
+    "available": true,
+    "q_norm": 3.1516,
+    "rank": 20,
+    "n_calibration": 20,
+    "empirical_oof_coverage": 1.0,
+    "n_inside": 20,
+    "coverage_by_sigma_half": {
+     "low_sigma": {
+      "n": 10,
+      "coverage": 1.0
+     },
+     "high_sigma": {
+      "n": 10,
+      "coverage": 1.0
+     }
+    }
+   }
+  ],
+  "gp_posterior": {
+   "gp_intervals": "observation (latent + observation noise), one new measurement",
+   "quantiles": "observation (latent + observation noise), one new measurement",
+   "expected_improvement": "latent mean (no observation noise)",
+   "p_improve": "latent mean (no observation noise): P(the model's mean beats the incumbent), not P(one new measurement beats it)",
+   "incumbent": "the value the proposal annotation compares against (best single measurement, or best replicate-averaged recipe mean when the replicate-aware surrogate proposed); analytic EI is reported for ranking context, the batch itself was chosen by qLogNEI",
+   "note": "model-based, not held-out calibrated"
+  }
+ },
+ "conformal_caveat": {
+  "code": "coverage_not_guaranteed",
+  "coverage_basis": "held_out_past_runs",
+  "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 90% range covered only 68-83%.",
+  "caveat_code": "coverage_lower_at_proposals",
+  "coverage_at_proposals_estimate": {
+   "nominal": 0.9,
+   "measured_min": 0.68,
+   "measured_max": 0.83,
+   "by_scenario": {
+    "hartmann6_n30": 0.68,
+    "hartmann6_n80": 0.765,
+    "bioprocess_n40": 0.79,
+    "bioprocess_n100": 0.83,
+    "heteroscedastic_n40": 0.765
+   },
+   "basis": "simulation",
+   "source": {
+    "kind": "simulation",
+    "benchmark": "python -m kalos.bench.coverage_at_proposals",
+    "results": "benchmarks/results/coverage_at_proposals_before.json",
+    "doc": "VALIDATION.md#interval-coverage-at-proposals",
+    "scenarios": [
+     "hartmann6_n30",
+     "hartmann6_n80",
+     "bioprocess_n40",
+     "bioprocess_n100",
+     "heteroscedastic_n40"
+    ],
+    "seeds_per_scenario": 40,
+    "proposals_per_seed": 5,
+    "measurement": "one fresh simulated measurement per proposal"
+   }
+  }
+ },
+ "driver_selection": {
+  "n_tested": 3,
+  "n_reported": 3,
+  "top_k": 8,
+  "fdr_method": "benjamini_hochberg",
+  "fdr_q": 0.05,
+  "n_bootstrap": 200,
+  "ranked_by": "abs_rho",
+  "unit": "recipe",
+  "n_units": 20,
+  "n_rows": 20
+ },
+ "reliability": {
+  "spearman": -0.248,
+  "ci95": [
+   -0.806,
+   0.178
+  ],
+  "spearman_floor": 0.2,
+  "clears_floor": false,
+  "clears_floor_rule": "held-out Spearman >= 0.2 AND the lower end of its 95% interval > 0, judged only with at least 12 runs and 3 CV groups",
+  "judged": true,
+  "verdict": "below_floor",
+  "not_judged_reason": null,
+  "producer_spearman": -0.248,
+  "producer_clears_floor": false,
+  "n_producers": 20,
+  "producer_threshold": 0.0,
+  "ci_excludes_zero": false,
+  "calibration": {
+   "available": true,
+   "reason": null,
+   "n": 20,
+   "judgeable": true,
+   "judgement": null,
+   "judge_min_n": 20,
+   "ece": 0.125,
+   "z_std": 1.4066,
+   "levels": [
+    {
+     "nominal": 0.5,
+     "empirical": 0.3
+    },
+    {
+     "nominal": 0.8,
+     "empirical": 0.65
+    },
+    {
+     "nominal": 0.9,
+     "empirical": 0.85
+    },
+    {
+     "nominal": 0.95,
+     "empirical": 0.85
+    }
+   ]
+  },
+  "unmodeled": [
+   "feasibility probability",
+   "scale-up transfer"
+  ],
+  "space_filling_advice": "The model has not yet shown it can rank unseen runs (CV Spearman below the 0.2 floor, its 95% interval reaching 0, or too few runs to judge), so this batch explores rather than exploits. On data like this a space-filling design (e.g. Latin hypercube) is expected to do about as well; the model's advantage appears once it clears the floor."
+ },
+ "promotion": {
+  "passed": false,
+  "failures": [
+   "surrogate_spearman=-0.248 < min 0.2"
+  ],
+  "metrics": {
+   "surrogate_spearman": -0.24812030075187969
+  },
+  "summary": "GATES FAILED: surrogate_spearman=-0.248 < min 0.2 (not judged: feasibility_auc: not applicable: too few non-producing runs (0 non-producing runs, need 5); ece: not applicable: too few non-producing runs (0 non-producing runs, need 5); brier: not applicable: too few non-producing runs (0 non-producing runs, need 5); group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)",
+  "not_judged": [
+   "feasibility_auc: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
+   "ece: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
+   "brier: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
+   "group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor"
+  ],
+  "status": "failed",
+  "unmeasured": [],
+  "meaning": "passed=false means \"not yet shown fit to promote\", which includes the case where a required metric is unmeasurable on this data (e.g. an all-producer sheet with no non-producers to score feasibility against). It is not a rejection of the analysis."
+ },
+ "verdict": {
+  "state": "not_yet",
+  "code": "not-yet",
+  "headline": "Kalos cannot yet show that it puts your past runs in the right order, so its suggestions are closer to guesses.",
+  "reasons": [
+   {
+    "code": "surrogate_spearman",
+    "plain": "The model put past runs it had not seen in the right order too rarely."
+   }
+  ],
+  "ordering": {
+   "state": "weak",
+   "plain": "The model put past runs it had not seen in the right order too rarely."
+  },
+  "range_width": {
+   "state": "too_narrow",
+   "code": "bands_narrow",
+   "plain": "The likely range is too narrow: fewer results land inside it than it promises."
+  },
+  "n_runs": 20,
+  "min_runs": 20,
+  "n_groups": 20,
+  "min_groups": 8,
+  "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else."
+ },
+ "refusal": null,
+ "proposal_gating": {
+  "gated": false,
+  "reason": "feasibility classifier did not fit (cold-start fallback: too few non-producer examples to train on); not zero-inflated enough: n_infeasible=0 < 5; feasibility CV AUC not measurable on this sheet",
+  "n_infeasible": 0,
+  "feasibility_auc": null,
+  "threshold": 0.0
+ },
+ "constraint": {
+  "column": null,
+  "floor": null,
+  "n_rows_with_value": 0,
+  "applied": false,
+  "reason": "no constraint requested"
+ },
+ "cv_logo": {
+  "spearman": null,
+  "n_groups": null,
+  "n_oof": null,
+  "reason": "no declared/detected group column; leave-one-group-out over the recipe-hash fallback would just be a costlier copy of the grouped CV already reported as cv_spearman"
+ },
+ "cv_topk": {
+  "overlap": 0.2,
+  "k": 5,
+  "n": 20,
+  "direction": "highest",
+  "evaluable": true,
+  "reason": null
+ },
+ "cv_group_mean_baseline": {
+  "spearman": null,
+  "n_evaluable": 0,
+  "n_groups_used": 0,
+  "interpretation": null,
+  "reason": "only 0 recipes have 2+ rows; need at least 5 to compute a group-mean floor",
+  "margin": {
+   "evaluable": false,
+   "passed": null,
+   "reason": "only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor"
+  }
+ },
+ "best": 6.64,
+ "noise": {
+  "n_recipes": 20,
+  "n_replicated": 0,
+  "replicate_aware": false,
+  "icc": null,
+  "n_exact_duplicates": 0,
+  "noise_sd": null,
+  "signal_sd": 1.0308,
+  "best_single": 6.64,
+  "best_reproducible": null,
+  "scale": {
+   "variance_mean_rho": null,
+   "homoscedastic": null,
+   "icc_raw": null,
+   "icc_log": null,
+   "icc_gain": null,
+   "log_offset": null,
+   "suggests_transform": false,
+   "reason": "only 0 replicated recipe(s); at least 4 are needed to relate within-recipe variance to recipe mean"
+  }
+ },
+ "alternative_scale": {
+  "scale": null,
+  "offset": null,
+  "cv_spearman": null,
+  "cv_ci95": null,
+  "calibration": null,
+  "icc": null,
+  "interpretation": null,
+  "reason": "only 0 replicated recipe(s); at least 4 are needed to relate within-recipe variance to recipe mean"
+ },
+ "drivers": [
+  {
+   "name": "temp_offset",
+   "rho": 0.328,
+   "ci95": [
+    -0.257,
+    0.763
+   ],
+   "p": 0.158244,
+   "ci_excludes_zero": false,
+   "survives_fdr": false,
+   "significant": false
+  },
+  {
+   "name": "feed_b",
+   "rho": -0.241,
+   "ci95": [
+    -0.617,
+    0.152
+   ],
+   "p": 0.306861,
+   "ci_excludes_zero": false,
+   "survives_fdr": false,
+   "significant": false
+  },
+  {
+   "name": "feed_a",
+   "rho": 0.212,
+   "ci95": [
+    -0.244,
+    0.567
+   ],
+   "p": 0.369486,
+   "ci_excludes_zero": false,
+   "survives_fdr": false,
+   "significant": false
+  }
+ ],
+ "gp_shapes": {
+  "available": false,
+  "reason": "out-of-fold Spearman (-0.248) does not clear the 0.20 floor, so this model has not shown it can predict held-out runs and the shape of its fitted response is not a finding",
+  "swept_at": "<volatile>",
+  "n_features": 3,
+  "features": [],
+  "unmodeled": [
+   "causation (these are associations in an observational fit, not causal effects)",
+   "the response away from the incumbent (each shape holds along one axis, with the other features fixed at the best observed run)",
+   "combinations never actually observed together",
+   "scale-up transfer"
+  ]
+ },
+ "proposal_features": [
+  "temp_offset",
+  "feed_b",
+  "feed_a"
+ ],
+ "feature_ranges": {
+  "feed_a": [
+   0.0824,
+   0.9848
+  ],
+  "feed_b": [
+   0.0026,
+   0.9928
+  ],
+  "temp_offset": [
+   0.0017,
+   0.9465
+  ]
+ },
+ "proposal_notice": null,
+ "batch_diversity": {
+  "requested": 5,
+  "returned": 5,
+  "near_duplicates_replaced": 1,
+  "min_separation": 0.05,
+  "metric": "max over continuous factors of |difference| / factor range; any differing categorical level counts as fully distinct"
+ },
+ "proposals": [
+  {
+   "pred": 6.32,
+   "std": 0.617,
+   "mode": "explore",
+   "reason": "diversifies the batch (predicted 6.32, ±0.617)",
+   "vals": [
+    0.611,
+    0.501,
+    0.78
+   ],
+   "recipe": {
+    "feed_a": 0.78,
+    "feed_b": 0.501,
+    "temp_offset": 0.611
+   },
+   "p_feasible": null,
+   "nearest_training_distance": 0.3031,
+   "predictive_std": 0.6222,
+   "intervals": [
+    {
+     "coverage": 0.9,
+     "method": "conformal_selection_aware",
+     "calibrated_on": "grouped_cv_oof_top_ranked",
+     "n_calibration": 20,
+     "coverage_basis": "held_out_top_ranked_runs",
+     "caveat": {
+      "code": "coverage_measured_at_proposals",
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed).",
+      "coverage_at_proposals_estimate": {
+       "nominal": 0.9,
+       "measured_min": 0.92,
+       "measured_max": 0.99,
+       "basis": "simulation",
+       "source": "interval_method.coverage_at_proposals.0.9",
+       "benchmark": "python -m kalos.bench.coverage_at_proposals"
+      }
+     },
+     "available": true,
+     "lo": 2.8165,
+     "hi": 9.8241,
+     "q_sel": 3.1954,
+     "sigma_floor": 1.0965,
+     "sigma_used": 1.0965
+    },
+    {
+     "coverage": 0.95,
+     "method": "conformal_selection_aware",
+     "calibrated_on": "grouped_cv_oof_top_ranked",
+     "n_calibration": 20,
+     "coverage_basis": "held_out_top_ranked_runs",
+     "caveat": {
+      "code": "coverage_measured_at_proposals",
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed).",
+      "coverage_at_proposals_estimate": {
+       "nominal": 0.95,
+       "measured_min": 0.965,
+       "measured_max": 0.995,
+       "basis": "simulation",
+       "source": "interval_method.coverage_at_proposals.0.95",
+       "benchmark": "python -m kalos.bench.coverage_at_proposals"
+      }
+     },
+     "available": true,
+     "lo": 2.0452,
+     "hi": 10.5954,
+     "q_sel": 3.8988,
+     "sigma_floor": 1.0965,
+     "sigma_used": 1.0965
+    }
+   ],
+   "gp_intervals": [
+    {
+     "coverage": 0.9,
+     "method": "gp_posterior",
+     "posterior": "observation",
+     "note": "model-based, not held-out calibrated",
+     "coverage_basis": "model_based",
+     "coverage_at_proposals_estimate": {
+      "nominal": 0.9,
+      "measured_min": 0.5,
+      "measured_max": 0.725,
+      "basis": "simulation",
+      "source": "interval_method.gp_coverage_at_proposals",
+      "benchmark": "python -m kalos.bench.coverage_at_proposals"
+     },
+     "available": true,
+     "lo": 5.2969,
+     "hi": 7.3437
+    },
+    {
+     "coverage": 0.95,
+     "method": "gp_posterior",
+     "posterior": "observation",
+     "note": "model-based, not held-out calibrated",
+     "coverage_basis": "model_based",
+     "coverage_at_proposals_estimate": {
+      "nominal": 0.95,
+      "measured_min": 0.525,
+      "measured_max": 0.775,
+      "basis": "simulation",
+      "source": "interval_method.gp_coverage_at_proposals",
+      "benchmark": "python -m kalos.bench.coverage_at_proposals"
+     },
+     "available": true,
+     "lo": 5.1008,
+     "hi": 7.5398
+    }
+   ],
+   "quantiles": {
+    "basis": "gp_posterior",
+    "posterior": "observation",
+    "note": "model-based, not held-out calibrated",
+    "coverage_basis": "model_based",
+    "p05": 5.2969,
+    "p25": 5.9006,
+    "p50": 6.3203,
+    "p75": 6.74,
+    "p95": 7.3437
+   },
+   "expected_improvement": {
+    "value": 0.1185,
+    "method": "analytic_ei_gp_posterior",
+    "incumbent": 6.64,
+    "incumbent_basis": "best_measured_single",
+    "maximize": true,
+    "basis": "model",
+    "posterior": "latent",
+    "note": "model-based, not held-out calibrated",
+    "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent"
+   },
+   "p_improve": {
+    "value": 0.302,
+    "method": "gp_posterior_cdf",
+    "incumbent": 6.64,
+    "incumbent_basis": "best_measured_single",
+    "maximize": true,
+    "basis": "model",
+    "posterior": "latent",
+    "note": "model-based, not held-out calibrated",
+    "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it"
+   },
+   "trust": {
+    "status": "exploration_untrusted",
+    "verdict": "not_yet",
+    "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well."
+   }
+  },
+  {
+   "pred": 6.386,
+   "std": 0.479,
+   "mode": "explore",
+   "reason": "diversifies the batch (predicted 6.39, ±0.479)",
+   "vals": [
+    0.002,
+    0.483,
+    0.836
+   ],
+   "recipe": {
+    "feed_a": 0.836,
+    "feed_b": 0.483,
+    "temp_offset": 0.002
+   },
+   "p_feasible": null,
+   "nearest_training_distance": 0.1732,
+   "predictive_std": 0.4865,
+   "intervals": [
+    {
+     "coverage": 0.9,
+     "method": "conformal_selection_aware",
+     "calibrated_on": "grouped_cv_oof_top_ranked",
+     "n_calibration": 20,
+     "coverage_basis": "held_out_top_ranked_runs",
+     "caveat": {
+      "code": "coverage_measured_at_proposals",
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed).",
+      "coverage_at_proposals_estimate": {
+       "nominal": 0.9,
+       "measured_min": 0.92,
+       "measured_max": 0.99,
+       "basis": "simulation",
+       "source": "interval_method.coverage_at_proposals.0.9",
+       "benchmark": "python -m kalos.bench.coverage_at_proposals"
+      }
+     },
+     "available": true,
+     "lo": 2.8824,
+     "hi": 9.8901,
+     "q_sel": 3.1954,
+     "sigma_floor": 1.0965,
+     "sigma_used": 1.0965
+    },
+    {
+     "coverage": 0.95,
+     "method": "conformal_selection_aware",
+     "calibrated_on": "grouped_cv_oof_top_ranked",
+     "n_calibration": 20,
+     "coverage_basis": "held_out_top_ranked_runs",
+     "caveat": {
+      "code": "coverage_measured_at_proposals",
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed).",
+      "coverage_at_proposals_estimate": {
+       "nominal": 0.95,
+       "measured_min": 0.965,
+       "measured_max": 0.995,
+       "basis": "simulation",
+       "source": "interval_method.coverage_at_proposals.0.95",
+       "benchmark": "python -m kalos.bench.coverage_at_proposals"
+      }
+     },
+     "available": true,
+     "lo": 2.1111,
+     "hi": 10.6614,
+     "q_sel": 3.8988,
+     "sigma_floor": 1.0965,
+     "sigma_used": 1.0965
+    }
+   ],
+   "gp_intervals": [
+    {
+     "coverage": 0.9,
+     "method": "gp_posterior",
+     "posterior": "observation",
+     "note": "model-based, not held-out calibrated",
+     "coverage_basis": "model_based",
+     "coverage_at_proposals_estimate": {
+      "nominal": 0.9,
+      "measured_min": 0.5,
+      "measured_max": 0.725,
+      "basis": "simulation",
+      "source": "interval_method.gp_coverage_at_proposals",
+      "benchmark": "python -m kalos.bench.coverage_at_proposals"
+     },
+     "available": true,
+     "lo": 5.5861,
+     "hi": 7.1864
+    },
+    {
+     "coverage": 0.95,
+     "method": "gp_posterior",
+     "posterior": "observation",
+     "note": "model-based, not held-out calibrated",
+     "coverage_basis": "model_based",
+     "coverage_at_proposals_estimate": {
+      "nominal": 0.95,
+      "measured_min": 0.525,
+      "measured_max": 0.775,
+      "basis": "simulation",
+      "source": "interval_method.gp_coverage_at_proposals",
+      "benchmark": "python -m kalos.bench.coverage_at_proposals"
+     },
+     "available": true,
+     "lo": 5.4328,
+     "hi": 7.3397
+    }
+   ],
+   "quantiles": {
+    "basis": "gp_posterior",
+    "posterior": "observation",
+    "note": "model-based, not held-out calibrated",
+    "coverage_basis": "model_based",
+    "p05": 5.5861,
+    "p25": 6.0581,
+    "p50": 6.3862,
+    "p75": 6.7144,
+    "p95": 7.1864
+   },
+   "expected_improvement": {
+    "value": 0.0905,
+    "method": "analytic_ei_gp_posterior",
+    "incumbent": 6.64,
+    "incumbent_basis": "best_measured_single",
+    "maximize": true,
+    "basis": "model",
+    "posterior": "latent",
+    "note": "model-based, not held-out calibrated",
+    "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent"
+   },
+   "p_improve": {
+    "value": 0.2982,
+    "method": "gp_posterior_cdf",
+    "incumbent": 6.64,
+    "incumbent_basis": "best_measured_single",
+    "maximize": true,
+    "basis": "model",
+    "posterior": "latent",
+    "note": "model-based, not held-out calibrated",
+    "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it"
+   },
+   "trust": {
+    "status": "exploration_untrusted",
+    "verdict": "not_yet",
+    "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well."
+   }
+  },
+  {
+   "pred": 5.041,
+   "std": 1.029,
+   "mode": "explore",
+   "reason": "reduce model uncertainty here (±1.03)",
+   "vals": [
+    0.002,
+    0.003,
+    0.082
+   ],
+   "recipe": {
+    "feed_a": 0.082,
+    "feed_b": 0.003,
+    "temp_offset": 0.002
+   },
+   "p_feasible": null,
+   "nearest_training_distance": 0.6452,
+   "predictive_std": 1.0328,
+   "intervals": [
+    {
+     "coverage": 0.9,
+     "method": "conformal_selection_aware",
+     "calibrated_on": "grouped_cv_oof_top_ranked",
+     "n_calibration": 20,
+     "coverage_basis": "held_out_top_ranked_runs",
+     "caveat": {
+      "code": "coverage_measured_at_proposals",
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed).",
+      "coverage_at_proposals_estimate": {
+       "nominal": 0.9,
+       "measured_min": 0.92,
+       "measured_max": 0.99,
+       "basis": "simulation",
+       "source": "interval_method.coverage_at_proposals.0.9",
+       "benchmark": "python -m kalos.bench.coverage_at_proposals"
+      }
+     },
+     "available": true,
+     "lo": 1.5375,
+     "hi": 8.5451,
+     "q_sel": 3.1954,
+     "sigma_floor": 1.0965,
+     "sigma_used": 1.0965
+    },
+    {
+     "coverage": 0.95,
+     "method": "conformal_selection_aware",
+     "calibrated_on": "grouped_cv_oof_top_ranked",
+     "n_calibration": 20,
+     "coverage_basis": "held_out_top_ranked_runs",
+     "caveat": {
+      "code": "coverage_measured_at_proposals",
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed).",
+      "coverage_at_proposals_estimate": {
+       "nominal": 0.95,
+       "measured_min": 0.965,
+       "measured_max": 0.995,
+       "basis": "simulation",
+       "source": "interval_method.coverage_at_proposals.0.95",
+       "benchmark": "python -m kalos.bench.coverage_at_proposals"
+      }
+     },
+     "available": true,
+     "lo": 0.7661,
+     "hi": 9.3164,
+     "q_sel": 3.8988,
+     "sigma_floor": 1.0965,
+     "sigma_used": 1.0965
+    }
+   ],
+   "gp_intervals": [
+    {
+     "coverage": 0.9,
+     "method": "gp_posterior",
+     "posterior": "observation",
+     "note": "model-based, not held-out calibrated",
+     "coverage_basis": "model_based",
+     "coverage_at_proposals_estimate": {
+      "nominal": 0.9,
+      "measured_min": 0.5,
+      "measured_max": 0.725,
+      "basis": "simulation",
+      "source": "interval_method.gp_coverage_at_proposals",
+      "benchmark": "python -m kalos.bench.coverage_at_proposals"
+     },
+     "available": true,
+     "lo": 3.3424,
+     "hi": 6.7401
+    },
+    {
+     "coverage": 0.95,
+     "method": "gp_posterior",
+     "posterior": "observation",
+     "note": "model-based, not held-out calibrated",
+     "coverage_basis": "model_based",
+     "coverage_at_proposals_estimate": {
+      "nominal": 0.95,
+      "measured_min": 0.525,
+      "measured_max": 0.775,
+      "basis": "simulation",
+      "source": "interval_method.gp_coverage_at_proposals",
+      "benchmark": "python -m kalos.bench.coverage_at_proposals"
+     },
+     "available": true,
+     "lo": 3.017,
+     "hi": 7.0656
+    }
+   ],
+   "quantiles": {
+    "basis": "gp_posterior",
+    "posterior": "observation",
+    "note": "model-based, not held-out calibrated",
+    "coverage_basis": "model_based",
+    "p05": 3.3424,
+    "p25": 4.3447,
+    "p50": 5.0413,
+    "p75": 5.7379,
+    "p95": 6.7401
+   },
+   "expected_improvement": {
+    "value": 0.02671,
+    "method": "analytic_ei_gp_posterior",
+    "incumbent": 6.64,
+    "incumbent_basis": "best_measured_single",
+    "maximize": true,
+    "basis": "model",
+    "posterior": "latent",
+    "note": "model-based, not held-out calibrated",
+    "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent"
+   },
+   "p_improve": {
+    "value": 0.06021,
+    "method": "gp_posterior_cdf",
+    "incumbent": 6.64,
+    "incumbent_basis": "best_measured_single",
+    "maximize": true,
+    "basis": "model",
+    "posterior": "latent",
+    "note": "model-based, not held-out calibrated",
+    "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it"
+   },
+   "trust": {
+    "status": "exploration_untrusted",
+    "verdict": "not_yet",
+    "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well."
+   }
+  },
+  {
+   "pred": 5.563,
+   "std": 0.826,
+   "mode": "explore",
+   "reason": "reduce model uncertainty here (±0.826)",
+   "vals": [
+    0.947,
+    0.516,
+    0.082
+   ],
+   "recipe": {
+    "feed_a": 0.082,
+    "feed_b": 0.516,
+    "temp_offset": 0.947
+   },
+   "p_feasible": null,
+   "nearest_training_distance": 0.1574,
+   "predictive_std": 0.8299,
+   "intervals": [
+    {
+     "coverage": 0.9,
+     "method": "conformal_selection_aware",
+     "calibrated_on": "grouped_cv_oof_top_ranked",
+     "n_calibration": 20,
+     "coverage_basis": "held_out_top_ranked_runs",
+     "caveat": {
+      "code": "coverage_measured_at_proposals",
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed).",
+      "coverage_at_proposals_estimate": {
+       "nominal": 0.9,
+       "measured_min": 0.92,
+       "measured_max": 0.99,
+       "basis": "simulation",
+       "source": "interval_method.coverage_at_proposals.0.9",
+       "benchmark": "python -m kalos.bench.coverage_at_proposals"
+      }
+     },
+     "available": true,
+     "lo": 2.0593,
+     "hi": 9.067,
+     "q_sel": 3.1954,
+     "sigma_floor": 1.0965,
+     "sigma_used": 1.0965
+    },
+    {
+     "coverage": 0.95,
+     "method": "conformal_selection_aware",
+     "calibrated_on": "grouped_cv_oof_top_ranked",
+     "n_calibration": 20,
+     "coverage_basis": "held_out_top_ranked_runs",
+     "caveat": {
+      "code": "coverage_measured_at_proposals",
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed).",
+      "coverage_at_proposals_estimate": {
+       "nominal": 0.95,
+       "measured_min": 0.965,
+       "measured_max": 0.995,
+       "basis": "simulation",
+       "source": "interval_method.coverage_at_proposals.0.95",
+       "benchmark": "python -m kalos.bench.coverage_at_proposals"
+      }
+     },
+     "available": true,
+     "lo": 1.288,
+     "hi": 9.8383,
+     "q_sel": 3.8988,
+     "sigma_floor": 1.0965,
+     "sigma_used": 1.0965
+    }
+   ],
+   "gp_intervals": [
+    {
+     "coverage": 0.9,
+     "method": "gp_posterior",
+     "posterior": "observation",
+     "note": "model-based, not held-out calibrated",
+     "coverage_basis": "model_based",
+     "coverage_at_proposals_estimate": {
+      "nominal": 0.9,
+      "measured_min": 0.5,
+      "measured_max": 0.725,
+      "basis": "simulation",
+      "source": "interval_method.gp_coverage_at_proposals",
+      "benchmark": "python -m kalos.bench.coverage_at_proposals"
+     },
+     "available": true,
+     "lo": 4.1981,
+     "hi": 6.9282
+    },
+    {
+     "coverage": 0.95,
+     "method": "gp_posterior",
+     "posterior": "observation",
+     "note": "model-based, not held-out calibrated",
+     "coverage_basis": "model_based",
+     "coverage_at_proposals_estimate": {
+      "nominal": 0.95,
+      "measured_min": 0.525,
+      "measured_max": 0.775,
+      "basis": "simulation",
+      "source": "interval_method.gp_coverage_at_proposals",
+      "benchmark": "python -m kalos.bench.coverage_at_proposals"
+     },
+     "available": true,
+     "lo": 3.9366,
+     "hi": 7.1897
+    }
+   ],
+   "quantiles": {
+    "basis": "gp_posterior",
+    "posterior": "observation",
+    "note": "model-based, not held-out calibrated",
+    "coverage_basis": "model_based",
+    "p05": 4.1981,
+    "p25": 5.0034,
+    "p50": 5.5632,
+    "p75": 6.1229,
+    "p95": 6.9282
+   },
+   "expected_improvement": {
+    "value": 0.03725,
+    "method": "analytic_ei_gp_posterior",
+    "incumbent": 6.64,
+    "incumbent_basis": "best_measured_single",
+    "maximize": true,
+    "basis": "model",
+    "posterior": "latent",
+    "note": "model-based, not held-out calibrated",
+    "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent"
+   },
+   "p_improve": {
+    "value": 0.09607,
+    "method": "gp_posterior_cdf",
+    "incumbent": 6.64,
+    "incumbent_basis": "best_measured_single",
+    "maximize": true,
+    "basis": "model",
+    "posterior": "latent",
+    "note": "model-based, not held-out calibrated",
+    "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it"
+   },
+   "trust": {
+    "status": "exploration_untrusted",
+    "verdict": "not_yet",
+    "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well."
+   }
+  },
+  {
+   "pred": 5.986,
+   "std": 0.716,
+   "mode": "explore",
+   "reason": "diversifies the batch (predicted 5.99, ±0.716)",
+   "vals": [
+    0.194,
+    0.531,
+    0.916
+   ],
+   "recipe": {
+    "feed_a": 0.916,
+    "feed_b": 0.531,
+    "temp_offset": 0.194
+   },
+   "p_feasible": null,
+   "nearest_training_distance": 0.1315,
+   "predictive_std": 0.7213,
+   "intervals": [
+    {
+     "coverage": 0.9,
+     "method": "conformal_selection_aware",
+     "calibrated_on": "grouped_cv_oof_top_ranked",
+     "n_calibration": 20,
+     "coverage_basis": "held_out_top_ranked_runs",
+     "caveat": {
+      "code": "coverage_measured_at_proposals",
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed).",
+      "coverage_at_proposals_estimate": {
+       "nominal": 0.9,
+       "measured_min": 0.92,
+       "measured_max": 0.99,
+       "basis": "simulation",
+       "source": "interval_method.coverage_at_proposals.0.9",
+       "benchmark": "python -m kalos.bench.coverage_at_proposals"
+      }
+     },
+     "available": true,
+     "lo": 2.4824,
+     "hi": 9.4901,
+     "q_sel": 3.1954,
+     "sigma_floor": 1.0965,
+     "sigma_used": 1.0965
+    },
+    {
+     "coverage": 0.95,
+     "method": "conformal_selection_aware",
+     "calibrated_on": "grouped_cv_oof_top_ranked",
+     "n_calibration": 20,
+     "coverage_basis": "held_out_top_ranked_runs",
+     "caveat": {
+      "code": "coverage_measured_at_proposals",
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed).",
+      "coverage_at_proposals_estimate": {
+       "nominal": 0.95,
+       "measured_min": 0.965,
+       "measured_max": 0.995,
+       "basis": "simulation",
+       "source": "interval_method.coverage_at_proposals.0.95",
+       "benchmark": "python -m kalos.bench.coverage_at_proposals"
+      }
+     },
+     "available": true,
+     "lo": 1.7111,
+     "hi": 10.2614,
+     "q_sel": 3.8988,
+     "sigma_floor": 1.0965,
+     "sigma_used": 1.0965
+    }
+   ],
+   "gp_intervals": [
+    {
+     "coverage": 0.9,
+     "method": "gp_posterior",
+     "posterior": "observation",
+     "note": "model-based, not held-out calibrated",
+     "coverage_basis": "model_based",
+     "coverage_at_proposals_estimate": {
+      "nominal": 0.9,
+      "measured_min": 0.5,
+      "measured_max": 0.725,
+      "basis": "simulation",
+      "source": "interval_method.gp_coverage_at_proposals",
+      "benchmark": "python -m kalos.bench.coverage_at_proposals"
+     },
+     "available": true,
+     "lo": 4.7997,
+     "hi": 7.1727
+    },
+    {
+     "coverage": 0.95,
+     "method": "gp_posterior",
+     "posterior": "observation",
+     "note": "model-based, not held-out calibrated",
+     "coverage_basis": "model_based",
+     "coverage_at_proposals_estimate": {
+      "nominal": 0.95,
+      "measured_min": 0.525,
+      "measured_max": 0.775,
+      "basis": "simulation",
+      "source": "interval_method.gp_coverage_at_proposals",
+      "benchmark": "python -m kalos.bench.coverage_at_proposals"
+     },
+     "available": true,
+     "lo": 4.5724,
+     "hi": 7.4
+    }
+   ],
+   "quantiles": {
+    "basis": "gp_posterior",
+    "posterior": "observation",
+    "note": "model-based, not held-out calibrated",
+    "coverage_basis": "model_based",
+    "p05": 4.7997,
+    "p25": 5.4997,
+    "p50": 5.9862,
+    "p75": 6.4728,
+    "p95": 7.1727
+   },
+   "expected_improvement": {
+    "value": 0.07032,
+    "method": "analytic_ei_gp_posterior",
+    "incumbent": 6.64,
+    "incumbent_basis": "best_measured_single",
+    "maximize": true,
+    "basis": "model",
+    "posterior": "latent",
+    "note": "model-based, not held-out calibrated",
+    "description": "expected amount by which the model's latent mean (no assay noise) beats the incumbent"
+   },
+   "p_improve": {
+    "value": 0.1808,
+    "method": "gp_posterior_cdf",
+    "incumbent": 6.64,
+    "incumbent_basis": "best_measured_single",
+    "maximize": true,
+    "basis": "model",
+    "posterior": "latent",
+    "note": "model-based, not held-out calibrated",
+    "description": "probability that the model's latent mean (the process mean, no assay noise) at this recipe beats the incumbent; not the probability that one new measurement beats it"
+   },
+   "trust": {
+    "status": "exploration_untrusted",
+    "verdict": "not_yet",
+    "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well."
+   }
+  }
+ ],
+ "training_nn_distance_median": 0.199,
+ "oof": [
+  [
+   5.8758,
+   5.1776
+  ],
+  [
+   4.4081,
+   3.4386
+  ],
+  [
+   4.3555,
+   5.1395
+  ],
+  [
+   4.0464,
+   5.6543
+  ],
+  [
+   5.6666,
+   4.9869
+  ],
+  [
+   4.6658,
+   4.5959
+  ],
+  [
+   4.3776,
+   5.4882
+  ],
+  [
+   2.3169,
+   4.9355
+  ],
+  [
+   6.0286,
+   4.8727
+  ],
+  [
+   4.6388,
+   4.7297
+  ],
+  [
+   5.611,
+   5.1404
+  ],
+  [
+   5.5744,
+   4.5972
+  ],
+  [
+   4.8741,
+   5.1565
+  ],
+  [
+   6.64,
+   4.4744
+  ],
+  [
+   6.1621,
+   4.3729
+  ],
+  [
+   3.7925,
+   4.92
+  ],
+  [
+   5.6336,
+   4.8993
+  ],
+  [
+   5.3484,
+   4.4053
+  ],
+  [
+   5.7275,
+   5.0112
+  ],
+  [
+   3.9265,
+   4.9421
+  ]
+ ],
+ "provenance": [
+  {
+   "name": "feed_a",
+   "status": "kept_feature",
+   "coerced_cells": 0,
+   "non_null": 20,
+   "source": "inferred"
+  },
+  {
+   "name": "feed_b",
+   "status": "kept_feature",
+   "coerced_cells": 0,
+   "non_null": 20,
+   "source": "inferred"
+  },
+  {
+   "name": "temp_offset",
+   "status": "kept_feature",
+   "coerced_cells": 0,
+   "non_null": 20,
+   "source": "inferred"
+  },
+  {
+   "name": "titer",
+   "status": "target",
+   "coerced_cells": 0,
+   "non_null": 20,
+   "source": "inferred"
+  }
+ ],
+ "orientation": null,
+ "validation": {
+  "status": "pass_with_warnings",
+  "mode": "warn",
+  "n_rows": 20,
+  "n_columns": 4,
+  "checks_run": [
+   "units_consistency",
+   "physical_bounds",
+   "duplicate_rows",
+   "missingness",
+   "outliers",
+   "provenance_metadata",
+   "replicate_adequacy",
+   "controls_present",
+   "constant_columns",
+   "informative_missingness",
+   "constant_within_group"
+  ],
+  "counts": {
+   "error": 0,
+   "warning": 6,
+   "info": 0
+  },
+  "findings": [
+   {
+    "check": "physical_bounds",
+    "severity": "warning",
+    "message": "column 'temp_offset' (inferred dimension 'temperature_c') has values outside the typical range [15.0, 45.0] though within physical limits",
+    "column": "temp_offset",
+    "rows": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18,
+     19
+    ],
+    "detail": {
+     "dimension": "temperature_c",
+     "typical_range": [
+      15.0,
+      45.0
+     ],
+     "min_seen": 0.0017,
+     "max_seen": 0.9465,
+     "n_rows_affected": 20
+    }
+   },
+   {
+    "check": "outliers",
+    "severity": "warning",
+    "message": "column 'feed_b' has values with MAD-based |z| > 5 (assessed on a log10 scale)",
+    "column": "feed_b",
+    "rows": [
+     2
+    ],
+    "detail": {
+     "median": -0.2736895470446794,
+     "mad": 0.1515933770585613,
+     "scale": "log10",
+     "n_rows_affected": 1
+    }
+   },
+   {
+    "check": "provenance_metadata",
+    "severity": "warning",
+    "message": "no run/batch identifier column found - results cannot be traced back to a physical run",
+    "column": null,
+    "rows": [],
+    "detail": {
+     "missing": "run_or_batch_id"
+    }
+   },
+   {
+    "check": "provenance_metadata",
+    "severity": "warning",
+    "message": "no date column found - results cannot be traced to when the run happened",
+    "column": null,
+    "rows": [],
+    "detail": {
+     "missing": "date"
+    }
+   },
+   {
+    "check": "provenance_metadata",
+    "severity": "warning",
+    "message": "no operator/instrument column found - results cannot be traced to who or what equipment ran the assay",
+    "column": null,
+    "rows": [],
+    "detail": {
+     "missing": "operator_or_instrument"
+    }
+   },
+   {
+    "check": "controls_present",
+    "severity": "warning",
+    "message": "no control/blank/reference/baseline label found - no internal reference to detect batch or calibration drift",
+    "column": null,
+    "rows": [],
+    "detail": {}
+   }
+  ],
+  "conversions": [],
+  "schema_version": 1
+ },
+ "design_box_exclusions": [],
+ "embedding": {
+  "method": "pca",
+  "encoding": "standardized_continuous_one_hot_categorical",
+  "unit": "run",
+  "n_rows": 20,
+  "n_features": 3,
+  "points": [
+   [
+    -0.5601,
+    0.7137,
+    5.6336
+   ],
+   [
+    2.7199,
+    -0.2603,
+    4.8741
+   ],
+   [
+    1.94,
+    -1.2116,
+    6.0286
+   ],
+   [
+    0.292,
+    -1.1992,
+    5.6666
+   ],
+   [
+    2.2185,
+    1.0403,
+    5.8758
+   ],
+   [
+    0.0729,
+    -0.0179,
+    5.3484
+   ],
+   [
+    -0.6654,
+    -0.7582,
+    6.64
+   ],
+   [
+    -1.0517,
+    1.0022,
+    4.6388
+   ],
+   [
+    -1.8385,
+    0.6521,
+    4.6658
+   ],
+   [
+    -1.2994,
+    0.9311,
+    4.4081
+   ],
+   [
+    1.4858,
+    1.0036,
+    5.611
+   ],
+   [
+    -0.4532,
+    -0.2753,
+    4.3776
+   ],
+   [
+    -0.4187,
+    -1.2931,
+    4.3555
+   ],
+   [
+    -0.997,
+    -0.3761,
+    5.7275
+   ],
+   [
+    -0.6331,
+    -0.77,
+    6.1621
+   ],
+   [
+    0.1865,
+    0.8479,
+    5.5744
+   ],
+   [
+    0.2922,
+    1.6742,
+    2.3169
+   ],
+   [
+    -0.5289,
+    -1.2332,
+    4.0464
+   ],
+   [
+    -0.4268,
+    0.1852,
+    3.9265
+   ],
+   [
+    -0.335,
+    -0.6553,
+    3.7925
+   ]
+  ]
+ },
+ "correlation": {
+  "unit": "recipe",
+  "n_units": 20,
+  "n_rows": 20,
+  "labels": [
+   "feed_a",
+   "feed_b",
+   "temp_offset",
+   "target_mean"
+  ],
+  "matrix": [
+   [
+    1.0,
+    0.035,
+    -0.08,
+    0.212
+   ],
+   [
+    0.035,
+    1.0,
+    -0.212,
+    -0.241
+   ],
+   [
+    -0.08,
+    -0.212,
+    1.0,
+    0.328
+   ],
+   [
+    0.212,
+    -0.241,
+    0.328,
+    1.0
+   ]
+  ]
+ },
+ "response_surface": {
+  "x_feature": "temp_offset",
+  "y_feature": "feed_b",
+  "x_vals": [
+   0.0017,
+   0.0489,
+   0.0962,
+   0.1434,
+   0.1907,
+   0.2379,
+   0.2851,
+   0.3324,
+   0.3796,
+   0.4269,
+   0.4741,
+   0.5213,
+   0.5686,
+   0.6158,
+   0.6631,
+   0.7103,
+   0.7575,
+   0.8048,
+   0.852,
+   0.8993,
+   0.9465
+  ],
+  "y_vals": [
+   0.0026,
+   0.0521,
+   0.1016,
+   0.1511,
+   0.2006,
+   0.2501,
+   0.2997,
+   0.3492,
+   0.3987,
+   0.4482,
+   0.4977,
+   0.5472,
+   0.5967,
+   0.6462,
+   0.6957,
+   0.7453,
+   0.7948,
+   0.8443,
+   0.8938,
+   0.9433,
+   0.9928
+  ],
+  "z": [
+   [
+    5.1356,
+    5.1459,
+    5.1568,
+    5.1683,
+    5.1802,
+    5.1925,
+    5.2049,
+    5.2175,
+    5.2299,
+    5.2421,
+    5.2539,
+    5.2651,
+    5.2755,
+    5.285,
+    5.2934,
+    5.3006,
+    5.3064,
+    5.3107,
+    5.3135,
+    5.3147,
+    5.3142
+   ],
+   [
+    5.1137,
+    5.1213,
+    5.1295,
+    5.138,
+    5.1468,
+    5.1559,
+    5.1651,
+    5.1744,
+    5.1837,
+    5.1927,
+    5.2014,
+    5.2097,
+    5.2175,
+    5.2245,
+    5.2307,
+    5.236,
+    5.2403,
+    5.2435,
+    5.2456,
+    5.2464,
+    5.2461
+   ],
+   [
+    5.0777,
+    5.081,
+    5.0845,
+    5.0882,
+    5.092,
+    5.0959,
+    5.0999,
+    5.1039,
+    5.1079,
+    5.1118,
+    5.1155,
+    5.1191,
+    5.1224,
+    5.1254,
+    5.1281,
+    5.1303,
+    5.1322,
+    5.1335,
+    5.1344,
+    5.1347,
+    5.1345
+   ],
+   [
+    5.0629,
+    5.065,
+    5.0673,
+    5.0696,
+    5.0721,
+    5.0747,
+    5.0773,
+    5.0799,
+    5.0825,
+    5.0851,
+    5.0875,
+    5.0899,
+    5.092,
+    5.0939,
+    5.0956,
+    5.097,
+    5.0982,
+    5.099,
+    5.0995,
+    5.0996,
+    5.0995
+   ],
+   [
+    5.047,
+    5.0518,
+    5.0573,
+    5.0632,
+    5.0697,
+    5.0765,
+    5.0836,
+    5.091,
+    5.0985,
+    5.106,
+    5.1134,
+    5.1205,
+    5.1272,
+    5.1335,
+    5.1392,
+    5.1443,
+    5.1486,
+    5.1521,
+    5.1547,
+    5.1565,
+    5.1573
+   ],
+   [
+    4.8971,
+    4.9034,
+    4.9117,
+    4.9219,
+    4.9341,
+    4.948,
+    4.9635,
+    4.9804,
+    4.9984,
+    5.0172,
+    5.0366,
+    5.0562,
+    5.0757,
+    5.0948,
+    5.1131,
+    5.1304,
+    5.1463,
+    5.1608,
+    5.1736,
+    5.1845,
+    5.1934
+   ],
+   [
+    4.464,
+    4.4598,
+    4.4602,
+    4.4653,
+    4.4751,
+    4.4896,
+    4.5086,
+    4.5318,
+    4.5589,
+    4.5895,
+    4.6229,
+    4.6588,
+    4.6964,
+    4.7352,
+    4.7745,
+    4.8136,
+    4.8521,
+    4.8894,
+    4.9249,
+    4.9583,
+    4.9892
+   ],
+   [
+    4.0859,
+    4.0657,
+    4.0517,
+    4.0442,
+    4.0433,
+    4.0493,
+    4.062,
+    4.0813,
+    4.1068,
+    4.1382,
+    4.1748,
+    4.2161,
+    4.2614,
+    4.31,
+    4.3609,
+    4.4135,
+    4.4669,
+    4.5205,
+    4.5734,
+    4.625,
+    4.6747
+   ],
+   [
+    4.5589,
+    4.5451,
+    4.5342,
+    4.5263,
+    4.5217,
+    4.5204,
+    4.5225,
+    4.528,
+    4.5367,
+    4.5486,
+    4.5635,
+    4.581,
+    4.601,
+    4.623,
+    4.6468,
+    4.6718,
+    4.6978,
+    4.7244,
+    4.7512,
+    4.7778,
+    4.8039
+   ],
+   [
+    5.8109,
+    5.8275,
+    5.8395,
+    5.8468,
+    5.8492,
+    5.8467,
+    5.8393,
+    5.8272,
+    5.8105,
+    5.7897,
+    5.7651,
+    5.737,
+    5.7061,
+    5.6727,
+    5.6375,
+    5.6009,
+    5.5635,
+    5.5258,
+    5.4882,
+    5.4511,
+    5.415
+   ],
+   [
+    6.5425,
+    6.5789,
+    6.6067,
+    6.6252,
+    6.6342,
+    6.6336,
+    6.6233,
+    6.6035,
+    6.5746,
+    6.5372,
+    6.4918,
+    6.4393,
+    6.3805,
+    6.3165,
+    6.2482,
+    6.1766,
+    6.103,
+    6.0281,
+    5.9531,
+    5.8787,
+    5.8059
+   ],
+   [
+    6.1605,
+    6.1907,
+    6.2146,
+    6.2317,
+    6.2419,
+    6.2448,
+    6.2405,
+    6.2291,
+    6.2107,
+    6.1856,
+    6.1544,
+    6.1175,
+    6.0757,
+    6.0295,
+    5.9798,
+    5.9272,
+    5.8727,
+    5.8169,
+    5.7605,
+    5.7044,
+    5.6491
+   ],
+   [
+    5.5413,
+    5.5603,
+    5.5769,
+    5.5908,
+    5.6017,
+    5.6096,
+    5.6142,
+    5.6155,
+    5.6134,
+    5.608,
+    5.5994,
+    5.5877,
+    5.5732,
+    5.556,
+    5.5366,
+    5.5151,
+    5.492,
+    5.4676,
+    5.4422,
+    5.4162,
+    5.3899
+   ],
+   [
+    5.3068,
+    5.3239,
+    5.3404,
+    5.3559,
+    5.3702,
+    5.3831,
+    5.3944,
+    5.4038,
+    5.4112,
+    5.4164,
+    5.4195,
+    5.4203,
+    5.4188,
+    5.4151,
+    5.4092,
+    5.4012,
+    5.3913,
+    5.3797,
+    5.3666,
+    5.3522,
+    5.3367
+   ],
+   [
+    5.2723,
+    5.2905,
+    5.3085,
+    5.3261,
+    5.343,
+    5.3589,
+    5.3736,
+    5.3869,
+    5.3985,
+    5.4082,
+    5.416,
+    5.4215,
+    5.4249,
+    5.4259,
+    5.4247,
+    5.4211,
+    5.4154,
+    5.4076,
+    5.3978,
+    5.3863,
+    5.3732
+   ],
+   [
+    5.2573,
+    5.2763,
+    5.2955,
+    5.3146,
+    5.3335,
+    5.3519,
+    5.3695,
+    5.3861,
+    5.4014,
+    5.4152,
+    5.4273,
+    5.4373,
+    5.4453,
+    5.451,
+    5.4543,
+    5.4552,
+    5.4537,
+    5.4498,
+    5.4436,
+    5.4352,
+    5.4247
+   ],
+   [
+    5.271,
+    5.2933,
+    5.3162,
+    5.3394,
+    5.3628,
+    5.386,
+    5.4087,
+    5.4306,
+    5.4514,
+    5.4708,
+    5.4884,
+    5.504,
+    5.5173,
+    5.528,
+    5.536,
+    5.5411,
+    5.5433,
+    5.5424,
+    5.5386,
+    5.5319,
+    5.5223
+   ],
+   [
+    5.2619,
+    5.2847,
+    5.3081,
+    5.3321,
+    5.3563,
+    5.3804,
+    5.4041,
+    5.427,
+    5.4488,
+    5.4692,
+    5.4878,
+    5.5044,
+    5.5186,
+    5.5301,
+    5.5389,
+    5.5446,
+    5.5473,
+    5.5469,
+    5.5433,
+    5.5367,
+    5.5272
+   ],
+   [
+    5.1153,
+    5.1275,
+    5.1402,
+    5.1532,
+    5.1664,
+    5.1796,
+    5.1925,
+    5.205,
+    5.2169,
+    5.2278,
+    5.2377,
+    5.2463,
+    5.2535,
+    5.2592,
+    5.2633,
+    5.2656,
+    5.2663,
+    5.2652,
+    5.2624,
+    5.2581,
+    5.2523
+   ],
+   [
+    4.8804,
+    4.88,
+    4.8804,
+    4.8814,
+    4.8829,
+    4.885,
+    4.8874,
+    4.8902,
+    4.8931,
+    4.8962,
+    4.8994,
+    4.9025,
+    4.9056,
+    4.9085,
+    4.9113,
+    4.914,
+    4.9165,
+    4.9189,
+    4.9212,
+    4.9235,
+    4.9259
+   ],
+   [
+    4.7547,
+    4.7512,
+    4.749,
+    4.748,
+    4.7482,
+    4.7495,
+    4.7519,
+    4.7553,
+    4.7595,
+    4.7646,
+    4.7703,
+    4.7765,
+    4.7833,
+    4.7905,
+    4.798,
+    4.8058,
+    4.8138,
+    4.822,
+    4.8303,
+    4.8388,
+    4.8473
+   ]
+  ],
+  "std": [
+   [
+    1.0269,
+    1.0259,
+    1.0247,
+    1.0233,
+    1.0217,
+    1.0199,
+    1.0179,
+    1.0157,
+    1.0133,
+    1.0108,
+    1.0083,
+    1.0057,
+    1.0031,
+    1.0007,
+    0.9985,
+    0.9965,
+    0.9949,
+    0.9936,
+    0.9928,
+    0.9925,
+    0.9926
+   ],
+   [
+    1.0287,
+    1.0281,
+    1.0275,
+    1.0267,
+    1.0259,
+    1.0249,
+    1.0238,
+    1.0226,
+    1.0213,
+    1.0199,
+    1.0185,
+    1.0171,
+    1.0158,
+    1.0144,
+    1.0132,
+    1.0122,
+    1.0113,
+    1.0106,
+    1.0102,
+    1.01,
+    1.0101
+   ],
+   [
+    1.0305,
+    1.0304,
+    1.0303,
+    1.0301,
+    1.03,
+    1.0298,
+    1.0297,
+    1.0295,
+    1.0292,
+    1.029,
+    1.0288,
+    1.0286,
+    1.0283,
+    1.0281,
+    1.0279,
+    1.0278,
+    1.0276,
+    1.0275,
+    1.0274,
+    1.0274,
+    1.0274
+   ],
+   [
+    1.0303,
+    1.0303,
+    1.0302,
+    1.0302,
+    1.0302,
+    1.0301,
+    1.0301,
+    1.03,
+    1.03,
+    1.0299,
+    1.0299,
+    1.0298,
+    1.0298,
+    1.0297,
+    1.0297,
+    1.0297,
+    1.0297,
+    1.0297,
+    1.0297,
+    1.0297,
+    1.0298
+   ],
+   [
+    1.018,
+    1.0174,
+    1.0169,
+    1.0164,
+    1.016,
+    1.0157,
+    1.0154,
+    1.0151,
+    1.0149,
+    1.0148,
+    1.0146,
+    1.0146,
+    1.0146,
+    1.0146,
+    1.0147,
+    1.0149,
+    1.0152,
+    1.0156,
+    1.016,
+    1.0166,
+    1.0173
+   ],
+   [
+    0.9125,
+    0.9092,
+    0.907,
+    0.9059,
+    0.9058,
+    0.9068,
+    0.9085,
+    0.911,
+    0.914,
+    0.9175,
+    0.9213,
+    0.9253,
+    0.9295,
+    0.9337,
+    0.938,
+    0.9423,
+    0.9467,
+    0.9511,
+    0.9556,
+    0.9602,
+    0.9649
+   ],
+   [
+    0.6191,
+    0.6068,
+    0.6003,
+    0.5998,
+    0.6053,
+    0.6161,
+    0.6315,
+    0.6506,
+    0.6723,
+    0.6957,
+    0.72,
+    0.7444,
+    0.7684,
+    0.7916,
+    0.8135,
+    0.8341,
+    0.8533,
+    0.871,
+    0.8873,
+    0.9023,
+    0.916
+   ],
+   [
+    0.4376,
+    0.397,
+    0.3646,
+    0.3438,
+    0.3373,
+    0.3463,
+    0.3691,
+    0.4027,
+    0.4437,
+    0.4891,
+    0.5364,
+    0.584,
+    0.6306,
+    0.6754,
+    0.7176,
+    0.7569,
+    0.793,
+    0.8258,
+    0.8553,
+    0.8816,
+    0.9047
+   ],
+   [
+    0.6188,
+    0.5887,
+    0.5631,
+    0.5435,
+    0.5312,
+    0.5273,
+    0.5319,
+    0.5449,
+    0.5651,
+    0.5913,
+    0.6218,
+    0.6552,
+    0.6901,
+    0.7252,
+    0.7598,
+    0.793,
+    0.8243,
+    0.8533,
+    0.8798,
+    0.9037,
+    0.9248
+   ],
+   [
+    0.6125,
+    0.5871,
+    0.5668,
+    0.5529,
+    0.5463,
+    0.5476,
+    0.5566,
+    0.5727,
+    0.5949,
+    0.6217,
+    0.6519,
+    0.6842,
+    0.7174,
+    0.7505,
+    0.7828,
+    0.8137,
+    0.8426,
+    0.8694,
+    0.8937,
+    0.9156,
+    0.9349
+   ],
+   [
+    0.3981,
+    0.3292,
+    0.2589,
+    0.189,
+    0.1244,
+    0.0843,
+    0.1042,
+    0.1634,
+    0.2325,
+    0.3034,
+    0.3735,
+    0.4414,
+    0.5063,
+    0.5678,
+    0.6252,
+    0.6784,
+    0.7272,
+    0.7715,
+    0.8113,
+    0.8466,
+    0.8778
+   ],
+   [
+    0.7359,
+    0.7125,
+    0.6917,
+    0.6746,
+    0.6619,
+    0.6545,
+    0.6528,
+    0.6569,
+    0.6665,
+    0.6811,
+    0.7,
+    0.7221,
+    0.7465,
+    0.7723,
+    0.7986,
+    0.8247,
+    0.8499,
+    0.8738,
+    0.8961,
+    0.9165,
+    0.9349
+   ],
+   [
+    0.9517,
+    0.9448,
+    0.9383,
+    0.9326,
+    0.9277,
+    0.9239,
+    0.9214,
+    0.9201,
+    0.9201,
+    0.9216,
+    0.9243,
+    0.9282,
+    0.9332,
+    0.939,
+    0.9456,
+    0.9526,
+    0.9598,
+    0.9672,
+    0.9744,
+    0.9814,
+    0.988
+   ],
+   [
+    0.9518,
+    0.9423,
+    0.9329,
+    0.9237,
+    0.9152,
+    0.9075,
+    0.901,
+    0.8958,
+    0.8922,
+    0.8904,
+    0.8903,
+    0.8921,
+    0.8956,
+    0.9007,
+    0.9072,
+    0.9149,
+    0.9234,
+    0.9326,
+    0.942,
+    0.9515,
+    0.9608
+   ],
+   [
+    0.9706,
+    0.9631,
+    0.9555,
+    0.948,
+    0.9408,
+    0.9342,
+    0.9283,
+    0.9234,
+    0.9197,
+    0.9172,
+    0.916,
+    0.9163,
+    0.9179,
+    0.9209,
+    0.9251,
+    0.9303,
+    0.9364,
+    0.9432,
+    0.9504,
+    0.9578,
+    0.9653
+   ],
+   [
+    1.0085,
+    1.0048,
+    1.0009,
+    0.9968,
+    0.9925,
+    0.9881,
+    0.9837,
+    0.9793,
+    0.9752,
+    0.9714,
+    0.968,
+    0.9651,
+    0.9628,
+    0.9613,
+    0.9605,
+    0.9604,
+    0.9612,
+    0.9627,
+    0.965,
+    0.9679,
+    0.9713
+   ],
+   [
+    0.997,
+    0.9894,
+    0.9806,
+    0.9706,
+    0.9595,
+    0.9472,
+    0.934,
+    0.92,
+    0.9055,
+    0.8908,
+    0.8762,
+    0.8622,
+    0.8493,
+    0.8379,
+    0.8285,
+    0.8215,
+    0.8171,
+    0.8156,
+    0.8171,
+    0.8215,
+    0.8286
+   ],
+   [
+    0.9574,
+    0.9403,
+    0.9204,
+    0.8974,
+    0.8712,
+    0.8417,
+    0.8091,
+    0.7734,
+    0.735,
+    0.6944,
+    0.6523,
+    0.6096,
+    0.5678,
+    0.5285,
+    0.4936,
+    0.4657,
+    0.447,
+    0.4394,
+    0.4438,
+    0.4598,
+    0.4855
+   ],
+   [
+    0.943,
+    0.9283,
+    0.9115,
+    0.8924,
+    0.871,
+    0.8473,
+    0.8214,
+    0.7938,
+    0.7648,
+    0.735,
+    0.7052,
+    0.6764,
+    0.6497,
+    0.6264,
+    0.6076,
+    0.5945,
+    0.5881,
+    0.5887,
+    0.5965,
+    0.6108,
+    0.6308
+   ],
+   [
+    0.7777,
+    0.7613,
+    0.7434,
+    0.7239,
+    0.7026,
+    0.6797,
+    0.6554,
+    0.6302,
+    0.6049,
+    0.5806,
+    0.5587,
+    0.5406,
+    0.528,
+    0.5221,
+    0.5238,
+    0.5336,
+    0.5508,
+    0.5747,
+    0.6037,
+    0.6364,
+    0.6713
+   ],
+   [
+    0.5251,
+    0.5096,
+    0.495,
+    0.4805,
+    0.4656,
+    0.4499,
+    0.4331,
+    0.4156,
+    0.3981,
+    0.382,
+    0.369,
+    0.3613,
+    0.361,
+    0.3697,
+    0.3878,
+    0.4148,
+    0.4493,
+    0.4894,
+    0.5332,
+    0.579,
+    0.6253
+   ]
+  ],
+  "std_kind": "gp_posterior_sd",
+  "std_basis": "latent_mean",
+  "z_basis": "predicted",
+  "runs": [
+   [
+    0.811,
+    0.8553,
+    5.6336
+   ],
+   [
+    0.9465,
+    0.0772,
+    4.8741
+   ],
+   [
+    0.9104,
+    0.0026,
+    6.0286
+   ],
+   [
+    0.8137,
+    0.2863,
+    5.6666
+   ],
+   [
+    0.8177,
+    0.4383,
+    5.8758
+   ],
+   [
+    0.117,
+    0.5177,
+    5.3484
+   ],
+   [
+    0.2483,
+    0.4979,
+    6.64
+   ],
+   [
+    0.5383,
+    0.9792,
+    4.6388
+   ],
+   [
+    0.0301,
+    0.9928,
+    4.6658
+   ],
+   [
+    0.1173,
+    0.9673,
+    4.4081
+   ],
+   [
+    0.7223,
+    0.5502,
+    5.611
+   ],
+   [
+    0.0515,
+    0.5477,
+    4.3776
+   ],
+   [
+    0.074,
+    0.3207,
+    4.3555
+   ],
+   [
+    0.4558,
+    0.6597,
+    5.7275
+   ],
+   [
+    0.1247,
+    0.4779,
+    6.1621
+   ],
+   [
+    0.7441,
+    0.7469,
+    5.5744
+   ],
+   [
+    0.9457,
+    0.9285,
+    2.3169
+   ],
+   [
+    0.2678,
+    0.3716,
+    4.0464
+   ],
+   [
+    0.1606,
+    0.6543,
+    3.9265
+   ],
+   [
+    0.0017,
+    0.4389,
+    3.7925
+   ]
+  ],
+  "swept_at": "<volatile>",
+  "fixed_recipe": {
+   "feed_a": 0.814,
+   "feed_b": 0.4979,
+   "temp_offset": 0.2483
+  },
+  "incumbent_basis": "single"
+ },
+ "slices": [
+  {
+   "feature": "temp_offset",
+   "x": [
+    0.0017,
+    0.0253,
+    0.0489,
+    0.0726,
+    0.0962,
+    0.1198,
+    0.1434,
+    0.167,
+    0.1907,
+    0.2143,
+    0.2379,
+    0.2615,
+    0.2851,
+    0.3088,
+    0.3324,
+    0.356,
+    0.3796,
+    0.4032,
+    0.4269,
+    0.4505,
+    0.4741,
+    0.4977,
+    0.5213,
+    0.545,
+    0.5686,
+    0.5922,
+    0.6158,
+    0.6394,
+    0.6631,
+    0.6867,
+    0.7103,
+    0.7339,
+    0.7575,
+    0.7812,
+    0.8048,
+    0.8284,
+    0.852,
+    0.8756,
+    0.8993,
+    0.9229,
+    0.9465
+   ],
+   "mean": [
+    6.543,
+    6.5622,
+    6.5794,
+    6.5944,
+    6.6072,
+    6.6176,
+    6.6257,
+    6.6315,
+    6.6348,
+    6.6357,
+    6.6341,
+    6.6302,
+    6.6238,
+    6.6151,
+    6.6041,
+    6.5908,
+    6.5752,
+    6.5575,
+    6.5377,
+    6.516,
+    6.4923,
+    6.4669,
+    6.4398,
+    6.4111,
+    6.381,
+    6.3496,
+    6.317,
+    6.2833,
+    6.2486,
+    6.2132,
+    6.1771,
+    6.1405,
+    6.1034,
+    6.0661,
+    6.0285,
+    5.991,
+    5.9535,
+    5.9161,
+    5.8791,
+    5.8424,
+    5.8062
+   ],
+   "sd": [
+    0.3983,
+    0.3642,
+    0.3295,
+    0.2945,
+    0.2592,
+    0.224,
+    0.1893,
+    0.1557,
+    0.1247,
+    0.0991,
+    0.0844,
+    0.0864,
+    0.1041,
+    0.1313,
+    0.1632,
+    0.1972,
+    0.2323,
+    0.2677,
+    0.3032,
+    0.3385,
+    0.3733,
+    0.4076,
+    0.4412,
+    0.4741,
+    0.5062,
+    0.5373,
+    0.5676,
+    0.5968,
+    0.6251,
+    0.6522,
+    0.6783,
+    0.7032,
+    0.7271,
+    0.7498,
+    0.7714,
+    0.7918,
+    0.8112,
+    0.8294,
+    0.8466,
+    0.8626,
+    0.8777
+   ],
+   "lo": [
+    5.8878,
+    5.9632,
+    6.0374,
+    6.11,
+    6.1808,
+    6.2492,
+    6.3144,
+    6.3754,
+    6.4296,
+    6.4726,
+    6.4953,
+    6.4881,
+    6.4526,
+    6.3991,
+    6.3357,
+    6.2664,
+    6.1931,
+    6.1171,
+    6.039,
+    5.9593,
+    5.8783,
+    5.7965,
+    5.7141,
+    5.6313,
+    5.5484,
+    5.4657,
+    5.3834,
+    5.3016,
+    5.2205,
+    5.1404,
+    5.0614,
+    4.9837,
+    4.9075,
+    4.8328,
+    4.7597,
+    4.6885,
+    4.6192,
+    4.5519,
+    4.4866,
+    4.4235,
+    4.3625
+   ],
+   "hi": [
+    7.1982,
+    7.1613,
+    7.1215,
+    7.0788,
+    7.0335,
+    6.9861,
+    6.937,
+    6.8876,
+    6.8399,
+    6.7987,
+    6.7729,
+    6.7723,
+    6.7951,
+    6.8312,
+    6.8725,
+    6.9151,
+    6.9573,
+    6.9979,
+    7.0365,
+    7.0727,
+    7.1063,
+    7.1373,
+    7.1655,
+    7.191,
+    7.2136,
+    7.2334,
+    7.2506,
+    7.265,
+    7.2768,
+    7.286,
+    7.2928,
+    7.2972,
+    7.2993,
+    7.2994,
+    7.2973,
+    7.2934,
+    7.2877,
+    7.2804,
+    7.2715,
+    7.2613,
+    7.2499
+   ],
+   "coverage": 0.9,
+   "band_method": "gp_posterior",
+   "band_of": "latent_mean",
+   "note": "model-based band, not held-out calibrated",
+   "basis": "predicted",
+   "range": [
+    0.0017,
+    0.9465
+   ],
+   "swept_at": "<volatile>",
+   "reference": {
+    "basis": "incumbent",
+    "incumbent_basis": "single",
+    "recipe": {
+     "feed_a": 0.814,
+     "feed_b": 0.4979,
+     "temp_offset": 0.2483
+    }
+   },
+   "n_points": 41
+  },
+  {
+   "feature": "feed_b",
+   "x": [
+    0.0026,
+    0.0274,
+    0.0521,
+    0.0769,
+    0.1016,
+    0.1264,
+    0.1511,
+    0.1759,
+    0.2006,
+    0.2254,
+    0.2501,
+    0.2749,
+    0.2997,
+    0.3244,
+    0.3492,
+    0.3739,
+    0.3987,
+    0.4234,
+    0.4482,
+    0.4729,
+    0.4977,
+    0.5225,
+    0.5472,
+    0.572,
+    0.5967,
+    0.6215,
+    0.6462,
+    0.671,
+    0.6957,
+    0.7205,
+    0.7453,
+    0.77,
+    0.7948,
+    0.8195,
+    0.8443,
+    0.869,
+    0.8938,
+    0.9185,
+    0.9433,
+    0.968,
+    0.9928
+   ],
+   "mean": [
+    5.1952,
+    5.1848,
+    5.1579,
+    5.125,
+    5.0968,
+    5.0798,
+    5.0753,
+    5.079,
+    5.078,
+    5.0471,
+    4.9513,
+    4.7632,
+    4.4934,
+    4.2142,
+    4.0515,
+    4.134,
+    4.5206,
+    5.1495,
+    5.8455,
+    6.3916,
+    6.6322,
+    6.5465,
+    6.2445,
+    5.8903,
+    5.6109,
+    5.4507,
+    5.3858,
+    5.3682,
+    5.3622,
+    5.3564,
+    5.3559,
+    5.3683,
+    5.391,
+    5.4059,
+    5.3856,
+    5.3104,
+    5.1825,
+    5.0281,
+    4.8855,
+    4.7874,
+    4.75
+   ],
+   "sd": [
+    1.0195,
+    1.0211,
+    1.0246,
+    1.0279,
+    1.0298,
+    1.0305,
+    1.0301,
+    1.0272,
+    1.0156,
+    0.9818,
+    0.9071,
+    0.7816,
+    0.6191,
+    0.4553,
+    0.3502,
+    0.392,
+    0.5276,
+    0.609,
+    0.5489,
+    0.3357,
+    0.083,
+    0.3621,
+    0.6536,
+    0.8429,
+    0.9233,
+    0.9271,
+    0.906,
+    0.9049,
+    0.9328,
+    0.9676,
+    0.9871,
+    0.9811,
+    0.9444,
+    0.8845,
+    0.8348,
+    0.8287,
+    0.8418,
+    0.804,
+    0.6744,
+    0.497,
+    0.4463
+   ],
+   "lo": [
+    3.5183,
+    3.5053,
+    3.4725,
+    3.4343,
+    3.4029,
+    3.3848,
+    3.3809,
+    3.3895,
+    3.4075,
+    3.4323,
+    3.4593,
+    3.4776,
+    3.475,
+    3.4653,
+    3.4756,
+    3.4892,
+    3.6528,
+    4.1477,
+    4.9426,
+    5.8394,
+    6.4957,
+    5.9509,
+    5.1694,
+    4.5039,
+    4.0923,
+    3.9257,
+    3.8956,
+    3.8798,
+    3.8279,
+    3.7649,
+    3.7322,
+    3.7546,
+    3.8376,
+    3.9509,
+    4.0125,
+    3.9473,
+    3.7979,
+    3.7056,
+    3.7761,
+    3.9698,
+    4.0159
+   ],
+   "hi": [
+    6.8721,
+    6.8643,
+    6.8433,
+    6.8158,
+    6.7907,
+    6.7747,
+    6.7696,
+    6.7685,
+    6.7486,
+    6.662,
+    6.4433,
+    6.0488,
+    5.5118,
+    4.9631,
+    4.6275,
+    4.7788,
+    5.3883,
+    6.1512,
+    6.7484,
+    6.9437,
+    6.7686,
+    7.1421,
+    7.3196,
+    7.2767,
+    7.1295,
+    6.9756,
+    6.8759,
+    6.8565,
+    6.8966,
+    6.9479,
+    6.9795,
+    6.982,
+    6.9444,
+    6.8608,
+    6.7588,
+    6.6736,
+    6.567,
+    6.3506,
+    5.9948,
+    5.6049,
+    5.484
+   ],
+   "coverage": 0.9,
+   "band_method": "gp_posterior",
+   "band_of": "latent_mean",
+   "note": "model-based band, not held-out calibrated",
+   "basis": "predicted",
+   "range": [
+    0.0026,
+    0.9928
+   ],
+   "swept_at": "<volatile>",
+   "reference": {
+    "basis": "incumbent",
+    "incumbent_basis": "single",
+    "recipe": {
+     "feed_a": 0.814,
+     "feed_b": 0.4979,
+     "temp_offset": 0.2483
+    }
+   },
+   "n_points": 41
+  },
+  {
+   "feature": "feed_a",
+   "x": [
+    0.0824,
+    0.105,
+    0.1275,
+    0.1501,
+    0.1726,
+    0.1952,
+    0.2178,
+    0.2403,
+    0.2629,
+    0.2854,
+    0.308,
+    0.3306,
+    0.3531,
+    0.3757,
+    0.3982,
+    0.4208,
+    0.4434,
+    0.4659,
+    0.4885,
+    0.511,
+    0.5336,
+    0.5562,
+    0.5787,
+    0.6013,
+    0.6238,
+    0.6464,
+    0.669,
+    0.6915,
+    0.7141,
+    0.7366,
+    0.7592,
+    0.7818,
+    0.8043,
+    0.8269,
+    0.8494,
+    0.872,
+    0.8946,
+    0.9171,
+    0.9397,
+    0.9622,
+    0.9848
+   ],
+   "mean": [
+    5.49,
+    5.5192,
+    5.5445,
+    5.5674,
+    5.5896,
+    5.6125,
+    5.6365,
+    5.6601,
+    5.6801,
+    5.6907,
+    5.6847,
+    5.654,
+    5.5912,
+    5.4916,
+    5.3548,
+    5.1861,
+    4.9967,
+    4.8037,
+    4.628,
+    4.492,
+    4.416,
+    4.4154,
+    4.4979,
+    4.6621,
+    4.8975,
+    5.1851,
+    5.5003,
+    5.816,
+    6.1055,
+    6.346,
+    6.5208,
+    6.6207,
+    6.6445,
+    6.5984,
+    6.494,
+    6.3468,
+    6.1735,
+    5.9902,
+    5.8109,
+    5.6458,
+    5.5018
+   ],
+   "sd": [
+    0.9084,
+    0.8938,
+    0.8806,
+    0.8685,
+    0.8571,
+    0.8453,
+    0.8309,
+    0.8103,
+    0.7786,
+    0.7312,
+    0.6657,
+    0.5839,
+    0.4944,
+    0.4144,
+    0.3684,
+    0.3719,
+    0.4116,
+    0.4609,
+    0.5014,
+    0.527,
+    0.5399,
+    0.5455,
+    0.5474,
+    0.545,
+    0.5343,
+    0.5112,
+    0.4747,
+    0.4269,
+    0.3714,
+    0.3102,
+    0.2421,
+    0.165,
+    0.0919,
+    0.1153,
+    0.2316,
+    0.3689,
+    0.5075,
+    0.6364,
+    0.7481,
+    0.8387,
+    0.9073
+   ],
+   "lo": [
+    3.9959,
+    4.049,
+    4.096,
+    4.1388,
+    4.1799,
+    4.2222,
+    4.2698,
+    4.3273,
+    4.3994,
+    4.488,
+    4.5898,
+    4.6936,
+    4.778,
+    4.81,
+    4.7488,
+    4.5744,
+    4.3196,
+    4.0456,
+    3.8034,
+    3.6252,
+    3.5279,
+    3.5181,
+    3.5974,
+    3.7657,
+    4.0187,
+    4.3442,
+    4.7195,
+    5.1139,
+    5.4947,
+    5.8358,
+    6.1226,
+    6.3492,
+    6.4933,
+    6.4088,
+    6.1131,
+    5.7399,
+    5.3386,
+    4.9434,
+    4.5803,
+    4.2663,
+    4.0094
+   ],
+   "hi": [
+    6.9842,
+    6.9895,
+    6.993,
+    6.996,
+    6.9994,
+    7.0029,
+    7.0032,
+    6.993,
+    6.9608,
+    6.8935,
+    6.7797,
+    6.6144,
+    6.4043,
+    6.1732,
+    5.9608,
+    5.7977,
+    5.6737,
+    5.5618,
+    5.4527,
+    5.3588,
+    5.3041,
+    5.3126,
+    5.3983,
+    5.5586,
+    5.7763,
+    6.026,
+    6.2812,
+    6.5182,
+    6.7164,
+    6.8562,
+    6.9189,
+    6.8921,
+    6.7957,
+    6.788,
+    6.8749,
+    6.9536,
+    7.0083,
+    7.0371,
+    7.0414,
+    7.0253,
+    6.9941
+   ],
+   "coverage": 0.9,
+   "band_method": "gp_posterior",
+   "band_of": "latent_mean",
+   "note": "model-based band, not held-out calibrated",
+   "basis": "predicted",
+   "range": [
+    0.0824,
+    0.9848
+   ],
+   "swept_at": "<volatile>",
+   "reference": {
+    "basis": "incumbent",
+    "incumbent_basis": "single",
+    "recipe": {
+     "feed_a": 0.814,
+     "feed_b": 0.4979,
+     "temp_offset": 0.2483
+    }
+   },
+   "n_points": 41
+  }
+ ],
+ "slices_skipped": [],
+ "visualization_reasons": {
+  "embedding": null,
+  "correlation": null,
+  "response_surface": null,
+  "slices": null
+ },
+ "model_diagnostics": {
+  "jitter_rung": 1e-08,
+  "jitter_rung_index": 0,
+  "jitter_added_max": 0.0,
+  "jitter_additions": 0,
+  "jitter_cap": 0.0001,
+  "restarts": 3,
+  "restart_seed": 1234,
+  "restart_mll": [
+   -1.466704,
+   -1.466704,
+   -1.466704
+  ],
+  "restart_chosen": 0,
+  "median_nn_distance": 0.180653,
+  "noise_fitted": 0.006592539656578411,
+  "lengthscales": [
+   0.137322,
+   0.064443,
+   0.638122
+  ],
+  "boundary_flags": [
+   "2 lengthscale(s) shorter than the median nearest-neighbour distance between training rows (0.181, normalized units); the fit may be following noise"
+  ],
+  "condition_number": 9.687715467142816,
+  "condition_warning": false,
+  "condition_notice": null,
+  "condition_warn_above": 100000000.0,
+  "condition_refuse_above": 1000000000000.0,
+  "cv_fit_restarts": 1
+ },
+ "seed": 1234,
+ "engine_version": "0.1.0",
+ "target_unit": {
+  "unit": null,
+  "source": "none",
+  "header": "titer",
+  "note": "the target column header states no recognized unit; set one in the campaign setup"
+ },
+ "strain_summary": {
+  "available": false,
+  "reason": "no clone column: declare one (strain_column in the campaign setup, or roles.strain) to see per-clone results",
+  "column": null,
+  "source": null,
+  "policy": null,
+  "fixed_level": null,
+  "reference_level": null,
+  "levels": [],
+  "refusals": []
+ },
+ "slices_by_level": {},
+ "slices_by_level_skipped": {},
+ "oof_levels": {},
+ "covariates": {
+  "columns": [],
+  "source": null,
+  "fitted": [],
+  "held": {},
+  "not_fitted": {},
+  "note": "covariates are recorded run properties: never proposed, never in a recipe"
+ },
+ "drivers_skipped": [],
+ "correlation_skipped": [],
+ "categorical_effects": null,
+ "proposal_trust": {
+  "status": "exploration_untrusted",
+  "verdict": "not_yet",
+  "gated": true,
+  "withheld": false,
+  "n_requested": 5,
+  "n_returned": 5,
+  "reasons": [
+   "surrogate_spearman"
+  ],
+  "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+  "rule": "refused -> proposals withheld; not_yet -> exploration_untrusted; reliable -> trusted"
+ }
+}

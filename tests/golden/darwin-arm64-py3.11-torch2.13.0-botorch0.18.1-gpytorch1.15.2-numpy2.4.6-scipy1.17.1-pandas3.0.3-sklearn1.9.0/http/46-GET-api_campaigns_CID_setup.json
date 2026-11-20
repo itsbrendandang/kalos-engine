@@ -1,0 +1,52 @@
+{
+ "request": "GET /api/campaigns/cmp_00000000000000000000000000000034/setup",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "campaign_id": "cmp_00000000000000000000000000000034",
+  "setup": {
+   "goal": "maximize",
+   "bounds": {
+    "a": {
+     "lo": 0.0,
+     "hi": 10.0
+    }
+   },
+   "linear_constraints": [
+    {
+     "coefficients": {
+      "a": 1.0,
+      "b": 1.0
+     },
+     "op": "<=",
+     "rhs": 12.0
+    }
+   ],
+   "target_unit": "g/L"
+  },
+  "source": "stored",
+  "hash": "9c59837ad8a9e738251027d128b02b6bc7900d2448a55aeeba287a6a50075700",
+  "updated_at": "<volatile>",
+  "updated_by": "golden@lab",
+  "bounds_report": {
+   "a": {
+    "lo": 0.0,
+    "hi": 10.0,
+    "observed": [
+     0.29,
+     9.81
+    ],
+    "effective": [
+     0.29,
+     9.81
+    ],
+    "extrapolates": true
+   }
+  },
+  "has_analysis": true,
+  "analysis_setup_hash": "9c59837ad8a9e738251027d128b02b6bc7900d2448a55aeeba287a6a50075700",
+  "settings_in_sync": true
+ }
+}

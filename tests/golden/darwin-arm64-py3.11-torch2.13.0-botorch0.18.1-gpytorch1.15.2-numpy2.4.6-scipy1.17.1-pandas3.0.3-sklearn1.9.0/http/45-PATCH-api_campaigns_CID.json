@@ -1,0 +1,18 @@
+{
+ "request": "PATCH /api/campaigns/cmp_00000000000000000000000000000034",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "id": "cmp_00000000000000000000000000000034",
+  "name": "golden categorical (renamed)",
+  "created_by": "golden@lab",
+  "created_at": "<volatile>",
+  "updated_at": "<volatile>",
+  "archived_at": null,
+  "archived": false,
+  "seeded": true,
+  "is_default": false
+ }
+}

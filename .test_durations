@@ -1,4 +1,10 @@
 {
+    "tests/contract/test_golden_oracle.py::test_canonical_keeps_key_order_and_exact_floats": 0.007197780000012699,
+    "tests/contract/test_golden_oracle.py::test_changes_log_exists": 0.0013414809999972022,
+    "tests/contract/test_golden_oracle.py::test_record_refuses_an_empty_reason": 0.0062520719999952235,
+    "tests/contract/test_golden_oracle.py::test_recorded_goldens_are_consistent": 0.006535372999991296,
+    "tests/contract/test_golden_oracle.py::test_scrub_removes_only_times": 0.0025234980000163887,
+    "tests/contract/test_golden_oracle.py::test_shape_and_slug": 0.002244512000004306,
     "tests/contract/test_import_layers.py::test_baseline_is_well_formed": 0.0007695970000156649,
     "tests/contract/test_import_layers.py::test_every_module_is_placed_in_a_layer": 0.5386110099999541,
     "tests/contract/test_import_layers.py::test_import_layer_report": 0.0018490439999823138,

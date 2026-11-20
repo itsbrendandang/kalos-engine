@@ -1,0 +1,116 @@
+{
+ "request": "GET /api/campaigns/cmp_0000000000000000000000000000001e",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "campaign": {
+   "id": "cmp_0000000000000000000000000000001e",
+   "name": "golden bioprocess_subset",
+   "created_by": "golden@lab",
+   "created_at": "<volatile>",
+   "updated_at": "<volatile>",
+   "archived_at": null,
+   "archived": false,
+   "seeded": true,
+   "is_default": false
+  },
+  "summary": {
+   "has_campaign": true,
+   "target": "titer_g_L",
+   "features": [
+    "temperature_C",
+    "pH",
+    "glucose_gL"
+   ],
+   "n_base": 34,
+   "best": 0.942,
+   "goal": "maximize",
+   "round": 2,
+   "history": [
+    {
+     "round": 0,
+     "best": 0.942,
+     "n_base": 30
+    },
+    {
+     "round": 1,
+     "best": 0.942,
+     "n_base": 32
+    },
+    {
+     "round": 2,
+     "best": 0.942,
+     "n_base": 34
+    }
+   ],
+   "pending": [],
+   "n_awaiting": 0,
+   "n_measured": 0,
+   "analysis_in_sync": true,
+   "stage": {
+    "round": 3,
+    "current": "plan",
+    "started": 0,
+    "steps": [
+     {
+      "key": "setup",
+      "state": "done",
+      "detail": "Run sheet analyzed"
+     },
+     {
+      "key": "plan",
+      "state": "current",
+      "detail": "5 recipes proposed"
+     },
+     {
+      "key": "run",
+      "state": "upcoming",
+      "detail": ""
+     },
+     {
+      "key": "record",
+      "state": "upcoming",
+      "detail": ""
+     },
+     {
+      "key": "learn",
+      "state": "upcoming",
+      "detail": ""
+     }
+    ]
+   },
+   "next_action": {
+    "stage": "plan",
+    "action": "Review and start round 3",
+    "reason": "The model proposed 5 recipes. Untick any you will not run, then start the rest."
+   },
+   "verdict": {
+    "state": "not_yet",
+    "code": "not-yet",
+    "headline": "Kalos cannot yet show that it puts your past runs in the right order, so its suggestions are closer to guesses.",
+    "reasons": [
+     {
+      "code": "surrogate_spearman",
+      "plain": "The model put past runs in roughly the right order, but Kalos is not sure that is better than chance."
+     }
+    ],
+    "ordering": {
+     "state": "unsure",
+     "plain": "The model put past runs in roughly the right order, but Kalos is not sure that is better than chance."
+    },
+    "range_width": {
+     "state": "too_narrow",
+     "code": "bands_narrow",
+     "plain": "The likely range is too narrow: fewer results land inside it than it promises."
+    },
+    "n_runs": 34,
+    "min_runs": 20,
+    "n_groups": 33,
+    "min_groups": 8,
+    "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else."
+   }
+  }
+ }
+}
