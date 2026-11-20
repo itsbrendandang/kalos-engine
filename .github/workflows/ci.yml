@@ -135,9 +135,11 @@ jobs:
     name: pytest (serial determinism)
     # Determinism tests compare analysis output for exact equality and must NOT
     # run under parallel xdist (float results vary per worker even with threads
-    # pinned). A handful of tests, so a quick serial job.
+    # pinned). A handful of tests, plus the serial-vs-pool identity test.
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # About 9 min since tests/test_parallel_identity.py (serial vs pooled full
+    # analyses); the cap is a hang guard.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - *setup-uv

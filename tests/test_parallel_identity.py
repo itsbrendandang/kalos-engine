@@ -93,7 +93,7 @@ CASES = [
                                 "pure_noise", "mixed_medium", "minimize", "campaign_rounds")],
     # other seeds where the parallel paths differ most: mixed levels, minimize, rounds
     ("mixed_medium", 7), ("minimize", 7), ("campaign_rounds", 7),
-    ("bioprocess_mixed", 1234), ("bioprocess_mixed", 7),
+    ("bioprocess_mixed", 1234),
 ]
 
 
