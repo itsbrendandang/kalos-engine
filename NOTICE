@@ -1,0 +1,18 @@
+Kalos
+Copyright the Kalos authors. Licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+This product includes work adapted from the following sources.
+
+-------------------------------------------------------------------------------
+claude-tools-marketplace (Bioqore): secret guard idea
+-------------------------------------------------------------------------------
+
+Source: claude-tools-marketplace@08fff7e
+  plugins/bioqore-team/hooks/check-secrets.py, by Kai Suematsu for Bioqore.
+
+Idea credit; re-implemented, no code copied. The repository carries no license
+file, so nothing from it is reproduced here. The idea (scan only the lines a
+commit or push adds, skip obvious placeholders, report the file and the kind of
+secret) is re-implemented as scripts/check_secrets.py, with Kalos patterns, a
+fail-closed CLI and diff-header parsing that keeps paths intact.

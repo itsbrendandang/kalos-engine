@@ -4,6 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [ -d .venv/bin ] && PATH="$PWD/.venv/bin:$PATH"
+python3 scripts/check_secrets.py --range '@{u}..HEAD' --staged --paths
 if command -v ruff >/dev/null; then ruff check kalos/ tests/ examples/
 elif command -v uvx >/dev/null; then uvx ruff check kalos/ tests/ examples/
 else echo "ruff not found (pip install -e '.[dev]')" >&2; exit 1; fi
