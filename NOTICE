@@ -1,0 +1,21 @@
+Kalos
+Copyright the Kalos authors. Licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+This product includes work adapted from the following sources.
+
+-------------------------------------------------------------------------------
+Lab-file parsers: labchip (Bioqore lab analyses; idea credit)
+-------------------------------------------------------------------------------
+
+Source: github.com/Bioqore/ad_hoc_data_analyses (commit 82e6ae0, 2026-06-24),
+the lab's capillary electrophoresis (LabChip peak table) analyses.
+
+Idea credit; re-implemented, no code copied. The ideas: reading the instrument's
+peak table as one row per peak; leaving ladder and marker peaks out of the
+results; choosing the product peak by a size window in kDa; converting the
+exported ng/uL concentration to g/L by a factor of 1e-3. Used in
+kalos/ingest/instruments/labchip.py.
+
+No data from that repository is included. The test fixtures are synthetic and
+copy only the header layout of the lab's files.
