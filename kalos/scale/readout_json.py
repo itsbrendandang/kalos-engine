@@ -49,8 +49,8 @@ INTERVAL_LABEL_REFUSED = "no interval: the readout refused to issue a number"
 ZONES_RULE = (
     "scale axis only: with reference step ratio r and largest trained scale M, a target up to "
     "M*WARN_RATIO_MULT*r passes the ratio check, up to M*REFUSE_RATIO_MULT*r gets a ratio warning, beyond "
-    "that is refused; never beyond M*HARD_CAP_RATIO (gate). Process-parameter range and pooled-backtest "
-    "checks still apply to any target"
+    "that is refused; never beyond M*HARD_CAP_RATIO (gate). Process-parameter range, pooled-backtest and "
+    "mixing/aeration range (physics_range) checks still apply to any target"
 )
 
 
@@ -155,6 +155,10 @@ def readout_to_json(readout: dict[str, Any], *, readout_id: str) -> dict[str, An
         "refuse_ratio_mult": REFUSE_RATIO_MULT,
         "hard_cap_ratio": HARD_CAP_RATIO,
         "zones": _zones(max_trained, readout.get("reference_ratio")),
+        # F10: how far beyond the measured scales the target is, and its mixing /
+        # aeration against the measured runs (kalos/scale/physics_range.py).
+        "extrapolation": readout.get("extrapolation"),
+        "physics_range": readout.get("physics_range"),
         "provenance": provenance,
     }
     if readout["decision"] == "REFUSAL":

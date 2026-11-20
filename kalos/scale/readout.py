@@ -85,6 +85,11 @@ from kalos.versions import library_versions
 
 from .evaluation import leave_one_scale_out_report
 from .features import GeometryAssumptions, PowerNumberAssumption, VantRietParams
+from .physics_range import (
+    PHYSICS_REFUSE_FACTOR,
+    check_physics_range,
+    extrapolation_statement,
+)
 from .transfer import (
     DEFAULT_SCALE_FEATURE_CONFIG,
     ScaleFeatureConfig,
@@ -126,6 +131,7 @@ CONSTANTS: dict[str, float | str] = {
     "ALPHA": ALPHA,
     "MIN_RESIDUALS": MIN_RESIDUALS,
     "CANDIDATE": CANDIDATE,
+    "PHYSICS_REFUSE_FACTOR": PHYSICS_REFUSE_FACTOR,
 }
 
 
@@ -1166,6 +1172,10 @@ def build_readout(
         "backtest": None,
         "divergence": None,
         "interval_half_width": None,
+        # F10: how far the target is beyond the measured scales, and the target's
+        # mixing/aeration against the measured runs (set once the gate passes).
+        "extrapolation": None,
+        "physics_range": None,
         "gate": {
             "passed": gate_result.passed,
             "failed_check": gate_result.failed_check,
@@ -1200,6 +1210,32 @@ def build_readout(
         col: (float(clean_df[col].min()), float(clean_df[col].max())) for col in process_columns
     }
     decision_result = decide(ladder_result, target_ratio, target.process_params, trained_param_ranges)
+    # F10: the target's mixing and aeration (P/V, tip speed, gas velocity, vvm,
+    # kLa) against the measured runs' range. Outside -> a warning; far outside
+    # on P/V, vvm or kLa -> a refusal (kalos/scale/physics_range.py). Applied on
+    # top of the ladder decision: it can only make the answer more cautious.
+    physics = check_physics_range(clean_df, target, working_config)
+    base["physics_range"] = physics
+    if physics["decision"] == "refuse" and decision_result.decision != REFUSAL:
+        decision_result = DecisionResult(
+            decision=REFUSAL, reasons=[*decision_result.reasons, *physics["reasons"]],
+            reference_ratio=decision_result.reference_ratio,
+            requested_ratio=decision_result.requested_ratio, out_of_range_params=[],
+        )
+    elif physics["reasons"] and decision_result.decision in (NUMBER, NUMBER_WITH_WARNING):
+        decision_result = DecisionResult(
+            decision=NUMBER_WITH_WARNING, reasons=[*decision_result.reasons, *physics["reasons"]],
+            reference_ratio=decision_result.reference_ratio,
+            requested_ratio=decision_result.requested_ratio,
+            out_of_range_params=decision_result.out_of_range_params,
+        )
+    elif physics["reasons"]:
+        decision_result = DecisionResult(
+            decision=decision_result.decision, reasons=[*decision_result.reasons, *physics["reasons"]],
+            reference_ratio=decision_result.reference_ratio,
+            requested_ratio=decision_result.requested_ratio,
+            out_of_range_params=decision_result.out_of_range_params,
+        )
 
     base["decision"] = decision_result.decision
     base["reasons"] = decision_result.reasons
@@ -1217,6 +1253,7 @@ def build_readout(
     }
     base["scale_points"] = build_scale_points(clean_df, target_column, ladder_result, working_config)
     base["max_trained_scale_L"] = float(np.round(clean_df[working_config.scale_column].to_numpy(dtype=float), 6).max())
+    base["extrapolation"] = extrapolation_statement(target.scale_L, base["max_trained_scale_L"])
     base["backtest"] = build_backtest(ladder_result)
     base["divergence"] = build_divergence(ladder_result)
 

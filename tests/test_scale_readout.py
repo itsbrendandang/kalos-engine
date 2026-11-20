@@ -56,7 +56,11 @@ def _make_sheet(
 def _target(scale_L: float = 500.0, **process) -> ro.TargetSpec:
     params = {"ph_setpoint": 7.0, "temperature_C": 36.7}
     params.update(process)
-    return ro.TargetSpec(scale_L=scale_L, agitation_rpm=150.0, airflow_L_per_min=10.0, process_params=params)
+    # Aeration at 0.047 vvm, inside the demo sheet's measured 0.040-0.060 vvm. The
+    # earlier fixed 10 L/min was 0.0013 vvm at 7,500 L, 30x below any measured run,
+    # which the F10 physics range check (kalos/scale/physics_range.py) refuses.
+    return ro.TargetSpec(scale_L=scale_L, agitation_rpm=150.0, airflow_L_per_min=round(0.047 * scale_L, 3),
+                         process_params=params)
 
 
 def _demo_sheet() -> pd.DataFrame:
