@@ -227,7 +227,8 @@ def list_campaigns(
     `summary=true` adds the per-campaign card fields and paginates
     (`limit` 1..200, default 50; `cursor` = the previous page's `next_cursor`);
     see `kalos.portal.campaign_list` and docs/CAMPAIGNS_API.md. Without it the
-    response is the unpaginated info list, unchanged; `limit`/`cursor` without
+    response is the unpaginated info list, bounded by the per-tenant campaign
+    cap (`MAX_CAMPAIGNS_PER_TENANT`, 1000); `limit`/`cursor` without
     `summary=true` are refused (400 `invalid_query`) rather than ignored."""
     if summary:
         try:
@@ -264,8 +265,9 @@ def create_campaign(
             tenant=principal.tenant, name=body.name, created_by=principal.subject
         )
     except CampaignError as exc:
-        _audit(store, principal, "campaign.create", 400, None)
-        return campaign_error_response(exc)
+        resp = campaign_error_response(exc)
+        _audit(store, principal, "campaign.create", resp.status_code, None)
+        return resp
     _audit(store, principal, "campaign.create", 201, info["id"])
     return JSONResponse(info, status_code=201)
 

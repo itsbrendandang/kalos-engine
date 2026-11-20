@@ -355,3 +355,26 @@ def test_summary_is_tenant_scoped(env):
 def test_summary_requires_auth(env):
     tc, _ = env
     assert tc.get("/api/campaigns", params={"summary": "true"}).status_code == 401
+
+
+def test_campaign_count_is_capped_per_tenant_so_the_plain_list_stays_bounded(env, monkeypatch):
+    """VERIFY_MAIN NIT 11: the plain (unpaginated) list is bounded by a per-tenant
+    cap on campaigns. A create past the cap is refused with 409 and writes nothing;
+    another tenant is unaffected."""
+    tc, store = env
+    monkeypatch.setattr(campaign_module, "MAX_CAMPAIGNS_PER_TENANT", 3)
+    for i in range(3):
+        store.create_campaign(tenant="globex", name=f"c{i}")
+    store.archive_campaign(tenant="globex",
+                           campaign_id=store.list_campaigns(tenant="globex")[0]["id"])
+    # Archived campaigns count: `include_archived=true` lists them too.
+    r = tc.post("/api/campaigns", json={"name": "one too many"}, headers=B)
+    assert r.status_code == 409 and r.json()["code"] == "campaign_limit_reached"
+    assert len(store.list_campaigns(tenant="globex", include_archived=True)) == 3
+    with pytest.raises(campaign_module.CampaignLimitReached):
+        store.create_campaign(tenant="globex", name="direct")
+    # The legacy default-campaign path is capped as well (it goes through the same insert).
+    with pytest.raises(campaign_module.CampaignLimitReached):
+        store.seed(DF, "titer", ["x"], tenant="globex", analysis=ANALYSIS, dataset="d.csv")
+    # Other tenants are not affected.
+    assert store.create_campaign(tenant="acme", name="ok")["id"].startswith("cmp_")

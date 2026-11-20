@@ -96,23 +96,26 @@ python examples/amii_benchmark.py --seeds 20   # ~30-40 min; writes a JSON repor
 
 # Interval coverage at proposals
 
-The per-proposal 90% and 95% ranges are calibrated by grouped cross-validation on
-past runs. Proposals are not like past runs: they are chosen *because* the model
+The per-proposal 90% and 95% ranges are sized from grouped cross-validation on past
+runs. Proposals are not like past runs: they are chosen *because* the model
 predicts them high, often where it is least sure. This section measures how often
 the measurement of a **proposed** recipe lands inside the range shown next to it
 (ML audit B1, REORG F02/F15).
 
-**Protocol** (`python -m kalos.bench.coverage_at_proposals --seeds 40`): Latin-hypercube
+**Protocol** (`python -m kalos.bench.coverage_at_proposals --seeds 40 --seed-offset 100`): Latin-hypercube
 design from a known simulator, the production analysis (`_analyze`), then each of the
 5 proposals is measured once with fresh simulated noise and checked against the shipped
-`proposals[].intervals` `[lo, hi]`. The same band is rebuilt at 300 random points in the
-design box ("runs like past runs") for comparison. 40 seeds x 5 proposals = 200 measured
-proposals per scenario; the 95% CI is a seed-cluster bootstrap (the 5 proposals of one
-seed are correlated). Widths are a fraction of the training target's range. All
+`proposals[].intervals` `[lo, hi]`. The plain normalized band (`pred +/- q_norm * sd`, the
+fallback) is rebuilt at the same proposals, and the shipped band at 300 random points in
+the design box ("runs like past runs"), for comparison. 40 seeds x 5 proposals = 200
+measured proposals per scenario; the 95% CI is a seed-cluster bootstrap (the 5 proposals
+of one seed are correlated). Widths are a fraction of the training target's range. All
 simulators are synthetic; Branin is a control where selection hardly matters.
-Results files: `benchmarks/results/coverage_at_proposals_*.json`.
+Each results file records its commit and environment in `meta.environment`.
 
-## Before (engine @ `0fc05c3`, normalized conformal band; `coverage_at_proposals_before.json`)
+## Before F15 (engine @ `0fc05c3`, normalized conformal band; `coverage_at_proposals_before.json`)
+
+Historical: recorded before F15, seeds 0-39; the file records no environment. Not rerun on `main` (that code path no longer exists); the plain band at `main`'s proposals is in the tables below.
 
 | Scenario | 90%: at proposals [95% CI] | 90%: random in-box | 95%: at proposals [95% CI] | 95%: random in-box | GP band 90% at proposals | `conformal_q` at proposals |
 |---|---|---|---|---|---|---|
@@ -125,66 +128,90 @@ Results files: `benchmarks/results/coverage_at_proposals_*.json`.
 
 The calibration step works where it was calibrated (0.90-0.91 and 0.95-0.98 on random
 in-box points). At the proposals it does not: a nominal 90% range contained the
-measurement for 60-81% of proposals, a 95% range for 76-86%. The engine says so: every
-proposal interval carries `coverage_basis: "held_out_past_runs"` and a `caveat` with
-these measured numbers (`docs/CAMPAIGNS_API.md`, "Coverage basis and the proposal
-caveat").
+measurement for 60-81% of proposals, a 95% range for 76-86%. That measurement led to F02
+(every proposal interval carries `coverage_basis` and a `caveat` with measured
+numbers) and F15 (below).
 
-## After F15: selection-aware bands (fresh seeds 100-139)
+## Selection-aware bands (F15) on `main`, both locked stacks (seeds 100-139)
 
-The proposal bands are now calibrated on the held-out runs the model ranked highest
-in each fold (top 30%, pooled over both CV repeats), and the proposal's sd is floored
-at the 90th percentile of the held-out sds (`calibrate_selection_aware`,
+The proposal bands are sized on the held-out runs the model ranked highest in each
+fold (top 30%, pooled over both CV repeats), and the proposal's sd is floored at the
+90th percentile of the held-out sds (`calibrate_selection_aware`,
 `kalos/portal/analysis_parts/intervals.py`). The two parameters were chosen on seeds
-0-39 (`coverage_at_proposals_after_selection_seeds.json`); the numbers below are on
-**fresh seeds 100-139**, with the old band re-run on the same seeds
-(`coverage_at_proposals_before_seeds100.json` -> `coverage_at_proposals_after.json`).
+0-39 (`coverage_at_proposals_after_selection_seeds.json`, no environment recorded);
+the numbers below are on **fresh seeds 100-139**.
+
+`uv.lock` pins two numerical stacks: Python < 3.12 gets numpy 2.4.6 and scipy 1.17.1
+(CI runs this one), Python >= 3.12 gets numpy 2.5.1 and scipy 1.18.0 (the engine image,
+`python:3.12`, runs this one). The benchmark ran on both, on `main` @ `cf7105c` (bench
+commit `84f044a`: `cf7105c` plus results metadata), on macOS arm64 at 1 torch thread per
+worker:
+
+- `coverage_at_proposals_main_py311_seeds100.json`: Python 3.11.17, numpy 2.4.6, scipy 1.17.1.
+- `coverage_at_proposals_main_py312_seeds100.json`: Python 3.12.15, numpy 2.5.1, scipy 1.18.0.
+  Row for row (240/240) the file first committed with F15, which was recorded on
+  Python 3.14.7 on the same branch of the lock.
 
 **90% nominal**
 
-| Scenario | before: at proposals [95% CI] | **after: at proposals [95% CI]** | random in-box before -> after | median width at proposals (x y range) | available |
-|---|---|---|---|---|---|
-| Hartmann-6, n=30 | 0.64 [0.56, 0.72] | **0.94** [0.90, 0.97] | 0.91 -> 0.98 | 0.71 -> 1.76 (x2.5) | 1.00 |
-| Hartmann-6, n=80 | 0.60 [0.53, 0.68] | **0.94** [0.89, 0.97] | 0.91 -> 0.99 | 0.38 -> 0.98 (x2.6) | 1.00 |
-| Bioprocess, n=40 | 0.66 [0.59, 0.72] | **0.92** [0.87, 0.96] | 0.91 -> 0.99 | 0.72 -> 1.82 (x2.5) | 1.00 |
-| Bioprocess, n=100 | 0.83 [0.80, 0.88] | **0.99** [0.97, 1.00] | 0.90 -> 0.99 | 0.45 -> 1.31 (x2.9) | 1.00 |
-| Heteroscedastic 3-D, n=40 | 0.65 [0.57, 0.71] | **0.96** [0.93, 0.98] | 0.89 -> 0.99 | 0.54 -> 1.71 (x3.2) | 1.00 |
-| Branin, n=20 (control) | 0.87 [0.80, 0.94] | 0.98 [0.96, 0.99] | 0.89 -> 0.98 | 0.55 -> 0.84 (x1.5) | 1.00 |
+| Scenario | Python 3.11: at proposals [95% CI] | Python >= 3.12: at proposals [95% CI] | plain band, same proposals (3.11 / >=3.12) | random in-box (3.11 / >=3.12) | median width, x y range (3.11 / >=3.12) | width vs plain band | GP band (3.11 / >=3.12) | `conformal_q` (3.11 / >=3.12) |
+|---|---|---|---|---|---|---|---|---|
+| Hartmann-6, n=30 | **0.91** [0.855, 0.955] | **0.935** [0.895, 0.97] | 0.58 / 0.64 | 0.98 / 0.98 | 1.76 / 1.76 | x2.6 / x2.5 | 0.42 / 0.485 | 0.685 / 0.735 |
+| Hartmann-6, n=80 | **0.94** [0.89, 0.98] | **0.94** [0.89, 0.975] | 0.545 / 0.595 | 0.99 / 0.99 | 0.98 / 0.98 | x2.7 / x2.6 | 0.5 / 0.56 | 0.7 / 0.71 |
+| Bioprocess, n=40 | **0.86** [0.79, 0.92] | **0.92** [0.87, 0.965] | 0.58 / 0.66 | 0.99 / 0.99 | 1.82 / 1.82 | x2.8 / x2.5 | 0.415 / 0.53 | 0.66 / 0.77 |
+| Bioprocess, n=100 | **0.95** [0.905, 0.985] | **0.99** [0.975, 1] | 0.705 / 0.835 | 0.99 / 0.99 | 1.30 / 1.31 | x3.7 / x2.9 | 0.655 / 0.795 | 0.77 / 0.87 |
+| Heteroscedastic 3-D, n=40 | **0.965** [0.94, 0.985] | **0.96** [0.93, 0.985] | 0.65 / 0.65 | 0.99 / 0.99 | 1.71 / 1.71 | x3.1 / x3.2 | 0.51 / 0.51 | 0.685 / 0.71 |
+| Branin, n=20 (control) | 0.975 [0.955, 0.995] | 0.98 [0.96, 0.995] | 0.92 / 0.915 | 0.98 / 0.98 | 0.84 / 0.84 | x1.2 / x1.4 | 0.795 / 0.765 | 0.97 / 0.965 |
 
 **95% nominal**
 
-| Scenario | before: at proposals [95% CI] | **after: at proposals [95% CI]** | random in-box before -> after | median width at proposals (x y range) | available |
-|---|---|---|---|---|---|
-| Hartmann-6, n=30 | 0.80 [0.73, 0.86] | **0.97** [0.95, 0.99] | 0.97 -> 0.99 | 1.23 -> 2.40 (x1.9) | 1.00 |
-| Hartmann-6, n=80 | 0.72 [0.65, 0.79] | **0.97** [0.94, 0.99] | 0.95 -> 1.00 | 0.53 -> 1.54 (x2.9) | 1.00 |
-| Bioprocess, n=40 | 0.77 [0.70, 0.82] | **0.96** [0.92, 1.00] | 0.95 -> 1.00 | 1.04 -> 2.64 (x2.5) | 1.00 |
-| Bioprocess, n=100 | 0.92 [0.89, 0.94] | **0.99** [0.98, 1.00] | 0.95 -> 1.00 | 0.80 -> 1.82 (x2.3) | 1.00 |
-| Heteroscedastic 3-D, n=40 | 0.77 [0.70, 0.83] | **0.99** [0.98, 1.00] | 0.95 -> 1.00 | 0.80 -> 2.57 (x3.2) | 1.00 |
-| Branin, n=20 (control) | 0.95 [0.91, 0.98] | 0.99 [0.98, 1.00] | 0.94 -> 0.99 | 0.74 -> 0.97 (x1.3) | 1.00 |
+| Scenario | Python 3.11: at proposals [95% CI] | Python >= 3.12: at proposals [95% CI] | plain band, same proposals (3.11 / >=3.12) | random in-box (3.11 / >=3.12) | median width, x y range (3.11 / >=3.12) | width vs plain band | GP band (3.11 / >=3.12) |
+|---|---|---|---|---|---|---|---|
+| Hartmann-6, n=30 | **0.965** [0.93, 0.995] | **0.97** [0.95, 0.99] | 0.76 / 0.8 | 0.99 / 0.99 | 2.40 / 2.40 | x2.1 / x1.9 | 0.47 / 0.52 |
+| Hartmann-6, n=80 | **0.96** [0.925, 0.99] | **0.97** [0.94, 0.995] | 0.68 / 0.72 | 1.00 / 1.00 | 1.54 / 1.54 | x3.1 / x2.9 | 0.55 / 0.58 |
+| Bioprocess, n=40 | **0.935** [0.875, 0.98] | **0.965** [0.92, 1] | 0.645 / 0.765 | 1.00 / 1.00 | 2.63 / 2.64 | x2.7 / x2.5 | 0.45 / 0.565 |
+| Bioprocess, n=100 | **0.97** [0.94, 0.99] | **0.995** [0.985, 1] | 0.83 / 0.915 | 1.00 / 1.00 | 1.81 / 1.82 | x2.9 / x2.3 | 0.705 / 0.815 |
+| Heteroscedastic 3-D, n=40 | **0.99** [0.975, 1] | **0.995** [0.985, 1] | 0.75 / 0.765 | 1.00 / 1.00 | 2.57 / 2.57 | x3.1 / x3.2 | 0.56 / 0.565 |
+| Branin, n=20 (control) | 0.99 [0.975, 1] | 0.995 [0.985, 1] | 0.95 / 0.95 | 0.99 / 0.99 | 0.97 / 0.97 | x1.2 / x1.3 | 0.83 / 0.815 |
+
+Width vs plain band: the median width of the selection-aware band over the median width
+of the plain band at the same proposals.
 
 What this shows, and what it does not:
 
-- **Nominal is reached at the proposals** on every simulator: 0.92-0.99 at 90%,
-  0.96-0.99 at 95% (the lower CI bound of the worst case, bioprocess n=40, is 0.87).
-  The shipped caveat carries these numbers (`coverage_measured_at_proposals`).
-- **The price is width.** The bands at proposals are 2.5-3.2x wider (median), often
-  wider than the whole range of the training target when the model is weak (Hartmann-6
-  n=30 has a held-out Spearman near 0.3). They are honest, not informative: a model
-  that cannot rank its own held-out runs cannot say where a proposal will land.
-- **They over-cover.** 0.99 on random in-box points and 0.99 at proposals on the
-  bioprocess n=100 sheet: the 90th-percentile sd floor is conservative. A less
-  conservative floor (75th percentile) measured 0.87 on bioprocess n=40 on the
-  selection seeds; we kept the floor that reached nominal everywhere.
+- **Nominal is not reached everywhere.** At 90% the band covered 0.86-0.965 on
+  Python 3.11 and 0.92-0.99 on Python 3.12; at 95%, 0.935-0.99 and 0.965-0.995.
+  Bioprocess n=40 at 90% on Python 3.11 is 0.86 [0.79, 0.92]. The shipped caveat spans
+  both stacks and says so: "covered 86-99% in simulation, below 90% in some cases"
+  (`coverage_lower_at_proposals`); at 95%, "93-99%, below 95% in some cases".
+- **The library stack moves the number.** Same code, same seeds: bioprocess n=40 at 90%
+  is 0.86 on one locked stack and 0.92 on the other; bioprocess n=100 0.95 vs 0.99.
+  Bisected: the F15 commit `0bbf5ae` and `main` give identical rows on each stack;
+  swapping only scipy 1.17.1 -> 1.18.0 (Python 3.14, numpy 2.4.6) turns one stack's rows
+  into the other's. The surrogate fit is the same (identical coverage on random in-box
+  points); the acquisition optimizer lands on different proposals. Read the per-scenario
+  numbers with that run-to-run spread in mind, on top of the seed CI.
+- **The price is width.** At the same proposals the bands are 2.5-3.7x (90%) and
+  1.9-3.2x (95%) wider than the plain band (median), often wider than the whole range of
+  the training target when the model is weak (Hartmann-6 n=30 has a held-out Spearman
+  near 0.3). They are honest, not informative: a model that cannot rank its own held-out
+  runs cannot say where a proposal will land.
+- **They over-cover runs like past runs.** 0.98-1.00 on random in-box points: the
+  90th-percentile sd floor is conservative there. A less conservative floor (75th
+  percentile) measured 0.87 on bioprocess n=40 on the selection seeds; the 90th was kept.
 - **No guarantee.** The pooled CV repeats re-use each run once per repeat and the
   top-ranked held-out runs are only a proxy for proposals. The claim is the measured
   coverage on these synthetic simulators, nothing more; CRUX_PORT_PLAN Rank 2 (F12)
   measures it prospectively on real campaigns.
 - **Fallback.** A level with too few top-ranked held-out runs (90% needs 9, 95% needs
   19; e.g. a sheet whose binding CV grouping is 5 batches) falls back to the plain
-  normalized band, which keeps its own caveat (0.60-0.81 measured at proposals) and a
+  normalized band, which keeps its own caveat (at `main`'s proposals it covered
+  0.545-0.835 at 90% and 0.645-0.915 at 95% over both stacks) and a
   `selection_aware_unavailable` reason.
-- Cost: no extra model fits (arithmetic on the CV predictions already computed);
-  median analysis time was unchanged within machine-load noise.
+- Cost: no extra model fits (arithmetic on the CV predictions already computed).
+- The served numbers are generated from the two results files
+  (`python -m kalos.bench.coverage_at_proposals --print-evidence FILE`);
+  `tests/test_interval_labels.py` fails when the caveat and the files disagree.
 
 ---
 

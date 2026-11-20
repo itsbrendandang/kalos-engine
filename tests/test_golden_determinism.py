@@ -109,14 +109,11 @@ def _bioprocess_80x6() -> tuple[bytes, str]:
     return pd.read_csv(EXAMPLE).head(80)[cols].to_csv(index=False).encode(), "titer_g_L"
 
 
-@pytest.mark.xfail(strict=False, reason=(
-    "MEASURED NOT DETERMINISTIC (R2): 80 rows x 6 features of the committed synthetic "
-    "example, analysed 4 times in one process, gave 4 different proposal batches at "
-    "KALOS_TORCH_THREADS=4 and at 1, on a loaded machine; the same happens at 23d11df "
-    "(before the R2 surrogate changes). The posterior agrees to ~1e-16 between runs; "
-    "the acquisition optimum moves by whole units on differences that small. Cause "
-    "not isolated (in-process state that _seeded_analysis does not reset is the lead)."
-))
+# Was `xfail(strict=False)` ("MEASURED NOT DETERMINISTIC (R2)": 4 different
+# proposal batches in one process, measured on a loaded machine before #166).
+# On main @ cf7105c it XPASSes in CI (serial job) and locally (VERIFY_MAIN NIT
+# 13), so the xfail is removed and this is a plain test: a regression now fails.
+# Same machine, stack and thread count only, like every test in this file.
 @pytest.mark.serial
 def test_80x6_subset_is_identical_three_times_in_process():
     raw, target = _bioprocess_80x6()

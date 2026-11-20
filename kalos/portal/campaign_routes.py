@@ -27,6 +27,7 @@ from kalos.portal.campaign import (
     CampaignArchived,
     CampaignConflict,
     CampaignError,
+    CampaignLimitReached,
     CampaignNotFound,
     CampaignReasonRequired,
     CampaignStore,
@@ -108,6 +109,8 @@ def campaign_error_response(exc: CampaignError) -> JSONResponse:
         return campaign_not_found_response()
     if isinstance(exc, CampaignReasonRequired):
         return JSONResponse({"error": str(exc), "code": "reason_required"}, status_code=400)
+    if isinstance(exc, CampaignLimitReached):
+        return JSONResponse({"error": str(exc), "code": "campaign_limit_reached"}, status_code=409)
     if isinstance(exc, (CampaignArchived, CampaignConflict)):
         return JSONResponse({"error": str(exc), "code": "conflict"}, status_code=409)
     return JSONResponse({"error": str(exc), "code": "invalid_request"}, status_code=400)

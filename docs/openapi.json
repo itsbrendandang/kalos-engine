@@ -1741,7 +1741,7 @@
     },
     "/api/campaigns": {
       "get": {
-        "description": "The caller's tenant's campaigns, newest first.\n\n`summary=true` adds the per-campaign card fields and paginates\n(`limit` 1..200, default 50; `cursor` = the previous page's `next_cursor`);\nsee `kalos.portal.campaign_list` and docs/CAMPAIGNS_API.md. Without it the\nresponse is the unpaginated info list, unchanged; `limit`/`cursor` without\n`summary=true` are refused (400 `invalid_query`) rather than ignored.",
+        "description": "The caller's tenant's campaigns, newest first.\n\n`summary=true` adds the per-campaign card fields and paginates\n(`limit` 1..200, default 50; `cursor` = the previous page's `next_cursor`);\nsee `kalos.portal.campaign_list` and docs/CAMPAIGNS_API.md. Without it the\nresponse is the unpaginated info list, bounded by the per-tenant campaign\ncap (`MAX_CAMPAIGNS_PER_TENANT`, 1000); `limit`/`cursor` without\n`summary=true` are refused (400 `invalid_query`) rather than ignored.",
         "operationId": "list_campaigns_api_campaigns_get",
         "parameters": [
           {

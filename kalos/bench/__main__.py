@@ -6,10 +6,13 @@
     python -m kalos.bench --vs-baselines  # head-to-head vs random/LHS/Optuna/Ax/GP-EI
                                           # (protocol: docs/BENCHMARK.md; needs the bench extra)
 
-Reproducible: every trial is seeded, so the numbers are stable run to run.
+Every trial is seeded, so repeated runs on one machine and library stack give
+the same numbers. Numbers recorded on another stack (Python, numpy, scipy, torch
+build) can differ.
 """
 from __future__ import annotations
 
+import argparse
 import sys
 
 from .benchmark import run_benchmark, summarize
@@ -35,20 +38,33 @@ def _report_pending(quick: bool) -> int:
     return 0
 
 
+def _parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog="python -m kalos.bench", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--quick", action="store_true", help="fewer seeds and a smaller budget")
+    ap.add_argument("--pending", action="store_true",
+                    help="how much of a round a blind re-proposal wastes")
+    ap.add_argument("--vs-baselines", action="store_true",
+                    help="head-to-head vs random/LHS/Optuna/Ax/GP-EI (docs/BENCHMARK.md)")
+    ap.add_argument("--pilot", action="store_true", help="--vs-baselines: one pilot seed, nothing written")
+    ap.add_argument("--out", default="benchmarks/results",
+                    help="--vs-baselines: results directory (default: benchmarks/results)")
+    return ap
+
+
 def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
-    quick = "--quick" in argv
-    if "--pending" in argv:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    # Unknown flags (and --help) stop here instead of starting the full sweep.
+    args = _parser().parse_args(argv)
+    quick = args.quick
+    if args.pending:
         return _report_pending(quick)
-    if "--vs-baselines" in argv:
+    if args.vs_baselines:
         from pathlib import Path
 
         from .vs_baselines import run_vs_baselines
 
-        out = Path("benchmarks/results")
-        if "--out" in argv:
-            out = Path(argv[argv.index("--out") + 1])
-        return run_vs_baselines(argv, out)
+        return run_vs_baselines(argv, Path(args.out))
     seeds = range(4) if quick else range(10)
     budget = 10 if quick else 18
     n_init = 5
