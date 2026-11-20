@@ -31,6 +31,7 @@ from .checks import (
     check_physical_bounds,
     check_provenance_metadata,
     check_replicate_adequacy,
+    check_result_duplicates,
     check_units_consistency,
 )
 from .report import (
@@ -64,6 +65,7 @@ __all__ = [
     "check_physical_bounds",
     "check_provenance_metadata",
     "check_replicate_adequacy",
+    "check_result_duplicates",
     "check_units_consistency",
     "infer_dimension",
     "report_dict",

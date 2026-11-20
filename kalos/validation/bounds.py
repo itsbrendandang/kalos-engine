@@ -252,4 +252,13 @@ def infer_dimension(column_name: str) -> str | None:
     return None
 
 
-__all__ = ["DIMENSION_BOUNDS", "DimensionBounds", "infer_dimension"]
+def bounds_for_column(column_name: str) -> tuple[DimensionBounds, str] | None:
+    """The bounds that apply to a column, with a plain note of where they came
+    from, or None when the column's kind is not recognised."""
+    dim = infer_dimension(column_name)
+    if dim is None:
+        return None
+    return DIMENSION_BOUNDS[dim], f"read as {dim.replace('_', ' ')} from the column name"
+
+
+__all__ = ["DIMENSION_BOUNDS", "DimensionBounds", "bounds_for_column", "infer_dimension"]

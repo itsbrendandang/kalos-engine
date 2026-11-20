@@ -36,6 +36,7 @@ from .checks import (
     check_physical_bounds,
     check_provenance_metadata,
     check_replicate_adequacy,
+    check_result_duplicates,
     check_units_consistency,
 )
 from .report import Finding, UnitConversion, ValidationReport, build_report
@@ -111,6 +112,7 @@ def validate_frame(
         "constant_within_group",
         lambda: check_constant_within_group(df, group_hint=profile.group_hint),
     )
+    run("result_duplicate_entry", lambda: check_result_duplicates(df, target))
 
     return build_report(
         mode=mode,

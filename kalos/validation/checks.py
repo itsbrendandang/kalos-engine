@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from itertools import pairwise
 from re import Pattern
 
 import numpy as np
@@ -57,7 +58,10 @@ __all__ = [
     "check_physical_bounds",
     "check_provenance_metadata",
     "check_replicate_adequacy",
+    "check_result_duplicates",
     "check_units_consistency",
+    "detached_from_reference",
+    "significant_digits",
 ]
 
 
@@ -530,21 +534,18 @@ def _prefers_log(positive: np.ndarray) -> bool:
 
 
 def _suspected_value(value: float, rest: np.ndarray, *, upward: bool) -> tuple[float | None, int | None]:
-    """The value a x10 / x100 / x1000 slip would have come from, if one of them
-    puts it back inside the range of `rest` (the closest to the median of `rest`
-    on a log scale wins). `(None, None)` when no power of ten does."""
+    """The value a x10 / x100 / x1000 slip would have come from: the SMALLEST
+    such slip that puts it back inside the range of `rest` (a misplaced decimal
+    is more common than a larger slip; a larger one cannot be ruled out, which
+    is why the result is called suspected). `(None, None)` when none does."""
     if len(rest) == 0 or value <= 0:
         return None, None
     lo, hi = float(rest.min()), float(rest.max())
-    centre = float(np.median(np.log10(rest)))
-    best: tuple[float, float | None, int | None] = (np.inf, None, None)
     for k in _SLIP_POWERS:
         cand = value / 10**k if upward else value * 10**k
         if lo <= cand <= hi:
-            dist = abs(np.log10(cand) - centre)
-            if dist < best[0]:
-                best = (dist, cand, k)
-    return best[1], best[2]
+            return cand, k
+    return None, None
 
 
 def _ladder_floor(arr: np.ndarray) -> float:
@@ -623,6 +624,53 @@ def _detached_clusters(
             i, factor, neighbour = hit
             out.append((labels[::-1][i:], factor, 1.0 / neighbour, False))
     return out
+
+
+def significant_digits(value: float) -> int:
+    """Significant digits as written (0.942 -> 3, 5.0 -> 1, 1200 -> 2). Trailing
+    zeros of an integer are not counted: 1200 may well be a rounded reading."""
+    if not np.isfinite(value) or value == 0:
+        return 0
+    text = repr(abs(float(value))).lower().split("e")[0]
+    digits = text.replace(".", "").lstrip("0")
+    if text.endswith(".0"):
+        digits = digits[:-1]
+    return len(digits.rstrip("0")) or 1
+
+
+def detached_from_reference(value: float, reference: Iterable[float]) -> dict | None:
+    """Judge one new value against measured `reference` values with the same
+    detached-value rule as `check_outliers` (the reference plus the new value,
+    the factor set by the number of positive values). None when the value is
+    not detached, not positive, or the reference is too small to judge.
+
+    Returns `factor`, `threshold_factor`, `neighbour` (the measured value it is
+    compared with), `direction` ("high"/"low"), `suspected_value` and
+    `slip_factor` (the x10/x100/x1000 slip that puts it back inside the
+    measured range, or None) and `n_reference`."""
+    ref = [float(v) for v in reference if v is not None and np.isfinite(float(v))]
+    if not np.isfinite(value) or value <= 0:
+        return None
+    series = pd.Series([*ref, float(value)])
+    new_label = len(series) - 1
+    threshold = _jump_threshold(int((series > 0).sum()))
+    if threshold is None:
+        return None
+    for rows, factor, neighbour, upward in _detached_clusters(series, threshold):
+        if new_label not in rows:
+            continue
+        rest = np.asarray([v for v in ref if v > 0], float)
+        suspect, power = _suspected_value(float(value), rest, upward=upward)
+        return {
+            "factor": factor,
+            "threshold_factor": max(threshold, _ladder_floor(np.sort(series[series > 0].to_numpy(float)))),
+            "neighbour": neighbour,
+            "direction": "high" if upward else "low",
+            "suspected_value": None if suspect is None else float(f"{suspect:.6g}"),
+            "slip_factor": None if power is None else 10**power,
+            "n_reference": len(ref),
+        }
+    return None
 
 
 def check_outliers(df: pd.DataFrame, *, outcome_columns: Iterable[str] = ()) -> list[Finding]:
@@ -1224,3 +1272,84 @@ def check_constant_within_group(df: pd.DataFrame, *, group_hint: Pattern[str]) -
             )
 
     return findings
+
+
+# --- 12. copy-pasted results ------------------------------------------------------ #
+
+# Expected number of neighbouring matches by chance on the sheet (see
+# `check_result_duplicates`). At or below `_PASTE_WARN_EXPECTED` a match between
+# neighbours is a warning; up to `_PASTE_MAX_EXPECTED` it is reported as info
+# (worth a look, but a coincidence would not be surprising); above that the check
+# stays silent, because a long sheet of 3-decimal values repeats by chance.
+_PASTE_WARN_EXPECTED = 0.02
+_PASTE_MAX_EXPECTED = 0.1
+
+
+def check_result_duplicates(df: pd.DataFrame, target: str | None) -> list[Finding]:
+    """Flag neighbouring rows whose result is exactly the same while their
+    settings differ: the signature of a value pasted into the next run.
+
+    Only precise values count (3 or more significant digits, not 0, and not a
+    reading the sheet records often, such as a reporting limit). The check
+    also asks how often two neighbours would match by chance on THIS sheet:
+    with every repeated value placed at random, the expected number of
+    neighbouring matches is sum(c * (c - 1)) / n over the repeated values. When
+    that exceeds `_PASTE_MAX_EXPECTED`, a match between neighbours is not
+    evidence of anything and nothing is reported; up to `_PASTE_WARN_EXPECTED`
+    it is a WARNING, in between INFO.
+
+    The suspected correct value is unknown (only the lab record has it), so the
+    finding names both rows and asks for the record to be checked.
+    """
+    if target is None or target not in df.columns or len(df) < 3:
+        return []
+    y = pd.to_numeric(df[target], errors="coerce")
+    counts = y.dropna().value_counts()
+    n = int(y.notna().sum())
+    common = max(3, int(np.ceil(0.05 * n)))
+
+    def eligible(v: float) -> bool:
+        return bool(np.isfinite(v)) and v != 0 and significant_digits(v) >= 3 and int(counts.get(v, 0)) < common
+
+    repeated = [int(c) for v, c in zip(counts.index.to_numpy(float), counts.to_numpy()) if c >= 2 and eligible(float(v))]
+    expected = sum(c * (c - 1) for c in repeated) / max(n, 1)
+    if not repeated or expected > _PASTE_MAX_EXPECTED:
+        return []
+    settings = [c for c in df.columns if c != target and not _RUN_ID_RE.match(str(c).strip())]
+    as_text = df[settings].astype(str) if settings else None
+    labels = list(df.index)
+    pairs: list[tuple[int, int, float]] = []
+    for a, b in pairwise(labels):
+        va, vb = y.loc[a], y.loc[b]
+        if pd.isna(va) or va != vb or not eligible(float(va)):
+            continue
+        if as_text is not None and as_text.loc[a].equals(as_text.loc[b]):
+            continue  # the whole row repeats: check_duplicate_rows reports it
+        pairs.append((_row_index(a), _row_index(b), float(va)))
+    if not pairs:
+        return []
+    rows = sorted({r for a, b, _ in pairs for r in (a, b)})
+    capped, total = cap_rows(rows)
+    a, b, v = pairs[0]
+    return [
+        Finding(
+            check="result_duplicate_entry",
+            severity="warning" if expected <= _PASTE_WARN_EXPECTED else "info",
+            message=(
+                f"column '{target}': rows {a} and {b} are neighbours with exactly the same result "
+                f"({v:g}) but different settings{f', and {len(pairs) - 1} more such pair(s)' if len(pairs) > 1 else ''}. "
+                "Either the value was pasted into the next run or the two results happen to match "
+                f"(on this sheet a match between neighbours is expected about {expected:.2f} times by "
+                "chance). Check both runs in the lab record; nothing was changed."
+            ),
+            column=str(target),
+            rows=capped,
+            detail={
+                "pairs": [{"rows": [a_, b_], "value": v_} for a_, b_, v_ in pairs[:20]],
+                "expected_by_chance": expected,
+                "suspected_value": None,
+                "n_rows_affected": total,
+            },
+        )
+    ]
+

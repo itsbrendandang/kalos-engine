@@ -223,6 +223,10 @@ GLOSSARY: dict[str, str] = {
 }
 
 ENGINE_ONLY: dict[str, str] = {
+    # Result-entry checks (kalos/portal/result_referee.py) and the same problems on upload
+    'result_physically_impossible': 'A result that cannot physically happen is a typo or a unit mix-up; if the next round learns from it, every suggestion after it bends toward a run that never happened.',
+    'result_magnitude_jump': 'A result ten or a thousand times away from everything measured so far is most often a unit or decimal slip; check it before the next round learns from it.',
+    'result_duplicate_entry': 'Two runs with exactly the same precise result are often one value pasted twice, which hides what the second run really gave.',
 }
 
 # The desktop engine names the verdict states reliable / not_yet / refused; the
