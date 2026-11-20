@@ -100,6 +100,47 @@ Re-record the full scorecard in the same way, and say in the PR which cases move
      are judged.
    - Rates come with Wilson 95 % intervals.
 
+## Current scorecard (re-recorded on main after #164, #165 and #166)
+
+**Full tier**, run at `74a9663` on `feat/planted-faults`: main @ `b0bd6b1` (engine
+APIs, clone/strain roles, trust layer) plus this suite. Kaggle base present.
+torch 2.13.0, BoTorch 0.18.1. Full table: `results/scorecard_full.md` (the first
+run is kept unchanged as `results/scorecard_full_baseline.md`).
+
+| | Count | Wilson 95 % |
+|---|---|---|
+| Caught | **25 / 36** (69 %) | 0.53–0.82 |
+| Caught or noticed | 28 / 36 (78 %) | 0.62–0.88 |
+| Caught, excluding the declared blind spot | 25 / 35 (71 %) | 0.55–0.84 |
+| Missed | 8 / 36 | |
+| Clean cases with a false alarm | **6 / 8** (75 %) | 0.41–0.93 |
+| Crashes | 0 | |
+
+By family (caught / noticed / missed): sheet (19) 15 / 2 / 2; result (4) 1 / 0 / 3;
+model (11) 8 / 1 / 2; scale (2) 1 / 0 / 1.
+
+**What moved since the baseline** (five up, none down):
+
+| Fault | Baseline | Now | Why |
+|---|---|---|---|
+| `too_few_rows_8` | noticed | caught | F04 (#166): the held-out score is not judged below 12 runs; with a held-out interval at or below 0 the proposals are withheld |
+| `batch_offset_with_column` | missed | caught | F05 (#166): the `batch` column is a CV group, not fitted or proposed; the held-out score drops to 0.01 [−0.71, 0.70] and does not clear the floor |
+| `jittered_replicates` | missed | caught | F05 (#166): as-run replicates are held out together; the score drops to −0.40 and does not clear the floor |
+| `id_like_numeric_categorical` | missed | caught | #165: a `clone` column is read as an unordered label, even when numeric |
+| `covariate_as_setpoint` | missed | caught | #165: `passage` is detected as a covariate and never proposed. The suite's signal adapter now reads the engine's `covariates` block (`74a9663`; no matcher or truth change) |
+
+**Still missed (8):** `result_x10`, `result_x1000`, `result_copy_paste` (Crux #1
+result referee), `impossible_value` (the `DO_pct` bounds regex), `duplicate_run_id`,
+`batch_offset_no_column` (F05 has no round index when no column marks the batches),
+`leaked_column_renamed` (F06) and `scale_physics_extrapolation` (F10). Noticed only:
+`duplicated_rows_new_id`, `outcome_as_factor` and the declared blind spot
+`swapped_levels`. The clean-case false alarms are the same six, for the same
+reasons as below.
+
+**Fast tier:** unchanged at 15 caught, 2 noticed and 6 missed of 23, false alarms
+on 5 of 7 clean cases, so the CI gate baseline (`results/baseline_fast_gate.json`)
+is unchanged.
+
 ## Baseline scorecard (first scored run)
 
 **Full tier.**
@@ -108,7 +149,7 @@ Re-record the full scorecard in the same way, and say in the PR which cases move
   lazy import in `kalos/bench/__init__.py`.
 - The Kaggle base was present.
 - Library versions: torch 2.13.0, BoTorch 0.18.1, GPyTorch 1.15.2.
-- Full table: `results/scorecard_full.md`.
+- Full table: `results/scorecard_full_baseline.md`.
 
 | | Count | Wilson 95 % |
 |---|---|---|
