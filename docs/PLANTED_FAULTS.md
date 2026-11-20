@@ -100,7 +100,74 @@ Re-record the full scorecard in the same way, and say in the PR which cases move
      are judged.
    - Rates come with Wilson 95 % intervals.
 
-## Current scorecard (re-recorded on main after #164, #165 and #166)
+## Current scorecard (feat/data-checks)
+
+**Full tier**, run at `e864b3e` on `feat/data-checks` (main @ `4bb477d` plus the data
+checks: BRE-115..118, result-entry checks, F06, F10). Kaggle base present. Protocol,
+catalogue and truth unchanged. Full table: `results/scorecard_full_data_checks.md`
+(the earlier runs are kept unchanged: `scorecard_full.md`, `scorecard_full_baseline.md`).
+The "before" column is a fresh full run of `4bb477d` on the same machine; it
+reproduced `scorecard_full.md` exactly.
+
+| | Before (main) | Wilson 95 % | After | Wilson 95 % |
+|---|---|---|---|---|
+| Caught | 25 / 36 | 0.53–0.82 | **34 / 36** | 0.82–0.98 |
+| Noticed (not caught) | 3 / 36 | 0.03–0.22 | 0 / 36 | 0.00–0.10 |
+| Missed | 8 / 36 | 0.12–0.38 | 2 / 36 | 0.02–0.18 |
+| Caught, excluding the declared blind spot | 25 / 35 | 0.55–0.84 | 34 / 35 | 0.86–0.99 |
+| Clean cases with a false alarm | 6 / 8 | 0.41–0.93 | **2 / 8** | 0.07–0.59 |
+| Crashes | 0 | | 0 | |
+
+What moved (all up except two notices that were never real):
+
+| Fault | Before | After | By |
+|---|---|---|---|
+| `result_x10`, `result_x1000` | missed | caught | result-entry check `result_magnitude_jump` (and the fold's outlier finding now names the row) |
+| `result_copy_paste` | missed | caught | result-entry check `result_duplicate_entry` |
+| `impossible_value` | missed | caught | BRE-117: `DO_pct` is read as a percentage (header unit `pct`; the DO regex fixed) |
+| `duplicate_run_id` | missed | caught | BRE-116: `duplicate_ids` |
+| `duplicated_rows_new_id` | noticed | caught | BRE-116: rows identical except the run id are `duplicate_rows` |
+| `leaked_column_renamed` | missed | caught | F06: `qc_grade` is `dropped_output` (QC is observed after the run) and `target_leak` finds it on content (C < B < A sorts 100 % of runs) |
+| `outcome_as_factor` | noticed | caught | F06: `contamination` is `dropped_output` (observed-outcome name) |
+| `scale_physics_extrapolation` | missed | caught | F10: refused; P/V 3,127 W/m3 is 3.1x the highest measured (995 W/m3), "about 164 rpm" stays inside |
+| `swapped_levels` (declared blind spot) | noticed | missed | the old notice came only from the outlier check naming one of 60 flagged rows; nothing on the sheet can see a consistent relabelling |
+
+The fast-tier CI gate baseline was regenerated in this PR. Two of its outcomes went
+down: `swapped_levels` and, in an intermediate commit, `duplicated_rows_new_id`, both
+noticed -> missed for the reason above. `duplicated_rows_new_id` is caught again by
+BRE-116. Fast tier now: 21 caught, 0 noticed and 2 missed of 23 (`swapped_levels`,
+and `too_few_rows_8`, which only the full tier can judge); 0 of 6 clean cases
+false-alarm (was 4 of 6).
+
+**Still missed (2):** `batch_offset_no_column` (F05: no column and no round index mark
+the batches, so no grouping can see them) and the declared blind spot `swapped_levels`.
+
+**Clean false alarms left (2):**
+- `clean_bioprocess30`: trust refused at 30 rows and 11 inputs (CV rho below the floor).
+  This is defensible at that size, but the rule counts it. Unchanged.
+- `clean_scale_in_ladder`: the readout refuses a target at the largest measured scale
+  ("interpolation is out of scope"). Unchanged, and the protocol already calls it a
+  design flaw of the clean case (protocol v2).
+
+**Read with care.**
+- The outlier thresholds (`_jump_threshold`: 10x / 5x / 3x / 2x by column size) were
+  calibrated on clean subsamples of the same example sheets the clean cases come
+  from, and after the faults had been seen. They target fewer than about 1 % flags per
+  column on clean data. On 100 random clean subsamples per size they flagged nothing on
+  the bioprocess and scale-up sheets at 30-160 rows, and 0-3 % of Kaggle sheets at
+  30-60 rows. Power on the same subsamples: a random x1000 target slip 83-100 %, a
+  random x10 target slip 10-21 % on the zero-inflated bioprocess titer (most x10 slips
+  of a mid-range titer land inside the measured range, where no sheet check can see
+  them) and 48-100 % on the other sheets. A random x10 feature slip was caught in
+  57-98 % of cases from 30 rows up.
+- `typo_x10_target` stays caught honestly now: 4.86 is flagged as 3.4x the best clean
+  titer. A second planted slip (1.66) sits between them; the skip-one comparison
+  (Dixon's r21 idea) is what stops it from hiding the first.
+- `leaked_column_renamed` is caught twice. The name `qc_grade` contains "QC", which the
+  observed-outcome vocabulary excludes on its own. The content check `target_leak`
+  would catch it under any name.
+
+## Previous scorecard (re-recorded on main after #164, #165 and #166)
 
 **Full tier**, run at `74a9663` on `feat/planted-faults`: main @ `b0bd6b1` (engine
 APIs, clone/strain roles, trust layer) plus this suite. Kaggle base present.
