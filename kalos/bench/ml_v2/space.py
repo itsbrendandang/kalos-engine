@@ -8,6 +8,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+LIN_TOL = 1e-3  # amendment A2
+
 
 @dataclass
 class Space:
@@ -38,7 +40,10 @@ class Space:
         b = np.array(list(self.continuous.values()), float).reshape(-1, 2)
         return b[:, 0], b[:, 1]
 
-    def feasible(self, df: pd.DataFrame, tol: float = 1e-9) -> np.ndarray:
+    def feasible(self, df: pd.DataFrame, tol: float = 1e-9, lin_tol: float = LIN_TOL) -> np.ndarray:
+        """Box (relative `tol`), linear constraints (`lin_tol` x (1 + |rhs|): recipes
+        are reported rounded, so a proposal ON an active constraint can miss it in
+        the last displayed digit; amendment A2), levels and pinned levels."""
         ok = np.ones(len(df), bool)
         lo, hi = self.lo_hi()
         names = list(self.continuous)
@@ -49,7 +54,7 @@ class Space:
         for c in self.linear_constraints:
             lhs = sum(float(v) * df[k].to_numpy(float) for k, v in c["coefficients"].items())
             scale = 1.0 + abs(float(c["rhs"]))
-            ok &= (lhs <= c["rhs"] + tol * scale) if c["op"] == "<=" else (lhs >= c["rhs"] - tol * scale)
+            ok &= (lhs <= c["rhs"] + lin_tol * scale) if c["op"] == "<=" else (lhs >= c["rhs"] - lin_tol * scale)
         for k, levels in self.categorical.items():
             ok &= df[k].astype(str).isin(levels).to_numpy()
         for k, v in self.fixed.items():

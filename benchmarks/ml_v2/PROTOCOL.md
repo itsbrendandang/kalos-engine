@@ -377,3 +377,15 @@ had never been run by this harness (no smoke, tuning or held-out job used the lo
 The reference numbers in `~/.kalos-dev/REAL_BACKTEST.md` were computed by agent
 real-backtest with sample-ID recipes; they are not results of this harness and are
 labelled as such wherever cited. No other constant changes.
+
+**A2 (2026-11-20): constraint tolerance.** Seen in the reference arm's tuning run (the
+`constrained` family): the engine returns proposals on the active linear constraint
+with recipe values rounded for display, so 44 of 60 proposals exceeded the right-hand
+side by about 1e-4 (e.g. 0.544 + 0.227 + 0.661 = 1.432 > 1.431918). With the original
+1e-9 tolerance the harness counted them infeasible and excluded them from the
+incumbent, which penalized regret for a rounding artifact. From this amendment on a
+linear constraint is satisfied within 1e-3 x (1 + |rhs|) (`space.LIN_TOL`); the strict
+count (1e-9) is still recorded as `n_infeasible_strict` and reported, because a
+displayed recipe that misses the user's constraint in the last digit is an engine
+issue worth fixing. The `constrained` closed-loop jobs of the reference, random and LHS
+tuning runs were re-run under A2; no candidate had been run. No other constant changes.

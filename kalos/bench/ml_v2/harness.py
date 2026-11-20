@@ -114,7 +114,10 @@ def job_file(out: Path, suite: str, task: str, seed: int) -> Path:
 
 def run(spec: str, config: dict[str, Any], out: Path, split: str, *, suites: list[str] | None = None,
         tasks: list[str] | None = None, workers: int = 4, user_data: Path | None = None,
-        leadgene_path: Path | None = None, log: Callable[[str], None] = print) -> Path:
+        leadgene_path: Path | None = None, log: Callable[[str], None] | None = None) -> Path:
+    if log is None:
+        def log(msg: str) -> None:
+            print(msg, flush=True)
     if split not in ("tuning", "heldout", "smoke", "ci"):
         raise ValueError("split must be tuning, heldout, smoke or ci")
     if split == "ci":
@@ -161,7 +164,12 @@ def run(spec: str, config: dict[str, Any], out: Path, split: str, *, suites: lis
                 jobs.append((spec, config, suite, task, seed, split, str(cache),
                              str(user_data) if user_data else None,
                              str(leadgene_path) if leadgene_path else None, str(f)))
-    (out / "run_meta.json").write_text(json.dumps(meta, indent=1, default=str) + "\n", encoding="utf-8")
+    meta_path = out / "run_meta.json"
+    if meta_path.is_file():  # a resumed or partial re-run keeps the earlier runs' metadata
+        old = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["previous_runs"] = [*old.pop("previous_runs", []), old]
+    meta["suites_requested"], meta["tasks_requested"] = suites, tasks
+    meta_path.write_text(json.dumps(meta, indent=1, default=str) + "\n", encoding="utf-8")
     _prefit_emulators(jobs, cache, user_data, log)
     jobs.sort(key=lambda j: (_COST.get(j[2], 9), j[4], j[3]))
     log(f"{len(jobs)} job(s) to run with {workers} worker(s) -> {out}")

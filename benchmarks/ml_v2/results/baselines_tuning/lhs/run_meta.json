@@ -1,0 +1,92 @@
+{
+ "protocol": "ml_v2.0",
+ "arm": "lhs",
+ "spec": "kalos.bench.ml_v2.arms.baselines:make_lhs",
+ "config": {},
+ "config_hash": "bef341e959bfb8b0",
+ "shippable": false,
+ "split": "tuning",
+ "started": "2026-11-20T04:54:15",
+ "stack": {
+  "library_versions": {
+   "torch": "2.13.0",
+   "botorch": "0.18.1",
+   "gpytorch": "1.15.2",
+   "linear-operator": "0.6.1",
+   "numpy": "2.4.6",
+   "scipy": "1.17.1",
+   "pandas": "3.0.3"
+  },
+  "pinned": {
+   "torch": "2.13.0",
+   "botorch": "0.18.1",
+   "gpytorch": "1.15.2"
+  },
+  "pin_drift": {}
+ },
+ "workers": 4,
+ "host": "Brendans-Mac-Studio.local",
+ "git": {
+  "commit": "2338a63549d4a81bb9fd91f837c2048ca4ac731f",
+  "branch": "feat/ml-bench-v2",
+  "dirty": true,
+  "dirty_files": [
+   "M benchmarks/ml_v2/.gitignore",
+   " M benchmarks/ml_v2/PROTOCOL.md",
+   " M kalos/bench/ml_v2/harness.py",
+   " M kalos/bench/ml_v2/space.py",
+   " M kalos/bench/ml_v2/suites.py"
+  ]
+ },
+ "leadgene": "/Users/brendandang/kalos/external/voyager/leadgene_cho_dynamics.csv",
+ "previous_runs": [
+  {
+   "protocol": "ml_v2.0",
+   "arm": "lhs",
+   "spec": "kalos.bench.ml_v2.arms.baselines:make_lhs",
+   "config": {},
+   "config_hash": "bef341e959bfb8b0",
+   "shippable": false,
+   "split": "tuning",
+   "started": "2026-11-20T04:36:55",
+   "stack": {
+    "library_versions": {
+     "torch": "2.13.0",
+     "botorch": "0.18.1",
+     "gpytorch": "1.15.2",
+     "linear-operator": "0.6.1",
+     "numpy": "2.4.6",
+     "scipy": "1.17.1",
+     "pandas": "3.0.3"
+    },
+    "pinned": {
+     "torch": "2.13.0",
+     "botorch": "0.18.1",
+     "gpytorch": "1.15.2"
+    },
+    "pin_drift": {}
+   },
+   "workers": 6,
+   "host": "Brendans-Mac-Studio.local",
+   "git": {
+    "commit": "2338a63549d4a81bb9fd91f837c2048ca4ac731f",
+    "branch": "feat/ml-bench-v2",
+    "dirty": true,
+    "dirty_files": [
+     "M kalos/bench/ml_v2/harness.py"
+    ]
+   },
+   "leadgene": "/Users/brendandang/kalos/external/voyager/leadgene_cho_dynamics.csv",
+   "finished": "2026-11-20T04:39:24",
+   "wall_seconds": 9.9
+  }
+ ],
+ "suites_requested": [
+  "closed_loop"
+ ],
+ "tasks_requested": [
+  "constrained"
+ ],
+ "finished": "2026-11-20T04:54:25",
+ "wall_seconds": 9.7
+}

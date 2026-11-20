@@ -1,0 +1,85 @@
+{
+ "protocol": "ml_v2.0",
+ "arm": "kalos_ref",
+ "spec": "kalos.bench.ml_v2.arms.kalos_ref:make_arm",
+ "config": {},
+ "config_hash": "98c2bcaf9584b22a",
+ "shippable": true,
+ "split": "tuning",
+ "started": "2026-11-20T02:35:17",
+ "stack": {
+  "library_versions": {
+   "torch": "2.13.0",
+   "botorch": "0.18.1",
+   "gpytorch": "1.15.2",
+   "linear-operator": "0.6.1",
+   "numpy": "2.4.6",
+   "scipy": "1.17.1",
+   "pandas": "3.0.3"
+  },
+  "pinned": {
+   "torch": "2.13.0",
+   "botorch": "0.18.1",
+   "gpytorch": "1.15.2"
+  },
+  "pin_drift": {}
+ },
+ "workers": 10,
+ "host": "Brendans-Mac-Studio.local",
+ "git": {
+  "commit": "2338a63549d4a81bb9fd91f837c2048ca4ac731f",
+  "branch": "feat/ml-bench-v2",
+  "dirty": false,
+  "dirty_files": []
+ },
+ "leadgene": "/Users/brendandang/kalos/external/voyager/leadgene_cho_dynamics.csv",
+ "finished": "2026-11-20T04:33:55",
+ "wall_seconds": 7117.6,
+ "reruns": [
+  {
+   "protocol": "ml_v2.0",
+   "arm": "kalos_ref",
+   "spec": "kalos.bench.ml_v2.arms.kalos_ref:make_arm",
+   "config": {},
+   "config_hash": "98c2bcaf9584b22a",
+   "shippable": true,
+   "split": "tuning",
+   "started": "2026-11-20T04:49:42",
+   "stack": {
+    "library_versions": {
+     "torch": "2.13.0",
+     "botorch": "0.18.1",
+     "gpytorch": "1.15.2",
+     "linear-operator": "0.6.1",
+     "numpy": "2.4.6",
+     "scipy": "1.17.1",
+     "pandas": "3.0.3"
+    },
+    "pinned": {
+     "torch": "2.13.0",
+     "botorch": "0.18.1",
+     "gpytorch": "1.15.2"
+    },
+    "pin_drift": {}
+   },
+   "workers": 12,
+   "host": "Brendans-Mac-Studio.local",
+   "git": {
+    "commit": "2338a63549d4a81bb9fd91f837c2048ca4ac731f",
+    "branch": "feat/ml-bench-v2",
+    "dirty": true,
+    "dirty_files": [
+     "M benchmarks/ml_v2/.gitignore",
+     " M benchmarks/ml_v2/PROTOCOL.md",
+     " M kalos/bench/ml_v2/harness.py",
+     " M kalos/bench/ml_v2/space.py",
+     " M kalos/bench/ml_v2/suites.py"
+    ]
+   },
+   "leadgene": "/Users/brendandang/kalos/external/voyager/leadgene_cho_dynamics.csv",
+   "finished": "2026-11-20T04:53:55",
+   "wall_seconds": 252.6,
+   "note": "amendment A2 re-run of closed_loop/constrained (12 jobs) at the working tree of commit 2338a63 + A2"
+  }
+ ]
+}

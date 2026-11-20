@@ -3,3 +3,9 @@ results/**/raw/internal/
 results/**/raw/backtest/internal__*/
 results/**/raw/scale/internal__*/
 results/**/_cache/
+# Real-data raw records can carry recorded values of rows whose datasets are not
+# redistributable (pool `order_values`): only summaries are committed for them.
+results/**/raw/pool/
+results/**/raw/snapshot_real/
+results/**/raw/backtest/
+results/**/raw/emulator/

@@ -219,6 +219,7 @@ def _loop(arm: Arm, prob: Problem, suite: str, task: str, seed: int, n0: int) ->
             recs += [{str(k): v for k, v in r.items()} for r in sp.sample(n_fill, rng_fill).to_dict("records")]
         new = pd.DataFrame(recs)[sp.inputs]
         infeasible = int((~sp.feasible(new)).sum())
+        infeasible_strict = int((~sp.feasible(new, lin_tol=1e-9)).sum())
         new = pd.concat([new.reset_index(drop=True), sp.draw_covariates(Q, rng_noise)], axis=1)
         y_new = prob.observe(new, rng_noise, np.full(Q, r))
         ho = sp.sample(N_HELDOUT_POINTS, rng_ho)
@@ -232,7 +233,7 @@ def _loop(arm: Arm, prob: Problem, suite: str, task: str, seed: int, n0: int) ->
                 pred_ho = None
         rec = {
             "round": r, **cost, "n_train": int(len(x)), "n_arm_proposals": n_arm, "n_filled": n_fill,
-            "n_infeasible": infeasible, **_verdict_rec(out),
+            "n_infeasible": infeasible, "n_infeasible_strict": infeasible_strict, **_verdict_rec(out),
             "at_proposals": _prop_cov(out, y_new, scale, n_arm),
             "heldout": _cov_record(y_ho, _bands(out, ho), scale),
             "prospective_spearman": pred_ho, "info": out.info,
