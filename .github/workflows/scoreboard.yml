@@ -1,0 +1,157 @@
+name: Scoreboard
+
+# The per-PR scoreboard (kalos/bench/scoreboard.py, `make scoreboard`): planted
+# faults, coverage and band width at proposals (90/95%), regret on the fast
+# synthetic tasks, wall time of the 160-row example and golden-output drift.
+#
+# Same-runner comparison: identical code gives slightly different floats on
+# different runners, so each job measures the base commit AND the PR (merge ref)
+# one after the other on ONE runner, both driven by the PR's copy of the script.
+# The sections are split over two parallel jobs to keep the wall time down.
+# The diff is the job summary and a PR comment. A regression beyond the noise
+# bands, or any golden drift, fails `scoreboard diff` unless the PR carries the
+# label `scoreboard-justified` (state the reason in the PR; after adding the
+# label, re-run only the failed diff job).
+#
+# On main it measures main only and uploads `scoreboard-main` (refresh the
+# committed SCOREBOARD.md from it). workflow_dispatch can run the full fault tier.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: planted-fault tier
+        type: choice
+        options: [fast, full]
+        default: fast
+
+concurrency:
+  group: scoreboard-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  UV_TORCH_BACKEND: cpu
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  measure:
+    name: scoreboard (${{ matrix.group }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: quick
+            sections: walltime,faults,golden
+          - group: slow
+            sections: coverage,regret
+    steps:
+      - name: Check out the PR (the scoreboard script always comes from here)
+        uses: actions/checkout@v4
+        with:
+          path: head
+      - name: Check out the base commit
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          prune-cache: false
+          cache-dependency-glob: |
+            head/pyproject.toml
+            head/uv.lock
+      - name: Install each side's locked stack (CPU torch)
+        run: |
+          for side in base head; do
+            [ -d "$side" ] || continue
+            (cd "$side" && uv venv --python "$PYTHON_VERSION" .venv \
+              && uv export --frozen --extra ml --extra portal --extra bench --extra dev \
+                   --no-emit-project --no-hashes -o "$RUNNER_TEMP/constraints-$side.txt" \
+              && uv pip install -e ".[ml,portal,bench,dev]" -c "$RUNNER_TEMP/constraints-$side.txt")
+          done
+      - name: Measure base, then head, on this runner
+        env:
+          TIER: ${{ inputs.tier || 'fast' }}
+        run: |
+          rc=0
+          for side in base head; do
+            [ -d "$side" ] || continue
+            KALOS_STATE_DIR="$RUNNER_TEMP/state-$side" "$side/.venv/bin/python" head/kalos/bench/scoreboard.py run \
+              --repo "$side" --out "out/$side-${{ matrix.group }}" --sections "${{ matrix.sections }}" \
+              --workers 4 --tier "$TIER" > "out-$side.log" 2>&1 || rc=1
+            tail -n 40 "out-$side.log"
+          done
+          exit $rc
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scoreboard-${{ matrix.group }}
+          path: out
+          retention-days: 30
+
+  diff:
+    name: scoreboard diff
+    needs: measure
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scoreboard-*
+          merge-multiple: true
+          path: out
+      - name: Merge the section groups
+        run: |
+          for side in base head; do
+            ls -d out/$side-* >/dev/null 2>&1 || continue
+            python3 kalos/bench/scoreboard.py merge "sb-$side" out/$side-*
+          done
+          cat sb-head/SCOREBOARD.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the merged scoreboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event_name == 'pull_request' && 'scoreboard-merged' || 'scoreboard-main' }}
+          path: sb-*
+          retention-days: 90
+      - name: Diff base vs head
+        id: diff
+        if: github.event_name == 'pull_request'
+        run: |
+          set +e
+          python3 kalos/bench/scoreboard.py diff sb-base sb-head --md diff.md
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          { echo; cat diff.md; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Comment on the PR
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          { echo "<!-- kalos-scoreboard -->"; cat diff.md; echo; echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"; } > comment.md
+          gh pr comment ${{ github.event.pull_request.number }} --edit-last --body-file comment.md \
+            || gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md
+      - name: Gate (regression or drift needs the scoreboard-justified label)
+        if: github.event_name == 'pull_request' && steps.diff.outputs.rc != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          labels=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels --jq '.[].name')
+          if echo "$labels" | grep -qx 'scoreboard-justified'; then
+            echo "Regression or drift present; the PR carries scoreboard-justified (the reason must be stated in the PR)."
+          else
+            echo "::error::Scoreboard regression or golden drift. State and justify it in the PR and add the label scoreboard-justified, or fix it."
+            exit 1
+          fi
