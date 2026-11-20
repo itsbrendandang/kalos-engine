@@ -1,0 +1,35 @@
+Well Label,Sample Name,Type,Size [kDa],Conc. (ng/ul),% Purity,Migration Time(sec) - Start,Migration Time(sec) - End,Corr. Area,Date_Time,Plate File,Height
+Ladder01,Protein ladder,LM,1.0,,,,,95.2,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,40.1
+Ladder01,Protein ladder,Xsys,7.5,,,,,12.3,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,6.2
+Ladder01,Protein ladder,L,10.0,,,,,210.4,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,80.3
+Ladder01,Protein ladder,L,20.0,,,,,220.9,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,82.7
+Ladder01,Protein ladder,L,40.0,,,,,198.1,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,77.0
+Ladder01,Protein ladder,L,80.0,,,,,185.6,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,70.4
+Ladder01,Protein ladder,L,120.0,,,,,170.2,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,66.8
+Ladder01,Protein ladder,L,,,,,,,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,1.1
+A01,R01-1,LM,1.0,,,15.10,15.32,90.4,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,41.2
+A01,R01-1,Xsys,7.4,,,17.80,17.95,11.8,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,5.9
+A01,R01-1,,14.2,21.3,5,19.40,19.61,20.1,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,8.3
+A01,R01-1,,30.1,412.5,90.2,22.71,23.02,388.6,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,150.4
+A01,R01-1,,61.0,19.6,4.8,26.30,26.55,18.4,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,7.7
+A02,R01-2,LM,1.0,,,15.10,15.32,90.4,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,41.2
+A02,R01-2,Xsys,7.4,,,17.80,17.95,11.8,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,5.9
+A02,R01-2,,29.6,356.0,93.1,22.65,22.97,335.2,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,131.0
+A02,R01-2,?,45.0,,,24.80,24.92,9.5,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,3.1
+A02,R01-2,,52.3,26.4,6.9,25.40,25.66,24.9,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,9.6
+A03,R02-1,LM,1.0,,,15.10,15.32,90.4,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,41.2
+A03,R02-1,Xsys,7.4,,,17.80,17.95,11.8,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,5.9
+A03,R02-1,,14.0,8.2,62,19.38,19.58,7.7,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,3.4
+A03,R02-1,,25.6,5.1,38,22.10,22.31,4.8,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,2.2
+A04,R02-2,LM,1.0,,,15.10,15.32,90.4,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,41.2
+A04,R02-2,Xsys,7.4,,,17.80,17.95,11.8,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,5.9
+A04,R02-2,,28.4,120.7,38.5,22.48,22.70,113.6,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,47.2
+A04,R02-2,,31.7,180.2,57.6,22.93,23.20,169.7,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,66.0
+A04,R02-2,,60.2,12.3,3.9,26.25,26.48,11.6,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,4.8
+A05,R03-1,LM,1.0,,,15.10,15.32,90.4,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,41.2
+A05,R03-1,Xsys,7.4,,,17.80,17.95,11.8,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,5.9
+A05,R03-1,,30.4,,88.0,22.76,23.05,301.2,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,118.9
+A05,R03-1,,58.8,40.9,12.0,26.10,26.37,38.5,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,15.0
+A06,BSA std 250 ng/uL,LM,1.0,,,15.10,15.32,90.4,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,41.2
+A06,BSA std 250 ng/uL,Xsys,7.4,,,17.80,17.95,11.8,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,5.9
+A06,BSA std 250 ng/uL,,66.4,101.3,100,26.60,26.91,95.4,2030\01\15 09:30:00,C:\LabChip\Data\demo_plate_01.gxd,39.6
