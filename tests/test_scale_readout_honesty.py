@@ -36,6 +36,14 @@ from kalos.scale.working_volume import (
 _DEMO_CSV = "examples/synthetic_scaleup/synthetic_scaleup.csv"
 
 
+
+@pytest.fixture(autouse=True)
+def _isolate_checks_setting(monkeypatch):
+    # these tests are the checks-on state (the default); see
+    # test_scale_readout_checks_setting.py for both states
+    monkeypatch.delenv("KALOS_SCALE_READOUT_CHECKS", raising=False)
+
+
 def _method_ladder() -> pd.DataFrame:
     """5 scales, one run each; the titer assay switches between a gel method and
     HPLC from step to step, one method cell is blank, and the titer follows the

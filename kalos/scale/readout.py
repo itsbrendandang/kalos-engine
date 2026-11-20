@@ -86,6 +86,7 @@ from kalos.versions import library_versions
 from .assay_confound import assay_method_confound
 from .evaluation import leave_one_scale_out_report
 from .features import GeometryAssumptions, PowerNumberAssumption, VantRietParams
+from .settings import READOUT_CHECKS_VAR, readout_checks_enabled
 from .transfer import (
     DEFAULT_SCALE_FEATURE_CONFIG,
     ScaleFeatureConfig,
@@ -1039,6 +1040,21 @@ def _resolve_working_volumes(
     return out, resolution
 
 
+def _checks_off_confound() -> dict[str, Any]:
+    """The `assay_confound` block when `KALOS_SCALE_READOUT_CHECKS=off`: says
+    the check did not run, never that it found nothing."""
+    return {
+        "code": "assay_method_confound",
+        "columns": [],
+        "skipped": [{"column": None, "reason": f"check not run: {READOUT_CHECKS_VAR}=off"}],
+        "severity": None,
+        "reasons": [],
+        "what_would_fix_it": None,
+        "rule": None,
+        "n_rows": 0,
+    }
+
+
 def _apply_measured_checks(
     decision_result: DecisionResult,
     confound: dict[str, Any],
@@ -1172,18 +1188,23 @@ def build_readout(
     `refuse` finding turns any decision into REFUSAL; the sentence is added to
     `reasons` either way and the full finding is in `assay_confound`.
     """
-    df, volumes = _resolve_working_volumes(df, working_volume_overrides)
-    confound = assay_method_confound(
-        df,
-        target_column,
-        DEFAULT_SCALE_FEATURE_CONFIG.scale_column,
-        exclude=[
-            *process_columns,
-            DEFAULT_SCALE_FEATURE_CONFIG.agitation_column,
-            DEFAULT_SCALE_FEATURE_CONFIG.airflow_column,
-        ],
-        declared=assay_columns,
-    )
+    checks_on = readout_checks_enabled()  # KALOS_SCALE_READOUT_CHECKS, default on
+    if checks_on:
+        df, volumes = _resolve_working_volumes(df, working_volume_overrides)
+        confound = assay_method_confound(
+            df,
+            target_column,
+            DEFAULT_SCALE_FEATURE_CONFIG.scale_column,
+            exclude=[
+                *process_columns,
+                DEFAULT_SCALE_FEATURE_CONFIG.agitation_column,
+                DEFAULT_SCALE_FEATURE_CONFIG.airflow_column,
+            ],
+            declared=assay_columns,
+        )
+    else:
+        volumes = None
+        confound = _checks_off_confound()
     extra_reasons = list(confound["reasons"])
     if volumes is not None and volumes.assumptions:
         extra_reasons.append(assumption_sentence(volumes.assumptions))
@@ -1240,6 +1261,7 @@ def build_readout(
         "target_column_unit": _unit_label_or_none(plan, target_column),
         "feature_set": feature_set,
         "missing_physics_inputs": missing_physics_inputs,
+        "readout_checks": "on" if checks_on else "off",
         "assay_columns_declared": list(assay_columns),
         "working_volume_overrides": dict(working_volume_overrides or {}),
         "constants": dict(CONSTANTS),

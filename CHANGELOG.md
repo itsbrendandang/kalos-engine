@@ -10,6 +10,7 @@ Newest first.
 - `kalos.scale.evaluation.leave_one_scale_out_report` raises `ValueError` naming the missing columns (the default physics feature set without `agitation_rpm`/`airflow_L_per_min`, or an absent target/scale column) or the columns that left no finite row, instead of returning `n_rows_used: 0`. The readout already picked `scale_only` for such sheets and is unaffected.
 - `scale_L` may hold plate/flask labels (`384w`, `96w`, `24w`, `SF125`). Each becomes a nominal working volume printed as an assumption in `physics_assumptions` and `working_volumes`, with a reason line; default-table volumes downgrade NUMBER to NUMBER_WITH_WARNING; the target's new `working_volume_overrides` replaces them. Unknown labels are a `422 scale_labels_unresolved` naming them (before: the text column was dropped and the readout refused with "missing required column(s): ['scale_L']").
 - `readout_id` is unchanged for requests without the new keys.
+- All three are behind `KALOS_SCALE_READOUT_CHECKS` (`on` by default; `off` restores the earlier decisions and reasons; unknown values refuse to start). `scripts/scale_readout_honesty_probe.py` prints before (`off`) and after (`on`) on synthetic sheets.
 
 ### Changed - selection-aware proposal intervals (F15, ML audit B1 fix 2; interval numbers change)
 

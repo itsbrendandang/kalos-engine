@@ -13,6 +13,13 @@ from kalos.scale.evaluation import leave_one_scale_out_report
 from kalos.scale.transfer import ScaleFeatureConfig
 
 
+@pytest.fixture(autouse=True)
+def _isolate_checks_setting(monkeypatch):
+    # these tests are the checks-on state (the default); see
+    # test_scale_readout_checks_setting.py for both states
+    monkeypatch.delenv("KALOS_SCALE_READOUT_CHECKS", raising=False)
+
+
 def _method_ladder() -> pd.DataFrame:
     """5 scales, one run each (invented values)."""
     return pd.DataFrame({"scale_L": [1.5, 4.0, 20.0, 2500.0, 30000.0], "titer_g_L": [0.72, 0.70, 1.84, 0.69, 1.52]})

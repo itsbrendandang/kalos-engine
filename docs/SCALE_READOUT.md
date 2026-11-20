@@ -52,6 +52,10 @@ In scale_only mode, `agitation_rpm` and `airflow_L_per_min` in the target are op
 A value supplied anyway is accepted but ignored, since the sheet gives the model nothing to relate it to, and the page marks it "ignored: sheet does not record them" (or "not recorded" when the field was left unset).
 The physics assumptions section only reports the assumptions scale_only actually uses (the geometry fields `log_volume_ratio` and `hydrostatic_pressure_mmHg` need, plus `reference_scale_L`); the power-number and van't Riet kLa constants are marked "not used (scale-only)".
 
+### Switching the checks off
+
+The plate/flask volumes, the assay method check below and the `leave_one_scale_out_report` refusal are on by default. `KALOS_SCALE_READOUT_CHECKS=off` restores the earlier decisions, reasons and numbers (the readout then says `provenance.readout_checks: "off"` and `assay_confound.skipped` says the check did not run). It is there for comparison and rollback, not as a recommended setting. `python scripts/scale_readout_honesty_probe.py`, run once with each value, prints the difference on synthetic sheets.
+
 ### Plate and flask formats
 
 `scale_L` may hold vessel-format labels instead of liters: `384w`, `96w`, `24w` (and spellings such as `384-well`, `24 deep well`, `SF-125`, `125 mL shake flask`).
