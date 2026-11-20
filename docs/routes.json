@@ -241,6 +241,32 @@
   },
   {
     "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/analyses",
+    "module": "kalos.portal.history_api",
+    "endpoint": "analysis_history",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/analyses/{snapshot_id}",
+    "module": "kalos.portal.history_api",
+    "endpoint": "analysis_snapshot",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
     "path": "/api/campaigns/{campaign_id}/analysis",
     "module": "kalos.portal.campaigns_api",
     "endpoint": "campaign_analysis",
@@ -474,6 +500,19 @@
     "response_model": null
   },
   {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/runs/{run_id}/history",
+    "module": "kalos.portal.history_api",
+    "endpoint": "run_history",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
     "method": "POST",
     "path": "/api/campaigns/{campaign_id}/runs/{run_id}/result",
     "module": "kalos.portal.campaigns_api",
@@ -532,6 +571,32 @@
     "endpoint": "put_stages",
     "scopes": [
       "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/track-record",
+    "module": "kalos.portal.history_api",
+    "endpoint": "track_record",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/track-record/runs",
+    "module": "kalos.portal.history_api",
+    "endpoint": "track_record_runs",
+    "scopes": [
+      "read"
     ],
     "auth": "required",
     "in_schema": true,
