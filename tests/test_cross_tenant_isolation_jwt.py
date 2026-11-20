@@ -14,14 +14,17 @@ tests/test_jwt_auth.py; this module drives the REAL app over HTTP:
 - the shared web vectors (tests/vectors/engine-token.json) run through the HTTP
   app in-process.
 
-Nothing is skipped or stubbed. Every key is generated here at test time; no
-secret is committed. Server logs are captured in full and checked for the
+The newer API surfaces use an in-process client with seeded records and a fake
+chat model; authentication still uses real signed JWTs and the real verifier.
+Every key is generated here at test time; no secret is committed.
+Server logs are captured in full and checked for the
 reason codes and for the absence of any token material.
 """
 from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import os
 import re
@@ -39,10 +42,17 @@ from typing import Any
 
 import httpx
 import jwt
+import pandas as pd
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi.testclient import TestClient
+
+from kalos.assist.index import AssistIndex
+from kalos.assist.llm import get_chat_model
+from kalos.portal.app import app
+from kalos.portal.campaign import CampaignStore, get_campaign_store
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VECTORS = json.loads((Path(__file__).parent / "vectors" / "engine-token.json").read_text())
@@ -972,6 +982,290 @@ def test_web_vector_invalid_token_is_refused_over_http(tmp_path, monkeypatch, ve
         assert r.json() == GENERIC_BODY
     finally:
         app.dependency_overrides.pop(get_authenticator, None)
+
+
+# --- newer campaign, job and assistant surfaces -------------------------------- #
+
+class _IsolationModel:
+    provider = "fake"
+    model = "isolation-test"
+    local = True
+
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def complete(self, system: str, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return ""
+
+
+@dataclass
+class _SurfaceWorld:
+    client: TestClient
+    store: CampaignStore
+    model: _IsolationModel
+    campaigns: dict[str, str]
+    runs: dict[str, str]
+    jobs: dict[str, str]
+    drafts: dict[str, str]
+
+    def request(self, method: str, path: str, *, auth: Who = ACME, **kw: Any):
+        return self.client.request(method, path, headers=auth.header(), **kw)
+
+
+@pytest.fixture
+def surfaces(tmp_path, monkeypatch) -> Iterator[_SurfaceWorld]:
+    for name in list(os.environ):
+        if name.startswith(_KALOS_ENV_PREFIX):
+            monkeypatch.delenv(name)
+    jwks = tmp_path / "jwks.json"
+    _write_jwks(jwks, {KID: KEY_A})
+    monkeypatch.setenv("KALOS_JWT_PUBLIC_KEYS_FILE", str(jwks))
+    monkeypatch.setenv("KALOS_ASSIST_EMBED", "0")
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("KALOS_JOBS_ENABLED", "1")
+    monkeypatch.setenv("KALOS_STATE_DIR", str(tmp_path / "state"))
+    store = CampaignStore(tmp_path / "state")
+    model = _IsolationModel()
+    app.dependency_overrides[get_campaign_store] = lambda: store
+    app.dependency_overrides[get_chat_model] = lambda: model
+    world = _SurfaceWorld(TestClient(app), store, model, {}, {}, {}, {})
+    try:
+        for who in (ACME, GLOBEX):
+            tenant = who.tenant
+            writer = Who(who.key, who.kid, tenant, who.sub, who.sid, ("campaigns:write",))
+            r = world.request("POST", "/api/campaigns", auth=writer,
+                              json={"name": f"{tenant}-private-marker"})
+            assert r.status_code == 201, r.text
+            cid = world.campaigns[tenant] = r.json()["id"]
+            store.seed(pd.read_csv(io.StringIO(_sheet(1))), "lipase_titer", ["Methanol", "pH"],
+                       tenant=tenant, campaign_id=cid, dataset=f"{tenant}-private-marker.csv",
+                       analysis={"target": "lipase_titer", "features": ["Methanol", "pH"],
+                                 "proposals": _RECIPE["recipes"]})
+            started = store.start(_RECIPE["recipes"], tenant=tenant, campaign_id=cid)
+            world.runs[tenant] = started[0]["id"]
+            r = world.request("POST", "/api/assist/sop/draft", auth=writer,
+                              json={"campaign_id": cid, "source": {"round": 0},
+                                    "template": "batch_recipe", "title": f"{tenant}-private-marker"})
+            assert r.status_code == 201, r.text
+            world.drafts[tenant] = r.json()["draft_id"]
+            job_cid = store.create_campaign(tenant=tenant, name=f"{tenant}-job")["id"]
+            r = world.request("POST", f"/api/campaigns/{job_cid}/jobs", auth=writer,
+                              files={"file": (f"{tenant}-private-marker.csv", _sheet(1), "text/csv")},
+                              data={"target": "lipase_titer"})
+            assert r.status_code == 202, r.text
+            world.jobs[tenant] = r.json()["job"]["id"]
+        yield world
+    finally:
+        app.dependency_overrides.pop(get_chat_model, None)
+        app.dependency_overrides.pop(get_campaign_store, None)
+        world.client.close()
+        store.close()
+
+
+def _no_foreign_data(response, world: _SurfaceWorld, tenant: str = "globex") -> None:
+    for value in (f"{tenant}-private-marker", world.campaigns[tenant], world.runs[tenant],
+                  world.jobs[tenant], world.drafts[tenant]):
+        assert value not in response.text
+
+
+@pytest.mark.parametrize("method,path,body", [
+    ("GET", "/api/campaigns/{cid}", None),
+    ("GET", "/api/campaigns/{cid}/analysis", None),
+    ("PATCH", "/api/campaigns/{cid}", {"name": "intruder"}),
+    ("PATCH", "/api/campaigns/{cid}", {"archived": True}),
+    ("POST", "/api/campaigns/{cid}/runs", _RECIPE),
+    ("POST", "/api/campaigns/{cid}/runs/{rid}/result", {"value": 999}),
+    ("POST", "/api/campaigns/{cid}/reanalyze", {}),
+    ("POST", "/api/campaigns/{cid}/upload", None),
+    ("GET", "/api/campaigns/{cid}/jobs", None),
+    ("POST", "/api/campaigns/{cid}/jobs", None),
+    ("GET", "/api/assist/next?campaign_id={cid}", None),
+    ("POST", "/api/assist/ask", {"question": "lipase titer", "campaign_id": "{cid}"}),
+    ("POST", "/api/assist/sop/draft",
+     {"campaign_id": "{cid}", "source": {"round": 0}, "template": "batch_recipe"}),
+    # The redesign routes (security review N8): valid bodies, so only the
+    # tenant boundary can produce the 404.
+    ("GET", "/api/campaigns/{cid}/setup", None),
+    ("PUT", "/api/campaigns/{cid}/setup", {"goal": "minimize", "target_unit": "g/L"}),
+    ("GET", "/api/campaigns/{cid}/stages", None),
+    ("PUT", "/api/campaigns/{cid}/stages",
+     {"stages": [{"key": "S1", "label": "intruder"}], "current_stage": "S1"}),
+    ("GET", "/api/campaigns/{cid}/gates", None),
+    ("PUT", "/api/campaigns/{cid}/gates/S1", {"decision": "go", "note": "intruder"}),
+    ("GET", "/api/campaigns/{cid}/export/rows", None),
+    ("GET", "/api/campaigns/{cid}/export/rows?format=csv", None),
+    ("GET", "/api/campaigns/{cid}/results/history", None),
+    ("GET", "/api/campaigns/{cid}/operating-ranges?threshold=1&probability=0.9", None),
+    ("POST", "/api/campaigns/{cid}/operating-ranges", {"threshold": 1.0}),
+    ("POST", "/api/campaigns/{cid}/reanalyze/jobs", None),
+])
+def test_new_campaign_surfaces_hide_foreign_and_missing(surfaces, method, path, body):
+    w = surfaces
+    b_cid = w.campaigns["globex"]
+    # Everything tenant B can see about its campaign, before and after.
+    b_views = (f"/api/campaigns/{b_cid}", f"/api/campaigns/{b_cid}/setup",
+               f"/api/campaigns/{b_cid}/stages", f"/api/campaigns/{b_cid}/gates",
+               f"/api/campaigns/{b_cid}/jobs")
+    before = [w.request("GET", v, auth=GLOBEX) for v in b_views]
+    admin = Who(KEY_A, KID, "acme", "user-acme", "sess-acme",
+                ("campaigns:read", "campaigns:write", "org:admin"))
+
+    def request(cid, rid):
+        kw = {}
+        if body is not None:
+            kw["json"] = {**body, **({"campaign_id": cid} if "campaign_id" in body else {})}
+        if path.endswith(("/upload", "/jobs")) and method == "POST":
+            kw = {"files": {"file": ("intruder.csv", _sheet(3), "text/csv")},
+                  "data": {"target": "lipase_titer", "replace": "true"}}
+        return w.request(method, path.format(cid=cid, rid=rid), auth=admin, **kw)
+
+    foreign = request(w.campaigns["globex"], w.runs["globex"])
+    missing = request("cmp_" + "0" * 32, "0" * 32)
+    assert foreign.status_code == missing.status_code == 404, foreign.text
+    assert foreign.content == missing.content
+    assert foreign.json() == {"error": "campaign not found", "code": "not_found"}
+    _no_foreign_data(foreign, w)
+    if method == "GET":  # the route exists and finds the campaign for its owner
+        # (export/rows answers its owner 409 here: the seeded analysis lacks the
+        # anonymize record; still past the tenant check), so the 404 is the boundary.
+        own = w.request(method, path.format(cid=b_cid, rid=w.runs["globex"]), auth=GLOBEX)
+        assert own.status_code in (200, 409) and own.json().get("code") != "not_found", (path, own.text)
+    after = [w.request("GET", v, auth=GLOBEX) for v in b_views]
+    for b, a in zip(before, after):
+        assert b.status_code == a.status_code == 200, a.text
+        assert b.json() == a.json()
+
+
+def test_new_lists_and_assistant_index_are_tenant_local(surfaces):
+    w = surfaces
+    for who, other in ((ACME, "globex"), (GLOBEX, "acme")):
+        for path, key, own in (("/api/campaigns?include_archived=true", "id", w.campaigns[who.tenant]),
+                               ("/api/assist/sop", "draft_id", w.drafts[who.tenant])):
+            r = w.request("GET", path, auth=who)
+            assert r.status_code == 200, r.text
+            rows = r.json()["campaigns" if key == "id" else "drafts"]
+            assert own in [row[key] for row in rows]
+            _no_foreign_data(r, w, other)
+        job = w.request("GET", f"/api/jobs/{w.jobs[who.tenant]}", auth=who).json()["job"]
+        r = w.request("GET", f"/api/campaigns/{job['campaign_id']}/jobs", auth=who)
+        assert r.status_code == 200
+        assert [j["id"] for j in r.json()["jobs"]] == [job["id"]]
+        _no_foreign_data(r, w, other)
+        r = w.request("GET", f"/api/campaigns/{w.campaigns[who.tenant]}/jobs", auth=who)
+        assert r.status_code == 200 and r.json() == {"jobs": []}
+        r = w.request("GET", "/api/assist/index/status", auth=who)
+        assert r.status_code == 200 and r.json()["chunks"] > 0
+        _no_foreign_data(r, w, other)
+        index = AssistIndex(w.store, who.tenant)
+        assert f"{who.tenant}-private-marker" in index.path.read_text()
+        assert f"{other}-private-marker" not in index.path.read_text()
+    b_index = AssistIndex(w.store, "globex").path.read_bytes()
+    assert w.request("POST", "/api/assist/index/rebuild", auth=WRITE_ONLY).status_code == 200
+    r = w.request("GET", f"/api/assist/next?campaign_id={w.campaigns['acme']}", auth=READ_ONLY)
+    assert r.status_code == 200
+    _no_foreign_data(r, w)
+    r = w.request("POST", "/api/assist/ask", auth=READ_ONLY,
+                  json={"question": "lipase titer proposed recipes", "campaign_id": w.campaigns['acme']})
+    assert r.status_code == 200, r.text
+    _no_foreign_data(r, w)
+    assert w.model.prompts
+    assert all("globex-private-marker" not in p for p in w.model.prompts)
+    assert AssistIndex(w.store, "globex").path.read_bytes() == b_index
+
+
+def test_campaign_summary_list_is_tenant_local(surfaces):
+    w = surfaces
+    for who, other in ((ACME, "globex"), (GLOBEX, "acme")):
+        r = w.request("GET", "/api/campaigns?summary=true&include_archived=true", auth=who)
+        assert r.status_code == 200, r.text
+        ids = [row["id"] for row in r.json()["campaigns"]]
+        assert w.campaigns[who.tenant] in ids
+        assert w.campaigns[other] not in ids
+        _no_foreign_data(r, w, other)
+
+
+def test_new_empty_tenant_lists_do_not_fall_back_to_other_tenants(surfaces):
+    nobody = Who(KEY_A, KID, "empty-tenant", "empty-user", "empty-session", ("campaigns:read",))
+    r = surfaces.request("GET", "/api/campaigns?summary=true", auth=nobody)
+    assert r.status_code == 200 and r.json()["campaigns"] == [], r.text
+    _no_foreign_data(r, surfaces, "acme")
+    _no_foreign_data(r, surfaces, "globex")
+    for path, key in (("/api/campaigns", "campaigns"), ("/api/assist/sop", "drafts")):
+        r = surfaces.request("GET", path, auth=nobody)
+        assert r.status_code == 200 and r.json() == {key: []}
+        _no_foreign_data(r, surfaces, "acme")
+        _no_foreign_data(r, surfaces, "globex")
+
+
+@pytest.mark.parametrize("kind,method,suffix,body", [
+    ("jobs", "GET", "", None),
+    ("jobs", "POST", "/cancel", None),
+    ("drafts", "GET", "", None),
+    ("drafts", "GET", "/export?format=md", None),
+    ("drafts", "GET", "/export?format=docx", None),
+    ("drafts", "POST", "/revise", {"instruction": "replace all text"}),
+    ("drafts", "POST", "/fill", {"values": {"safety_notes": "intruder"}}),
+])
+def test_new_job_and_sop_ids_are_tenant_local(surfaces, kind, method, suffix, body):
+    w = surfaces
+    ids = getattr(w, kind)
+    prefix = "/api/jobs/" if kind == "jobs" else "/api/assist/sop/"
+    before = w.request("GET", prefix + ids["globex"], auth=GLOBEX)
+    assert before.status_code == 200
+    kw = {"json": body} if body is not None else {}
+    foreign = w.request(method, prefix + ids["globex"] + suffix, **kw)
+    missing = w.request(method, prefix + ("job_" if kind == "jobs" else "sop_") + "0" * 32 + suffix, **kw)
+    assert foreign.status_code == missing.status_code == 404, foreign.text
+    assert foreign.content == missing.content
+    _no_foreign_data(foreign, w)
+    assert w.request("GET", prefix + ids["globex"], auth=GLOBEX).json() == before.json()
+    own = w.request("GET", prefix + ids["acme"], auth=READ_ONLY)
+    assert own.status_code == 200
+    _no_foreign_data(own, w)
+
+
+@pytest.mark.parametrize("method,path,body,scope", [
+    ("GET", "/api/campaigns", None, "write"),
+    ("GET", "/api/campaigns/{cid}", None, "write"),
+    ("GET", "/api/campaigns/{cid}/analysis", None, "write"),
+    ("GET", "/api/campaigns/{cid}/jobs", None, "write"),
+    ("GET", "/api/jobs/{jid}", None, "write"),
+    ("GET", "/api/assist/next?campaign_id={cid}", None, "write"),
+    ("POST", "/api/assist/ask", {"question": "lipase"}, "write"),
+    ("GET", "/api/assist/index/status", None, "write"),
+    ("GET", "/api/assist/sop", None, "write"),
+    ("GET", "/api/assist/sop/{did}", None, "write"),
+    ("GET", "/api/assist/sop/{did}/export", None, "write"),
+    ("POST", "/api/campaigns", {"name": "forbidden"}, "read"),
+    ("PATCH", "/api/campaigns/{cid}", {"name": "forbidden"}, "read"),
+    ("POST", "/api/campaigns/{cid}/upload", None, "read"),
+    ("POST", "/api/campaigns/{cid}/runs", _RECIPE, "read"),
+    ("POST", "/api/campaigns/{cid}/runs/{rid}/result", {"value": 999}, "read"),
+    ("POST", "/api/campaigns/{cid}/reanalyze", {}, "read"),
+    ("POST", "/api/campaigns/{cid}/jobs", None, "read"),
+    ("POST", "/api/jobs/{jid}/cancel", None, "read"),
+    ("POST", "/api/assist/index/rebuild", None, "read"),
+    ("POST", "/api/assist/sop/draft", {"source": {"round": 0}, "template": "custom"}, "read"),
+    ("POST", "/api/assist/sop/{did}/revise", {"instruction": "forbidden"}, "read"),
+    ("POST", "/api/assist/sop/{did}/fill", {"values": {"safety_notes": "forbidden"}}, "read"),
+])
+def test_new_surface_jwt_read_write_scopes(surfaces, method, path, body, scope):
+    w = surfaces
+    path = path.format(cid=w.campaigns["acme"], rid=w.runs["acme"],
+                       jid=w.jobs["acme"], did=w.drafts["acme"])
+    before = w.request("GET", f"/api/campaigns/{w.campaigns['acme']}").json()
+    job_before = w.request("GET", f"/api/jobs/{w.jobs['acme']}").json()
+    draft_before = w.request("GET", f"/api/assist/sop/{w.drafts['acme']}").json()
+    kw = {"json": body} if body is not None else {}
+    if method == "POST" and path.endswith(("/jobs", "/upload")):
+        kw = {"files": {"file": ("runs.csv", _sheet(1), "text/csv")}, "data": {"target": "lipase_titer"}}
+    r = w.request(method, path, auth=READ_ONLY if scope == "read" else WRITE_ONLY, **kw)
+    assert r.status_code == 403, r.text
+    _no_foreign_data(r, w)
+    assert w.request("GET", f"/api/campaigns/{w.campaigns['acme']}").json() == before
+    assert w.request("GET", f"/api/jobs/{w.jobs['acme']}").json() == job_before
+    assert w.request("GET", f"/api/assist/sop/{w.drafts['acme']}").json() == draft_before
 
 
 # --- startup refusals that only a fresh process can show ------------------------ #

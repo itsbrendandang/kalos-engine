@@ -65,6 +65,8 @@ def test_analysis_returns_the_field_without_verdict_words(anonymize):
     for p in r["proposals"]:
         assert isinstance(p["nearest_training_distance"], float) and p["nearest_training_distance"] >= 0
     assert isinstance(r["training_nn_distance_median"], float)
-    text = json.dumps(r["proposals"]).lower()
+    # The F04 trust label (`proposals[].trust`) is a verdict by design; this test
+    # guards the distance field and the rest of the proposal against verdict words.
+    text = json.dumps([{k: v for k, v in p.items() if k != "trust"} for p in r["proposals"]]).lower()
     for word in ("out of domain", "out-of-domain", "extrapolat", "applicab", "unsafe", "trusted"):
         assert word not in text

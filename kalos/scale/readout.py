@@ -69,7 +69,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from datetime import UTC
 from typing import Any, Literal
 
@@ -399,6 +399,11 @@ class LadderResult:
     pooled_naive_mean_mae: float
     pooled_naive_nn_mae: float
     pooled_beats_both: bool
+    # per-row backtest output (additive, for the JSON readout's scale_points /
+    # divergence): one dict per evaluated held-out row, in rung order, with
+    # `scale_L`, `actual` (measured), `pred` (the rung model's prediction, fit
+    # ONLY on strictly smaller scales), `naive_mean_pred`, `naive_nn_pred`.
+    oof_rows: list[dict[str, float]] = field(default_factory=list)
 
 
 def ladder(
@@ -432,6 +437,7 @@ def ladder(
     all_pred: list[float] = []
     all_naive_mean: list[float] = []
     all_naive_nn: list[float] = []
+    oof_rows: list[dict[str, float]] = []
 
     for i in range(1, len(scales)):
         k = scales[i]
@@ -479,6 +485,18 @@ def ladder(
         all_pred.extend(oof["pred"])
         all_naive_mean.extend(oof["naive_mean_pred"])
         all_naive_nn.extend(oof["naive_nn_pred"])
+        oof_rows.extend(
+            {
+                "scale_L": float(sl),
+                "actual": float(a),
+                "pred": float(p),
+                "naive_mean_pred": float(nm),
+                "naive_nn_pred": float(nn),
+            }
+            for sl, a, p, nm, nn in zip(
+                oof["scale_L"], oof["actual"], oof["pred"], oof["naive_mean_pred"], oof["naive_nn_pred"], strict=True
+            )
+        )
 
     actual_arr = np.asarray(all_actual, dtype=float)
     pred_arr = np.asarray(all_pred, dtype=float)
@@ -508,6 +526,7 @@ def ladder(
         pooled_naive_mean_mae=pooled_naive_mean_mae,
         pooled_naive_nn_mae=pooled_naive_nn_mae,
         pooled_beats_both=pooled_beats_both,
+        oof_rows=oof_rows,
     )
 
 
@@ -688,6 +707,161 @@ def _build_data_plan(
             line += f"; to avoid refusal, {format_liters_plain(refusal_target_L)} L or larger"
         plan.append(line + " (assuming the reference step holds)")
     return plan
+
+
+# --- chart evidence (additive; consumed by the JSON readout) ------------------ #
+
+BACKTEST_METHOD = "nested_leave_last_scale_out"
+BACKTEST_METHOD_DESCRIPTION = (
+    "each held-out scale is predicted by the readout's model fit ONLY on strictly smaller scales "
+    "(the ladder backtest), with the same feature bounds as the final fit"
+)
+DIVERGENCE_RULE = (
+    "a held-out scale diverges when (a) it has at least MIN_RUNG_N_FOR_LICENSE runs and its backtest MAE "
+    "does not beat both naive baselines (did_not_beat_baselines), or (b) its measured mean lies outside "
+    "the backtest band: mean backtest prediction +/- the split-conformal half-width (alpha = ALPHA) "
+    "computed from the ladder residuals of strictly SMALLER held-out scales only, evaluated only when "
+    "those smaller scales supply at least MIN_RESIDUALS residuals (outside_backtest_band)"
+)
+
+
+def _scale_key(value: float) -> float:
+    return round(float(value), 6)
+
+
+def build_scale_points(
+    clean_df: pd.DataFrame,
+    target_column: str,
+    ladder_result: LadderResult,
+    config: ScaleFeatureConfig,
+) -> list[dict[str, Any]]:
+    """One point per measured row, ascending by scale. `actual` is always the
+    measured value (basis `measured`). `oof_pred` is the ladder backtest
+    prediction for that row (a model fit only on strictly smaller scales),
+    or `None` for rows at scales the ladder did not hold out (the smallest
+    scales, or skipped rungs). Rows at a held-out scale come straight from
+    the backtest's own per-row output so `actual` and `oof_pred` are paired
+    exactly as the backtest paired them."""
+    by_scale: dict[float, list[dict[str, float]]] = {}
+    for row in ladder_result.oof_rows:
+        by_scale.setdefault(_scale_key(row["scale_L"]), []).append(row)
+
+    scale = clean_df[config.scale_column].to_numpy(dtype=float)
+    actual = clean_df[target_column].to_numpy(dtype=float)
+    points: list[dict[str, Any]] = []
+    for s in sorted({_scale_key(v) for v in scale}):
+        held_out = by_scale.get(s)
+        if held_out:
+            points.extend(
+                {
+                    "scale_L": s,
+                    "actual": float(r["actual"]),
+                    "oof_pred": float(r["pred"]),
+                    "basis": "measured",
+                    "oof_pred_basis": "predicted",
+                }
+                for r in held_out
+            )
+            continue
+        mask = np.round(scale, 6) == s
+        points.extend(
+            {"scale_L": s, "actual": float(a), "oof_pred": None, "basis": "measured", "oof_pred_basis": None}
+            for a in actual[mask]
+        )
+    return points
+
+
+def build_backtest(ladder_result: LadderResult) -> dict[str, Any]:
+    """Per-held-out-scale backtest results (the ladder rungs plus each
+    scale's measured and backtest-predicted means), skipped scales, and the
+    pooled comparison."""
+    by_scale: dict[float, list[dict[str, float]]] = {}
+    for row in ladder_result.oof_rows:
+        by_scale.setdefault(_scale_key(row["scale_L"]), []).append(row)
+    per_scale = []
+    for r in ladder_result.rungs:
+        rows = by_scale.get(_scale_key(r.scale_L), [])
+        per_scale.append(
+            {
+                **r.__dict__,
+                "measured_mean": float(np.mean([x["actual"] for x in rows])) if rows else None,
+                "backtest_pred_mean": float(np.mean([x["pred"] for x in rows])) if rows else None,
+            }
+        )
+    return {
+        "method": BACKTEST_METHOD,
+        "method_description": BACKTEST_METHOD_DESCRIPTION,
+        "per_scale": per_scale,
+        "skipped": [s.__dict__ for s in ladder_result.skipped],
+        "pooled": {
+            "mae": ladder_result.pooled_mae,
+            "naive_mean_mae": ladder_result.pooled_naive_mean_mae,
+            "naive_nn_mae": ladder_result.pooled_naive_nn_mae,
+            "beats_both": ladder_result.pooled_beats_both,
+            "n_residuals": len(ladder_result.residuals),
+            "too_few_to_judge": len(ladder_result.residuals) < MIN_RESIDUALS,
+        },
+    }
+
+
+def build_divergence(ladder_result: LadderResult) -> dict[str, Any]:
+    """Flag held-out scales whose measured performance diverges from what
+    the model trained on smaller scales predicted (see `DIVERGENCE_RULE`).
+    Never estimates a band from too few residuals: such a scale's
+    `outside_band` is `None` with `band_unavailable_reason`."""
+    if not ladder_result.rungs:
+        return {
+            "computed": False,
+            "reason": "no backtest rung could be formed, so there is no smaller-scale prediction to compare against",
+            "rule": DIVERGENCE_RULE,
+        }
+    by_scale: dict[float, list[dict[str, float]]] = {}
+    for row in ladder_result.oof_rows:
+        by_scale.setdefault(_scale_key(row["scale_L"]), []).append(row)
+
+    per_scale: list[dict[str, Any]] = []
+    flags: list[dict[str, Any]] = []
+    for rung in sorted(ladder_result.rungs, key=lambda r: r.scale_L):
+        key = _scale_key(rung.scale_L)
+        rows = by_scale.get(key, [])
+        measured_mean = float(np.mean([x["actual"] for x in rows])) if rows else None
+        pred_mean = float(np.mean([x["pred"] for x in rows])) if rows else None
+        prior = [abs(x["actual"] - x["pred"]) for s, xs in by_scale.items() if s < key for x in xs]
+        half_width: float | None = None
+        outside: bool | None = None
+        unavailable: str | None = None
+        if len(prior) < MIN_RESIDUALS:
+            unavailable = (
+                f"only {len(prior)} backtest residual(s) from smaller held-out scales; "
+                f"need at least {MIN_RESIDUALS} for a band"
+            )
+        elif measured_mean is not None and pred_mean is not None:
+            half_width = q_from_residuals(np.asarray(prior, dtype=float), alpha=ALPHA)
+            outside = bool(abs(measured_mean - pred_mean) > half_width)
+        codes: list[str] = []
+        if outside:
+            codes.append("outside_backtest_band")
+        if not rung.beats_both and not rung.too_few_to_judge:
+            codes.append("did_not_beat_baselines")
+        entry = {
+            "scale_L": rung.scale_L,
+            "n": rung.n,
+            "measured_mean": measured_mean,
+            "backtest_pred_mean": pred_mean,
+            "band_half_width": half_width,
+            "band_basis": "derived" if half_width is not None else None,
+            "n_prior_residuals": len(prior),
+            "outside_band": outside,
+            "band_unavailable_reason": unavailable,
+            "beats_both": rung.beats_both,
+            "too_few_to_judge": rung.too_few_to_judge,
+            "diverges": bool(codes),
+            "codes": codes,
+        }
+        per_scale.append(entry)
+        if codes:
+            flags.append({"scale_L": rung.scale_L, "codes": codes})
+    return {"computed": True, "rule": DIVERGENCE_RULE, "flags": flags, "per_scale": per_scale}
 
 
 # --- physics assumption provenance ------------------------------------------- #
@@ -986,6 +1160,12 @@ def build_readout(
         },
         "physics_assumptions": physics_assumptions,
         "provenance": provenance,
+        # additive chart evidence (JSON readout); the HTML page ignores these
+        "scale_points": [],
+        "max_trained_scale_L": None,
+        "backtest": None,
+        "divergence": None,
+        "interval_half_width": None,
         "gate": {
             "passed": gate_result.passed,
             "failed_check": gate_result.failed_check,
@@ -1035,6 +1215,10 @@ def build_readout(
         "pooled_beats_both": ladder_result.pooled_beats_both,
         "n_residuals": len(ladder_result.residuals),
     }
+    base["scale_points"] = build_scale_points(clean_df, target_column, ladder_result, working_config)
+    base["max_trained_scale_L"] = float(np.round(clean_df[working_config.scale_column].to_numpy(dtype=float), 6).max())
+    base["backtest"] = build_backtest(ladder_result)
+    base["divergence"] = build_divergence(ladder_result)
 
     if decision_result.decision in (REFUSAL, NUMBER_WITH_WARNING):
         base["data_plan"] = _build_data_plan(ladder_result, decision_result, target.scale_L, clean_df, working_config)
@@ -1051,13 +1235,16 @@ def build_readout(
     lower, upper = conformal_interval(mean, q)[0]
     base["prediction"] = prediction
     base["interval"] = [float(lower), float(upper)]
+    base["interval_half_width"] = float(q)
     return base
 
 
 __all__ = [
     "ALPHA",
+    "BACKTEST_METHOD",
     "CANDIDATE",
     "CONSTANTS",
+    "DIVERGENCE_RULE",
     "HARD_CAP_RATIO",
     "MAX_DROPPED_FRACTION",
     "MIN_RESIDUALS",
@@ -1076,7 +1263,10 @@ __all__ = [
     "RungResult",
     "SkippedRung",
     "TargetSpec",
+    "build_backtest",
+    "build_divergence",
     "build_readout",
+    "build_scale_points",
     "decide",
     "format_liters_plain",
     "gate",

@@ -221,12 +221,14 @@ def test_analyze_reports_the_scale_diagnostic():
 
 
 def test_clears_floor_is_unchanged_by_this_work():
-    """The producer number is reported, not folded into the gate. Tightening the
-    gate changes which uploads the API accepts, which is a product decision."""
+    """The producer number is reported, not folded into the gate. (F04 did tighten
+    the gate, deliberately: the floor also needs the interval's lower end above 0
+    and at least 12 runs; the producer number still does not enter it.)"""
     out = _analyze(_media_like_sheet(), target="Lipase_g_L")
     rel = out["reliability"]
-    rho = rel["spearman"]
-    expected = bool(rho is not None and rho >= rel["spearman_floor"])
+    rho, ci = rel["spearman"], rel["ci95"]
+    expected = bool(rho is not None and rho >= rel["spearman_floor"] and ci is not None and ci[0] > 0
+                    and out["n"] >= 12)
     assert rel["clears_floor"] == expected
 
 

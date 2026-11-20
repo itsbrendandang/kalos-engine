@@ -1,0 +1,4006 @@
+{
+ "suite": "kalos planted-fault honesty suite",
+ "label": "synthetic planted faults",
+ "protocol_version": "1",
+ "suite_seed": 20261119,
+ "tier": "full",
+ "commit": "74a9663b7580181147fd0cf4e6204189bb8d5a10",
+ "branch": "feat/planted-faults",
+ "generated_at": "2026-11-20T03:02:30Z",
+ "versions": {
+  "python": "3.14.7",
+  "numpy": "2.5.5",
+  "pandas": "3.1.1",
+  "scipy": "1.18.1",
+  "torch": "2.13.0",
+  "botorch": "0.18.1",
+  "gpytorch": "1.15.2"
+ },
+ "totals": {
+  "faults_scored": 36,
+  "caught": 25,
+  "noticed": 3,
+  "missed": 8,
+  "clean_scored": 8,
+  "clean_false_alarm": 6,
+  "skipped": 0,
+  "crashed": 0
+ },
+ "rates": {
+  "caught": {
+   "k": 25,
+   "n": 36,
+   "rate": 0.694,
+   "wilson95": [
+    0.531,
+    0.82
+   ]
+  },
+  "caught_or_noticed": {
+   "k": 28,
+   "n": 36,
+   "rate": 0.778,
+   "wilson95": [
+    0.619,
+    0.883
+   ]
+  },
+  "caught_detectable": {
+   "k": 25,
+   "n": 35,
+   "rate": 0.714,
+   "wilson95": [
+    0.549,
+    0.837
+   ]
+  },
+  "clean_false_alarm": {
+   "k": 6,
+   "n": 8,
+   "rate": 0.75,
+   "wilson95": [
+    0.409,
+    0.929
+   ]
+  }
+ },
+ "by_family": {
+  "sheet": {
+   "caught": 15,
+   "noticed": 2,
+   "missed": 2
+  },
+  "result": {
+   "caught": 1,
+   "noticed": 0,
+   "missed": 3
+  },
+  "scale": {
+   "caught": 1,
+   "noticed": 0,
+   "missed": 1
+  },
+  "model": {
+   "caught": 8,
+   "noticed": 1,
+   "missed": 2
+  }
+ },
+ "false_alarms_by_detector": {
+  "reliability:does_not_clear_floor": 1,
+  "scale_readout:refusal": 1,
+  "validation:outliers|physical_bounds": 5,
+  "validation:physical_bounds": 1,
+  "validation:physical_bounds|units_consistency": 1,
+  "validation:units_consistency|outliers|physical_bounds": 5
+ },
+ "faults": [
+  {
+   "case": "case-27",
+   "id": "batch_offset_no_column",
+   "kind": "fault",
+   "family": "model",
+   "title": "Batch offsets, no input signal, batch not recorded",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 172.75,
+   "outcome": "missed",
+   "caught_by": [],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "trust is refused (CV cannot see the batches, so a trusted verdict is false trust)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis.py (CV groups)",
+   "owner_plan": "F05 leak-proof CV grouping (round index on folded rows) + F04",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.493,
+     0.878
+    ],
+    "cv_spearman": 0.745,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 48,
+    "n_proposals": 5,
+    "promotion_passed": true,
+    "proposal_recipes": [
+     {
+      "DO_pct": 27.698,
+      "agitation_rpm": 388.956,
+      "antifoam_mgL": 28.402,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 11.832,
+      "glutamine_mM": 1.046,
+      "inoculum_1e6": 1.949,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 297.293,
+      "pH": 6.24,
+      "temperature_C": 30.204
+     },
+     {
+      "DO_pct": 79.688,
+      "agitation_rpm": 359.238,
+      "antifoam_mgL": 17.85,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 11.832,
+      "glutamine_mM": 1.046,
+      "inoculum_1e6": 1.949,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 283.903,
+      "pH": 6.294,
+      "temperature_C": 36.342
+     },
+     {
+      "DO_pct": 49.6,
+      "agitation_rpm": 369.92,
+      "antifoam_mgL": 16.224,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 11.832,
+      "glutamine_mM": 1.046,
+      "inoculum_1e6": 0.232,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 358.803,
+      "pH": 6.25,
+      "temperature_C": 30.039
+     },
+     {
+      "DO_pct": 21.541,
+      "agitation_rpm": 159.061,
+      "antifoam_mgL": 29.926,
+      "feed_rate_mLh": 0.108,
+      "glucose_gL": 11.832,
+      "glutamine_mM": 1.046,
+      "inoculum_1e6": 1.949,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 358.803,
+      "pH": 6.229,
+      "temperature_C": 30.039
+     },
+     {
+      "DO_pct": 21.541,
+      "agitation_rpm": 154.086,
+      "antifoam_mgL": 21.402,
+      "feed_rate_mLh": 0.108,
+      "glucose_gL": 11.832,
+      "glutamine_mM": 1.046,
+      "inoculum_1e6": 1.949,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 283.903,
+      "pH": 6.305,
+      "temperature_C": 38.852
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-39",
+   "id": "batch_offset_with_column",
+   "kind": "fault",
+   "family": "model",
+   "title": "Batch offsets, no input signal, batch column present",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 324.27,
+   "outcome": "caught",
+   "caught_by": [
+    "reliability:does_not_clear_floor (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "CV is grouped by batch or trust is refused; batch is never proposed",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis.py + analysis_parts/columns.py (CV groups)",
+   "owner_plan": "F05 leak-proof CV grouping (+ F06: never propose a batch level)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": false,
+    "cv_ci95": [
+     -0.71,
+     0.696
+    ],
+    "cv_spearman": 0.009,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 48,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 55.25,
+      "agitation_rpm": 235.949,
+      "antifoam_mgL": 9.523,
+      "feed_rate_mLh": 0.88,
+      "glucose_gL": 7.375,
+      "glutamine_mM": 1.046,
+      "inoculum_1e6": 1.949,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 326.271,
+      "pH": 6.611,
+      "temperature_C": 33.294
+     },
+     {
+      "DO_pct": 54.737,
+      "agitation_rpm": 300.166,
+      "antifoam_mgL": 48.701,
+      "feed_rate_mLh": 0.942,
+      "glucose_gL": 5.695,
+      "glutamine_mM": 6.649,
+      "inoculum_1e6": 1.32,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 324.698,
+      "pH": 7.151,
+      "temperature_C": 30.039
+     },
+     {
+      "DO_pct": 24.718,
+      "agitation_rpm": 289.143,
+      "antifoam_mgL": 0.17,
+      "feed_rate_mLh": 0.51,
+      "glucose_gL": 7.386,
+      "glutamine_mM": 1.046,
+      "inoculum_1e6": 0.453,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 329.492,
+      "pH": 6.654,
+      "temperature_C": 38.852
+     },
+     {
+      "DO_pct": 73.202,
+      "agitation_rpm": 309.895,
+      "antifoam_mgL": 43.519,
+      "feed_rate_mLh": 0.969,
+      "glucose_gL": 7.368,
+      "glutamine_mM": 1.046,
+      "inoculum_1e6": 1.949,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 324.973,
+      "pH": 6.615,
+      "temperature_C": 30.039
+     },
+     {
+      "DO_pct": 79.688,
+      "agitation_rpm": 316.359,
+      "antifoam_mgL": 0.17,
+      "feed_rate_mLh": 0.789,
+      "glucose_gL": 6.093,
+      "glutamine_mM": 1.046,
+      "inoculum_1e6": 1.949,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 325.678,
+      "pH": 6.602,
+      "temperature_C": 38.852
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-30",
+   "id": "covariate_as_setpoint",
+   "kind": "fault",
+   "family": "model",
+   "title": "Passage number (a covariate) in the sheet",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 257.83,
+   "outcome": "caught",
+   "caught_by": [
+    "columns:covariate [passage] (info) [planned code]"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "passage is recognised as a covariate: kept out of the design box and never proposed",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis_parts/columns.py (no covariate role)",
+   "owner_plan": "strain-engine P1 (roles.covariates) + F06 (covariate role)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.479,
+     0.733
+    ],
+    "cv_spearman": 0.646,
+    "d": 12,
+    "features": [
+     "passage",
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 55.12,
+      "agitation_rpm": 181.524,
+      "antifoam_mgL": 46.726,
+      "feed_rate_mLh": 1.541,
+      "glucose_gL": 7.384,
+      "glutamine_mM": 4.44,
+      "inoculum_1e6": 1.076,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 315.495,
+      "pH": 6.963,
+      "temperature_C": 36.085
+     },
+     {
+      "DO_pct": 55.035,
+      "agitation_rpm": 215.083,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.463,
+      "glucose_gL": 7.443,
+      "glutamine_mM": 4.44,
+      "inoculum_1e6": 1.063,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 322.035,
+      "pH": 6.967,
+      "temperature_C": 36.097
+     },
+     {
+      "DO_pct": 55.123,
+      "agitation_rpm": 138.605,
+      "antifoam_mgL": 37.908,
+      "feed_rate_mLh": 1.357,
+      "glucose_gL": 7.497,
+      "glutamine_mM": 4.5,
+      "inoculum_1e6": 1.154,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 308.749,
+      "pH": 6.964,
+      "temperature_C": 36.094
+     },
+     {
+      "DO_pct": 55.145,
+      "agitation_rpm": 110.046,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 7.304,
+      "glutamine_mM": 4.445,
+      "inoculum_1e6": 0.863,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 324.196,
+      "pH": 6.957,
+      "temperature_C": 36.081
+     },
+     {
+      "DO_pct": 55.131,
+      "agitation_rpm": 327.148,
+      "antifoam_mgL": 47.206,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 7.309,
+      "glutamine_mM": 4.403,
+      "inoculum_1e6": 1.085,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 312.07,
+      "pH": 6.961,
+      "temperature_C": 36.077
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-41",
+   "id": "id_like_numeric_categorical",
+   "kind": "fault",
+   "family": "model",
+   "title": "Numeric clone ids (101/204/377) with real offsets",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 511.72,
+   "outcome": "caught",
+   "caught_by": [
+    "columns:categorical [clone] (info)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "clone is treated as a label (categorical), never proposed as a fractional number",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis_parts/columns.py (numeric columns default to continuous)",
+   "owner_plan": "strain-engine P1 (roles.strain) + F06 (id role)",
+   "summary": {
+    "categorical_features": [
+     "clone",
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.55,
+     0.796
+    ],
+    "cv_spearman": 0.729,
+    "d": 12,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "clone",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 54.353,
+      "agitation_rpm": 199.102,
+      "antifoam_mgL": 39.259,
+      "clone": "377",
+      "feed_rate_mLh": 1.042,
+      "glucose_gL": 7.915,
+      "glutamine_mM": 5.148,
+      "inoculum_1e6": 1.125,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 311.515,
+      "pH": 6.979,
+      "temperature_C": 36.21
+     },
+     {
+      "DO_pct": 54.492,
+      "agitation_rpm": 190.499,
+      "antifoam_mgL": 49.971,
+      "clone": "377",
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 7.851,
+      "glutamine_mM": 5.132,
+      "inoculum_1e6": 0.97,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 312.763,
+      "pH": 6.977,
+      "temperature_C": 36.208
+     },
+     {
+      "DO_pct": 54.123,
+      "agitation_rpm": 294.156,
+      "antifoam_mgL": 34.964,
+      "clone": "377",
+      "feed_rate_mLh": 0.213,
+      "glucose_gL": 7.927,
+      "glutamine_mM": 5.12,
+      "inoculum_1e6": 1.138,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 311.096,
+      "pH": 6.978,
+      "temperature_C": 36.202
+     },
+     {
+      "DO_pct": 54.592,
+      "agitation_rpm": 149.856,
+      "antifoam_mgL": 29.68,
+      "clone": "377",
+      "feed_rate_mLh": 0.99,
+      "glucose_gL": 7.941,
+      "glutamine_mM": 5.166,
+      "inoculum_1e6": 1.667,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 310.01,
+      "pH": 6.989,
+      "temperature_C": 36.224
+     },
+     {
+      "DO_pct": 54.572,
+      "agitation_rpm": 105.858,
+      "antifoam_mgL": 49.971,
+      "clone": "377",
+      "feed_rate_mLh": 0.411,
+      "glucose_gL": 7.774,
+      "glutamine_mM": 5.137,
+      "inoculum_1e6": 0.835,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 311.516,
+      "pH": 6.969,
+      "temperature_C": 36.197
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-40",
+   "id": "jittered_replicates",
+   "kind": "fault",
+   "family": "model",
+   "title": "Replicates recorded as-run with 0.2 % jitter, no input signal",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 177.73,
+   "outcome": "caught",
+   "caught_by": [
+    "reliability:does_not_clear_floor (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "replicates are recognised (grouped) or trust is refused",
+   "detectable_from_input": true,
+   "owner_module": "kalos/core/splits.py + kalos/core/replicates.py (exact-match replicates)",
+   "owner_plan": "F05 (replicates grouped with a tolerance)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": false,
+    "cv_ci95": [
+     -0.738,
+     0.368
+    ],
+    "cv_spearman": -0.4,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 60,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 63.27,
+      "agitation_rpm": 337.219,
+      "antifoam_mgL": 22.324,
+      "feed_rate_mLh": 1.724,
+      "glucose_gL": 9.829,
+      "glutamine_mM": 5.441,
+      "inoculum_1e6": 0.845,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 328.557,
+      "pH": 6.928,
+      "temperature_C": 32.346
+     },
+     {
+      "DO_pct": 77.729,
+      "agitation_rpm": 271.666,
+      "antifoam_mgL": 22.141,
+      "feed_rate_mLh": 1.387,
+      "glucose_gL": 11.018,
+      "glutamine_mM": 5.493,
+      "inoculum_1e6": 0.533,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 321.449,
+      "pH": 6.89,
+      "temperature_C": 32.436
+     },
+     {
+      "DO_pct": 71.148,
+      "agitation_rpm": 311.859,
+      "antifoam_mgL": 32.8,
+      "feed_rate_mLh": 1.925,
+      "glucose_gL": 5.563,
+      "glutamine_mM": 5.457,
+      "inoculum_1e6": 1.836,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 312.812,
+      "pH": 6.835,
+      "temperature_C": 32.92
+     },
+     {
+      "DO_pct": 42.085,
+      "agitation_rpm": 320.949,
+      "antifoam_mgL": 16.923,
+      "feed_rate_mLh": 1.048,
+      "glucose_gL": 7.779,
+      "glutamine_mM": 5.331,
+      "inoculum_1e6": 0.239,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 352.467,
+      "pH": 6.867,
+      "temperature_C": 31.616
+     },
+     {
+      "DO_pct": 78.821,
+      "agitation_rpm": 354.428,
+      "antifoam_mgL": 34.965,
+      "feed_rate_mLh": 1.966,
+      "glucose_gL": 11.761,
+      "glutamine_mM": 5.461,
+      "inoculum_1e6": 0.239,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 335.345,
+      "pH": 6.919,
+      "temperature_C": 36.304
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-42",
+   "id": "leaked_column_named",
+   "kind": "fault",
+   "family": "model",
+   "title": "Target-derived yield_tier kept in the sheet (Kaggle)",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 3.45,
+   "outcome": "caught",
+   "caught_by": [
+    "columns:dropped_output [yield_tier] (info)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "yield_tier is excluded from the inputs as an outcome (dropped_output)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis_parts/columns.py (role inference)",
+   "owner_plan": "F06 column roles (derived role)",
+   "summary": {
+    "categorical_features": [],
+    "clears_floor": false,
+    "cv_ci95": [
+     -0.104,
+     0.23
+    ],
+    "cv_spearman": 0.054,
+    "d": 6,
+    "features": [
+     "temp_c",
+     "ph",
+     "inoculum_vol_ml",
+     "rpm",
+     "lactose_feed_ml",
+     "duration_days"
+    ],
+    "group_col": null,
+    "n": 150,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "duration_days": 3.0,
+      "inoculum_vol_ml": 110.424,
+      "lactose_feed_ml": 1817.373,
+      "ph": 6.88,
+      "rpm": 258.26,
+      "temp_c": 22.274
+     },
+     {
+      "duration_days": 3.0,
+      "inoculum_vol_ml": 146.212,
+      "lactose_feed_ml": 1079.32,
+      "ph": 5.099,
+      "rpm": 269.934,
+      "temp_c": 22.274
+     },
+     {
+      "duration_days": 8.269,
+      "inoculum_vol_ml": 146.212,
+      "lactose_feed_ml": 353.727,
+      "ph": 5.524,
+      "rpm": 192.357,
+      "temp_c": 22.274
+     },
+     {
+      "duration_days": 8.269,
+      "inoculum_vol_ml": 47.253,
+      "lactose_feed_ml": 1782.161,
+      "ph": 3.603,
+      "rpm": 304.457,
+      "temp_c": 33.217
+     },
+     {
+      "duration_days": 8.269,
+      "inoculum_vol_ml": 52.555,
+      "lactose_feed_ml": 1901.28,
+      "ph": 4.389,
+      "rpm": 280.804,
+      "temp_c": 33.217
+     }
+    ],
+    "target": "max_yield_fpu_ml"
+   }
+  },
+  {
+   "case": "case-15",
+   "id": "leaked_column_renamed",
+   "kind": "fault",
+   "family": "model",
+   "title": "Target tertile label under a neutral name (qc_grade)",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 548.04,
+   "outcome": "missed",
+   "caught_by": [],
+   "noticed_by": [],
+   "harm": [
+    "proposals:proposes [qc_grade] (info): 5 proposal(s), e.g. 'A'"
+   ],
+   "row_list_truncated": false,
+   "expected": "qc_grade is excluded or flagged as target-derived",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis_parts/columns.py (_auto_categorical)",
+   "owner_plan": "F06 column roles (derived role); a content-based leak check is unplanned",
+   "summary": {
+    "categorical_features": [
+     "medium_base",
+     "qc_grade"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.711,
+     0.869
+    ],
+    "cv_spearman": 0.788,
+    "d": 12,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base",
+     "qc_grade"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": true,
+    "proposal_recipes": [
+     {
+      "DO_pct": 54.988,
+      "agitation_rpm": 254.918,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.239,
+      "glucose_gL": 11.114,
+      "glutamine_mM": 5.124,
+      "inoculum_1e6": 1.238,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 332.959,
+      "pH": 6.957,
+      "qc_grade": "A",
+      "temperature_C": 36.02
+     },
+     {
+      "DO_pct": 55.051,
+      "agitation_rpm": 101.777,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.026,
+      "glucose_gL": 11.161,
+      "glutamine_mM": 5.149,
+      "inoculum_1e6": 1.057,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 355.917,
+      "pH": 6.955,
+      "qc_grade": "A",
+      "temperature_C": 36.01
+     },
+     {
+      "DO_pct": 54.949,
+      "agitation_rpm": 399.907,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.774,
+      "glucose_gL": 11.021,
+      "glutamine_mM": 5.098,
+      "inoculum_1e6": 1.16,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 336.791,
+      "pH": 6.96,
+      "qc_grade": "A",
+      "temperature_C": 36.024
+     },
+     {
+      "DO_pct": 54.99,
+      "agitation_rpm": 248.473,
+      "antifoam_mgL": 49.014,
+      "feed_rate_mLh": 0.814,
+      "glucose_gL": 11.189,
+      "glutamine_mM": 5.136,
+      "inoculum_1e6": 1.573,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 282.609,
+      "pH": 6.955,
+      "qc_grade": "A",
+      "temperature_C": 36.023
+     },
+     {
+      "DO_pct": 54.978,
+      "agitation_rpm": 353.166,
+      "antifoam_mgL": 48.768,
+      "feed_rate_mLh": 0.35,
+      "glucose_gL": 11.031,
+      "glutamine_mM": 5.19,
+      "inoculum_1e6": 1.484,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 359.948,
+      "pH": 6.954,
+      "qc_grade": "A",
+      "temperature_C": 36.024
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-14",
+   "id": "outcome_as_factor",
+   "kind": "fault",
+   "family": "model",
+   "title": "Contamination (an observed outcome) as a text column (Kaggle)",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 67.21,
+   "outcome": "noticed",
+   "caught_by": [],
+   "noticed_by": [
+    "reliability:does_not_clear_floor (warning) (not on the clean parent)",
+    "reliability:space_filling_advice (warning) (not on the clean parent)"
+   ],
+   "harm": [
+    "proposals:proposes [contamination] (info): 5 proposal(s), e.g. 'Y'"
+   ],
+   "row_list_truncated": false,
+   "expected": "contamination is excluded as an outcome and never proposed",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis_parts/columns.py (_auto_categorical)",
+   "owner_plan": "F06 column roles (response role)",
+   "summary": {
+    "categorical_features": [
+     "contamination"
+    ],
+    "clears_floor": false,
+    "cv_ci95": [
+     -0.146,
+     0.27
+    ],
+    "cv_spearman": 0.134,
+    "d": 7,
+    "features": [
+     "temp_c",
+     "ph",
+     "inoculum_vol_ml",
+     "rpm",
+     "lactose_feed_ml",
+     "duration_days",
+     "contamination"
+    ],
+    "group_col": null,
+    "n": 150,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "contamination": "Y",
+      "duration_days": 8.234,
+      "inoculum_vol_ml": 78.144,
+      "lactose_feed_ml": 856.756,
+      "ph": 4.842,
+      "rpm": 294.72,
+      "temp_c": 31.656
+     },
+     {
+      "contamination": "Y",
+      "duration_days": 4.378,
+      "inoculum_vol_ml": 82.434,
+      "lactose_feed_ml": 1026.415,
+      "ph": 4.898,
+      "rpm": 278.401,
+      "temp_c": 26.444
+     },
+     {
+      "contamination": "Y",
+      "duration_days": 5.976,
+      "inoculum_vol_ml": 81.66,
+      "lactose_feed_ml": 1023.201,
+      "ph": 4.674,
+      "rpm": 262.395,
+      "temp_c": 27.832
+     },
+     {
+      "contamination": "Y",
+      "duration_days": 4.063,
+      "inoculum_vol_ml": 81.893,
+      "lactose_feed_ml": 1012.014,
+      "ph": 4.67,
+      "rpm": 237.452,
+      "temp_c": 24.782
+     },
+     {
+      "contamination": "Y",
+      "duration_days": 5.051,
+      "inoculum_vol_ml": 81.294,
+      "lactose_feed_ml": 1006.568,
+      "ph": 5.477,
+      "rpm": 265.791,
+      "temp_c": 22.274
+     }
+    ],
+    "target": "max_yield_fpu_ml"
+   }
+  },
+  {
+   "case": "case-44",
+   "id": "pure_noise_target_s1",
+   "kind": "fault",
+   "family": "model",
+   "title": "Target shuffled across runs (seed 1)",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 169.36,
+   "outcome": "caught",
+   "caught_by": [
+    "reliability:does_not_clear_floor (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "trust is refused: reliability does not clear the floor (or a refusal)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis.py (clears_floor on the CV point estimate)",
+   "owner_plan": "F04 (clears_floor needs the CV CI lower bound > 0)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": false,
+    "cv_ci95": [
+     -0.48,
+     0.399
+    ],
+    "cv_spearman": -0.213,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 30,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 61.26,
+      "agitation_rpm": 132.178,
+      "antifoam_mgL": 1.191,
+      "feed_rate_mLh": 1.425,
+      "glucose_gL": 9.565,
+      "glutamine_mM": 3.406,
+      "inoculum_1e6": 1.068,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 326.99,
+      "pH": 7.257,
+      "temperature_C": 38.968
+     },
+     {
+      "DO_pct": 60.877,
+      "agitation_rpm": 185.288,
+      "antifoam_mgL": 4.462,
+      "feed_rate_mLh": 1.659,
+      "glucose_gL": 6.279,
+      "glutamine_mM": 1.531,
+      "inoculum_1e6": 1.065,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 297.716,
+      "pH": 7.188,
+      "temperature_C": 38.968
+     },
+     {
+      "DO_pct": 61.065,
+      "agitation_rpm": 309.931,
+      "antifoam_mgL": 6.113,
+      "feed_rate_mLh": 1.091,
+      "glucose_gL": 9.056,
+      "glutamine_mM": 4.479,
+      "inoculum_1e6": 0.888,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 319.437,
+      "pH": 7.188,
+      "temperature_C": 38.968
+     },
+     {
+      "DO_pct": 60.806,
+      "agitation_rpm": 152.898,
+      "antifoam_mgL": 15.737,
+      "feed_rate_mLh": 1.254,
+      "glucose_gL": 7.084,
+      "glutamine_mM": 2.067,
+      "inoculum_1e6": 1.126,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 345.574,
+      "pH": 7.163,
+      "temperature_C": 38.968
+     },
+     {
+      "DO_pct": 61.02,
+      "agitation_rpm": 129.428,
+      "antifoam_mgL": 1.452,
+      "feed_rate_mLh": 1.683,
+      "glucose_gL": 11.956,
+      "glutamine_mM": 3.545,
+      "inoculum_1e6": 0.487,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 307.053,
+      "pH": 7.151,
+      "temperature_C": 38.062
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-19",
+   "id": "pure_noise_target_s2",
+   "kind": "fault",
+   "family": "model",
+   "title": "Target shuffled across runs (seed 2)",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 120.22,
+   "outcome": "caught",
+   "caught_by": [
+    "reliability:does_not_clear_floor (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "trust is refused: reliability does not clear the floor (or a refusal)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis.py (clears_floor on the CV point estimate)",
+   "owner_plan": "F04 (clears_floor needs the CV CI lower bound > 0)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": false,
+    "cv_ci95": [
+     -0.503,
+     0.345
+    ],
+    "cv_spearman": -0.003,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 30,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 62.669,
+      "agitation_rpm": 132.086,
+      "antifoam_mgL": 1.191,
+      "feed_rate_mLh": 1.888,
+      "glucose_gL": 11.733,
+      "glutamine_mM": 2.566,
+      "inoculum_1e6": 0.887,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 349.734,
+      "pH": 6.015,
+      "temperature_C": 31.024
+     },
+     {
+      "DO_pct": 51.205,
+      "agitation_rpm": 146.594,
+      "antifoam_mgL": 1.191,
+      "feed_rate_mLh": 1.635,
+      "glucose_gL": 11.066,
+      "glutamine_mM": 1.333,
+      "inoculum_1e6": 1.368,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 355.711,
+      "pH": 6.015,
+      "temperature_C": 34.992
+     },
+     {
+      "DO_pct": 59.741,
+      "agitation_rpm": 110.605,
+      "antifoam_mgL": 1.191,
+      "feed_rate_mLh": 1.577,
+      "glucose_gL": 10.973,
+      "glutamine_mM": 5.225,
+      "inoculum_1e6": 0.92,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 345.645,
+      "pH": 6.015,
+      "temperature_C": 31.456
+     },
+     {
+      "DO_pct": 76.758,
+      "agitation_rpm": 163.828,
+      "antifoam_mgL": 1.191,
+      "feed_rate_mLh": 1.959,
+      "glucose_gL": 10.78,
+      "glutamine_mM": 1.212,
+      "inoculum_1e6": 0.906,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 345.772,
+      "pH": 6.015,
+      "temperature_C": 30.039
+     },
+     {
+      "DO_pct": 45.901,
+      "agitation_rpm": 318.104,
+      "antifoam_mgL": 1.191,
+      "feed_rate_mLh": 1.788,
+      "glucose_gL": 11.398,
+      "glutamine_mM": 2.259,
+      "inoculum_1e6": 0.725,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 349.249,
+      "pH": 6.015,
+      "temperature_C": 30.039
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-17",
+   "id": "pure_noise_target_s3",
+   "kind": "fault",
+   "family": "model",
+   "title": "Target shuffled across runs (seed 3)",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 203.91,
+   "outcome": "caught",
+   "caught_by": [
+    "reliability:does_not_clear_floor (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "trust is refused: reliability does not clear the floor (or a refusal)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis.py (clears_floor on the CV point estimate)",
+   "owner_plan": "F04 (clears_floor needs the CV CI lower bound > 0)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": false,
+    "cv_ci95": [
+     -0.702,
+     -0.008
+    ],
+    "cv_spearman": -0.331,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 30,
+    "n_proposals": 0,
+    "promotion_passed": false,
+    "proposal_recipes": [],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-11",
+   "id": "result_copy_paste",
+   "kind": "fault",
+   "family": "result",
+   "title": "Same value pasted into two runs of one round",
+   "surface": "result",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.04,
+   "outcome": "missed",
+   "caught_by": [],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "held for review as a copy-paste duplicate",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/campaign.py (set_result accepts any finite value)",
+   "owner_plan": "Crux #1 result referee (result_duplicate_entry; F11)",
+   "summary": {
+    "n_base": 155,
+    "n_fold": 160
+   }
+  },
+  {
+   "case": "case-12",
+   "id": "result_negative",
+   "kind": "fault",
+   "family": "result",
+   "title": "Negative titer entered",
+   "surface": "result",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.05,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:physical_bounds [titer_g_L] (error)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "refused at entry, or a physical_bounds error on the folded row",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/campaign.py (set_result accepts any finite value)",
+   "owner_plan": "Crux #1 result referee (result_physically_impossible; F11)",
+   "summary": {
+    "n_base": 155,
+    "n_fold": 160
+   }
+  },
+  {
+   "case": "case-02",
+   "id": "result_x10",
+   "kind": "fault",
+   "family": "result",
+   "title": "Result entered x10 (decimal slip)",
+   "surface": "result",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.06,
+   "outcome": "missed",
+   "caught_by": [],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": true,
+   "expected": "held at entry (referee) or flagged on the folded row at re-analysis",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/campaign.py (set_result accepts any finite value)",
+   "owner_plan": "Crux #1 result referee (result_magnitude_jump; F11)",
+   "summary": {
+    "n_base": 155,
+    "n_fold": 160
+   }
+  },
+  {
+   "case": "case-25",
+   "id": "result_x1000",
+   "kind": "fault",
+   "family": "result",
+   "title": "Result entered x1000 (mg/L typed as g/L)",
+   "surface": "result",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.05,
+   "outcome": "missed",
+   "caught_by": [],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": true,
+   "expected": "held at entry (referee) or flagged on the folded row at re-analysis",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/campaign.py (set_result accepts any finite value)",
+   "owner_plan": "Crux #1 result referee (result_magnitude_jump; F11)",
+   "summary": {
+    "n_base": 155,
+    "n_fold": 160
+   }
+  },
+  {
+   "case": "case-35",
+   "id": "scale_far_extrapolation",
+   "kind": "fault",
+   "family": "scale",
+   "title": "5,000 L from a ladder that stops at 10 L",
+   "surface": "scale",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.03,
+   "outcome": "caught",
+   "caught_by": [
+    "scale_readout:refusal (error)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "refusal (or a warning naming the ratio)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/scale/readout.py (decide)",
+   "owner_plan": "F10 scale physics guardrails",
+   "summary": {
+    "decision": "REFUSAL",
+    "interval": null,
+    "max_trained_scale_L": null,
+    "prediction": null,
+    "reasons": [
+     "target scale-up ratio 500.00x exceeds the 20x hard cap"
+    ],
+    "reference_ratio": null,
+    "requested_ratio": 500.0
+   }
+  },
+  {
+   "case": "case-03",
+   "id": "scale_physics_extrapolation",
+   "kind": "fault",
+   "family": "scale",
+   "title": "2,000 L at 240 rpm from a ladder that stops at 300 L",
+   "surface": "scale",
+   "status": "ok",
+   "error": null,
+   "seconds": 1.73,
+   "outcome": "missed",
+   "caught_by": [],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "refusal, or a number with a warning that names the ratio / physics range",
+   "detectable_from_input": true,
+   "owner_module": "kalos/scale/readout.py (decide; derived physics not range-checked)",
+   "owner_plan": "F10 scale physics guardrails",
+   "summary": {
+    "decision": "NUMBER",
+    "interval": [
+     5.089830481778266,
+     6.066271866291407
+    ],
+    "max_trained_scale_L": 300.0,
+    "prediction": 5.578051174034837,
+    "reasons": [],
+    "reference_ratio": 3.3333333333333335,
+    "requested_ratio": 6.666666666666667
+   }
+  },
+  {
+   "case": "case-07",
+   "id": "constant_target",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Constant target",
+   "surface": "sheet",
+   "status": "refused",
+   "error": null,
+   "seconds": 1.0,
+   "outcome": "caught",
+   "caught_by": [
+    "refusal:target_constant (error)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "refusal target_constant",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis_parts/refusals.py (_refuse_unusable_target)",
+   "owner_plan": "existing refusal (no plan item)",
+   "summary": null
+  },
+  {
+   "case": "case-10",
+   "id": "duplicate_run_id",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Two different runs share one run id",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 269.91,
+   "outcome": "missed",
+   "caught_by": [],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "a finding on run_id names the two rows (duplicate identifier)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (no duplicate-id check)",
+   "owner_plan": "unplanned (DOMAIN_AUDIT LOW: duplicate run ids are not flagged)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.467,
+     0.734
+    ],
+    "cv_spearman": 0.584,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 55.188,
+      "agitation_rpm": 181.208,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.641,
+      "glucose_gL": 7.696,
+      "glutamine_mM": 4.945,
+      "inoculum_1e6": 1.115,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 310.084,
+      "pH": 6.965,
+      "temperature_C": 36.162
+     },
+     {
+      "DO_pct": 55.164,
+      "agitation_rpm": 391.562,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.806,
+      "glucose_gL": 7.72,
+      "glutamine_mM": 4.939,
+      "inoculum_1e6": 1.096,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 310.386,
+      "pH": 6.968,
+      "temperature_C": 36.164
+     },
+     {
+      "DO_pct": 55.4,
+      "agitation_rpm": 119.225,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.063,
+      "glucose_gL": 7.743,
+      "glutamine_mM": 5.011,
+      "inoculum_1e6": 1.32,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 306.228,
+      "pH": 6.965,
+      "temperature_C": 36.163
+     },
+     {
+      "DO_pct": 55.019,
+      "agitation_rpm": 109.911,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.932,
+      "glucose_gL": 7.659,
+      "glutamine_mM": 4.937,
+      "inoculum_1e6": 0.779,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 317.481,
+      "pH": 6.96,
+      "temperature_C": 36.16
+     },
+     {
+      "DO_pct": 55.27,
+      "agitation_rpm": 135.392,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 7.563,
+      "glutamine_mM": 4.783,
+      "inoculum_1e6": 1.3,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 298.716,
+      "pH": 6.963,
+      "temperature_C": 36.152
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-01",
+   "id": "duplicated_rows_exact",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Eight rows pasted twice (identical, run id included)",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 302.13,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:duplicate_rows (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "duplicate_rows warns and names the duplicated rows",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_duplicate_rows)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.487,
+     0.768
+    ],
+    "cv_spearman": 0.605,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 168,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 55.2,
+      "agitation_rpm": 176.264,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.515,
+      "glucose_gL": 8.439,
+      "glutamine_mM": 5.369,
+      "inoculum_1e6": 1.016,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 326.422,
+      "pH": 6.969,
+      "temperature_C": 36.164
+     },
+     {
+      "DO_pct": 55.249,
+      "agitation_rpm": 194.241,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.425,
+      "glucose_gL": 8.477,
+      "glutamine_mM": 5.332,
+      "inoculum_1e6": 1.739,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 298.901,
+      "pH": 6.976,
+      "temperature_C": 36.18
+     },
+     {
+      "DO_pct": 55.134,
+      "agitation_rpm": 206.798,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.492,
+      "glucose_gL": 8.503,
+      "glutamine_mM": 5.342,
+      "inoculum_1e6": 0.71,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 308.863,
+      "pH": 6.97,
+      "temperature_C": 36.164
+     },
+     {
+      "DO_pct": 55.032,
+      "agitation_rpm": 176.038,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.379,
+      "glucose_gL": 8.578,
+      "glutamine_mM": 5.556,
+      "inoculum_1e6": 1.192,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 339.588,
+      "pH": 6.981,
+      "temperature_C": 36.183
+     },
+     {
+      "DO_pct": 55.272,
+      "agitation_rpm": 314.643,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.61,
+      "glucose_gL": 8.408,
+      "glutamine_mM": 5.255,
+      "inoculum_1e6": 0.758,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 308.841,
+      "pH": 6.97,
+      "temperature_C": 36.164
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-33",
+   "id": "duplicated_rows_new_id",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Eight rows pasted again under new run ids",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 288.98,
+   "outcome": "noticed",
+   "caught_by": [],
+   "noticed_by": [
+    "validation:outliers [antifoam_mgL] (warning) (names a planted row)",
+    "validation:outliers [titer_g_L] (warning) (names a planted row)"
+   ],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "duplicate_rows warns (identical on every column except the run id)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_duplicate_rows ignores nothing but outcome columns)",
+   "owner_plan": "unplanned (exclude identifier columns from the duplicate comparison)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.525,
+     0.76
+    ],
+    "cv_spearman": 0.644,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 168,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 56.305,
+      "agitation_rpm": 231.632,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.237,
+      "glucose_gL": 9.066,
+      "glutamine_mM": 4.934,
+      "inoculum_1e6": 1.091,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 316.047,
+      "pH": 6.963,
+      "temperature_C": 35.978
+     },
+     {
+      "DO_pct": 56.455,
+      "agitation_rpm": 192.21,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.031,
+      "glucose_gL": 11.044,
+      "glutamine_mM": 4.889,
+      "inoculum_1e6": 1.479,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 322.577,
+      "pH": 6.97,
+      "temperature_C": 35.995
+     },
+     {
+      "DO_pct": 55.795,
+      "agitation_rpm": 234.379,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.669,
+      "glucose_gL": 8.121,
+      "glutamine_mM": 5.155,
+      "inoculum_1e6": 0.955,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 346.551,
+      "pH": 6.97,
+      "temperature_C": 36.008
+     },
+     {
+      "DO_pct": 56.414,
+      "agitation_rpm": 243.764,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.39,
+      "glucose_gL": 8.156,
+      "glutamine_mM": 4.722,
+      "inoculum_1e6": 0.999,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 284.623,
+      "pH": 6.954,
+      "temperature_C": 35.943
+     },
+     {
+      "DO_pct": 56.414,
+      "agitation_rpm": 295.003,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.203,
+      "glucose_gL": 11.956,
+      "glutamine_mM": 5.934,
+      "inoculum_1e6": 0.892,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 305.957,
+      "pH": 6.967,
+      "temperature_C": 35.991
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-08",
+   "id": "fahrenheit_rows_bare",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Fahrenheit rows in a Celsius column (bare numbers)",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 273.52,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:physical_bounds [temperature_C] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "physical_bounds or units_consistency flags temperature_C on the planted rows",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_physical_bounds)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.337,
+     0.666
+    ],
+    "cv_spearman": 0.46,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 54.499,
+      "agitation_rpm": 224.788,
+      "antifoam_mgL": 38.323,
+      "feed_rate_mLh": 1.903,
+      "glucose_gL": 8.96,
+      "glutamine_mM": 5.366,
+      "inoculum_1e6": 1.206,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 321.16,
+      "pH": 6.962,
+      "temperature_C": 36.129
+     },
+     {
+      "DO_pct": 54.645,
+      "agitation_rpm": 193.933,
+      "antifoam_mgL": 47.432,
+      "feed_rate_mLh": 0.844,
+      "glucose_gL": 9.05,
+      "glutamine_mM": 5.369,
+      "inoculum_1e6": 1.001,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 316.391,
+      "pH": 6.952,
+      "temperature_C": 36.101
+     },
+     {
+      "DO_pct": 54.322,
+      "agitation_rpm": 154.942,
+      "antifoam_mgL": 37.722,
+      "feed_rate_mLh": 1.937,
+      "glucose_gL": 11.956,
+      "glutamine_mM": 5.759,
+      "inoculum_1e6": 1.226,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 334.144,
+      "pH": 6.977,
+      "temperature_C": 36.156
+     },
+     {
+      "DO_pct": 54.521,
+      "agitation_rpm": 318.95,
+      "antifoam_mgL": 32.165,
+      "feed_rate_mLh": 0.841,
+      "glucose_gL": 6.557,
+      "glutamine_mM": 5.033,
+      "inoculum_1e6": 0.994,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 323.46,
+      "pH": 6.951,
+      "temperature_C": 36.095
+     },
+     {
+      "DO_pct": 54.656,
+      "agitation_rpm": 217.087,
+      "antifoam_mgL": 40.297,
+      "feed_rate_mLh": 0.776,
+      "glucose_gL": 11.956,
+      "glutamine_mM": 5.558,
+      "inoculum_1e6": 1.048,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 287.43,
+      "pH": 6.962,
+      "temperature_C": 36.119
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-21",
+   "id": "fahrenheit_rows_labeled",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Fahrenheit rows in a Celsius column (labelled 'F')",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 270.92,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:units_consistency [temperature_C] (info)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "units_consistency recognises the F token on temperature_C (and converts it)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_units_consistency)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.463,
+     0.766
+    ],
+    "cv_spearman": 0.589,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 55.216,
+      "agitation_rpm": 185.879,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.646,
+      "glucose_gL": 7.687,
+      "glutamine_mM": 4.948,
+      "inoculum_1e6": 1.117,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 309.964,
+      "pH": 6.964,
+      "temperature_C": 36.162
+     },
+     {
+      "DO_pct": 55.181,
+      "agitation_rpm": 380.672,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.825,
+      "glucose_gL": 7.719,
+      "glutamine_mM": 4.94,
+      "inoculum_1e6": 1.091,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 310.757,
+      "pH": 6.968,
+      "temperature_C": 36.164
+     },
+     {
+      "DO_pct": 55.209,
+      "agitation_rpm": 138.176,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.101,
+      "glucose_gL": 7.778,
+      "glutamine_mM": 5.026,
+      "inoculum_1e6": 1.366,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 307.724,
+      "pH": 6.968,
+      "temperature_C": 36.173
+     },
+     {
+      "DO_pct": 55.062,
+      "agitation_rpm": 159.064,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.932,
+      "glucose_gL": 7.619,
+      "glutamine_mM": 4.912,
+      "inoculum_1e6": 0.729,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 317.656,
+      "pH": 6.957,
+      "temperature_C": 36.155
+     },
+     {
+      "DO_pct": 55.383,
+      "agitation_rpm": 134.148,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 7.554,
+      "glutamine_mM": 4.802,
+      "inoculum_1e6": 1.308,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 298.024,
+      "pH": 6.962,
+      "temperature_C": 36.151
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-32",
+   "id": "impossible_value",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Dissolved oxygen of 140 % in one row",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 283.84,
+   "outcome": "missed",
+   "caught_by": [],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "physical_bounds error on DO_pct naming the row",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_physical_bounds)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.474,
+     0.761
+    ],
+    "cv_spearman": 0.584,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 55.1,
+      "agitation_rpm": 383.485,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.474,
+      "glucose_gL": 8.643,
+      "glutamine_mM": 5.5,
+      "inoculum_1e6": 1.0,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 326.242,
+      "pH": 6.973,
+      "temperature_C": 36.165
+     },
+     {
+      "DO_pct": 55.057,
+      "agitation_rpm": 189.008,
+      "antifoam_mgL": 45.583,
+      "feed_rate_mLh": 1.429,
+      "glucose_gL": 8.733,
+      "glutamine_mM": 5.41,
+      "inoculum_1e6": 1.751,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 298.837,
+      "pH": 6.977,
+      "temperature_C": 36.187
+     },
+     {
+      "DO_pct": 54.985,
+      "agitation_rpm": 177.138,
+      "antifoam_mgL": 44.443,
+      "feed_rate_mLh": 1.696,
+      "glucose_gL": 8.786,
+      "glutamine_mM": 5.512,
+      "inoculum_1e6": 1.146,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 339.873,
+      "pH": 6.979,
+      "temperature_C": 36.187
+     },
+     {
+      "DO_pct": 55.238,
+      "agitation_rpm": 279.649,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 8.455,
+      "glutamine_mM": 5.445,
+      "inoculum_1e6": 0.988,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 326.368,
+      "pH": 6.965,
+      "temperature_C": 36.173
+     },
+     {
+      "DO_pct": 55.172,
+      "agitation_rpm": 125.252,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.161,
+      "glucose_gL": 8.732,
+      "glutamine_mM": 5.767,
+      "inoculum_1e6": 0.981,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 326.274,
+      "pH": 6.967,
+      "temperature_C": 36.167
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-34",
+   "id": "mixed_units_labeled",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Mixed units in one column (g/L and mg/L labels)",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 280.33,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:units_consistency [glucose_gL] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "units_consistency flags glucose_gL (mixed or unconvertible unit tokens)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_units_consistency)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.403,
+     0.701
+    ],
+    "cv_spearman": 0.541,
+    "d": 10,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 57.097,
+      "agitation_rpm": 212.096,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.222,
+      "glutamine_mM": 4.733,
+      "inoculum_1e6": 1.113,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 315.589,
+      "pH": 6.955,
+      "temperature_C": 35.943
+     },
+     {
+      "DO_pct": 57.281,
+      "agitation_rpm": 200.3,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 0.372,
+      "glutamine_mM": 4.522,
+      "inoculum_1e6": 1.332,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 308.433,
+      "pH": 6.954,
+      "temperature_C": 35.942
+     },
+     {
+      "DO_pct": 56.956,
+      "agitation_rpm": 218.72,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.995,
+      "glutamine_mM": 5.215,
+      "inoculum_1e6": 0.902,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 325.85,
+      "pH": 6.959,
+      "temperature_C": 35.942
+     },
+     {
+      "DO_pct": 56.68,
+      "agitation_rpm": 212.465,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.584,
+      "glutamine_mM": 3.687,
+      "inoculum_1e6": 1.191,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 320.489,
+      "pH": 6.955,
+      "temperature_C": 35.934
+     },
+     {
+      "DO_pct": 56.815,
+      "agitation_rpm": 205.167,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.149,
+      "glutamine_mM": 6.04,
+      "inoculum_1e6": 1.16,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 300.944,
+      "pH": 6.964,
+      "temperature_C": 36.003
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-38",
+   "id": "mixed_units_unlabeled",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "A block of target rows entered in mg/L as bare numbers",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 164.72,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:outliers [titer_g_L] (warning)",
+    "validation:physical_bounds [titer_g_L] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "the x1000 block is flagged on titer_g_L (units or outliers), naming planted rows",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_outliers / check_units_consistency)",
+   "owner_plan": "unplanned for sheets (Crux #1 covers result entries only)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": false,
+    "cv_ci95": [
+     -0.055,
+     0.326
+    ],
+    "cv_spearman": 0.077,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 70.906,
+      "agitation_rpm": 212.028,
+      "antifoam_mgL": 28.96,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 9.496,
+      "glutamine_mM": 3.685,
+      "inoculum_1e6": 1.238,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 337.844,
+      "pH": 7.003,
+      "temperature_C": 37.045
+     },
+     {
+      "DO_pct": 55.501,
+      "agitation_rpm": 212.963,
+      "antifoam_mgL": 28.891,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 8.187,
+      "glutamine_mM": 5.413,
+      "inoculum_1e6": 1.119,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 337.89,
+      "pH": 6.557,
+      "temperature_C": 37.508
+     },
+     {
+      "DO_pct": 78.906,
+      "agitation_rpm": 212.783,
+      "antifoam_mgL": 28.997,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 8.0,
+      "glutamine_mM": 3.869,
+      "inoculum_1e6": 1.378,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 337.561,
+      "pH": 7.22,
+      "temperature_C": 33.6
+     },
+     {
+      "DO_pct": 77.308,
+      "agitation_rpm": 214.448,
+      "antifoam_mgL": 29.11,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 10.21,
+      "glutamine_mM": 3.006,
+      "inoculum_1e6": 1.493,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 338.68,
+      "pH": 7.151,
+      "temperature_C": 38.968
+     },
+     {
+      "DO_pct": 53.303,
+      "agitation_rpm": 213.097,
+      "antifoam_mgL": 29.019,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 11.413,
+      "glutamine_mM": 3.06,
+      "inoculum_1e6": 0.25,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 338.155,
+      "pH": 6.777,
+      "temperature_C": 35.665
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-31",
+   "id": "swapped_columns",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "pH and temperature swapped in six rows",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 301.48,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:physical_bounds [pH] (error)",
+    "validation:physical_bounds [temperature_C] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "physical_bounds flags pH (or temperature_C) on the planted rows",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_physical_bounds)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.47,
+     0.723
+    ],
+    "cv_spearman": 0.609,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 57.042,
+      "agitation_rpm": 192.909,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.508,
+      "glucose_gL": 7.25,
+      "glutamine_mM": 4.982,
+      "inoculum_1e6": 0.825,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 313.813,
+      "pH": 6.958,
+      "temperature_C": 36.15
+     },
+     {
+      "DO_pct": 57.12,
+      "agitation_rpm": 102.465,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.118,
+      "glucose_gL": 7.233,
+      "glutamine_mM": 5.036,
+      "inoculum_1e6": 1.383,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 310.37,
+      "pH": 6.958,
+      "temperature_C": 36.148
+     },
+     {
+      "DO_pct": 57.12,
+      "agitation_rpm": 117.763,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.877,
+      "glucose_gL": 7.171,
+      "glutamine_mM": 4.804,
+      "inoculum_1e6": 0.201,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 317.683,
+      "pH": 6.952,
+      "temperature_C": 36.134
+     },
+     {
+      "DO_pct": 56.894,
+      "agitation_rpm": 354.853,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.78,
+      "glucose_gL": 7.333,
+      "glutamine_mM": 5.096,
+      "inoculum_1e6": 0.953,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 310.79,
+      "pH": 6.966,
+      "temperature_C": 36.162
+     },
+     {
+      "DO_pct": 57.012,
+      "agitation_rpm": 197.809,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 0.281,
+      "glucose_gL": 7.41,
+      "glutamine_mM": 5.187,
+      "inoculum_1e6": 0.477,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 316.776,
+      "pH": 6.96,
+      "temperature_C": 36.169
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-29",
+   "id": "swapped_levels",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Medium labels rotated in a block of 30 runs",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 285.02,
+   "outcome": "noticed",
+   "caught_by": [],
+   "noticed_by": [
+    "validation:outliers [titer_g_L] (warning) (names a planted row)"
+   ],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "no sheet-only check can see a consistent relabelling; expected miss, kept as a measured blind spot (would need an as-run record or a bridging control)",
+   "detectable_from_input": false,
+   "owner_module": "none today (as-run record / bridging controls)",
+   "owner_plan": "Crux #1 recipe_deviation (with as-run recipes, F11); DOMAIN H4 bridging controls (unplanned)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.557,
+     0.772
+    ],
+    "cv_spearman": 0.666,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 54.85,
+      "agitation_rpm": 219.885,
+      "antifoam_mgL": 47.283,
+      "feed_rate_mLh": 1.492,
+      "glucose_gL": 8.289,
+      "glutamine_mM": 5.291,
+      "inoculum_1e6": 1.117,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 315.307,
+      "pH": 6.975,
+      "temperature_C": 36.15
+     },
+     {
+      "DO_pct": 54.587,
+      "agitation_rpm": 220.56,
+      "antifoam_mgL": 29.271,
+      "feed_rate_mLh": 1.026,
+      "glucose_gL": 8.563,
+      "glutamine_mM": 5.483,
+      "inoculum_1e6": 1.232,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 312.887,
+      "pH": 6.981,
+      "temperature_C": 36.178
+     },
+     {
+      "DO_pct": 54.879,
+      "agitation_rpm": 221.868,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 8.147,
+      "glutamine_mM": 5.114,
+      "inoculum_1e6": 0.647,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 315.335,
+      "pH": 6.968,
+      "temperature_C": 36.154
+     },
+     {
+      "DO_pct": 55.153,
+      "agitation_rpm": 218.812,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.75,
+      "glucose_gL": 8.062,
+      "glutamine_mM": 5.136,
+      "inoculum_1e6": 1.722,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 314.144,
+      "pH": 6.975,
+      "temperature_C": 36.134
+     },
+     {
+      "DO_pct": 54.924,
+      "agitation_rpm": 218.38,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.206,
+      "glucose_gL": 8.397,
+      "glutamine_mM": 5.556,
+      "inoculum_1e6": 0.95,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 331.182,
+      "pH": 6.98,
+      "temperature_C": 36.168
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-09",
+   "id": "too_few_rows_5",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Five rows",
+   "surface": "sheet",
+   "status": "refused",
+   "error": null,
+   "seconds": 0.92,
+   "outcome": "caught",
+   "caught_by": [
+    "refusal:too_few_rows (error)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "refusal too_few_rows",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis_parts/refusals.py (_too_few_rows)",
+   "owner_plan": "existing refusal (no plan item)",
+   "summary": null
+  },
+  {
+   "case": "case-28",
+   "id": "too_few_rows_8",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Eight rows, eleven inputs",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 180.44,
+   "outcome": "caught",
+   "caught_by": [
+    "reliability:not_judged (warning) [planned code]"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "refusal, or a reliability verdict of not_judged (too few rows to judge trust)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis.py (reliability verdict)",
+   "owner_plan": "F04 (not_judged below about 12 rows; ML_AUDIT N3)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": null,
+    "cv_ci95": [
+     -0.96,
+     -0.294
+    ],
+    "cv_spearman": -0.791,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 8,
+    "n_proposals": 0,
+    "promotion_passed": false,
+    "proposal_recipes": [],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-16",
+   "id": "transposed_sheet",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Transposed sheet (runs as columns), with a run-id row",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 12.76,
+   "outcome": "caught",
+   "caught_by": [
+    "orientation:transposed (info)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "orientation pre-pass detects 'transposed' and re-orients",
+   "detectable_from_input": true,
+   "owner_module": "kalos/normalize/orientation.py (detect_orientation)",
+   "owner_plan": "existing pre-pass (no plan item)",
+   "summary": {
+    "categorical_features": [],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.519,
+     0.747
+    ],
+    "cv_spearman": 0.656,
+    "d": 10,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 73.035,
+      "agitation_rpm": 392.01,
+      "antifoam_mgL": 24.974,
+      "feed_rate_mLh": 1.317,
+      "glucose_gL": 6.44,
+      "glutamine_mM": 3.537,
+      "inoculum_1e6": 0.814,
+      "osmolality_mOsm": 310.583,
+      "pH": 7.594,
+      "temperature_C": 38.965
+     },
+     {
+      "DO_pct": 23.087,
+      "agitation_rpm": 307.541,
+      "antifoam_mgL": 44.821,
+      "feed_rate_mLh": 1.392,
+      "glucose_gL": 3.502,
+      "glutamine_mM": 1.104,
+      "inoculum_1e6": 1.464,
+      "osmolality_mOsm": 302.554,
+      "pH": 6.005,
+      "temperature_C": 36.867
+     },
+     {
+      "DO_pct": 55.008,
+      "agitation_rpm": 176.129,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.716,
+      "glucose_gL": 7.85,
+      "glutamine_mM": 4.97,
+      "inoculum_1e6": 1.125,
+      "osmolality_mOsm": 306.775,
+      "pH": 6.969,
+      "temperature_C": 36.174
+     },
+     {
+      "DO_pct": 42.155,
+      "agitation_rpm": 328.492,
+      "antifoam_mgL": 10.843,
+      "feed_rate_mLh": 1.954,
+      "glucose_gL": 3.49,
+      "glutamine_mM": 7.955,
+      "inoculum_1e6": 1.687,
+      "osmolality_mOsm": 304.03,
+      "pH": 7.454,
+      "temperature_C": 36.019
+     },
+     {
+      "DO_pct": 65.459,
+      "agitation_rpm": 146.85,
+      "antifoam_mgL": 34.939,
+      "feed_rate_mLh": 0.771,
+      "glucose_gL": 10.04,
+      "glutamine_mM": 6.473,
+      "inoculum_1e6": 1.615,
+      "osmolality_mOsm": 295.236,
+      "pH": 6.362,
+      "temperature_C": 32.651
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-18",
+   "id": "transposed_sheet_no_id",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Transposed sheet with no run-id row (scale-up sheet)",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 11.6,
+   "outcome": "caught",
+   "caught_by": [
+    "orientation:transposed (info)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "orientation pre-pass detects 'transposed' and re-orients",
+   "detectable_from_input": true,
+   "owner_module": "kalos/normalize/orientation.py (detect_orientation)",
+   "owner_plan": "existing pre-pass (no plan item)",
+   "summary": {
+    "categorical_features": [],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.244,
+     0.711
+    ],
+    "cv_spearman": 0.482,
+    "d": 5,
+    "features": [
+     "scale_L",
+     "agitation_rpm",
+     "airflow_L_per_min",
+     "ph_setpoint",
+     "temperature_C"
+    ],
+    "group_col": null,
+    "n": 90,
+    "n_proposals": 5,
+    "promotion_passed": true,
+    "proposal_recipes": [
+     {
+      "agitation_rpm": 154.408,
+      "airflow_L_per_min": 268.249,
+      "ph_setpoint": 7.128,
+      "scale_L": 144.833,
+      "temperature_C": 37.958
+     },
+     {
+      "agitation_rpm": 237.329,
+      "airflow_L_per_min": 119.21,
+      "ph_setpoint": 7.524,
+      "scale_L": 3882.543,
+      "temperature_C": 36.083
+     },
+     {
+      "agitation_rpm": 83.397,
+      "airflow_L_per_min": 0.045,
+      "ph_setpoint": 7.31,
+      "scale_L": 2917.19,
+      "temperature_C": 36.069
+     },
+     {
+      "agitation_rpm": 249.755,
+      "airflow_L_per_min": 210.401,
+      "ph_setpoint": 7.241,
+      "scale_L": 1063.242,
+      "temperature_C": 37.958
+     },
+     {
+      "agitation_rpm": 161.15,
+      "airflow_L_per_min": 206.519,
+      "ph_setpoint": 6.708,
+      "scale_L": 4007.364,
+      "temperature_C": 37.944
+     }
+    ],
+    "target": "titer_g_per_L"
+   }
+  },
+  {
+   "case": "case-24",
+   "id": "typo_x1000_feature",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "x1000 typo in one agitation cell",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 280.2,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:outliers [agitation_rpm] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "outliers (or bounds) flags agitation_rpm naming the planted row",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_outliers)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.487,
+     0.725
+    ],
+    "cv_spearman": 0.61,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 57.413,
+      "agitation_rpm": 22186.943,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.5,
+      "glucose_gL": 9.298,
+      "glutamine_mM": 4.748,
+      "inoculum_1e6": 1.271,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 308.945,
+      "pH": 6.969,
+      "temperature_C": 35.907
+     },
+     {
+      "DO_pct": 57.467,
+      "agitation_rpm": 101.777,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.506,
+      "glucose_gL": 9.253,
+      "glutamine_mM": 4.756,
+      "inoculum_1e6": 1.293,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 308.502,
+      "pH": 6.97,
+      "temperature_C": 35.907
+     },
+     {
+      "DO_pct": 57.613,
+      "agitation_rpm": 4165.514,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 0.456,
+      "glucose_gL": 9.23,
+      "glutamine_mM": 4.782,
+      "inoculum_1e6": 1.384,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 299.41,
+      "pH": 6.963,
+      "temperature_C": 35.918
+     },
+     {
+      "DO_pct": 57.183,
+      "agitation_rpm": 10507.321,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 9.774,
+      "glutamine_mM": 4.752,
+      "inoculum_1e6": 0.925,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 316.558,
+      "pH": 6.968,
+      "temperature_C": 35.892
+     },
+     {
+      "DO_pct": 57.321,
+      "agitation_rpm": 2381.707,
+      "antifoam_mgL": 48.147,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 9.152,
+      "glutamine_mM": 4.825,
+      "inoculum_1e6": 1.484,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 284.119,
+      "pH": 6.973,
+      "temperature_C": 35.913
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-06",
+   "id": "typo_x1000_target",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "x1000 typo in one target cell",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 140.22,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:outliers [titer_g_L] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "outliers (or bounds) flags titer_g_L naming the planted row",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_outliers)",
+   "owner_plan": "existing check; Crux #1 referee for result entries",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": false,
+    "cv_ci95": [
+     -0.093,
+     0.211
+    ],
+    "cv_spearman": 0.076,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 79.688,
+      "agitation_rpm": 399.907,
+      "antifoam_mgL": 0.17,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 2.004,
+      "glutamine_mM": 1.032,
+      "inoculum_1e6": 1.995,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 280.044,
+      "pH": 7.594,
+      "temperature_C": 38.968
+     },
+     {
+      "DO_pct": 79.688,
+      "agitation_rpm": 399.907,
+      "antifoam_mgL": 0.17,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 2.004,
+      "glutamine_mM": 1.032,
+      "inoculum_1e6": 1.995,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 359.948,
+      "pH": 7.594,
+      "temperature_C": 38.968
+     },
+     {
+      "DO_pct": 79.688,
+      "agitation_rpm": 399.907,
+      "antifoam_mgL": 0.17,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 2.004,
+      "glutamine_mM": 8.0,
+      "inoculum_1e6": 0.201,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 359.948,
+      "pH": 7.594,
+      "temperature_C": 38.968
+     },
+     {
+      "DO_pct": 79.688,
+      "agitation_rpm": 399.907,
+      "antifoam_mgL": 0.17,
+      "feed_rate_mLh": 0.108,
+      "glucose_gL": 2.004,
+      "glutamine_mM": 1.032,
+      "inoculum_1e6": 1.995,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 280.044,
+      "pH": 6.005,
+      "temperature_C": 38.968
+     },
+     {
+      "DO_pct": 79.688,
+      "agitation_rpm": 399.907,
+      "antifoam_mgL": 0.17,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 2.004,
+      "glutamine_mM": 8.0,
+      "inoculum_1e6": 1.995,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 359.948,
+      "pH": 7.594,
+      "temperature_C": 30.039
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-05",
+   "id": "typo_x10_feature",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "x10 typo in two glucose cells",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 286.75,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:outliers [glucose_gL] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "outliers (or bounds) flags glucose_gL naming the planted rows",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_outliers)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.559,
+     0.779
+    ],
+    "cv_spearman": 0.689,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 57.039,
+      "agitation_rpm": 204.903,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.175,
+      "glucose_gL": 9.919,
+      "glutamine_mM": 4.759,
+      "inoculum_1e6": 1.158,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 314.255,
+      "pH": 6.957,
+      "temperature_C": 35.947
+     },
+     {
+      "DO_pct": 57.051,
+      "agitation_rpm": 211.748,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.817,
+      "glucose_gL": 2.004,
+      "glutamine_mM": 5.081,
+      "inoculum_1e6": 0.956,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 316.942,
+      "pH": 6.956,
+      "temperature_C": 35.941
+     },
+     {
+      "DO_pct": 57.104,
+      "agitation_rpm": 201.559,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 0.864,
+      "glucose_gL": 24.1,
+      "glutamine_mM": 4.674,
+      "inoculum_1e6": 1.244,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 310.288,
+      "pH": 6.958,
+      "temperature_C": 35.947
+     },
+     {
+      "DO_pct": 57.416,
+      "agitation_rpm": 208.455,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 0.416,
+      "glucose_gL": 2.004,
+      "glutamine_mM": 4.454,
+      "inoculum_1e6": 1.357,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 306.342,
+      "pH": 6.953,
+      "temperature_C": 35.936
+     },
+     {
+      "DO_pct": 56.478,
+      "agitation_rpm": 208.558,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.932,
+      "glucose_gL": 17.373,
+      "glutamine_mM": 5.824,
+      "inoculum_1e6": 1.02,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 312.444,
+      "pH": 6.967,
+      "temperature_C": 36.003
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-22",
+   "id": "typo_x10_target",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "x10 typo in two target cells",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 199.66,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:outliers [titer_g_L] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "outliers (or bounds) flags titer_g_L naming the planted rows",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_outliers)",
+   "owner_plan": "existing check; Crux #1 referee for result entries",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.277,
+     0.572
+    ],
+    "cv_spearman": 0.452,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 50.499,
+      "agitation_rpm": 115.516,
+      "antifoam_mgL": 43.462,
+      "feed_rate_mLh": 1.873,
+      "glucose_gL": 6.837,
+      "glutamine_mM": 7.427,
+      "inoculum_1e6": 0.959,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 280.044,
+      "pH": 7.101,
+      "temperature_C": 35.478
+     },
+     {
+      "DO_pct": 22.329,
+      "agitation_rpm": 101.798,
+      "antifoam_mgL": 43.36,
+      "feed_rate_mLh": 1.86,
+      "glucose_gL": 7.564,
+      "glutamine_mM": 5.767,
+      "inoculum_1e6": 0.421,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 280.044,
+      "pH": 7.102,
+      "temperature_C": 35.443
+     },
+     {
+      "DO_pct": 36.655,
+      "agitation_rpm": 198.106,
+      "antifoam_mgL": 43.286,
+      "feed_rate_mLh": 1.866,
+      "glucose_gL": 8.98,
+      "glutamine_mM": 7.512,
+      "inoculum_1e6": 1.86,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 280.044,
+      "pH": 7.103,
+      "temperature_C": 35.654
+     },
+     {
+      "DO_pct": 63.94,
+      "agitation_rpm": 114.13,
+      "antifoam_mgL": 43.716,
+      "feed_rate_mLh": 1.867,
+      "glucose_gL": 4.692,
+      "glutamine_mM": 8.0,
+      "inoculum_1e6": 0.23,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 280.044,
+      "pH": 7.101,
+      "temperature_C": 35.346
+     },
+     {
+      "DO_pct": 71.845,
+      "agitation_rpm": 118.222,
+      "antifoam_mgL": 43.245,
+      "feed_rate_mLh": 1.888,
+      "glucose_gL": 9.364,
+      "glutamine_mM": 3.71,
+      "inoculum_1e6": 1.023,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 280.044,
+      "pH": 7.102,
+      "temperature_C": 35.572
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  }
+ ],
+ "clean": [
+  {
+   "case": "case-23",
+   "id": "clean_bioprocess160",
+   "kind": "clean",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 273.28,
+   "false_alarm": true,
+   "detectors_fired": [
+    "validation:outliers|physical_bounds",
+    "validation:units_consistency|outliers|physical_bounds"
+   ],
+   "refusals": [],
+   "standing_warnings": [
+    "validation:controls_present",
+    "validation:provenance_metadata"
+   ],
+   "expected": "no refusal and no catch detector fires (examples/synthetic_bioprocess, all 160 rows)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.457,
+     0.759
+    ],
+    "cv_spearman": 0.571,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 160,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 55.268,
+      "agitation_rpm": 172.689,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.641,
+      "glucose_gL": 7.69,
+      "glutamine_mM": 4.943,
+      "inoculum_1e6": 1.117,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 310.636,
+      "pH": 6.965,
+      "temperature_C": 36.161
+     },
+     {
+      "DO_pct": 55.163,
+      "agitation_rpm": 377.957,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.758,
+      "glucose_gL": 7.713,
+      "glutamine_mM": 4.932,
+      "inoculum_1e6": 1.118,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 308.127,
+      "pH": 6.967,
+      "temperature_C": 36.16
+     },
+     {
+      "DO_pct": 55.291,
+      "agitation_rpm": 126.504,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.058,
+      "glucose_gL": 7.779,
+      "glutamine_mM": 5.013,
+      "inoculum_1e6": 1.368,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 307.371,
+      "pH": 6.967,
+      "temperature_C": 36.172
+     },
+     {
+      "DO_pct": 55.005,
+      "agitation_rpm": 118.076,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.9,
+      "glucose_gL": 7.65,
+      "glutamine_mM": 4.942,
+      "inoculum_1e6": 0.723,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 317.434,
+      "pH": 6.957,
+      "temperature_C": 36.157
+     },
+     {
+      "DO_pct": 55.35,
+      "agitation_rpm": 116.707,
+      "antifoam_mgL": 49.971,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 7.532,
+      "glutamine_mM": 4.781,
+      "inoculum_1e6": 1.282,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 298.802,
+      "pH": 6.961,
+      "temperature_C": 36.148
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-26",
+   "id": "clean_bioprocess30",
+   "kind": "clean",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 104.01,
+   "false_alarm": true,
+   "detectors_fired": [
+    "reliability:does_not_clear_floor",
+    "validation:outliers|physical_bounds",
+    "validation:units_consistency|outliers|physical_bounds"
+   ],
+   "refusals": [],
+   "standing_warnings": [
+    "reliability:space_filling_advice",
+    "validation:controls_present",
+    "validation:provenance_metadata"
+   ],
+   "expected": "no refusal and no catch detector fires (30-row seeded subsample)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": false,
+    "cv_ci95": [
+     -0.589,
+     0.53
+    ],
+    "cv_spearman": -0.324,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 30,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 42.165,
+      "agitation_rpm": 126.285,
+      "antifoam_mgL": 15.886,
+      "feed_rate_mLh": 0.762,
+      "glucose_gL": 11.956,
+      "glutamine_mM": 7.759,
+      "inoculum_1e6": 1.969,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 288.599,
+      "pH": 7.588,
+      "temperature_C": 37.799
+     },
+     {
+      "DO_pct": 78.46,
+      "agitation_rpm": 397.046,
+      "antifoam_mgL": 8.803,
+      "feed_rate_mLh": 0.648,
+      "glucose_gL": 11.956,
+      "glutamine_mM": 7.759,
+      "inoculum_1e6": 1.969,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 288.599,
+      "pH": 7.588,
+      "temperature_C": 37.685
+     },
+     {
+      "DO_pct": 22.308,
+      "agitation_rpm": 110.605,
+      "antifoam_mgL": 24.451,
+      "feed_rate_mLh": 0.413,
+      "glucose_gL": 11.956,
+      "glutamine_mM": 7.759,
+      "inoculum_1e6": 1.969,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 358.803,
+      "pH": 7.588,
+      "temperature_C": 37.995
+     },
+     {
+      "DO_pct": 22.308,
+      "agitation_rpm": 110.605,
+      "antifoam_mgL": 21.237,
+      "feed_rate_mLh": 1.561,
+      "glucose_gL": 11.956,
+      "glutamine_mM": 7.759,
+      "inoculum_1e6": 1.969,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 288.599,
+      "pH": 6.015,
+      "temperature_C": 37.983
+     },
+     {
+      "DO_pct": 22.308,
+      "agitation_rpm": 110.605,
+      "antifoam_mgL": 2.969,
+      "feed_rate_mLh": 0.108,
+      "glucose_gL": 11.956,
+      "glutamine_mM": 7.759,
+      "inoculum_1e6": 1.969,
+      "medium_base": "BalanCD",
+      "osmolality_mOsm": 288.599,
+      "pH": 7.588,
+      "temperature_C": 37.54
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-43",
+   "id": "clean_bioprocess60",
+   "kind": "clean",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 176.45,
+   "false_alarm": true,
+   "detectors_fired": [
+    "validation:outliers|physical_bounds",
+    "validation:units_consistency|outliers|physical_bounds"
+   ],
+   "refusals": [],
+   "standing_warnings": [
+    "validation:controls_present",
+    "validation:provenance_metadata"
+   ],
+   "expected": "no refusal and no catch detector fires (60-row seeded subsample)",
+   "summary": {
+    "categorical_features": [
+     "medium_base"
+    ],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.366,
+     0.743
+    ],
+    "cv_spearman": 0.568,
+    "d": 11,
+    "features": [
+     "pH",
+     "temperature_C",
+     "glucose_gL",
+     "glutamine_mM",
+     "feed_rate_mLh",
+     "DO_pct",
+     "agitation_rpm",
+     "inoculum_1e6",
+     "antifoam_mgL",
+     "osmolality_mOsm",
+     "medium_base"
+    ],
+    "group_col": null,
+    "n": 60,
+    "n_proposals": 5,
+    "promotion_passed": false,
+    "proposal_recipes": [
+     {
+      "DO_pct": 63.49,
+      "agitation_rpm": 132.855,
+      "antifoam_mgL": 39.163,
+      "feed_rate_mLh": 1.982,
+      "glucose_gL": 9.263,
+      "glutamine_mM": 4.873,
+      "inoculum_1e6": 0.863,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 334.417,
+      "pH": 6.954,
+      "temperature_C": 36.257
+     },
+     {
+      "DO_pct": 64.655,
+      "agitation_rpm": 140.908,
+      "antifoam_mgL": 48.701,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 7.84,
+      "glutamine_mM": 6.698,
+      "inoculum_1e6": 0.337,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 358.667,
+      "pH": 6.925,
+      "temperature_C": 36.179
+     },
+     {
+      "DO_pct": 64.63,
+      "agitation_rpm": 195.497,
+      "antifoam_mgL": 25.109,
+      "feed_rate_mLh": 1.738,
+      "glucose_gL": 10.355,
+      "glutamine_mM": 4.767,
+      "inoculum_1e6": 1.66,
+      "medium_base": "CD-CHO",
+      "osmolality_mOsm": 343.573,
+      "pH": 6.977,
+      "temperature_C": 36.376
+     },
+     {
+      "DO_pct": 62.565,
+      "agitation_rpm": 109.751,
+      "antifoam_mgL": 31.484,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 8.954,
+      "glutamine_mM": 1.079,
+      "inoculum_1e6": 0.733,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 291.728,
+      "pH": 6.935,
+      "temperature_C": 36.163
+     },
+     {
+      "DO_pct": 63.786,
+      "agitation_rpm": 141.006,
+      "antifoam_mgL": 48.701,
+      "feed_rate_mLh": 1.995,
+      "glucose_gL": 9.538,
+      "glutamine_mM": 8.0,
+      "inoculum_1e6": 1.057,
+      "medium_base": "ProCHO",
+      "osmolality_mOsm": 283.822,
+      "pH": 6.959,
+      "temperature_C": 36.296
+     }
+    ],
+    "target": "titer_g_L"
+   }
+  },
+  {
+   "case": "case-36",
+   "id": "clean_kaggle150",
+   "kind": "clean",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 10.36,
+   "false_alarm": true,
+   "detectors_fired": [
+    "validation:outliers|physical_bounds",
+    "validation:physical_bounds",
+    "validation:physical_bounds|units_consistency",
+    "validation:units_consistency|outliers|physical_bounds"
+   ],
+   "refusals": [],
+   "standing_warnings": [
+    "validation:controls_present",
+    "validation:provenance_metadata"
+   ],
+   "expected": "no refusal and no catch detector fires (Kaggle sheet minus outcome/derived/provenance columns)",
+   "summary": {
+    "categorical_features": [],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.044,
+     0.358
+    ],
+    "cv_spearman": 0.222,
+    "d": 6,
+    "features": [
+     "temp_c",
+     "ph",
+     "inoculum_vol_ml",
+     "rpm",
+     "lactose_feed_ml",
+     "duration_days"
+    ],
+    "group_col": null,
+    "n": 150,
+    "n_proposals": 5,
+    "promotion_passed": true,
+    "proposal_recipes": [
+     {
+      "duration_days": 8.269,
+      "inoculum_vol_ml": 57.855,
+      "lactose_feed_ml": 2156.017,
+      "ph": 4.368,
+      "rpm": 307.41,
+      "temp_c": 33.217
+     },
+     {
+      "duration_days": 8.269,
+      "inoculum_vol_ml": 47.142,
+      "lactose_feed_ml": 889.274,
+      "ph": 3.585,
+      "rpm": 307.41,
+      "temp_c": 33.217
+     },
+     {
+      "duration_days": 8.269,
+      "inoculum_vol_ml": 47.142,
+      "lactose_feed_ml": 1960.161,
+      "ph": 3.966,
+      "rpm": 192.357,
+      "temp_c": 33.217
+     },
+     {
+      "duration_days": 3.0,
+      "inoculum_vol_ml": 146.212,
+      "lactose_feed_ml": 917.891,
+      "ph": 5.167,
+      "rpm": 192.357,
+      "temp_c": 22.274
+     },
+     {
+      "duration_days": 7.518,
+      "inoculum_vol_ml": 91.76,
+      "lactose_feed_ml": 788.982,
+      "ph": 6.049,
+      "rpm": 204.718,
+      "temp_c": 30.01
+     }
+    ],
+    "target": "max_yield_fpu_ml"
+   }
+  },
+  {
+   "case": "case-20",
+   "id": "clean_results_plain",
+   "kind": "clean",
+   "surface": "result",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.06,
+   "false_alarm": false,
+   "detectors_fired": [],
+   "refusals": [],
+   "standing_warnings": [
+    "validation:controls_present",
+    "validation:provenance_metadata"
+   ],
+   "expected": "five true held-out results: none refused, none flagged on their fold rows",
+   "summary": {
+    "n_base": 155,
+    "n_fold": 160
+   }
+  },
+  {
+   "case": "case-04",
+   "id": "clean_results_surprise",
+   "kind": "clean",
+   "surface": "result",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.06,
+   "false_alarm": false,
+   "detectors_fired": [],
+   "refusals": [],
+   "standing_warnings": [
+    "validation:controls_present",
+    "validation:provenance_metadata"
+   ],
+   "expected": "a surprising but plausible new best (1.10 x the best measured): not refused, not flagged",
+   "summary": {
+    "n_base": 155,
+    "n_fold": 160
+   }
+  },
+  {
+   "case": "case-37",
+   "id": "clean_scale_in_ladder",
+   "kind": "clean",
+   "surface": "scale",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.03,
+   "false_alarm": true,
+   "detectors_fired": [
+    "scale_readout:refusal"
+   ],
+   "refusals": [],
+   "standing_warnings": [],
+   "expected": "a target at the largest trained scale: a number, no refusal and no warning",
+   "summary": {
+    "decision": "REFUSAL",
+    "interval": null,
+    "max_trained_scale_L": null,
+    "prediction": null,
+    "reasons": [
+     "interpolation is out of scope for this readout"
+    ],
+    "reference_ratio": null,
+    "requested_ratio": 1.0
+   }
+  },
+  {
+   "case": "case-13",
+   "id": "clean_scaleup90",
+   "kind": "clean",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 11.06,
+   "false_alarm": true,
+   "detectors_fired": [
+    "validation:outliers|physical_bounds",
+    "validation:units_consistency|outliers|physical_bounds"
+   ],
+   "refusals": [],
+   "standing_warnings": [
+    "validation:controls_present",
+    "validation:provenance_metadata"
+   ],
+   "expected": "no refusal and no catch detector fires (examples/synthetic_scaleup as an upload)",
+   "summary": {
+    "categorical_features": [],
+    "clears_floor": true,
+    "cv_ci95": [
+     0.165,
+     0.689
+    ],
+    "cv_spearman": 0.46,
+    "d": 5,
+    "features": [
+     "scale_L",
+     "agitation_rpm",
+     "airflow_L_per_min",
+     "ph_setpoint",
+     "temperature_C"
+    ],
+    "group_col": null,
+    "n": 90,
+    "n_proposals": 5,
+    "promotion_passed": true,
+    "proposal_recipes": [
+     {
+      "agitation_rpm": 249.755,
+      "airflow_L_per_min": 39.532,
+      "ph_setpoint": 7.235,
+      "scale_L": 914.418,
+      "temperature_C": 37.958
+     },
+     {
+      "agitation_rpm": 154.517,
+      "airflow_L_per_min": 14.157,
+      "ph_setpoint": 7.58,
+      "scale_L": 2124.945,
+      "temperature_C": 36.555
+     },
+     {
+      "agitation_rpm": 161.746,
+      "airflow_L_per_min": 269.661,
+      "ph_setpoint": 7.106,
+      "scale_L": 126.291,
+      "temperature_C": 37.958
+     },
+     {
+      "agitation_rpm": 132.389,
+      "airflow_L_per_min": 97.202,
+      "ph_setpoint": 7.288,
+      "scale_L": 4485.847,
+      "temperature_C": 36.851
+     },
+     {
+      "agitation_rpm": 117.142,
+      "airflow_L_per_min": 71.122,
+      "ph_setpoint": 7.305,
+      "scale_L": 3096.644,
+      "temperature_C": 36.069
+     }
+    ],
+    "target": "titer_g_per_L"
+   }
+  }
+ ],
+ "skipped": []
+}
