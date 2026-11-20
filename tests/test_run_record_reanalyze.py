@@ -18,7 +18,6 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
-from kalos.portal import app as portal_module
 from kalos.portal import campaign as campaign_module
 from kalos.portal import run_record
 from kalos.portal.app import app
@@ -41,8 +40,6 @@ def store(tmp_path, monkeypatch):
 
 @pytest.fixture
 def client(store, tmp_path, monkeypatch):
-    monkeypatch.setattr(portal_module, "_STATE_DIR", tmp_path)
-    monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
     monkeypatch.setattr(campaign_module, "_STORE", store)
     app.dependency_overrides[get_campaign_store] = lambda: store
     try:

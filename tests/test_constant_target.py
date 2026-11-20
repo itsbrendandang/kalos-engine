@@ -160,8 +160,6 @@ def test_near_constant_but_varying_target_is_still_fit():
 def client(tmp_path, monkeypatch):
     store = CampaignStore(tmp_path)
     monkeypatch.setenv("KALOS_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(portal_module, "_STATE_DIR", tmp_path)
-    monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
     monkeypatch.setattr(campaign_module, "_STORE", store)
     portal_module.app.dependency_overrides[get_campaign_store] = lambda: store
     try:
