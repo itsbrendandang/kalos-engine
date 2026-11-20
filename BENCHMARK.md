@@ -54,6 +54,15 @@ Positioning follows from this: sell the rigor and the honest decision layer, and
 
 ## On the real media data (pool-based retrospective)
 
+> **Caveat (added after these results were published; the numbers in this section are not corrected yet).**
+> This section and the three updates after it use one real pool, the combined media DoE. That pool has two problems the runs below did not account for:
+>
+> - **The zeros are not measured zeros.** Where the assay detected no lipase peak, the titer was written in as 0 (or as a small placeholder value). These are censored non-detects: the true titer is somewhere below the assay's limit of detection, not 0. `kalos/bench/pool.py` and `examples/benchmark_media_pool.py` treat them as measured values.
+> - **Harvest time differs between plates and is not recorded.** In one of the two experiments in the pool, one plate was harvested at 8 h and another at 25 h, and no column in the pool records harvest time. Most of the non-detects come from that experiment.
+>
+> So every real-pool number in this section and its updates (the non-producer share, the feasibility AUC, the BO-vs-random tables, the replicate count, the ICC and the noise estimates) is confounded: it partly measures harvest time and experiment, not only the media recipe. Treat these numbers as unconfirmed, and do not cite them as evidence for or against BO on real media data.
+> A corrected rerun (non-detects handled as censored, harvest time and experiment recorded, replicates grouped by recipe) will follow under ml-bench-v2 and will report the old and the corrected numbers side by side.
+
 The synthetic sweep says BO helps when the signal is clean and stops helping as noise rises.
 So the honest test is the real one.
 On the actual combined media DoE (96 runs, target `Lipase_g.L`, via `kalos/bench/pool.py`): does BO pick the best recipes from the pool in fewer experiments than random selection?
@@ -172,6 +181,7 @@ It races BO / feasibility-gated BO / random on both the replicate-averaged objec
 ## Caveats
 
 - The synthetic surfaces measure whether the optimization machinery beats space-filling in a controlled setting; they do not claim a specific number of experiments saved on real data.
+- The real-data pool numbers are confounded (non-detects scored as zeros, unrecorded harvest time); see the caveat at the top of "On the real media data".
 - The real-data pool benchmark uses client data that is NOT committed; `kalos/bench/pool.py` takes a DataFrame, so the code stays reproducible and data-free. Point it at a run sheet to reproduce the numbers above.
 - The real-data numbers in the update section are reproducible from the private media data set, pointed to by the `KALOS_MEDIA_DATA` env var (see `examples/benchmark_media_pool.py`); no client data is committed to this repo.
 - Noise (synthetic) is expressed as a fraction of each surface's output scale, so it is comparable across surfaces with different units.
