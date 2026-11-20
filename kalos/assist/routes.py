@@ -6,6 +6,10 @@
 - POST /api/assist/index/rebuild         write  rebuild the index (audited)
 - GET  /api/campaigns/{id}/search?q=&k=  read   semantic search over one campaign's
                                                 records (kalos.assist.semantic)
+- POST /api/campaigns/{id}/setup/suggestions
+                                         read   suggested column roles and units for
+                                                the uploaded sheet; nothing is applied
+                                                (kalos.assist.setup_suggest)
 
 The tenant is always the caller's (`principal.tenant`). A campaign id that is
 malformed, missing, or another tenant's gets the shared campaign 404. With
@@ -39,6 +43,7 @@ from kalos.assist.llm import (
 )
 from kalos.assist.semantic import MAX_K, MAX_QUERY_CHARS
 from kalos.assist.semantic import search as semantic_search
+from kalos.assist.setup_suggest import suggest
 from kalos.assist.state import campaign_inputs
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
 from kalos.portal.campaign import CampaignNotFound, CampaignStore, get_campaign_store
@@ -148,6 +153,51 @@ def campaign_search(
     log.info("campaign search: retriever=%s docs=%d hits=%d", result["retriever"],
              result["n_documents"], len(result["hits"]))
     return JSONResponse({"campaign_id": campaign_id, **result})
+
+
+class _SuggestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target: Annotated[str, StringConstraints(min_length=1, max_length=256)] | None = None
+
+
+@router.post("/api/campaigns/{campaign_id}/setup/suggestions")
+def setup_suggestions(
+    campaign_id: str,
+    body: _SuggestBody | None = None,
+    principal: Principal = Depends(require_scope(READ)),
+    store: CampaignStore = Depends(get_campaign_store),
+    model: ChatModel | None = Depends(get_chat_model),
+) -> JSONResponse:
+    """Suggested roles and units for each column of the campaign's uploaded
+    sheet, each with a reason and an engine-set confidence. Suggestions only:
+    nothing is written (read scope), and nothing here reaches the model fit.
+    Works with no model configured (the engine's own suggestions,
+    `provider_path: offline`)."""
+    if not _valid_campaign_id(campaign_id):
+        return campaign_not_found_response()
+    try:
+        state = store.get(tenant=principal.tenant, campaign_id=campaign_id)
+    except CampaignNotFound:
+        return campaign_not_found_response()
+    rows = (state or {}).get("base_rows") or []
+    if not rows:
+        return JSONResponse(
+            {"error": "upload a run sheet to this campaign first", "code": "no_sheet"}, status_code=409,
+        )
+    wait = ratelimit.check(principal.tenant, f"{principal.subject or ''}\x00suggest")
+    if wait:
+        return JSONResponse(
+            {"error": "too many requests in a short time; try again shortly", "code": "rate_limited"},
+            status_code=429, headers={"Retry-After": str(wait)},
+        )
+    import pandas as pd
+
+    target = (body.target if body is not None else None) or (state or {}).get("target")
+    cascade = None if assist_disabled() else cascade_for(model)
+    out = suggest(pd.DataFrame(rows), target=target, cascade=cascade)
+    log.info("setup suggestions: columns=%d path=%s", len(out["suggestions"]), out["provider_path"])
+    return JSONResponse({"campaign_id": campaign_id, **out})
 
 
 def _status(store: CampaignStore, tenant: str, *, build: bool = False) -> dict[str, Any]:

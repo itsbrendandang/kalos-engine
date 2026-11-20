@@ -139,7 +139,7 @@ test keeps it equal to the code). `{id}` is a campaign id.
 | Operating ranges | `GET`/`POST .../{id}/operating-ranges` (both refit the model) | write | `kalos/portal/operating_ranges.py` |
 | Clones | `GET .../{id}/clones`, `GET .../{id}/clones/summary`, `PUT .../{id}/clones/{label}`, `GET`/`POST .../{id}/clones/{label}/titer-history` | read / write | [`docs/CLONES.md`](docs/CLONES.md) |
 | Scale-up | `POST /api/scale/readout` (HTML), `POST /api/scale/readout.json` | write | [`docs/SCALE_READOUT.md`](docs/SCALE_READOUT.md) |
-| Assistant | `/api/assist/next`, `/ask`, `/index/*`, `/sop/*`, `GET .../{id}/search` (semantic search) | read / write | [`docs/ASSISTANT.md`](docs/ASSISTANT.md) |
+| Assistant | `/api/assist/next`, `/ask`, `/index/*`, `/sop/*`, `GET .../{id}/search` (semantic search), `POST .../{id}/setup/suggestions` | read / write | [`docs/ASSISTANT.md`](docs/ASSISTANT.md) |
 | Legacy: one sheet per tenant | `POST /api/run`, `GET /api/latest` | write / read | [`docs/UPLOADS.md`](docs/UPLOADS.md) |
 | Legacy: default campaign | `GET /api/campaign`, `POST /api/campaign/start`, `/result`, `/reanalyze` | read / write | [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md) |
 | Demo | `GET /api/single`, `GET /api/multi` (synthetic; not served when `KALOS_ENV=production`) | read | |

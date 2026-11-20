@@ -124,6 +124,28 @@ Install: `uv sync --extra assist` (BM25 and the .docx export). The `assist-embed
 
 Response: `{campaign_id, retriever, model, fallback_reason, n_documents, hits[{kind, id, title, text, score}]}`. `score` is a similarity (embeddings) or a BM25 score (keyword); it orders hits and means nothing else.
 
+## Setup suggestions
+
+`POST /api/campaigns/{id}/setup/suggestions` `{target?}` (read scope) suggests, for each column of the campaign's uploaded sheet, a role and a plausible unit, each with a short reason and a confidence. The model helps; you decide.
+
+- **Suggestions only.** Nothing is applied: the route writes nothing, and no part of the model fit reads a suggestion, so a suggestion can never become a prior (`tests/test_setup_suggestions.py` checks both). Every suggestion has `requires_confirmation: true`. To use one, confirm it in the campaign setup or post the roles yourself; `roles_draft` is the suggestions in the roles shape, for you to review.
+- **Roles** match the analysis's column roles one to one:
+
+| Role | Roles key | Meaning |
+|---|---|---|
+| `setting` | `features` (`categoricals` for a text column) | a process input you choose before the run |
+| `outcome` | `target` (the one you chose), else `outputs` | a result measured after the run |
+| `covariate` | `covariates` | recorded about the run but not chosen (passage, thaw) |
+| `batch_group` | `groups` | a batch, lot, plate or replicate group |
+| `clone` | `strain` | the production clone or strain label |
+| `id` | `ids` | an identifier or free text, not used by the model |
+| `derived_from_target` | `outputs` (reason `target_leak`) | computed from the result (a grade, a tier), never an input |
+
+- **What the model sees:** each header, the unit the engine read from it, and summary statistics (count, missing, distinct values, min, median, max, up to five level labels of a short text column). Never a row, never an identity column, never free text.
+- **What the model may say** is checked like every other reply: the column exists, the role is one of the seven, the unit is a known unit or none, and the reason names no other column and states no number the statistics do not hold, with no claim words. A failed reply goes to the quality model, then to the engine's own suggestion (`reason_source: engine`, `provider_path: ...offline`).
+- **Confidence is the engine's, not the model's:** `high` when the engine's own evidence (the header unit, the identifier rule, the clone and covariate name rules, the target-leak check on the data) agrees with the role, `low` when it disagrees (the evidence and `engine_role` are listed), `medium` when there is none. A unit read from the header always wins over a model's unit (`unit_source`).
+- Works with no model (`KALOS_LLM_PROVIDER=none`): the engine's suggestions, `provider_path: offline`. Answers 409 `no_sheet` before an upload.
+
 ## SOP drafts
 
 A draft is written from one set of recipes: some started runs, some proposals, or every run of one round. There are three templates: run recipe (template id `batch_recipe`), media preparation, and custom.
@@ -146,6 +168,7 @@ All routes use the caller's tenant. Read scope unless marked.
 | `POST /api/assist/ask` `{question, campaign_id?}` | `{answer, sources[{kind, id, quote, campaign_id}], abstained, next, provider_path, offline_fallback, model, attempts, checks?}` |
 | `GET /api/assist/index/status` | `{provider, model, local, fast_model?, quality_model?, escalation?, chunks, built_at, building, retriever}` |
 | `POST /api/assist/index/rebuild` (write) | the status. Writes an audit row. |
+| `POST /api/campaigns/{id}/setup/suggestions` `{target?}` | `{campaign_id, status, applied: false, notice, target, role_vocabulary, suggestions[{column, role, roles_key, unit, unit_source, reason, reason_source, confidence, evidence, engine_role, requires_confirmation}], roles_draft, confidence_basis, provider_path, offline_fallback, model, attempts}` |
 | `GET /api/campaigns/{id}/search?q=&k=` | `{campaign_id, retriever, model, fallback_reason, n_documents, hits[{kind, id, title, text, score}]}` |
 | `POST /api/assist/sop/draft` (write) | a draft, version 1. Writes an audit row. |
 | `POST /api/assist/sop/{id}/revise` (write) | the next version, or 422 `revision_refused` |

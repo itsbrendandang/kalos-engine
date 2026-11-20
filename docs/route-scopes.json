@@ -326,6 +326,14 @@
     "auth": "required"
   },
   {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/setup/suggestions",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
     "method": "GET",
     "path": "/api/campaigns/{campaign_id}/stages",
     "scopes": [
