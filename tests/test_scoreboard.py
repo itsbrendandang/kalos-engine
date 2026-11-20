@@ -182,3 +182,13 @@ def test_merge_unions_sections_of_one_commit_and_refuses_mixed_commits(tmp_path)
     (tmp_path / "b" / "scoreboard.json").write_text(json.dumps(b))
     with pytest.raises(SystemExit):
         sb.merge(tmp_path / "m2", [tmp_path / "a", tmp_path / "b"])
+
+
+def test_full_tier_faults_are_diffed_separately():
+    base = _board()
+    base["sections"]["faults_full"] = copy.deepcopy(base["sections"]["faults"])
+    head = copy.deepcopy(base)
+    head["sections"]["faults_full"]["per_fault"]["b"] = "missed"
+    regs = sb.diff(base, head)[1]
+    assert regs == ["faults_full: `b` caught -> missed"]
+    assert "Planted faults caught (full tier)" in sb.render(base)

@@ -4,15 +4,11 @@ OUT ?= /tmp/kalos-scoreboard
 BASE ?= origin/main
 WORKERS ?= 4
 
-.PHONY: scoreboard scoreboard-diff scoreboard-full
+.PHONY: scoreboard scoreboard-diff
 
-## Measure this checkout and write SCOREBOARD.md (fast fault tier; ~15-30 min on 4 cores).
+## Measure this checkout and write SCOREBOARD.md (about 15 min on a 4-core CI runner).
 scoreboard:
 	KALOS_STATE_DIR=$$(mktemp -d) $(PY) -m kalos.bench.scoreboard run --out $(OUT)/head --workers $(WORKERS) --write SCOREBOARD.md
-
-## Same, with the full planted-fault tier (about 40 analyses; slow).
-scoreboard-full:
-	KALOS_STATE_DIR=$$(mktemp -d) $(PY) -m kalos.bench.scoreboard run --out $(OUT)/head-full --workers $(WORKERS) --tier full
 
 ## Measure $(BASE) in a temporary worktree with this checkout's scoreboard and venv, then diff.
 ## Same-machine comparison; the venv must match $(BASE)'s uv.lock (a warning is printed if it differs).

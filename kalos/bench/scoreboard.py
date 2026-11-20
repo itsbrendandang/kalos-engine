@@ -3,10 +3,11 @@
 It measures nothing new. Every number comes from an existing, pre-registered
 benchmark in this repo, run on a small fixed CI slice:
 
-  faults     planted-fault suite (kalos.bench.faults, PROTOCOL v1), fast tier:
-             caught / noticed / missed per fault and false alarms on clean
-             cases, with Wilson 95% CIs. The full tier (model-family faults,
-             ~40 analyses) is too slow for every PR; run it with --tier full.
+  faults     planted-fault suite (kalos.bench.faults, PROTOCOL v1), fast tier
+             (torch-free): caught / noticed / missed per fault and false alarms
+             on clean cases, with Wilson 95% CIs.
+  faults_full  the same suite, full tier (adds the model-family faults; about
+             40 analyses, run in parallel).
   coverage   coverage of the shipped 90/95% proposal intervals AT the
              proposals, and median band width (kalos.bench.coverage_at_proposals),
              on CI seeds 500.. (disjoint from the method-selection seeds 0-39
@@ -59,15 +60,15 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA = 1
-SECTIONS: tuple[str, ...] = ("walltime", "faults", "golden", "coverage", "regret")
+SECTIONS: tuple[str, ...] = ("walltime", "faults", "faults_full", "golden", "coverage", "regret")
 
 # ---- the fixed CI slice (changing any of these is a scoreboard amendment) -----------
 COVERAGE_SCENARIOS: tuple[str, ...] = ("hartmann6_n30", "heteroscedastic_n40",
                                        "bioprocess_n40", "branin_n20_control")
-COVERAGE_SEEDS: tuple[int, ...] = (500, 501, 502, 503, 504)
+COVERAGE_SEEDS: tuple[int, ...] = tuple(range(500, 520))
 COVERAGE_LEVELS: tuple[str, ...] = ("0.9", "0.95")
 REGRET_TASKS: tuple[tuple[str, float], ...] = (("gaussian_4d", 0.15), ("bioprocess_like_mixed", 0.15))
-REGRET_SEEDS: tuple[int, ...] = (9002, 9003, 9004, 9005)
+REGRET_SEEDS: tuple[int, ...] = (9002, 9003, 9004, 9005, 9006, 9007, 9008, 9009)
 WALLTIME_SHEET = "examples/synthetic_bioprocess/synthetic_bioprocess.csv"
 WALLTIME_TARGET = "titer_g_L"
 
@@ -164,6 +165,10 @@ def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
 # ======================================================================= sections
 # Each section runs in its own interpreter (see `run`), imports the measured repo's
 # code, and returns a JSON-able dict. A missing benchmark is reported, not faked.
+
+def section_faults_full(repo: Path, workers: int) -> dict[str, Any]:
+    return section_faults(repo, workers, "full")
+
 
 def section_walltime(repo: Path, workers: int) -> dict[str, Any]:
     from kalos.portal.pipeline import compute_upload_analysis
@@ -274,12 +279,13 @@ def section_regret(repo: Path, workers: int) -> dict[str, Any]:
 
 
 SECTION_FUNCS: dict[str, Callable[..., dict[str, Any]]] = {
-    "walltime": section_walltime, "faults": section_faults, "golden": section_golden,
+    "walltime": section_walltime, "faults": section_faults, "faults_full": section_faults_full,
+    "golden": section_golden,
     "coverage": section_coverage, "regret": section_regret,
 }
 
 
-def _run_section(name: str, repo: Path, out: Path, workers: int, tier: str) -> None:
+def _run_section(name: str, repo: Path, out: Path, workers: int) -> None:
     """Child-process entry: import the measured repo first, run one section."""
     sys.path.insert(0, str(repo))
     out = out.resolve()
@@ -288,7 +294,7 @@ def _run_section(name: str, repo: Path, out: Path, workers: int, tier: str) -> N
     t0 = time.perf_counter()
     try:
         fn = SECTION_FUNCS[name]
-        data = fn(repo, workers, tier) if name == "faults" else fn(repo, workers)
+        data = fn(repo, workers)
         data["status"] = "ok"
     except Exception as exc:  # noqa: BLE001 - reported, never silently dropped
         import traceback
@@ -300,8 +306,7 @@ def _run_section(name: str, repo: Path, out: Path, workers: int, tier: str) -> N
 
 
 # ============================================================================ run
-def run(repo: Path, out: Path, *, workers: int, sections: Iterable[str], tier: str,
-        timeout: float) -> dict[str, Any]:
+def run(repo: Path, out: Path, *, workers: int, sections: Iterable[str], timeout: float) -> dict[str, Any]:
     repo = repo.resolve()
     out = out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -322,7 +327,7 @@ def run(repo: Path, out: Path, *, workers: int, sections: Iterable[str], tier: s
         try:
             subprocess.run(  # noqa: S603 - our own script, no shell
                 [sys.executable, str(me), "_section", name, "--repo", str(repo),
-                            "--out", str(out), "--workers", str(workers), "--tier", tier],
+                            "--out", str(out), "--workers", str(workers)],
                            env=env, cwd=str(repo), timeout=timeout, check=False)
         except subprocess.TimeoutExpired:
             (out / f"section-{name}.json").write_text(json.dumps(
@@ -331,7 +336,7 @@ def run(repo: Path, out: Path, *, workers: int, sections: Iterable[str], tier: s
     board: dict[str, Any] = {"schema": SCHEMA, "commit": _git(repo, "rev-parse", "HEAD"),
                              "branch": _git(repo, "rev-parse", "--abbrev-ref", "HEAD"),
                              "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                             "env": _env(), "workers": workers, "faults_tier": tier, "sections": {}}
+                             "env": _env(), "workers": workers, "sections": {}}
     for name in sections:
         p = out / f"section-{name}.json"
         board["sections"][name] = (json.loads(p.read_text()) if p.exists()
@@ -361,16 +366,17 @@ def headline(board: Mapping[str, Any]) -> list[tuple[str, str]]:
     """(metric, value) rows; each value carries its CI where there is one."""
     s = board.get("sections", {})
     rows: list[tuple[str, str]] = []
-    f = s.get("faults", {})
-    if f.get("status") == "ok":
-        rows.append((f"Planted faults caught ({f['tier']} tier)",
-                     f"{f['caught']}/{f['faults_scored']}{_ci(f['caught_ci'])}"))
-        rows.append(("Planted faults caught or noticed",
-                     f"{f['caught'] + f['noticed']}/{f['faults_scored']}"))
-        rows.append(("Clean cases with a false alarm",
-                     f"{f['clean_false_alarm']}/{f['clean_scored']}{_ci(f['false_alarm_ci'])}"))
-    else:
-        rows.append(("Planted faults", _why(f)))
+    for key, tier in (("faults", "fast"), ("faults_full", "full")):
+        f = s.get(key, {})
+        if f.get("status") == "ok":
+            rows.append((f"Planted faults caught ({tier} tier)",
+                         f"{f['caught']}/{f['faults_scored']}{_ci(f['caught_ci'])}"))
+            rows.append((f"Planted faults caught or noticed ({tier} tier)",
+                         f"{f['caught'] + f['noticed']}/{f['faults_scored']}"))
+            rows.append((f"Clean cases with a false alarm ({tier} tier)",
+                         f"{f['clean_false_alarm']}/{f['clean_scored']}{_ci(f['false_alarm_ci'])}"))
+        else:
+            rows.append((f"Planted faults ({tier} tier)", _why(f)))
     c = s.get("coverage", {})
     if c.get("status") == "ok":
         for lv in COVERAGE_LEVELS:
@@ -418,7 +424,8 @@ def render(board: Mapping[str, Any]) -> str:
         "",
         "## Sources and slices",
         "",
-        f"- Planted faults: `kalos.bench.faults`, PROTOCOL v1, {board.get('faults_tier')} tier, repo-only bases; Wilson 95% CIs.",
+        "- Planted faults: `kalos.bench.faults`, PROTOCOL v1, fast and full tiers, repo-only bases "
+        "(the optional Kaggle sheet is skipped, so case counts differ from the committed full scorecard); Wilson 95% CIs.",
         f"- Coverage: `kalos.bench.coverage_at_proposals`, scenarios {', '.join(COVERAGE_SCENARIOS)}, "
         f"seeds {COVERAGE_SEEDS[0]}-{COVERAGE_SEEDS[-1]} (disjoint from selection seeds 0-39 and reported seeds 100-139); "
         "seed-cluster bootstrap CI. A smoke slice: the reported figures are in VALIDATION.md.",
@@ -451,6 +458,31 @@ def _num(x: Any) -> float | None:
     return float(x) if isinstance(x, (int, float)) else None
 
 
+def _diff_faults(fkey: str, bf: Mapping[str, Any], hf: Mapping[str, Any],
+                 regs: list[str], notes: list[str]) -> None:
+    if not bf and not hf:
+        return
+    if bf.get("status") == "ok" and hf.get("status") == "ok":
+        for fault, b_out in sorted(bf["per_fault"].items()):
+            h_out = hf["per_fault"].get(fault)
+            if h_out is None:
+                notes.append(f"{fkey}: `{fault}` not scored on head")
+            elif _OUTCOME_RANK.get(h_out, 0) < _OUTCOME_RANK.get(b_out, 0):
+                regs.append(f"{fkey}: `{fault}` {b_out} -> {h_out}")
+            elif _OUTCOME_RANK.get(h_out, 0) > _OUTCOME_RANK.get(b_out, 0):
+                notes.append(f"{fkey}: `{fault}` improved {b_out} -> {h_out}")
+        for clean, b_fa in sorted(bf["per_clean"].items()):
+            h_fa = hf["per_clean"].get(clean)
+            if h_fa and not b_fa:
+                regs.append(f"{fkey}: clean `{clean}` now false-alarms")
+            elif b_fa and h_fa is False:
+                notes.append(f"{fkey}: clean `{clean}` no longer false-alarms")
+        for fault in sorted(set(hf["per_fault"]) - set(bf["per_fault"])):
+            notes.append(f"{fkey}: new case `{fault}` -> {hf['per_fault'][fault]}")
+    elif hf.get("status") != "ok":
+        regs.append(f"{fkey}: head section failed ({hf.get('error')})")
+
+
 def diff(base: Mapping[str, Any], head: Mapping[str, Any],
          base_golden: Mapping[str, Any] | None = None,
          head_golden: Mapping[str, Any] | None = None) -> tuple[str, list[str], list[str]]:
@@ -461,27 +493,8 @@ def diff(base: Mapping[str, Any], head: Mapping[str, Any],
     same_env = {k: v for k, v in base.get("env", {}).items() if k != "platform"} == \
                {k: v for k, v in head.get("env", {}).items() if k != "platform"}
 
-    # faults
-    bf, hf = bs.get("faults", {}), hs.get("faults", {})
-    if bf.get("status") == "ok" and hf.get("status") == "ok":
-        for fault, b_out in sorted(bf["per_fault"].items()):
-            h_out = hf["per_fault"].get(fault)
-            if h_out is None:
-                notes.append(f"faults: `{fault}` not scored on head")
-            elif _OUTCOME_RANK.get(h_out, 0) < _OUTCOME_RANK.get(b_out, 0):
-                regs.append(f"faults: `{fault}` {b_out} -> {h_out}")
-            elif _OUTCOME_RANK.get(h_out, 0) > _OUTCOME_RANK.get(b_out, 0):
-                notes.append(f"faults: `{fault}` improved {b_out} -> {h_out}")
-        for clean, b_fa in sorted(bf["per_clean"].items()):
-            h_fa = hf["per_clean"].get(clean)
-            if h_fa and not b_fa:
-                regs.append(f"faults: clean `{clean}` now false-alarms")
-            elif b_fa and h_fa is False:
-                notes.append(f"faults: clean `{clean}` no longer false-alarms")
-        for fault in sorted(set(hf["per_fault"]) - set(bf["per_fault"])):
-            notes.append(f"faults: new case `{fault}` -> {hf['per_fault'][fault]}")
-    elif hf.get("status") != "ok":
-        regs.append(f"faults: head section failed ({hf.get('error')})")
+    for fkey in ("faults", "faults_full"):
+        _diff_faults(fkey, bs.get(fkey, {}), hs.get(fkey, {}), regs, notes)
 
     # coverage
     bc, hc = bs.get("coverage", {}), hs.get("coverage", {})
@@ -604,7 +617,6 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--out", type=Path, required=True)
     r.add_argument("--workers", type=int, default=max(1, min(4, os.cpu_count() or 1)))
     r.add_argument("--sections", default=",".join(SECTIONS))
-    r.add_argument("--tier", choices=["fast", "full"], default="fast", help="planted-fault tier")
     r.add_argument("--timeout", type=float, default=3600, help="per-section timeout (s)")
     r.add_argument("--write", type=Path, default=None, help="also copy SCOREBOARD.md here")
     s = sub.add_parser("_section")
@@ -612,7 +624,6 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--repo", type=Path, required=True)
     s.add_argument("--out", type=Path, required=True)
     s.add_argument("--workers", type=int, default=1)
-    s.add_argument("--tier", default="fast")
     m = sub.add_parser("merge", help="merge `run` output dirs holding different sections into one")
     m.add_argument("out", type=Path)
     m.add_argument("parts", type=Path, nargs="+")
@@ -623,7 +634,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     if args.cmd == "_section":
-        _run_section(args.name, args.repo.resolve(), args.out, args.workers, args.tier)
+        _run_section(args.name, args.repo.resolve(), args.out, args.workers)
         return 0
     if args.cmd == "run":
         sections = [x for x in args.sections.split(",") if x]
@@ -631,7 +642,7 @@ def main(argv: list[str] | None = None) -> int:
         if unknown:
             ap.error(f"unknown sections {sorted(unknown)}")
         board = run(args.repo, args.out, workers=args.workers, sections=sections,
-                    tier=args.tier, timeout=args.timeout)
+                    timeout=args.timeout)
         text = (args.out / "SCOREBOARD.md").read_text()
         if args.write:
             args.write.write_text(text, encoding="utf-8")

@@ -14,18 +14,12 @@ name: Scoreboard
 # label, re-run only the failed diff job).
 #
 # On main it measures main only and uploads `scoreboard-main` (refresh the
-# committed SCOREBOARD.md from it). workflow_dispatch can run the full fault tier.
+# committed SCOREBOARD.md from it).
 on:
   pull_request:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      tier:
-        description: planted-fault tier
-        type: choice
-        options: [fast, full]
-        default: fast
 
 concurrency:
   group: scoreboard-${{ github.ref }}
@@ -50,6 +44,8 @@ jobs:
         include:
           - group: quick
             sections: walltime,faults,golden
+          - group: faults
+            sections: faults_full
           - group: slow
             sections: coverage,regret
     steps:
@@ -80,15 +76,13 @@ jobs:
               && uv pip install -e ".[ml,portal,bench,dev]" -c "$RUNNER_TEMP/constraints-$side.txt")
           done
       - name: Measure base, then head, on this runner
-        env:
-          TIER: ${{ inputs.tier || 'fast' }}
         run: |
           rc=0
           for side in base head; do
             [ -d "$side" ] || continue
             KALOS_STATE_DIR="$RUNNER_TEMP/state-$side" "$side/.venv/bin/python" head/kalos/bench/scoreboard.py run \
               --repo "$side" --out "out/$side-${{ matrix.group }}" --sections "${{ matrix.sections }}" \
-              --workers 4 --tier "$TIER" > "out-$side.log" 2>&1 || rc=1
+              --workers 4 > "out-$side.log" 2>&1 || rc=1
             tail -n 40 "out-$side.log"
           done
           exit $rc
