@@ -33,10 +33,18 @@ def test_lower_bound_on_a_component_ratio_style_constraint():
     assert (out[:, 0] - out[:, 1] >= 0.2 - 1e-6).all()
 
 
-def test_linear_constraints_rejected_with_categoricals():
+def test_linear_constraints_rejected_with_categoricals_the_optimizer_cannot_enumerate():
+    """Linear constraints with categorical dims run only through the exact mixed
+    enumeration (`optimize_acqf_mixed` takes `inequality_constraints`; ML_AUDIT
+    N2). Without the level counts, or above `MAX_MIXED_COMBOS` combinations (the
+    alternating optimizer), they are still refused. Whether a campaign may use
+    them at all is the setup's policy (`setup_settings.plan_setup`)."""
     s, b = _fit()
     with pytest.raises(ValueError, match="categorical"):
-        propose(s, b, q=1, cat_dims=[2], cat_cardinalities=[2], linear_constraints=[([0], [1.0], 0.0)])
+        propose(s, b, q=1, cat_dims=[2], linear_constraints=[([0], [1.0], 0.0)])
+    with pytest.raises(ValueError, match="categorical"):
+        propose(s, b, q=1, cat_dims=[1, 2], cat_cardinalities=[9, 9],
+                linear_constraints=[([0], [1.0], 0.0)])
 
 
 # ---- validation, infeasibility, edge cases (review of PR #78) -------------

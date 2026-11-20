@@ -81,7 +81,11 @@ def _resolve_columns(
         # Fail loudly so the caller is never told a declared column was honored
         # when it was not - ids included (a typo'd id leaves the real id in as a
         # feature otherwise).
-        declared_names = [*roles.features, *roles.categoricals, *roles.ids, *roles.sparse]
+        declared_names = [
+            *roles.features, *roles.categoricals, *roles.ids, *roles.sparse, *roles.covariates,
+        ]
+        if roles.strain:
+            declared_names.append(roles.strain)
         if roles.groups:
             declared_names.append(roles.groups)
         unknown = sorted({c for c in declared_names if c not in df.columns})

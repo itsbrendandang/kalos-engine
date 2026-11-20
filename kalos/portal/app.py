@@ -62,6 +62,7 @@ from kalos.portal.campaign_routes import audit as _audit
 from kalos.portal.campaign_routes import campaign_error_response
 from kalos.portal.campaign_routes import router as _campaign_router
 from kalos.portal.campaigns_api import router as _campaigns_router
+from kalos.portal.clones_api import router as _clones_router
 from kalos.portal.config import (
     ProductionConfigError,
     assert_production_posture,
@@ -918,6 +919,7 @@ app.include_router(_jobs_router)  # background jobs (kalos.portal.jobs_api, docs
 app.include_router(_assist_router)  # /api/assist/* (kalos.assist, docs/ASSISTANT.md)
 app.include_router(_assist_sop_router)  # /api/assist/sop* (kalos.assist.sop)
 app.include_router(_gates_router)  # /api/campaigns/{id}/stages|gates (kalos.portal.gates_api)
+app.include_router(_clones_router)  # /api/campaigns/{id}/clones* (kalos.portal.clones_api)
 
 
 _CAMPAIGN_BODY_FIELDS = frozenset(

@@ -159,6 +159,46 @@
   },
   {
     "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/clones",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/clones/summary",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/campaigns/{campaign_id}/clones/{label}",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/clones/{label}/titer-history",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/clones/{label}/titer-history",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
     "path": "/api/campaigns/{campaign_id}/export/rows",
     "scopes": [
       "read"
