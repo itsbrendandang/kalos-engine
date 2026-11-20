@@ -1,0 +1,23 @@
+Kalos
+Copyright the Kalos authors. Licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+This product includes work adapted from the following sources.
+
+-------------------------------------------------------------------------------
+Lab-file parsers: snest (Bioqore lab analyses; idea credit)
+-------------------------------------------------------------------------------
+
+Source: github.com/Bioqore/ad_hoc_data_analyses (commit 82e6ae0, 2026-06-24),
+the lab's shaken-microbioreactor run folders, which keep each plate's DO and pH
+exports next to the plate maps and reads of the same run.
+
+Idea credit; re-implemented, no code copied. The ideas: reading the plate's DO
+and pH exports per well and per sampling time beside the run's other plate
+data, and keeping the plate conditions the export records (working volume,
+temperature, CO2, mixing) with the readings. That repository has no DO/pH
+parsing or summary code; the per-well summaries here are Kalos's own.
+Used in kalos/ingest/instruments/snest.py.
+
+No data from that repository is included. The test fixtures are synthetic and
+copy only the header layout of the lab's files.
