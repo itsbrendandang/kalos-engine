@@ -1,0 +1,117 @@
+{
+  "about": "Make-up arithmetic goldens for kalos/analysis/makeup.py. Synthetic numbers only. Every expected value was derived by hand from C1*V1 = C2*V2 (derivation in each case), not recorded from the code. Volumes are exact decimals in mL, written as strings.",
+  "cases": [
+    {
+      "id": "g_per_l_same_unit",
+      "derivation": "glucose 20/500*100 = 4; NaCl 5/250*100 = 2; water 100 - 4 - 2 = 94",
+      "final_volume_ml": 100,
+      "targets": [["glucose", 20, "g/L"], ["NaCl", 5, "g/L"]],
+      "stocks": [["glucose", 500, "g/L", null], ["NaCl", 250, "g/L", null]],
+      "expect": {"status": "ok", "volumes_ml": {"glucose": "4", "NaCl": "2"}, "water_ml": "94"}
+    },
+    {
+      "id": "g_per_l_from_mg_per_ml",
+      "derivation": "100 mg/mL = 100 g/L; 2/100*50 = 1; water 49",
+      "final_volume_ml": 50,
+      "targets": [["yeast extract", 2, "g/L"]],
+      "stocks": [["yeast extract", 100, "mg/mL", null]],
+      "expect": {"status": "ok", "volumes_ml": {"yeast extract": "1"}, "water_ml": "49"}
+    },
+    {
+      "id": "mm_target_g_per_l_stock_with_mw",
+      "derivation": "10 mM * 180.16 g/mol = 1.8016 g/L; 1.8016/200*100 = 0.9008; water 99.0992",
+      "final_volume_ml": 100,
+      "targets": [["glucose", 10, "mM"]],
+      "stocks": [["glucose", 200, "g/L", 180.16]],
+      "expect": {"status": "ok", "volumes_ml": {"glucose": "0.9008"}, "water_ml": "99.0992"}
+    },
+    {
+      "id": "g_per_l_target_mm_stock_with_mw",
+      "derivation": "1000 mM * 120.37 g/mol = 120.37 g/L; 0.24074/120.37*100 = 0.2; water 99.8",
+      "final_volume_ml": 100,
+      "targets": [["MgSO4", 0.24074, "g/L"]],
+      "stocks": [["MgSO4", 1000, "mM", 120.37]],
+      "expect": {"status": "ok", "volumes_ml": {"MgSO4": "0.2"}, "water_ml": "99.8"}
+    },
+    {
+      "id": "mm_target_m_stock_no_mw_needed",
+      "derivation": "1 M = 1000 mM; 4/1000*250 = 1; water 249",
+      "final_volume_ml": 250,
+      "targets": [["KH2PO4", 4, "mM"]],
+      "stocks": [["KH2PO4", 1, "M", null]],
+      "expect": {"status": "ok", "volumes_ml": {"KH2PO4": "1"}, "water_ml": "249"}
+    },
+    {
+      "id": "um_target_mm_stock",
+      "derivation": "50 uM = 0.05 mM; 0.05/10*1 = 0.005; water 0.995",
+      "final_volume_ml": 1,
+      "targets": [["FeSO4", 50, "\u00b5M"]],
+      "stocks": [["FeSO4", 10, "mM", null]],
+      "expect": {"status": "ok", "volumes_ml": {"FeSO4": "0.005"}, "water_ml": "0.995"}
+    },
+    {
+      "id": "w_v_same_unit",
+      "derivation": "2/50*100 = 4; water 96",
+      "final_volume_ml": 100,
+      "targets": [["glycerol", 2, "% w/v"]],
+      "stocks": [["glycerol", 50, "% w/v", null]],
+      "expect": {"status": "ok", "volumes_ml": {"glycerol": "4"}, "water_ml": "96"}
+    },
+    {
+      "id": "w_v_target_g_per_l_stock",
+      "derivation": "0.5 % w/v = 5 g/L; 5/250*100 = 2; water 98",
+      "final_volume_ml": 100,
+      "targets": [["sucrose", 0.5, "% w/v"]],
+      "stocks": [["sucrose", 250, "g/L", null]],
+      "expect": {"status": "ok", "volumes_ml": {"sucrose": "2"}, "water_ml": "98"}
+    },
+    {
+      "id": "w_v_stock_mm_target_with_mw",
+      "derivation": "stock 20 % w/v = 200 g/L; target 5 mM * 58.44 g/mol = 0.2922 g/L; 0.2922/200*10 = 0.01461; water 9.98539",
+      "final_volume_ml": 10,
+      "targets": [["NaCl", 5, "mM"]],
+      "stocks": [["NaCl", 20, "% w/v", 58.44]],
+      "expect": {"status": "ok", "volumes_ml": {"NaCl": "0.01461"}, "water_ml": "9.98539"}
+    },
+    {
+      "id": "fold_stock_same_unit",
+      "derivation": "1/10*1000 = 100; water 900",
+      "final_volume_ml": 1000,
+      "targets": [["PBS", 1, "X"]],
+      "stocks": [["PBS", 10, "X", null]],
+      "expect": {"status": "ok", "volumes_ml": {"PBS": "100"}, "water_ml": "900"}
+    },
+    {
+      "id": "stock_equals_target_zero_water",
+      "derivation": "20/20*100 = 100; water 0 (allowed: not negative)",
+      "final_volume_ml": 100,
+      "targets": [["glucose", 20, "g/L"]],
+      "stocks": [["glucose", 20, "g/L", null]],
+      "expect": {"status": "ok", "volumes_ml": {"glucose": "100"}, "water_ml": "0"}
+    },
+    {
+      "id": "refuse_negative_water",
+      "derivation": "a 60/100*100 = 60; b 30/50*100 = 60; 120 > 100",
+      "final_volume_ml": 100,
+      "targets": [["a", 60, "g/L"], ["b", 30, "g/L"]],
+      "stocks": [["a", 100, "g/L", null], ["b", 50, "g/L", null]],
+      "expect": {"status": "refused", "refusal_codes": ["negative_water"], "volumes_ml": {"a": "60", "b": "60"}}
+    },
+    {
+      "id": "refuse_stock_too_dilute",
+      "derivation": "stock 10 g/L < target 20 g/L; it alone would need 20/10*100 = 200 mL",
+      "final_volume_ml": 100,
+      "targets": [["glucose", 20, "g/L"]],
+      "stocks": [["glucose", 10, "g/L", null]],
+      "expect": {"status": "refused", "refusal_codes": ["stock_too_dilute"]}
+    },
+    {
+      "id": "refuse_unit_mismatch_without_mw",
+      "derivation": "mM against g/L needs the molecular weight; none declared",
+      "final_volume_ml": 100,
+      "targets": [["glucose", 10, "mM"]],
+      "stocks": [["glucose", 200, "g/L", null]],
+      "expect": {"status": "refused", "refusal_codes": ["unit_mismatch_no_mw"]}
+    }
+  ]
+}

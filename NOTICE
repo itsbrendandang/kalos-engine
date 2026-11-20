@@ -1,0 +1,25 @@
+Kalos
+Copyright the Kalos authors. Licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+This product includes work adapted from the following sources.
+
+-------------------------------------------------------------------------------
+Bioqore lab tools: media make-up (idea credit)
+-------------------------------------------------------------------------------
+
+Sources (ideas only):
+  - github.com/Bioqore/lab_tools (commit 0151377), media_calculator.py:
+    stock volumes from C1*V1 = C2*V2 for a recipe at a fixed final volume.
+  - github.com/Bioqore/d2_diagrams (commit b77d15b), Lab/lab_tools.d2:
+    the "media calculator" step in the lab workflow.
+  - github.com/Bioqore/ad_hoc_data_analyses (commit 82e6ae0), the "Stock
+    Solutions" sheet of a batch ticket: that stocks are declared per component
+    with a unit (sheet name and unit only; no values were read or copied).
+
+What was adapted: idea credit; re-implemented, no code copied. Kalos's
+kalos/analysis/makeup.py computes the same quantity with exact decimal
+arithmetic, unit conversion (mass, % w/v, and molar with a declared molecular
+weight) and refusals (negative water, stock too dilute, unit mismatch without a
+molecular weight, missing or duplicated stocks) where the source script skipped
+or zero-filled those cases.
