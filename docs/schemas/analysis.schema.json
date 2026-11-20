@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/itsbrendandang/kalos-engine/docs/schemas/analysis.schema.json",
+  "title": "Kalos analysis (partial)",
+  "description": "Partial schema of the analysis object returned by /api/run, campaign uploads and reanalyze (docs/CAMPAIGNS_API.md). Only the blocks listed under properties are described; every other key is allowed. Additive keys appear only in analyses computed after the change that added them, so none is required at the top level. Checked against a real analysis by tests/test_viz_fields.py (test_analysis_matches_the_schema).",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "categorical_levels": {
+      "description": "VIZ_SPEC_V2 E12. Per categorical input and the clone column: every non-blank label in the uploaded sheet's column (all rows, including rows with no usable target), sorted. Levels with 0 fitted runs are listed. null if the computation failed.",
+      "type": ["object", "null"],
+      "additionalProperties": {"type": "array", "items": {"type": "string"}}
+    },
+    "correlation": {
+      "description": "Descriptive pairwise Spearman correlation over the fitted rows. null with visualization_reasons.correlation when unavailable.",
+      "type": ["object", "null"],
+      "required": ["unit", "n_units", "n_rows", "labels", "matrix", "n_matrix"],
+      "properties": {
+        "unit": {"description": "E5: each row (run) counts once; replicates are not averaged.", "const": "row"},
+        "n_units": {"type": "integer"},
+        "n_rows": {"type": "integer"},
+        "labels": {"type": "array", "items": {"type": "string"}},
+        "matrix": {"type": "array", "items": {"type": "array", "items": {"type": ["number", "null"]}}},
+        "n_matrix": {
+          "description": "E5: pairwise complete-case n behind each matrix cell (diagonal: the column's finite count). A cell with n < 3 is null in matrix.",
+          "type": "array", "items": {"type": "array", "items": {"type": "integer"}}
+        }
+      }
+    },
+    "response_surfaces": {
+      "description": "VIZ_SPEC_V2 E3. GP mean (z) and latent posterior SD (std) on a 21x21 grid for the top k continuous-driver pairs (KALOS_VIZ_SURFACE_PAIRS, default 3), other inputs at the incumbent recipe. Entry pair_rank 1 equals response_surface. Model-only, not held-out calibrated. Fewer than k entries: visualization_reasons.response_surfaces says why.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pair_rank", "x_feature", "y_feature", "x_vals", "y_vals", "z", "std", "std_kind", "std_basis", "z_basis", "runs", "swept_at", "fixed_recipe", "incumbent_basis"],
+        "properties": {
+          "pair_rank": {"type": "integer"},
+          "x_feature": {"type": "string"},
+          "y_feature": {"type": "string"},
+          "x_vals": {"type": "array", "items": {"type": "number"}},
+          "y_vals": {"type": "array", "items": {"type": "number"}},
+          "z": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
+          "std": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
+          "std_kind": {"const": "gp_posterior_sd"},
+          "std_basis": {"const": "latent_mean"},
+          "z_basis": {"const": "predicted"},
+          "runs": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
+          "swept_at": {"const": "incumbent"},
+          "fixed_recipe": {"type": "object"},
+          "incumbent_basis": {"enum": ["single", "recipe_mean"]}
+        }
+      }
+    },
+    "visualization_reasons": {
+      "type": "object",
+      "properties": {
+        "response_surfaces": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

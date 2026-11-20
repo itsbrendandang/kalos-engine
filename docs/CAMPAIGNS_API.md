@@ -660,6 +660,50 @@ scope checked first, default JSON body cap, writes audited without field values.
 Schema v7 adds `campaign_clones` and `clone_titer_history` (docs/MIGRATIONS.md);
 v8 is reserved for the Crux items.
 
+### Heat-map fields (additive; analyses computed after this change)
+
+VIZ_SPEC_V2 E3, E5 and E12 for the kalos-web heat maps. Code:
+`kalos/analysis/viz_fields.py` (hooked into the analysis next to
+`response_surface`); schema: `docs/schemas/analysis.schema.json`. None of these
+fields feeds a proposal, interval, verdict or any other number in the analysis;
+the rest of the response is byte-identical (R02 golden oracle: only the keys
+below changed).
+
+- **`correlation.unit` is now `"row"`** (was `"recipe"`). The matrix was always
+  computed over the fitted rows, one value per run, with replicates not averaged;
+  only the label was wrong. The numbers did not change. `correlation.n_matrix`
+  (new) is the pairwise complete-case n behind each cell (diagonal: the column's
+  own count). A cell with fewer than 3 complete pairs is `null` in `matrix` and
+  keeps its n in `n_matrix`. Every fitted row is complete today, so every entry
+  equals `n_rows`; the field is there so a client never has to assume it. The
+  target's label is still `target_mean` (unchanged, see the E5 note in the PR).
+- **`categorical_levels`** (new): `{column: [label, ...]}` for every
+  categorical input (including one with a single level, which the model drops)
+  and the clone column. It lists every non-blank label the uploaded sheet holds
+  in that column, over all rows, including rows with no usable target or a
+  missing cell. So a level whose runs were all dropped is listed with 0 fitted
+  runs. Sorted, which is the order the engine encodes levels in. A label that is
+  not in the sheet is never added (a clone only in the registry is listed by
+  `GET .../clones/summary`). Levels of identifier-like and clone columns are
+  pseudonymized under `anonymize`, 0-run levels included. `null` if it failed.
+- **`response_surfaces`** (new): a list of surfaces, each with the same shape and
+  labels as `response_surface` (`x_feature`, `y_feature`, `x_vals`, `y_vals`,
+  `z`, `std`, `std_kind: "gp_posterior_sd"`, `std_basis: "latent_mean"`,
+  `z_basis: "predicted"`, `runs`, `swept_at`, `fixed_recipe`, `incumbent_basis`)
+  plus `pair_rank`. They cover the top `k` pairs of continuous drivers in
+  `drivers` order: (1,2), (1,3), (2,3), (1,4), (2,4), (3,4). All of them are held
+  at the same incumbent recipe. Entry 1 is `response_surface` itself, reused and
+  not recomputed. The grids come from the same builder
+  (`viz_utils.surface_grid`). `std` is the latent GP posterior SD: model-based
+  and not held-out calibrated. When fewer than `k` surfaces come back,
+  `visualization_reasons.response_surfaces` says why (for example, "1 of 3 pairs
+  returned: only 1 pair(s) from the continuous drivers"). Otherwise it is
+  `null`.
+- `k` comes from `KALOS_VIZ_SURFACE_PAIRS`: default 3, `0` turns the field off
+  (empty list plus a reason), maximum 6. An out-of-range value is refused
+  (`ConfigError`), never defaulted. Cost: see the PR (one 21x21 grid is 441
+  posterior calls; at `k = 3` two grids are added).
+
 ## Not in this slice
 
 - Background jobs for reanalyze (it still runs synchronously; upload has a job route).
