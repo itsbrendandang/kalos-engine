@@ -244,7 +244,9 @@ def test_analysis_proposals_carry_interval_fields():
     assert r["conformal_coverage"] == 0.9 and isinstance(r["conformal_q"], float)
     assert r["interval_levels"] == [0.9, 0.95]
     im = r["interval_method"]
-    assert im["method"] == "conformal_normalized" and im["calibrated_on"] == "grouped_cv_oof"
+    # F15: the per-proposal bands are selection-aware; `levels` keeps the plain
+    # normalized calibration (the per-level fallback).
+    assert im["method"] == "conformal_selection_aware" and im["calibrated_on"] == "grouped_cv_oof"
     assert im["sigma_source"] == SIGMA_FITTED_NOISE
     assert im["n_calibration"] == len(r["oof"])
     assert [lv["coverage"] for lv in im["levels"]] == [0.9, 0.95]

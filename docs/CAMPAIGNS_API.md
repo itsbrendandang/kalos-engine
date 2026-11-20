@@ -350,12 +350,16 @@ record of the proposal surrogate's fit (`kalos/core/surrogate.py`):
 ### Promotion gate changes (additive fields)
 
 - `promotion.not_judged`: list of gates that were neither passed nor failed,
-  with the reason. Two cases today:
+  with the reason. Three cases today:
   - `ece: not enough runs to judge calibration (n=<n>, need 20)`: the classifier
     ECE is judged only from 20 pooled out-of-fold runs (`GatesConfig.min_ece_n`).
     Below that it is still reported in `feasibility`-side metrics, but does not
     pass or fail the gate.
   - `group-mean floor: <reason>`: too few recipes with 2+ rows to form the floor.
+  - `feasibility_auc: not applicable when minimizing` (and the same for `ece`
+    and `brier`): the feasibility classifier scores P(y > 0), a maximize
+    notion, so under `direction: minimize` its three gates do not pass or fail.
+    The surrogate Spearman and group-mean floors still apply.
   `promotion.summary` appends `(not judged: ...)` when the list is not empty.
 - Group-mean floor gate: the surrogate must beat the leave-one-row-out recipe
   mean on the same out-of-fold rows by more than a paired bootstrap's
@@ -436,6 +440,40 @@ Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
   calibrated_on: "grouped_cv_oof", n_calibration, available, lo, hi, q_norm,
   empirical_oof_coverage}`; `lo = pred - q_norm * predictive_std`. Refused: `lo`
   / `hi` null plus `code`, `reason`, `what_would_fix_it`.
+- **Coverage basis and the proposal caveat (F02, additive).** Every band says
+  what its coverage claim rests on, and the proposal bands carry what was
+  measured where the user acts:
+  - `proposals[].intervals[].coverage_basis`: `"held_out_past_runs"` (grouped
+    CV out-of-fold runs, i.e. runs like past runs). `gp_intervals[]` and
+    `quantiles` carry `coverage_basis: "model_based"`.
+  - `proposals[].intervals[].caveat`: `{code: "coverage_lower_at_proposals",
+    message, coverage_at_proposals_estimate}`. `message` is plain words for
+    display. It says what the band was calibrated on and the coverage measured
+    at proposed recipes, never that the range "is calibrated". Selection-aware
+    band (F15, `code: "coverage_measured_at_proposals"`): "Based on held-out
+    runs: this 90% range was sized on the held-out past runs the model ranked
+    highest, to mimic how proposals are chosen. At proposed recipes this 90%
+    range covered 92-99% in simulation (measured, not guaranteed)." Plain
+    fallback band: "Based on held-out runs similar to past runs. Proposals are
+    chosen for high predicted values, so coverage at proposed recipes is lower:
+    in simulation this 90% range covered only 60-81%."
+  - `coverage_at_proposals_estimate` (per proposal, compact): `{nominal,
+    measured_min, measured_max, basis: "simulation", source, benchmark}`, the
+    coverage MEASURED at proposals by `python -m kalos.bench.coverage_at_proposals`
+    (VALIDATION.md, "Interval coverage at proposals"); `source` points at the
+    full object below. The same compact estimate is on `gp_intervals[]`.
+    Evidence from synthetic simulators, not a guarantee.
+  - `interval_method.coverage_basis`, `interval_method.coverage_at_proposals`
+    (`{"0.9": caveat, "0.95": caveat}`) and
+    `interval_method.gp_coverage_at_proposals` (`{"0.9": estimate, ...}`): once
+    per analysis, with the full estimate `{nominal, measured_min, measured_max,
+    by_scenario{...}, basis, source{kind, benchmark, results, doc, scenarios,
+    seeds_per_scenario, proposals_per_seed, measurement}}`.
+  - `conformal_caveat` (top level, for `conformal_q`): `{code:
+    "coverage_not_guaranteed", coverage_basis, message, caveat_code,
+    coverage_at_proposals_estimate}`.
+  - Client rule: never say a proposal's range "is calibrated"; show the
+    caveat and `measured_min`-`measured_max` next to the nominal level.
 - `proposals[].gp_intervals[]` (always): `{coverage, method: "gp_posterior",
   posterior: "observation", note: "model-based, not held-out calibrated",
   available, lo, hi}`, Gaussian `pred +/- z * predictive_std`.
@@ -455,6 +493,133 @@ Code: `kalos/portal/analysis_parts/intervals.py`, `kalos/core/conformal.py`
   (`noise.best_reproducible`, replicate-aware path). The batch itself is
   chosen by qLogNEI, not by this EI. `maximize` is false when the campaign
   setup goal is minimize (then EI / p_improve are for going BELOW the incumbent).
+
+### Selection-aware proposal intervals (F15; interval numbers change)
+
+Code: `calibrate_selection_aware` in `kalos/portal/analysis_parts/intervals.py`;
+evidence in VALIDATION.md "Interval coverage at proposals". The plain normalized
+band covered 0.60-0.84 of measured proposals at 90% nominal; the selection-aware
+band covers 0.92-0.99 (95%: 0.96-0.99) on fresh simulation seeds, at 2.5-3.2x the
+width.
+
+- `proposals[].intervals[]` (per level, when available): `{coverage, method:
+  "conformal_selection_aware", calibrated_on: "grouped_cv_oof_top_ranked",
+  n_calibration (selected runs), coverage_basis: "held_out_top_ranked_runs",
+  caveat {code: "coverage_measured_at_proposals" (or
+  "coverage_lower_at_proposals" if a measured scenario fell below nominal),
+  message, coverage_at_proposals_estimate}, available, lo, hi, q_sel,
+  sigma_floor, sigma_used}`; `lo = pred - q_sel * max(predictive_std,
+  sigma_floor)`.
+- Per-level fallback: when too few top-ranked held-out runs exist for a level's
+  rank (90% needs 9 selected runs, 95% needs 19), that level keeps the plain
+  `conformal_normalized` entry (F02 fields and caveat) plus
+  `selection_aware_unavailable: {code: too_few_top_ranked_runs |
+  degenerate_sigma | degenerate_proposal_sigma, reason}`.
+- `interval_method.method`: `conformal_selection_aware`, `conformal_normalized`
+  or `mixed`; `interval_method.method_by_level`; `interval_method.selection_aware`:
+  `{method, top_fraction (0.3), sigma_floor_quantile (0.9), sigma_floor,
+  n_selected, n_pooled, levels[{coverage, available, q_sel, rank, n_selected,
+  n_pooled | code, reason, min_selected}], score, band, selection,
+  coverage_guarantee}`. `interval_method.levels` keeps the plain normalized
+  calibration (the fallback), unchanged in shape.
+- `interval_method.coverage_at_proposals[level]` is the caveat of the method that
+  level actually uses.
+- Selection mimics the proposal step: in every fold of both CV repeats, the
+  `ceil(0.3 * n_fold)` held-out runs the fold model ranked best (lowest when
+  minimizing). The floor corrects the full-data model's sd at its own proposals,
+  measured at 0.6-0.8 of the held-out sds. No guarantee: measured coverage only.
+
+### Verdict and trust gates that gate (F04; proposals change)
+
+Code: `kalos/portal/verdict.py` (cherry-picked from `arch-safe-now` a7a7865 and
+48bf479), `kalos/portal/analysis_parts/trust_gate.py`. ML audit B3: no gate was
+enforced (five proposals on every sheet, pure noise included), the floor passed
+on a point estimate (15.8% of pure-noise sheets) and the promotion gate could not
+pass on an ordinary target (0/280).
+
+Every analysis carries `verdict`: one answer to "can I trust the model's
+suggestions?", read from the held-out score of the leak-free CV (F05). The
+campaign summary (`GET /api/campaign`, `GET /api/campaigns/{id}` `summary`,
+reanalyze `campaign`) returns the stored analysis's own `verdict` (`null` for an
+analysis written before this field).
+
+Fields: `state` (`reliable`, `not_yet`, `refused`), `code` (`reliable`,
+`not-yet`, `insufficient`, `no_ordering`), `headline` (one plain sentence),
+`reasons` (`[{code, plain}]`, empty when reliable; codes `too_few_rows`,
+`too_few_groups`, `surrogate_spearman`, `cv_ci_unavailable`), `ordering`
+(`{state: ok | unsure | weak | absent | unchecked, plain}`), `range_width`
+(`{state: ok | too_narrow | too_wide | unchecked, code: bands_*, plain}`,
+reported, not part of the state), `n_runs`, `min_runs` (20), `n_groups`,
+`min_groups` (8), `rule`. Checked top to bottom:
+
+| state | code | rule | what happens to the proposals |
+|---|---|---|---|
+| `refused` | `insufficient` | no score, or fewer than 3 CV groups (no interval) | withheld: `proposals: []`, `refusal: {code, plain, what_would_help}`, `proposal_notice: {code: "model_refused", reason, requested, returned: 0, message}` |
+| `refused` | `no_ordering` | upper end of the score's 95% interval at or below 0 | withheld (as above) |
+| `reliable` | `reliable` | score >= 0.20, lower end of the interval > 0, >= 20 runs and >= 8 groups | returned, `trust.status: "trusted"` |
+| `not_yet` | `not-yet` | everything else | returned, each labelled `trust.status: "exploration_untrusted"` |
+
+- `proposal_trust` (top level): `{status: trusted | exploration_untrusted |
+  withheld, verdict, gated, withheld, n_requested, n_returned, reasons[codes],
+  message, rule}`; every returned proposal carries `trust: {status, verdict,
+  message}`. A refused campaign stays on `plan` with the plan step "No recipes
+  proposed" and `next_action.action` "Add runs and upload again".
+- `reliability.clears_floor` now needs the score >= 0.20 AND the lower end of its
+  95% interval > 0, and is judged only with at least 12 runs and 3 CV groups.
+  Not judged, it is `null` (not `false`: the floor was not failed, it could not
+  be asked) with `reliability.verdict: "not_judged"`; otherwise
+  `reliability.verdict` is `clears_floor` or `below_floor`
+  (`reliability.judged`, `not_judged_reason`, `clears_floor_rule`). The model
+  verdict then reads `not_yet` with reason `too_few_rows_to_judge` and the
+  proposals are labelled exploration.
+  `space_filling_advice` still accompanies every `clears_floor: false`.
+- `cv_ci95` is `null` (not `[NaN, NaN]`) when fewer than 3 groups leave no
+  interval.
+- Promotion: `promotion.status` (`passed`, `failed`, `not_measurable`) and
+  `promotion.unmeasured` (cherry-picked from 64e43ae). The feasibility AUC /
+  ECE / Brier gates go to `promotion.not_judged` instead of failing closed when
+  the goal is minimize (`not applicable when minimizing`, e2257ac) or the sheet
+  has fewer than 5 non-producing runs (`not applicable: too few non-producing
+  runs`). An ordinary learnable target can now be promoted. `promotion` is
+  still reported, not enforced; the verdict is what gates the proposals.
+- `cv_topk` ranks `-y` under minimize (the lowest k runs; 3935dfa).
+
+### Leak-free cross-validation grouping (F05; numbers change)
+
+Code: `kalos/portal/analysis_parts/cv_grouping.py`. ML audit B2: the held-out
+score leaked across as-run replicates (CV 0.95, 100% false trust on a sheet with
+no input signal), batches (CV 0.61, 95% false trust) and campaign rounds.
+
+- Replicates recorded as run are one CV group: rows whose settings are all within
+  `NEAR_DUPLICATE_TOL` (0.05 of each input's box width; complete linkage,
+  Chebyshev) and share every categorical label and missing-value pattern. On a
+  sheet whose groups are the exact recipes nothing changes.
+- Batch-like columns (name ending in batch, lot, plate, block, round, date, week,
+  run date, optionally with an id/no/number suffix, e.g. `media_lot`, `Batch_ID`;
+  not `batch_volume_mL`) are never fitted or proposed (unless declared as
+  features); provenance status `dropped_cv_group`. They, scale columns (scale,
+  vessel, working volume, reactor size; kept as inputs) and the campaign round of
+  folded rows (`CampaignStore.plan_fold` sets `df.attrs["kalos_round_index"]`
+  from the fold history) are CV-group candidates, merged with the replicate
+  groups so neither can straddle a split.
+- Every candidate with at least 3 groups is cross-validated; the **lowest**
+  held-out Spearman drives `cv_spearman`, `cv_ci95`, `cv_n_groups`, `oof`,
+  `conformal_q`, the per-proposal interval calibration, `reliability` and the
+  promotion gate. `cv_logo` runs over the binding grouping when it is a column or
+  round.
+- `cv_grouping` (new): `{used: {basis, column, n_groups, merged_with_replicates?},
+  candidates: [{basis: replicate_clusters | group_column | declared_column |
+  column | scale_column | campaign_round, column, n_groups, n_levels?,
+  merged_with_replicates?, evaluable, spearman, ci95, reason, used,
+  same_partition_as?}], rule, replicate_tolerance, n_exact_recipes,
+  n_replicate_clusters, min_groups, warnings: [{code, message, column?}]}`.
+- Warning codes: `too_few_cv_groups` (< 3 groups: no held-out score; the verdict
+  refuses, F04), `few_cv_groups` (3-4 groups: coarse), `structure_not_checkable`
+  (a batch/scale/round candidate with < 3 levels), `near_duplicate_recipes_grouped`
+  (distinct recipes merged as near-duplicates).
+- Not changed: the replicate noise model and the drivers' unit of analysis still
+  use exact recipe matches; fold fits still use one start and raw rows (ML audit
+  S2 is open).
 
 ### Clones and strains (additive; analyses computed after this change)
 

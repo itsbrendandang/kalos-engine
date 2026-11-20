@@ -27,6 +27,17 @@ sd above the incumbent gives p_improve 0.84; with observation noise equal to the
 latent sd one run beats it with probability 0.76). Each value carries a
 `description` saying so.
 
+Every band carries the BASIS of its coverage claim (F02, ML audit B1):
+`coverage_basis` is `"held_out_past_runs"` for the conformal bands (calibrated
+on grouped-CV out-of-fold runs, i.e. runs like past runs) and `"model_based"`
+for the GP's own bands. The conformal bands at proposals also carry a
+structured `caveat` (`code: "coverage_lower_at_proposals"`, a plain message and
+`coverage_at_proposals_estimate`, the coverage MEASURED at proposals in
+simulation with its source; `kalos/portal/analysis_parts/coverage_evidence.py`).
+A client must not say a proposal's range "is calibrated": it shows the caveat,
+which names what the band was calibrated on and the coverage measured at
+proposed recipes.
+
 Torch-free: the surrogate is only ever called through its `posterior` method.
 """
 from __future__ import annotations
@@ -38,6 +49,15 @@ import numpy as np
 from scipy.special import ndtr, ndtri
 
 from kalos.core.conformal import normalized_conformal_quantile, normalized_scores
+from kalos.portal.analysis_parts.coverage_evidence import (
+    BASIS_HELD_OUT,
+    BASIS_MODEL,
+    BASIS_SELECTION_AWARE,
+    CAVEAT_CODE,
+    compact,
+    coverage_at_proposals_estimate,
+    proposal_caveat,
+)
 
 METHOD_CONFORMAL = "conformal_normalized"
 CALIBRATED_ON = "grouped_cv_oof"
@@ -51,6 +71,7 @@ EI_DESCRIPTION = (
     "expected amount by which the model's latent mean (no assay noise) beats the incumbent"
 )
 QUANTILE_LEVELS = (0.05, 0.25, 0.5, 0.75, 0.95)
+CALIBRATED_ON_SELECTED = "grouped_cv_oof_top_ranked"
 
 # How `sigma_pred` at a proposal was obtained (reported in `interval_method`).
 SIGMA_FITTED_NOISE = "surrogate_fitted_noise"
@@ -136,6 +157,93 @@ def calibrate_normalized(
     return {"n_calibration": n, "levels": out_levels}
 
 
+METHOD_SELECTION_AWARE = "conformal_selection_aware"
+# F15 parameters, chosen on simulation seeds 0-39 (benchmarks/results/
+# coverage_at_proposals_*.json, VALIDATION.md): the top 30% of each fold's
+# held-out runs by the fold model's prediction (the runs a proposal step would
+# have picked), pooled over the CV repeats, normalized scores, and the proposal
+# sd floored at the 90th percentile of the held-out sds.
+SELECTION_TOP_FRACTION = 0.3
+SIGMA_FLOOR_QUANTILE = 0.9
+
+
+def calibrate_selection_aware(oof_repeats, levels: Sequence[float], *, maximize: bool = True,
+                              top_fraction: float = SELECTION_TOP_FRACTION,
+                              sigma_floor_quantile: float = SIGMA_FLOOR_QUANTILE) -> dict:
+    """Selection-aware normalized conformal (F15).
+
+    Proposals are the recipes the model ranks highest, and their errors are not
+    exchangeable with past runs: the model is optimistic there and its sd is
+    smaller than the held-out sds the plain band was normalized by (measured
+    sd ratio 0.6-0.8). This calibration mimics the selection inside the CV:
+
+    1. in every fold of every repeat, keep the ceil(top_fraction * n_fold)
+       held-out runs the FOLD model ranked best (highest prediction; lowest when
+       minimizing) - the runs a proposal step would have picked;
+    2. score them |y - mu| / sigma (the fold model's own predictive sd), and
+       take `q_sel` = the ceil((n_sel + 1) * coverage)-th smallest score;
+    3. at a proposal, use sd = max(predictive_sd, floor), where `floor` is the
+       `sigma_floor_quantile` quantile of every held-out sd: the full-data
+       model's sd at its own proposals was measured at 0.6-0.8 of the held-out
+       sds while its errors there were larger, so the band never claims less
+       uncertainty at a proposal than the model had on its less-certain
+       held-out runs. Band: pred +/- q_sel * max(predictive_sd, floor).
+
+    Not a guarantee: the pooled repeats re-use each run once per repeat with
+    correlated errors, and held-out runs are only a proxy for proposals. The
+    coverage at proposals is MEASURED by the benchmark and shipped with the
+    band. A level is refused (with the plain normalized band as the fallback)
+    when there are too few top-ranked runs for its rank.
+    """
+    sel_scores: list[float] = []
+    all_sd: list[float] = []
+    n_pool = 0
+    ok = True
+    for rep in oof_repeats or []:
+        p = np.asarray(rep.get("pred", []), float)
+        s = np.asarray(rep.get("std", []), float)
+        a = np.asarray(rep.get("actual", []), float)
+        f = np.asarray(rep.get("fold", []), int)
+        if not (len(p) == len(s) == len(a) == len(f)) or len(p) == 0:
+            continue
+        if not (np.all(np.isfinite(p)) and np.all(np.isfinite(s)) and np.all(np.isfinite(a)) and np.all(s > 0)):
+            ok = False
+            continue
+        all_sd.extend(s.tolist())
+        n_pool += len(p)
+        rank_by = p if maximize else -p
+        for k in np.unique(f):
+            idx = np.where(f == k)[0]
+            m = int(np.ceil(top_fraction * len(idx) - 1e-9))
+            top = idx[np.argsort(-rank_by[idx], kind="stable")[:m]]
+            sel_scores.extend((np.abs(a[top] - p[top]) / s[top]).tolist())
+    floor = float(np.quantile(all_sd, sigma_floor_quantile)) if all_sd else float("nan")
+    scores = np.asarray(sel_scores, float)
+    n_sel = int(len(scores))
+    out_levels: list[dict] = []
+    for lv in levels:
+        cov = float(lv)
+        base = {"coverage": _r(cov), "n_selected": n_sel, "n_pooled": n_pool}
+        if not ok or not np.isfinite(floor) or floor <= 0:
+            out_levels.append({**base, "available": False, "code": "degenerate_sigma",
+                               "reason": "a held-out sd is non-finite or zero"})
+            continue
+        k = int(np.ceil((n_sel + 1) * cov - 1e-9))
+        if n_sel == 0 or k > n_sel:
+            need = int(np.ceil(cov / (1 - cov) - 1e-9))  # smallest n with ceil((n+1)cov) <= n
+            out_levels.append({**base, "available": False, "code": "too_few_top_ranked_runs", "rank": k,
+                               "min_selected": need,
+                               "reason": (f"{n_sel} top-ranked held-out runs; the {int(round(cov * 100))}% "
+                                          f"selection-aware band needs {need}")})
+            continue
+        q = float(np.sort(scores)[k - 1])
+        out_levels.append({**base, "available": True, "q_sel": _r(q), "rank": k, "_q": q})
+    return {"method": METHOD_SELECTION_AWARE, "top_fraction": top_fraction,
+            "sigma_floor_quantile": sigma_floor_quantile,
+            "sigma_floor": None if not np.isfinite(floor) else _r(floor), "_floor": floor,
+            "n_selected": n_sel, "n_pooled": n_pool, "levels": out_levels}
+
+
 def proposal_predictive_std(
     surrogate: Any, batch, latent_std, assay_noise_var: float | None = None,
 ) -> tuple[np.ndarray, str]:
@@ -185,6 +293,7 @@ def probability_of_improvement(mean, std, incumbent: float, *, maximize: bool = 
 def proposal_interval_fields(
     mean, latent_std, predictive_std, calibration: Mapping[str, Any], levels: Sequence[float],
     incumbent: float, incumbent_basis: str, *, maximize: bool = True,
+    selection: Mapping[str, Any] | None = None,
 ) -> list[dict]:
     """Additive per-proposal fields (one dict per proposal, merged by `_annotate`):
     `predictive_std`, `intervals`, `gp_intervals`, `quantiles`,
@@ -195,14 +304,44 @@ def proposal_interval_fields(
     ei = expected_improvement(mu, lat, incumbent, maximize=maximize)
     pi = probability_of_improvement(mu, lat, incumbent, maximize=maximize)
     cal_levels = list(calibration.get("levels", []))
+    # Per proposal: the caveat with the measured numbers; the full source is
+    # once per analysis, in `interval_method.coverage_at_proposals`.
+    caveats = {}
+    sel_levels = {float(lv["coverage"]): lv for lv in (selection or {}).get("levels", [])}
+    sel_floor = float((selection or {}).get("_floor", float("nan")))
+    for c in cal_levels:
+        for meth in (METHOD_CONFORMAL, METHOD_SELECTION_AWARE):
+            cav = proposal_caveat(meth, float(c["coverage"]))
+            cav["coverage_at_proposals_estimate"] = compact(
+                cav["coverage_at_proposals_estimate"],
+                f"interval_method.coverage_at_proposals.{float(c['coverage']):g}")
+            caveats[meth, float(c["coverage"])] = cav
+    gp_estimates = {float(lv): compact(coverage_at_proposals_estimate(METHOD_GP, float(lv)),
+                                       "interval_method.gp_coverage_at_proposals")
+                    for lv in levels}
     rows: list[dict] = []
     for i in range(len(mu)):
         m, sp = float(mu[i]), float(pre[i])
         sp_ok = bool(np.isfinite(sp) and sp > 0)
         ivs: list[dict] = []
         for c in cal_levels:
+            sl = sel_levels.get(float(c["coverage"]))
+            if sl is not None and sl.get("available") and sp_ok and np.isfinite(sel_floor):
+                # F15: the selection-aware band (see `calibrate_selection_aware`).
+                half = float(sl["_q"]) * max(sp, sel_floor)
+                ivs.append({
+                    "coverage": c["coverage"], "method": METHOD_SELECTION_AWARE,
+                    "calibrated_on": CALIBRATED_ON_SELECTED, "n_calibration": sl["n_selected"],
+                    "coverage_basis": BASIS_SELECTION_AWARE,
+                    "caveat": caveats[METHOD_SELECTION_AWARE, float(c["coverage"])],
+                    "available": True, "lo": _r(m - half), "hi": _r(m + half),
+                    "q_sel": sl["q_sel"], "sigma_floor": _r(sel_floor),
+                    "sigma_used": _r(max(sp, sel_floor)),
+                })
+                continue
             base = {"coverage": c["coverage"], "method": METHOD_CONFORMAL, "calibrated_on": CALIBRATED_ON,
-                    "n_calibration": c["n_calibration"]}
+                    "n_calibration": c["n_calibration"], "coverage_basis": BASIS_HELD_OUT,
+                    "caveat": caveats[METHOD_CONFORMAL, float(c["coverage"])]}
             if not c["available"]:
                 ivs.append({**base, "available": False, "lo": None, "hi": None, "code": c["code"],
                             "reason": c["reason"], "what_would_fix_it": c["what_would_fix_it"]})
@@ -215,17 +354,25 @@ def proposal_interval_fields(
                 half = float(c["_q"]) * sp
                 ivs.append({**base, "available": True, "lo": _r(m - half), "hi": _r(m + half),
                             "q_norm": c["q_norm"], "empirical_oof_coverage": c["empirical_oof_coverage"]})
+            if sl is not None:
+                ivs[-1]["selection_aware_unavailable"] = {
+                    "code": sl.get("code", "degenerate_proposal_sigma"),
+                    "reason": sl.get("reason", "the predictive sd at this proposal is non-finite or zero"),
+                }
         gp: list[dict] = []
         for lv in levels:
             cov = float(lv)
-            entry: dict = {"coverage": _r(cov), "method": METHOD_GP, "posterior": "observation", "note": GP_NOTE}
+            entry: dict = {"coverage": _r(cov), "method": METHOD_GP, "posterior": "observation", "note": GP_NOTE,
+                           "coverage_basis": BASIS_MODEL,
+                           "coverage_at_proposals_estimate": gp_estimates[cov]}
             if np.isfinite(sp) and sp >= 0:
                 half = float(ndtri(0.5 + cov / 2.0)) * sp
                 entry.update(available=True, lo=_r(m - half), hi=_r(m + half))
             else:
                 entry.update(available=False, lo=None, hi=None)
             gp.append(entry)
-        quant: dict[str, Any] = {"basis": METHOD_GP, "posterior": "observation", "note": GP_NOTE}
+        quant: dict[str, Any] = {"basis": METHOD_GP, "posterior": "observation", "note": GP_NOTE,
+                                 "coverage_basis": BASIS_MODEL}
         for p in QUANTILE_LEVELS:
             key = f"p{int(round(p * 100)):02d}"
             quant[key] = _r(m + float(ndtri(p)) * sp) if np.isfinite(sp) and sp >= 0 else None
@@ -246,13 +393,49 @@ def proposal_interval_fields(
     return rows
 
 
-def interval_method_summary(calibration: Mapping[str, Any], sigma_source: str) -> dict:
+def interval_method_summary(
+    calibration: Mapping[str, Any], sigma_source: str, selection: Mapping[str, Any] | None = None,
+) -> dict:
     """Top-level `interval_method`: how `proposals[].intervals` were built, per
     level, plus what the GP-based fields are. Internal keys are stripped."""
     levels = [{k: v for k, v in lv.items() if not k.startswith("_")} for lv in calibration.get("levels", [])]
+    sel_levels = {float(lv["coverage"]): lv for lv in (selection or {}).get("levels", [])}
+
+    def used(cov: float) -> str:
+        lv = sel_levels.get(cov)
+        return METHOD_SELECTION_AWARE if lv is not None and lv.get("available") else METHOD_CONFORMAL
+
+    methods = {used(float(lv["coverage"])) for lv in calibration.get("levels", [])}
+    selection_block = None if selection is None else {
+        **{k: v for k, v in selection.items() if not k.startswith("_") and k != "levels"},
+        "levels": [{k: v for k, v in lv.items() if not k.startswith("_")} for lv in selection.get("levels", [])],
+        "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+        "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+        "selection": ("in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the "
+                      "fold model ranked best (highest prediction; lowest when minimizing)"),
+        "coverage_guarantee": (
+            "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are "
+            "correlated; the coverage at proposals is measured in simulation and shipped with the band"
+        ),
+    }
     return {
-        "method": METHOD_CONFORMAL,
+        "method": METHOD_SELECTION_AWARE if methods == {METHOD_SELECTION_AWARE} else (
+            METHOD_CONFORMAL if methods == {METHOD_CONFORMAL} else "mixed"),
+        "method_by_level": {f"{float(lv['coverage']):g}": used(float(lv["coverage"]))
+                            for lv in calibration.get("levels", [])},
+        "selection_aware": selection_block,
         "calibrated_on": CALIBRATED_ON,
+        # F02: what the coverage claim rests on, and what was measured where the
+        # user acts (the proposals). Per level, same object each proposal carries.
+        "coverage_basis": BASIS_HELD_OUT,
+        "coverage_at_proposals": {
+            f"{float(lv['coverage']):g}": proposal_caveat(used(float(lv["coverage"])), float(lv["coverage"]))
+            for lv in calibration.get("levels", [])
+        },
+        "gp_coverage_at_proposals": {
+            f"{float(lv['coverage']):g}": coverage_at_proposals_estimate(METHOD_GP, float(lv["coverage"]))
+            for lv in calibration.get("levels", [])
+        },
         "score": "abs(y - mu_oof) / sigma_oof",
         "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
         "sigma": "gp_predictive_sd",
@@ -281,7 +464,50 @@ def interval_method_summary(calibration: Mapping[str, Any], sigma_source: str) -
     }
 
 
+def conformal_band_caveat(alpha: float) -> dict:
+    """`conformal_caveat` for the global +/- `conformal_q` band (F02; the
+    arch-safe-now `coverage_not_guaranteed` field, now with the measured
+    coverage at proposals and its source)."""
+    level = 1.0 - float(alpha)
+    est = coverage_at_proposals_estimate("conformal_abs_global", level)
+    cav = proposal_caveat("conformal_abs_global", level)
+    return {
+        "code": "coverage_not_guaranteed",
+        "coverage_basis": BASIS_HELD_OUT,
+        "message": (
+            "The +/- conformal_q band's coverage was measured on held-out past runs. It is not "
+            "guaranteed for proposals, especially those far from the data or at the box edge. "
+            + cav["message"].split(". ", 1)[1]
+        ),
+        "caveat_code": CAVEAT_CODE,
+        "coverage_at_proposals_estimate": est,
+    }
+
+
+def band_from_summary(mean, sd, method_summary: Mapping[str, Any], level: float):
+    """Rebuild the shipped per-proposal band at arbitrary points from the
+    response's `interval_method` (benchmarks and tests: the band a proposal at
+    those points would carry). Returns `(lo, hi)` arrays, or `(None, None)` when
+    the level is unavailable."""
+    mu = np.asarray(mean, float).reshape(-1)
+    sp = np.asarray(sd, float).reshape(-1)
+    sel = method_summary.get("selection_aware") or {}
+    for lv in sel.get("levels", []):
+        if abs(float(lv["coverage"]) - float(level)) < 1e-9 and lv.get("available"):
+            half = float(lv["q_sel"]) * np.maximum(sp, float(sel["sigma_floor"]))
+            return mu - half, mu + half
+    for lv in method_summary.get("levels", []):
+        if abs(float(lv["coverage"]) - float(level)) < 1e-9 and lv.get("available"):
+            half = float(lv["q_norm"]) * sp
+            return mu - half, mu + half
+    return None, None
+
+
 __all__ = [
-    "calibrate_normalized", "expected_improvement", "interval_method_summary",
+    "METHOD_SELECTION_AWARE",
+    "band_from_summary",
+    "calibrate_normalized",
+    "calibrate_selection_aware",
+    "conformal_band_caveat", "expected_improvement", "interval_method_summary",
     "probability_of_improvement", "proposal_interval_fields", "proposal_predictive_std",
 ]

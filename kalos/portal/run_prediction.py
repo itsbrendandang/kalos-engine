@@ -51,7 +51,7 @@ NO_ANALYSIS_REASON = (
 )
 NO_BAND_REASON = (
     "the published analysis carries no conformal band (conformal_q/conformal_coverage absent "
-    "or not finite), so no calibrated interval was recorded"
+    "or not finite), so no held-out (conformal) interval was recorded"
 )
 
 

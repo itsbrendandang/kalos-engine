@@ -2,11 +2,12 @@
 
 The clone / covariate roles (docs/CLONES.md) must not move a single number for a
 sheet that has no clone, strain, cell-line or covariate column. This pins the
-full `_analyze` response of five such sheets, recorded on main @ 8066c86 (#164,
-the branch's base, with no strain code), first recorded on `feat/web-redesign-apis`
-@ 2692e7c; re-recorded when main only added descriptive fields (no number
-moved: `cv_topk.direction`, `p_improve`/`expected_improvement.description`), and asserts that every key recorded
-then is byte-identical now. New keys may be added (they are additive); no
+full `_analyze` response of five such sheets, recorded with NO strain code on
+`feat/trust-calibration` @ 773ec98 (the trust layer, F02/F04/F05/F15, merged
+with main @ 8066c86; re-recorded because F05/F15 change the CV grouping and the
+intervals for every campaign), earlier on main @ 8066c86 and first on
+`feat/web-redesign-apis` @ 2692e7c, and asserts that every key recorded then
+is byte-identical now. New keys may be added (they are additive); no
 recorded key may change.
 
 Excluded from the comparison, each for a stated reason:
@@ -155,7 +156,7 @@ def test_no_clone_sheet_output_is_unchanged(name):
 
 if __name__ == "__main__":  # regenerate (on the base commit only)
     payload = {
-        "recorded_on": "main@8066c86 (#164; before the strain work)",
+        "recorded_on": "feat/trust-calibration@773ec98 (trust layer + main@8066c86; no strain code)",
         "environment": _environment(),
         "results": {name: _run(name) for name in sorted(DATASETS)},
     }

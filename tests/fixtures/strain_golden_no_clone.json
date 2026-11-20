@@ -8,7 +8,7 @@
   "torch": "2.13.0",
   "torch_threads": 1
  },
- "recorded_on": "main@8066c86 (#164; before the strain work)",
+ "recorded_on": "feat/trust-calibration@773ec98 (trust layer + main@8066c86; no strain code)",
  "results": {
   "bioprocess_subset": {
    "alternative_scale": {
@@ -31,6 +31,41 @@
    },
    "best": 0.942,
    "categorical_features": [],
+   "conformal_caveat": {
+    "caveat_code": "coverage_lower_at_proposals",
+    "code": "coverage_not_guaranteed",
+    "coverage_at_proposals_estimate": {
+     "basis": "simulation",
+     "by_scenario": {
+      "bioprocess_n100": 0.83,
+      "bioprocess_n40": 0.79,
+      "hartmann6_n30": 0.68,
+      "hartmann6_n80": 0.765,
+      "heteroscedastic_n40": 0.765
+     },
+     "measured_max": 0.83,
+     "measured_min": 0.68,
+     "nominal": 0.9,
+     "source": {
+      "benchmark": "python -m kalos.bench.coverage_at_proposals",
+      "doc": "VALIDATION.md#interval-coverage-at-proposals",
+      "kind": "simulation",
+      "measurement": "one fresh simulated measurement per proposal",
+      "proposals_per_seed": 5,
+      "results": "benchmarks/results/coverage_at_proposals_before.json",
+      "scenarios": [
+       "hartmann6_n30",
+       "hartmann6_n80",
+       "bioprocess_n40",
+       "bioprocess_n100",
+       "heteroscedastic_n40"
+      ],
+      "seeds_per_scenario": 40
+     }
+    },
+    "coverage_basis": "held_out_past_runs",
+    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 90% range covered only 68-83%."
+   },
    "conformal_coverage": 0.9,
    "conformal_q": 0.3937,
    "constraint": {
@@ -92,6 +127,34 @@
     "n_groups_used": 0,
     "reason": "only 0 recipes have 2+ rows; need at least 5 to compute a group-mean floor",
     "spearman": null
+   },
+   "cv_grouping": {
+    "candidates": [
+     {
+      "basis": "replicate_clusters",
+      "ci95": [
+       -0.131,
+       0.563
+      ],
+      "column": null,
+      "evaluable": true,
+      "n_groups": 30,
+      "reason": null,
+      "spearman": 0.268,
+      "used": true
+     }
+    ],
+    "min_groups": 3,
+    "n_exact_recipes": 30,
+    "n_replicate_clusters": 30,
+    "replicate_tolerance": 0.05,
+    "rule": "every evaluable grouping (replicate clusters or the declared group, plus batch, lot, plate, date, round and scale columns and campaign rounds) is cross-validated; the lowest held-out Spearman drives cv_spearman, the reliability verdict and the conformal calibration",
+    "used": {
+     "basis": "replicate_clusters",
+     "column": null,
+     "n_groups": 30
+    },
+    "warnings": []
    },
    "cv_logo": {
     "n_groups": null,
@@ -411,8 +474,139 @@
    ],
    "interval_method": {
     "calibrated_on": "grouped_cv_oof",
+    "coverage_at_proposals": {
+     "0.9": {
+      "code": "coverage_measured_at_proposals",
+      "coverage_at_proposals_estimate": {
+       "basis": "simulation",
+       "by_scenario": {
+        "bioprocess_n100": 0.99,
+        "bioprocess_n40": 0.92,
+        "hartmann6_n30": 0.935,
+        "hartmann6_n80": 0.94,
+        "heteroscedastic_n40": 0.96
+       },
+       "measured_max": 0.99,
+       "measured_min": 0.92,
+       "nominal": 0.9,
+       "source": {
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "doc": "VALIDATION.md#interval-coverage-at-proposals",
+        "kind": "simulation",
+        "measurement": "one fresh simulated measurement per proposal",
+        "proposals_per_seed": 5,
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
+        "scenarios": [
+         "hartmann6_n30",
+         "hartmann6_n80",
+         "bioprocess_n40",
+         "bioprocess_n100",
+         "heteroscedastic_n40"
+        ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
+        "seeds_per_scenario": 40
+       }
+      },
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+     },
+     "0.95": {
+      "code": "coverage_measured_at_proposals",
+      "coverage_at_proposals_estimate": {
+       "basis": "simulation",
+       "by_scenario": {
+        "bioprocess_n100": 0.995,
+        "bioprocess_n40": 0.965,
+        "hartmann6_n30": 0.97,
+        "hartmann6_n80": 0.97,
+        "heteroscedastic_n40": 0.995
+       },
+       "measured_max": 0.995,
+       "measured_min": 0.965,
+       "nominal": 0.95,
+       "source": {
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "doc": "VALIDATION.md#interval-coverage-at-proposals",
+        "kind": "simulation",
+        "measurement": "one fresh simulated measurement per proposal",
+        "proposals_per_seed": 5,
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
+        "scenarios": [
+         "hartmann6_n30",
+         "hartmann6_n80",
+         "bioprocess_n40",
+         "bioprocess_n100",
+         "heteroscedastic_n40"
+        ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
+        "seeds_per_scenario": 40
+       }
+      },
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+     }
+    },
+    "coverage_basis": "held_out_past_runs",
     "coverage_guarantee": "approximate: out-of-fold scores come from grouped-CV fold models and are not exactly exchangeable with a proposal from the full-data model",
     "empirical_oof_coverage_note": "in-sample: counted on the same scores that set q_norm, so it is >= rank / n by construction; coverage_by_sigma_half shows whether the band adapts to the model's sd",
+    "gp_coverage_at_proposals": {
+     "0.9": {
+      "basis": "simulation",
+      "by_scenario": {
+       "bioprocess_n100": 0.725,
+       "bioprocess_n40": 0.635,
+       "hartmann6_n30": 0.5,
+       "hartmann6_n80": 0.57,
+       "heteroscedastic_n40": 0.53
+      },
+      "measured_max": 0.725,
+      "measured_min": 0.5,
+      "nominal": 0.9,
+      "source": {
+       "benchmark": "python -m kalos.bench.coverage_at_proposals",
+       "doc": "VALIDATION.md#interval-coverage-at-proposals",
+       "kind": "simulation",
+       "measurement": "one fresh simulated measurement per proposal",
+       "proposals_per_seed": 5,
+       "results": "benchmarks/results/coverage_at_proposals_before.json",
+       "scenarios": [
+        "hartmann6_n30",
+        "hartmann6_n80",
+        "bioprocess_n40",
+        "bioprocess_n100",
+        "heteroscedastic_n40"
+       ],
+       "seeds_per_scenario": 40
+      }
+     },
+     "0.95": {
+      "basis": "simulation",
+      "by_scenario": {
+       "bioprocess_n100": 0.775,
+       "bioprocess_n40": 0.655,
+       "hartmann6_n30": 0.525,
+       "hartmann6_n80": 0.61,
+       "heteroscedastic_n40": 0.585
+      },
+      "measured_max": 0.775,
+      "measured_min": 0.525,
+      "nominal": 0.95,
+      "source": {
+       "benchmark": "python -m kalos.bench.coverage_at_proposals",
+       "doc": "VALIDATION.md#interval-coverage-at-proposals",
+       "kind": "simulation",
+       "measurement": "one fresh simulated measurement per proposal",
+       "proposals_per_seed": 5,
+       "results": "benchmarks/results/coverage_at_proposals_before.json",
+       "scenarios": [
+        "hartmann6_n30",
+        "hartmann6_n80",
+        "bioprocess_n40",
+        "bioprocess_n100",
+        "heteroscedastic_n40"
+       ],
+       "seeds_per_scenario": 40
+      }
+     }
+    },
     "gp_posterior": {
      "expected_improvement": "latent mean (no observation noise)",
      "gp_intervals": "observation (latent + observation noise), one new measurement",
@@ -461,10 +655,44 @@
       "rank": 30
      }
     ],
-    "method": "conformal_normalized",
+    "method": "conformal_selection_aware",
+    "method_by_level": {
+     "0.9": "conformal_selection_aware",
+     "0.95": "conformal_selection_aware"
+    },
     "n_calibration": 30,
     "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
     "score": "abs(y - mu_oof) / sigma_oof",
+    "selection_aware": {
+     "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+     "coverage_guarantee": "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are correlated; the coverage at proposals is measured in simulation and shipped with the band",
+     "levels": [
+      {
+       "available": true,
+       "coverage": 0.9,
+       "n_pooled": 60,
+       "n_selected": 20,
+       "q_sel": 5.3526,
+       "rank": 19
+      },
+      {
+       "available": true,
+       "coverage": 0.95,
+       "n_pooled": 60,
+       "n_selected": 20,
+       "q_sel": 7.18,
+       "rank": 20
+      }
+     ],
+     "method": "conformal_selection_aware",
+     "n_pooled": 60,
+     "n_selected": 20,
+     "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+     "selection": "in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the fold model ranked best (highest prediction; lowest when minimizing)",
+     "sigma_floor": 0.2287,
+     "sigma_floor_quantile": 0.9,
+     "top_fraction": 0.3
+    },
     "sigma": "gp_predictive_sd",
     "sigma_source": "surrogate_fitted_noise"
    },
@@ -663,7 +891,9 @@
      "group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor"
     ],
     "passed": false,
-    "summary": "GATES FAILED: feasibility_auc=0.379 < min 0.65; ece=0.248 > max 0.15; brier=0.306 > max 0.25 (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)"
+    "status": "failed",
+    "summary": "GATES FAILED: feasibility_auc=0.379 < min 0.65; ece=0.248 > max 0.15; brier=0.306 > max 0.25 (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)",
+    "unmeasured": []
    },
    "proposal_features": [
     "temperature_C",
@@ -679,6 +909,19 @@
    },
    "proposal_notice": null,
    "proposal_optimizer": "continuous",
+   "proposal_trust": {
+    "gated": true,
+    "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+    "n_requested": 5,
+    "n_returned": 5,
+    "reasons": [
+     "surrogate_spearman"
+    ],
+    "rule": "refused -> proposals withheld; not_yet -> exploration_untrusted; reliable -> trusted",
+    "status": "exploration_untrusted",
+    "verdict": "not_yet",
+    "withheld": false
+   },
    "proposals": [
     {
      "expected_improvement": {
@@ -696,6 +939,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 0.4659,
        "lo": -0.0834,
        "method": "gp_posterior",
@@ -705,6 +957,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 0.5185,
        "lo": -0.136,
        "method": "gp_posterior",
@@ -715,25 +976,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9333,
-       "hi": 0.6837,
-       "lo": -0.3012,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 2.9495
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.4154,
+       "lo": -1.0329,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.3526,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 1.085,
-       "lo": -0.7024,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 5.3526
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.8334,
+       "lo": -1.4508,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 7.18,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       }
      ],
      "mode": "explore",
@@ -754,6 +1043,7 @@
      "predictive_std": 0.167,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": -0.0834,
       "p25": 0.0787,
@@ -769,6 +1059,11 @@
       "temperature_C": 34.849
      },
      "std": 0.105,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       34.849,
       7.222,
@@ -791,6 +1086,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 0.4874,
        "lo": -0.0058,
        "method": "gp_posterior",
@@ -800,6 +1104,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 0.5347,
        "lo": -0.0531,
        "method": "gp_posterior",
@@ -810,25 +1123,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9333,
-       "hi": 0.683,
-       "lo": -0.2014,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 2.9495
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.465,
+       "lo": -0.9834,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.3526,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 1.0434,
-       "lo": -0.5617,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 5.3526
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.8829,
+       "lo": -1.4013,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 7.18,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       }
      ],
      "mode": "explore",
@@ -849,6 +1190,7 @@
      "predictive_std": 0.1499,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": -0.0058,
       "p25": 0.1397,
@@ -864,6 +1206,11 @@
       "temperature_C": 38.737
      },
      "std": 0.075,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       38.737,
       6.739,
@@ -886,6 +1233,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 0.8818,
        "lo": 0.3529,
        "method": "gp_posterior",
@@ -895,6 +1251,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 0.9324,
        "lo": 0.3023,
        "method": "gp_posterior",
@@ -905,25 +1270,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9333,
-       "hi": 1.0915,
-       "lo": 0.1432,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 2.9495
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.8415,
+       "lo": -0.6068,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.3526,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 1.4778,
-       "lo": -0.2431,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 5.3526
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 2.2594,
+       "lo": -1.0248,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 7.18,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       }
      ],
      "mode": "explore",
@@ -944,6 +1337,7 @@
      "predictive_std": 0.1608,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 0.3529,
       "p25": 0.5089,
@@ -959,6 +1353,11 @@
       "temperature_C": 37.075
      },
      "std": 0.095,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       37.075,
       7.102,
@@ -981,6 +1380,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 0.898,
        "lo": 0.358,
        "method": "gp_posterior",
@@ -990,6 +1398,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 0.9497,
        "lo": 0.3063,
        "method": "gp_posterior",
@@ -1000,25 +1417,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9333,
-       "hi": 1.1121,
-       "lo": 0.1438,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 2.9495
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.8521,
+       "lo": -0.5962,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.3526,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 1.5066,
-       "lo": -0.2506,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 5.3526
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 2.2701,
+       "lo": -1.0141,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 7.18,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       }
      ],
      "mode": "explore",
@@ -1039,6 +1484,7 @@
      "predictive_std": 0.1641,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 0.358,
       "p25": 0.5173,
@@ -1054,6 +1500,11 @@
       "temperature_C": 37.308
      },
      "std": 0.101,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       37.308,
       6.884,
@@ -1076,6 +1527,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 0.882,
        "lo": 0.3323,
        "method": "gp_posterior",
@@ -1085,6 +1545,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 0.9347,
        "lo": 0.2797,
        "method": "gp_posterior",
@@ -1095,25 +1564,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9333,
-       "hi": 1.1,
-       "lo": 0.1143,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 2.9495
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.8313,
+       "lo": -0.617,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.3526,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 1.5015,
-       "lo": -0.2872,
-       "method": "conformal_normalized",
-       "n_calibration": 30,
-       "q_norm": 5.3526
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 2.2493,
+       "lo": -1.0349,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 7.18,
+       "sigma_floor": 0.2287,
+       "sigma_used": 0.2287
       }
      ],
      "mode": "explore",
@@ -1134,6 +1631,7 @@
      "predictive_std": 0.1671,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 0.3323,
       "p25": 0.4945,
@@ -1149,6 +1647,11 @@
       "temperature_C": 38.071
      },
      "std": 0.105,
+     "trust": {
+      "message": "Exploration, not a recommendation: the model has not yet shown it can rank held-out past runs, so a space-filling design would be expected to do about as well.",
+      "status": "exploration_untrusted",
+      "verdict": "not_yet"
+     },
      "vals": [
       38.071,
       6.997,
@@ -1186,6 +1689,7 @@
      "status": "target"
     }
    ],
+   "refusal": null,
    "reliability": {
     "calibration": {
      "available": true,
@@ -1220,18 +1724,22 @@
      0.563
     ],
     "ci_excludes_zero": false,
-    "clears_floor": true,
+    "clears_floor": false,
+    "clears_floor_rule": "held-out Spearman >= 0.2 AND the lower end of its 95% interval > 0, judged only with at least 12 runs and 3 CV groups",
+    "judged": true,
     "n_producers": 16,
+    "not_judged_reason": null,
     "producer_clears_floor": true,
     "producer_spearman": 0.374,
     "producer_threshold": 0.0,
-    "space_filling_advice": null,
+    "space_filling_advice": "The model has not yet shown it can rank unseen runs (CV Spearman below the 0.2 floor, its 95% interval reaching 0, or too few runs to judge), so this batch explores rather than exploits. On data like this a space-filling design (e.g. Latin hypercube) is expected to do about as well; the model's advantage appears once it clears the floor.",
     "spearman": 0.268,
     "spearman_floor": 0.2,
     "unmodeled": [
      "feasibility probability",
      "scale-up transfer"
-    ]
+    ],
+    "verdict": "below_floor"
    },
    "response_surface": {
     "fixed_recipe": {
@@ -3237,6 +3745,31 @@
     "schema_version": 1,
     "status": "pass_with_warnings"
    },
+   "verdict": {
+    "code": "not-yet",
+    "headline": "Kalos cannot yet show that it puts your past runs in the right order, so its suggestions are closer to guesses.",
+    "min_groups": 8,
+    "min_runs": 20,
+    "n_groups": 30,
+    "n_runs": 30,
+    "ordering": {
+     "plain": "The model put past runs in roughly the right order, but Kalos is not sure that is better than chance.",
+     "state": "unsure"
+    },
+    "range_width": {
+     "code": "bands_narrow",
+     "plain": "The likely range is too narrow: fewer results land inside it than it promises.",
+     "state": "too_narrow"
+    },
+    "reasons": [
+     {
+      "code": "surrogate_spearman",
+      "plain": "The model put past runs in roughly the right order, but Kalos is not sure that is better than chance."
+     }
+    ],
+    "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else.",
+    "state": "not_yet"
+   },
    "visualization_reasons": {
     "correlation": null,
     "embedding": null,
@@ -3265,8 +3798,43 @@
    },
    "best": 5.523,
    "categorical_features": [],
+   "conformal_caveat": {
+    "caveat_code": "coverage_lower_at_proposals",
+    "code": "coverage_not_guaranteed",
+    "coverage_at_proposals_estimate": {
+     "basis": "simulation",
+     "by_scenario": {
+      "bioprocess_n100": 0.83,
+      "bioprocess_n40": 0.79,
+      "hartmann6_n30": 0.68,
+      "hartmann6_n80": 0.765,
+      "heteroscedastic_n40": 0.765
+     },
+     "measured_max": 0.83,
+     "measured_min": 0.68,
+     "nominal": 0.9,
+     "source": {
+      "benchmark": "python -m kalos.bench.coverage_at_proposals",
+      "doc": "VALIDATION.md#interval-coverage-at-proposals",
+      "kind": "simulation",
+      "measurement": "one fresh simulated measurement per proposal",
+      "proposals_per_seed": 5,
+      "results": "benchmarks/results/coverage_at_proposals_before.json",
+      "scenarios": [
+       "hartmann6_n30",
+       "hartmann6_n80",
+       "bioprocess_n40",
+       "bioprocess_n100",
+       "heteroscedastic_n40"
+      ],
+      "seeds_per_scenario": 40
+     }
+    },
+    "coverage_basis": "held_out_past_runs",
+    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 90% range covered only 68-83%."
+   },
    "conformal_coverage": 0.9,
-   "conformal_q": 0.2652,
+   "conformal_q": 0.2975,
    "constraint": {
     "applied": false,
     "column": null,
@@ -3302,8 +3870,8 @@
     "unit": "recipe"
    },
    "cv_ci95": [
-    0.958,
-    1.0
+    0.94,
+    0.999
    ],
    "cv_group_mean_baseline": {
     "interpretation": null,
@@ -3317,18 +3885,51 @@
     "reason": "only 0 recipes have 2+ rows; need at least 5 to compute a group-mean floor",
     "spearman": null
    },
+   "cv_grouping": {
+    "candidates": [
+     {
+      "basis": "replicate_clusters",
+      "ci95": [
+       0.94,
+       0.999
+      ],
+      "column": null,
+      "evaluable": true,
+      "n_groups": 21,
+      "reason": null,
+      "spearman": 0.991,
+      "used": true
+     }
+    ],
+    "min_groups": 3,
+    "n_exact_recipes": 24,
+    "n_replicate_clusters": 21,
+    "replicate_tolerance": 0.05,
+    "rule": "every evaluable grouping (replicate clusters or the declared group, plus batch, lot, plate, date, round and scale columns and campaign rounds) is cross-validated; the lowest held-out Spearman drives cv_spearman, the reliability verdict and the conformal calibration",
+    "used": {
+     "basis": "replicate_clusters",
+     "column": null,
+     "n_groups": 21
+    },
+    "warnings": [
+     {
+      "code": "near_duplicate_recipes_grouped",
+      "message": "24 distinct recipes form 21 groups of near-identical settings (every input within 0.05 of its range). Each group is held out together, so a held-out run never has a near-twin in training. Replicates recorded as run fall in the same group; the replicate noise model still counts exact matches only."
+     }
+    ]
+   },
    "cv_logo": {
     "n_groups": null,
     "n_oof": null,
     "reason": "no declared/detected group column; leave-one-group-out over the recipe-hash fallback would just be a costlier copy of the grouped CV already reported as cv_spearman",
     "spearman": null
    },
-   "cv_n_groups": 24,
+   "cv_n_groups": 21,
    "cv_n_repeats": 2,
-   "cv_spearman": 0.996,
+   "cv_spearman": 0.991,
    "cv_spearman_per_repeat": [
-    0.996,
-    0.991
+    0.991,
+    0.992
    ],
    "cv_topk": {
     "direction": "highest",
@@ -3577,8 +4178,139 @@
    ],
    "interval_method": {
     "calibrated_on": "grouped_cv_oof",
+    "coverage_at_proposals": {
+     "0.9": {
+      "code": "coverage_measured_at_proposals",
+      "coverage_at_proposals_estimate": {
+       "basis": "simulation",
+       "by_scenario": {
+        "bioprocess_n100": 0.99,
+        "bioprocess_n40": 0.92,
+        "hartmann6_n30": 0.935,
+        "hartmann6_n80": 0.94,
+        "heteroscedastic_n40": 0.96
+       },
+       "measured_max": 0.99,
+       "measured_min": 0.92,
+       "nominal": 0.9,
+       "source": {
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "doc": "VALIDATION.md#interval-coverage-at-proposals",
+        "kind": "simulation",
+        "measurement": "one fresh simulated measurement per proposal",
+        "proposals_per_seed": 5,
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
+        "scenarios": [
+         "hartmann6_n30",
+         "hartmann6_n80",
+         "bioprocess_n40",
+         "bioprocess_n100",
+         "heteroscedastic_n40"
+        ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
+        "seeds_per_scenario": 40
+       }
+      },
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+     },
+     "0.95": {
+      "code": "coverage_measured_at_proposals",
+      "coverage_at_proposals_estimate": {
+       "basis": "simulation",
+       "by_scenario": {
+        "bioprocess_n100": 0.995,
+        "bioprocess_n40": 0.965,
+        "hartmann6_n30": 0.97,
+        "hartmann6_n80": 0.97,
+        "heteroscedastic_n40": 0.995
+       },
+       "measured_max": 0.995,
+       "measured_min": 0.965,
+       "nominal": 0.95,
+       "source": {
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "doc": "VALIDATION.md#interval-coverage-at-proposals",
+        "kind": "simulation",
+        "measurement": "one fresh simulated measurement per proposal",
+        "proposals_per_seed": 5,
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
+        "scenarios": [
+         "hartmann6_n30",
+         "hartmann6_n80",
+         "bioprocess_n40",
+         "bioprocess_n100",
+         "heteroscedastic_n40"
+        ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
+        "seeds_per_scenario": 40
+       }
+      },
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+     }
+    },
+    "coverage_basis": "held_out_past_runs",
     "coverage_guarantee": "approximate: out-of-fold scores come from grouped-CV fold models and are not exactly exchangeable with a proposal from the full-data model",
     "empirical_oof_coverage_note": "in-sample: counted on the same scores that set q_norm, so it is >= rank / n by construction; coverage_by_sigma_half shows whether the band adapts to the model's sd",
+    "gp_coverage_at_proposals": {
+     "0.9": {
+      "basis": "simulation",
+      "by_scenario": {
+       "bioprocess_n100": 0.725,
+       "bioprocess_n40": 0.635,
+       "hartmann6_n30": 0.5,
+       "hartmann6_n80": 0.57,
+       "heteroscedastic_n40": 0.53
+      },
+      "measured_max": 0.725,
+      "measured_min": 0.5,
+      "nominal": 0.9,
+      "source": {
+       "benchmark": "python -m kalos.bench.coverage_at_proposals",
+       "doc": "VALIDATION.md#interval-coverage-at-proposals",
+       "kind": "simulation",
+       "measurement": "one fresh simulated measurement per proposal",
+       "proposals_per_seed": 5,
+       "results": "benchmarks/results/coverage_at_proposals_before.json",
+       "scenarios": [
+        "hartmann6_n30",
+        "hartmann6_n80",
+        "bioprocess_n40",
+        "bioprocess_n100",
+        "heteroscedastic_n40"
+       ],
+       "seeds_per_scenario": 40
+      }
+     },
+     "0.95": {
+      "basis": "simulation",
+      "by_scenario": {
+       "bioprocess_n100": 0.775,
+       "bioprocess_n40": 0.655,
+       "hartmann6_n30": 0.525,
+       "hartmann6_n80": 0.61,
+       "heteroscedastic_n40": 0.585
+      },
+      "measured_max": 0.775,
+      "measured_min": 0.525,
+      "nominal": 0.95,
+      "source": {
+       "benchmark": "python -m kalos.bench.coverage_at_proposals",
+       "doc": "VALIDATION.md#interval-coverage-at-proposals",
+       "kind": "simulation",
+       "measurement": "one fresh simulated measurement per proposal",
+       "proposals_per_seed": 5,
+       "results": "benchmarks/results/coverage_at_proposals_before.json",
+       "scenarios": [
+        "hartmann6_n30",
+        "hartmann6_n80",
+        "bioprocess_n40",
+        "bioprocess_n100",
+        "heteroscedastic_n40"
+       ],
+       "seeds_per_scenario": 40
+      }
+     }
+    },
     "gp_posterior": {
      "expected_improvement": "latent mean (no observation noise)",
      "gp_intervals": "observation (latent + observation noise), one new measurement",
@@ -3604,7 +4336,7 @@
       "empirical_oof_coverage": 0.9583,
       "n_calibration": 24,
       "n_inside": 23,
-      "q_norm": 1.6718,
+      "q_norm": 2.0764,
       "rank": 23
      },
      {
@@ -3623,14 +4355,48 @@
       "empirical_oof_coverage": 1.0,
       "n_calibration": 24,
       "n_inside": 24,
-      "q_norm": 1.9533,
+      "q_norm": 2.1124,
       "rank": 24
      }
     ],
-    "method": "conformal_normalized",
+    "method": "conformal_selection_aware",
+    "method_by_level": {
+     "0.9": "conformal_selection_aware",
+     "0.95": "conformal_selection_aware"
+    },
     "n_calibration": 24,
     "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
     "score": "abs(y - mu_oof) / sigma_oof",
+    "selection_aware": {
+     "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+     "coverage_guarantee": "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are correlated; the coverage at proposals is measured in simulation and shipped with the band",
+     "levels": [
+      {
+       "available": true,
+       "coverage": 0.9,
+       "n_pooled": 48,
+       "n_selected": 20,
+       "q_sel": 2.0764,
+       "rank": 19
+      },
+      {
+       "available": true,
+       "coverage": 0.95,
+       "n_pooled": 48,
+       "n_selected": 20,
+       "q_sel": 2.1124,
+       "rank": 20
+      }
+     ],
+     "method": "conformal_selection_aware",
+     "n_pooled": 48,
+     "n_selected": 20,
+     "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+     "selection": "in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the fold model ranked best (highest prediction; lowest when minimizing)",
+     "sigma_floor": 0.1931,
+     "sigma_floor_quantile": 0.9,
+     "top_fraction": 0.3
+    },
     "sigma": "gp_predictive_sd",
     "sigma_source": "surrogate_fitted_noise"
    },
@@ -3690,133 +4456,144 @@
    },
    "oof": [
     [
-     4.769,
-     4.8392
-    ],
-    [
-     5.523,
-     5.3966
-    ],
-    [
-     -0.165,
-     0.2134
-    ],
-    [
-     5.196,
-     5.1334
-    ],
-    [
-     0.196,
-     0.2931
-    ],
-    [
-     -0.51,
-     -0.601
-    ],
-    [
-     -0.762,
-     -0.6934
-    ],
-    [
-     2.879,
-     2.9144
+     5.47,
+     5.3786
     ],
     [
      4.775,
-     4.9145
-    ],
-    [
-     0.94,
-     1.0916
-    ],
-    [
-     1.707,
-     1.5456
-    ],
-    [
-     4.377,
-     4.3454
-    ],
-    [
-     3.949,
-     3.8826
-    ],
-    [
-     2.584,
-     2.4768
-    ],
-    [
-     3.903,
-     3.918
-    ],
-    [
-     3.959,
-     3.8684
-    ],
-    [
-     3.397,
-     3.6111
-    ],
-    [
-     -0.401,
-     -0.4496
-    ],
-    [
-     1.928,
-     1.6677
-    ],
-    [
-     3.791,
-     3.7497
-    ],
-    [
-     5.47,
-     5.383
+     4.9446
     ],
     [
      5.1,
-     5.0824
+     5.1388
+    ],
+    [
+     3.949,
+     3.6984
+    ],
+    [
+     2.584,
+     2.5256
+    ],
+    [
+     -0.51,
+     -0.4821
+    ],
+    [
+     -0.762,
+     -0.5544
+    ],
+    [
+     4.769,
+     4.8819
+    ],
+    [
+     -0.401,
+     -0.3616
+    ],
+    [
+     1.928,
+     1.6231
+    ],
+    [
+     3.959,
+     3.854
+    ],
+    [
+     -0.165,
+     0.1322
     ],
     [
      3.121,
-     3.2207
+     3.21
+    ],
+    [
+     3.791,
+     3.7681
+    ],
+    [
+     3.903,
+     3.9107
+    ],
+    [
+     1.707,
+     1.6382
+    ],
+    [
+     4.377,
+     4.3057
+    ],
+    [
+     5.523,
+     5.4317
+    ],
+    [
+     5.196,
+     5.1287
     ],
     [
      0.038,
-     0.1871
+     0.2047
+    ],
+    [
+     3.397,
+     3.643
+    ],
+    [
+     2.879,
+     2.9341
+    ],
+    [
+     0.94,
+     1.0426
+    ],
+    [
+     0.196,
+     0.0171
     ]
    ],
    "orientation": null,
    "promotion": {
-    "failures": [
-     "ece=0.155 > max 0.15"
-    ],
+    "failures": [],
     "meaning": "passed=false means \"not yet shown fit to promote\", which includes the case where a required metric is unmeasurable on this data (e.g. an all-producer sheet with no non-producers to score feasibility against). It is not a rejection of the analysis.",
     "metrics": {
-     "brier": 0.08740613500436469,
-     "ece": 0.15461512800801303,
-     "feasibility_auc": 0.9375,
-     "surrogate_spearman": 0.9956521739130434
+     "surrogate_spearman": 0.9913043478260868
     },
     "not_judged": [
+     "feasibility_auc: not applicable: too few non-producing runs (4 non-producing runs, need 5)",
+     "ece: not applicable: too few non-producing runs (4 non-producing runs, need 5)",
+     "brier: not applicable: too few non-producing runs (4 non-producing runs, need 5)",
      "group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor"
     ],
-    "passed": false,
-    "summary": "GATES FAILED: ece=0.155 > max 0.15 (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)"
+    "passed": true,
+    "status": "passed",
+    "summary": "ALL GATES PASSED (not judged: feasibility_auc: not applicable: too few non-producing runs (4 non-producing runs, need 5); ece: not applicable: too few non-producing runs (4 non-producing runs, need 5); brier: not applicable: too few non-producing runs (4 non-producing runs, need 5); group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)",
+    "unmeasured": []
    },
    "proposal_features": [
     "Methanol",
     "pH"
    ],
    "proposal_gating": {
-    "feasibility_auc": 0.938,
+    "feasibility_auc": 0.55,
     "gated": false,
     "n_infeasible": 4,
-    "reason": "not zero-inflated enough: n_infeasible=4 < 5",
+    "reason": "not zero-inflated enough: n_infeasible=4 < 5; feasibility CV AUC too low to trust: auc=0.550 < 0.65",
     "threshold": 0.0
    },
    "proposal_notice": null,
    "proposal_optimizer": "continuous",
+   "proposal_trust": {
+    "gated": false,
+    "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+    "n_requested": 5,
+    "n_returned": 5,
+    "reasons": [],
+    "rule": "refused -> proposals withheld; not_yet -> exploration_untrusted; reliable -> trusted",
+    "status": "trusted",
+    "verdict": "reliable",
+    "withheld": false
+   },
    "proposals": [
     {
      "expected_improvement": {
@@ -3834,6 +4611,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 5.7411,
        "lo": 5.3203,
        "method": "gp_posterior",
@@ -3843,6 +4629,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 5.7814,
        "lo": 5.28,
        "method": "gp_posterior",
@@ -3853,25 +4648,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 5.7445,
-       "lo": 5.3168,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 1.6718
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.9316,
+       "lo": 5.1297,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.0764,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 5.7805,
-       "lo": 5.2808,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 1.9533
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.9385,
+       "lo": 5.1228,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1124,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       }
      ],
      "mode": "explore",
@@ -3892,6 +4715,7 @@
      "predictive_std": 0.1279,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 5.3203,
       "p25": 5.4444,
@@ -3906,6 +4730,11 @@
       "pH": 6.237
      },
      "std": 0.068,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       3.74,
       6.237
@@ -3927,6 +4756,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 0.7978,
        "lo": 0.3955,
        "method": "gp_posterior",
@@ -3936,6 +4774,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 0.8363,
        "lo": 0.357,
        "method": "gp_posterior",
@@ -3946,25 +4793,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 0.8011,
-       "lo": 0.3922,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 1.6718
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 0.9976,
+       "lo": 0.1957,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.0764,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 0.8355,
-       "lo": 0.3578,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 1.9533
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 1.0045,
+       "lo": 0.1888,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1124,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       }
      ],
      "mode": "explore",
@@ -3985,6 +4860,7 @@
      "predictive_std": 0.1223,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 0.3955,
       "p25": 0.5142,
@@ -3999,6 +4875,11 @@
       "pH": 5.771
      },
      "std": 0.056,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       0.426,
       5.771
@@ -4020,6 +4901,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 5.735,
        "lo": 5.2747,
        "method": "gp_posterior",
@@ -4029,6 +4919,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 5.7791,
        "lo": 5.2306,
        "method": "gp_posterior",
@@ -4039,25 +4938,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 5.7388,
-       "lo": 5.2709,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 1.6718
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.9058,
+       "lo": 5.1039,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.0764,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 5.7782,
-       "lo": 5.2315,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 1.9533
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.9127,
+       "lo": 5.097,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1124,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       }
      ],
      "mode": "explore",
@@ -4078,6 +5005,7 @@
      "predictive_std": 0.1399,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 5.2747,
       "p25": 5.4105,
@@ -4092,6 +5020,11 @@
       "pH": 6.044
      },
      "std": 0.088,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       3.74,
       6.044
@@ -4113,6 +5046,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.1217,
        "lo": 2.7248,
        "method": "gp_posterior",
@@ -4122,6 +5064,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.1597,
        "lo": 2.6868,
        "method": "gp_posterior",
@@ -4132,25 +5083,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.125,
-       "lo": 2.7216,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 1.6718
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.3242,
+       "lo": 2.5223,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.0764,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.1589,
-       "lo": 2.6876,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 1.9533
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.3311,
+       "lo": 2.5154,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1124,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       }
      ],
      "mode": "explore",
@@ -4171,6 +5150,7 @@
      "predictive_std": 0.1207,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 2.7248,
       "p25": 2.8419,
@@ -4185,6 +5165,11 @@
       "pH": 5.666
      },
      "std": 0.053,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       1.952,
       5.666
@@ -4206,6 +5191,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 0.5995,
        "lo": 0.169,
        "method": "gp_posterior",
@@ -4215,6 +5209,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 0.6408,
        "lo": 0.1278,
        "method": "gp_posterior",
@@ -4225,25 +5228,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 0.6031,
-       "lo": 0.1655,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 1.6718
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 0.7852,
+       "lo": -0.0167,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.0764,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 0.6399,
-       "lo": 0.1286,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 1.9533
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 0.7921,
+       "lo": -0.0236,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.1124,
+       "sigma_floor": 0.1931,
+       "sigma_used": 0.1931
       }
      ],
      "mode": "explore",
@@ -4264,6 +5295,7 @@
      "predictive_std": 0.1309,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 0.169,
       "p25": 0.296,
@@ -4278,6 +5310,11 @@
       "pH": 6.57
      },
      "std": 0.073,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       0.523,
       6.57
@@ -4307,10 +5344,11 @@
      "status": "target"
     }
    ],
+   "refusal": null,
    "reliability": {
     "calibration": {
      "available": true,
-     "ece": 0.0458,
+     "ece": 0.0312,
      "judge_min_n": 20,
      "judgeable": true,
      "judgement": null,
@@ -4320,7 +5358,7 @@
        "nominal": 0.5
       },
       {
-       "empirical": 0.875,
+       "empirical": 0.8333,
        "nominal": 0.8
       },
       {
@@ -4328,31 +5366,35 @@
        "nominal": 0.9
       },
       {
-       "empirical": 1.0,
+       "empirical": 0.9167,
        "nominal": 0.95
       }
      ],
      "n": 24,
      "reason": null,
-     "z_std": 0.8712
+     "z_std": 0.966
     },
     "ci95": [
-     0.958,
-     1.0
+     0.94,
+     0.999
     ],
     "ci_excludes_zero": true,
     "clears_floor": true,
+    "clears_floor_rule": "held-out Spearman >= 0.2 AND the lower end of its 95% interval > 0, judged only with at least 12 runs and 3 CV groups",
+    "judged": true,
     "n_producers": 20,
+    "not_judged_reason": null,
     "producer_clears_floor": true,
-    "producer_spearman": 0.994,
+    "producer_spearman": 0.988,
     "producer_threshold": 0.0,
     "space_filling_advice": null,
-    "spearman": 0.996,
+    "spearman": 0.991,
     "spearman_floor": 0.2,
     "unmodeled": [
      "feasibility probability",
      "scale-up transfer"
-    ]
+    ],
+    "verdict": "clears_floor"
    },
    "response_surface": {
     "fixed_recipe": {
@@ -6099,6 +7141,26 @@
     "schema_version": 1,
     "status": "fail"
    },
+   "verdict": {
+    "code": "reliable",
+    "headline": "Kalos put your past runs in the right order, with enough runs to check the ranking, so its suggestions are worth running.",
+    "min_groups": 8,
+    "min_runs": 20,
+    "n_groups": 21,
+    "n_runs": 24,
+    "ordering": {
+     "plain": "The model put past runs it had not seen in the right order most of the time.",
+     "state": "ok"
+    },
+    "range_width": {
+     "code": "bands_ok",
+     "plain": "The likely range is about the right width.",
+     "state": "ok"
+    },
+    "reasons": [],
+    "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else.",
+    "state": "reliable"
+   },
    "visualization_reasons": {
     "correlation": null,
     "embedding": null,
@@ -6131,6 +7193,41 @@
    "categorical_features": [
     "medium"
    ],
+   "conformal_caveat": {
+    "caveat_code": "coverage_lower_at_proposals",
+    "code": "coverage_not_guaranteed",
+    "coverage_at_proposals_estimate": {
+     "basis": "simulation",
+     "by_scenario": {
+      "bioprocess_n100": 0.83,
+      "bioprocess_n40": 0.79,
+      "hartmann6_n30": 0.68,
+      "hartmann6_n80": 0.765,
+      "heteroscedastic_n40": 0.765
+     },
+     "measured_max": 0.83,
+     "measured_min": 0.68,
+     "nominal": 0.9,
+     "source": {
+      "benchmark": "python -m kalos.bench.coverage_at_proposals",
+      "doc": "VALIDATION.md#interval-coverage-at-proposals",
+      "kind": "simulation",
+      "measurement": "one fresh simulated measurement per proposal",
+      "proposals_per_seed": 5,
+      "results": "benchmarks/results/coverage_at_proposals_before.json",
+      "scenarios": [
+       "hartmann6_n30",
+       "hartmann6_n80",
+       "bioprocess_n40",
+       "bioprocess_n100",
+       "heteroscedastic_n40"
+      ],
+      "seeds_per_scenario": 40
+     }
+    },
+    "coverage_basis": "held_out_past_runs",
+    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 90% range covered only 68-83%."
+   },
    "conformal_coverage": 0.9,
    "conformal_q": 0.2267,
    "constraint": {
@@ -6182,6 +7279,34 @@
     "n_groups_used": 0,
     "reason": "only 0 recipes have 2+ rows; need at least 5 to compute a group-mean floor",
     "spearman": null
+   },
+   "cv_grouping": {
+    "candidates": [
+     {
+      "basis": "replicate_clusters",
+      "ci95": [
+       0.813,
+       0.983
+      ],
+      "column": null,
+      "evaluable": true,
+      "n_groups": 24,
+      "reason": null,
+      "spearman": 0.943,
+      "used": true
+     }
+    ],
+    "min_groups": 3,
+    "n_exact_recipes": 24,
+    "n_replicate_clusters": 24,
+    "replicate_tolerance": 0.05,
+    "rule": "every evaluable grouping (replicate clusters or the declared group, plus batch, lot, plate, date, round and scale columns and campaign rounds) is cross-validated; the lowest held-out Spearman drives cv_spearman, the reliability verdict and the conformal calibration",
+    "used": {
+     "basis": "replicate_clusters",
+     "column": null,
+     "n_groups": 24
+    },
+    "warnings": []
    },
    "cv_logo": {
     "n_groups": null,
@@ -6421,8 +7546,139 @@
    ],
    "interval_method": {
     "calibrated_on": "grouped_cv_oof",
+    "coverage_at_proposals": {
+     "0.9": {
+      "code": "coverage_measured_at_proposals",
+      "coverage_at_proposals_estimate": {
+       "basis": "simulation",
+       "by_scenario": {
+        "bioprocess_n100": 0.99,
+        "bioprocess_n40": 0.92,
+        "hartmann6_n30": 0.935,
+        "hartmann6_n80": 0.94,
+        "heteroscedastic_n40": 0.96
+       },
+       "measured_max": 0.99,
+       "measured_min": 0.92,
+       "nominal": 0.9,
+       "source": {
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "doc": "VALIDATION.md#interval-coverage-at-proposals",
+        "kind": "simulation",
+        "measurement": "one fresh simulated measurement per proposal",
+        "proposals_per_seed": 5,
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
+        "scenarios": [
+         "hartmann6_n30",
+         "hartmann6_n80",
+         "bioprocess_n40",
+         "bioprocess_n100",
+         "heteroscedastic_n40"
+        ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
+        "seeds_per_scenario": 40
+       }
+      },
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+     },
+     "0.95": {
+      "code": "coverage_measured_at_proposals",
+      "coverage_at_proposals_estimate": {
+       "basis": "simulation",
+       "by_scenario": {
+        "bioprocess_n100": 0.995,
+        "bioprocess_n40": 0.965,
+        "hartmann6_n30": 0.97,
+        "hartmann6_n80": 0.97,
+        "heteroscedastic_n40": 0.995
+       },
+       "measured_max": 0.995,
+       "measured_min": 0.965,
+       "nominal": 0.95,
+       "source": {
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "doc": "VALIDATION.md#interval-coverage-at-proposals",
+        "kind": "simulation",
+        "measurement": "one fresh simulated measurement per proposal",
+        "proposals_per_seed": 5,
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
+        "scenarios": [
+         "hartmann6_n30",
+         "hartmann6_n80",
+         "bioprocess_n40",
+         "bioprocess_n100",
+         "heteroscedastic_n40"
+        ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
+        "seeds_per_scenario": 40
+       }
+      },
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+     }
+    },
+    "coverage_basis": "held_out_past_runs",
     "coverage_guarantee": "approximate: out-of-fold scores come from grouped-CV fold models and are not exactly exchangeable with a proposal from the full-data model",
     "empirical_oof_coverage_note": "in-sample: counted on the same scores that set q_norm, so it is >= rank / n by construction; coverage_by_sigma_half shows whether the band adapts to the model's sd",
+    "gp_coverage_at_proposals": {
+     "0.9": {
+      "basis": "simulation",
+      "by_scenario": {
+       "bioprocess_n100": 0.725,
+       "bioprocess_n40": 0.635,
+       "hartmann6_n30": 0.5,
+       "hartmann6_n80": 0.57,
+       "heteroscedastic_n40": 0.53
+      },
+      "measured_max": 0.725,
+      "measured_min": 0.5,
+      "nominal": 0.9,
+      "source": {
+       "benchmark": "python -m kalos.bench.coverage_at_proposals",
+       "doc": "VALIDATION.md#interval-coverage-at-proposals",
+       "kind": "simulation",
+       "measurement": "one fresh simulated measurement per proposal",
+       "proposals_per_seed": 5,
+       "results": "benchmarks/results/coverage_at_proposals_before.json",
+       "scenarios": [
+        "hartmann6_n30",
+        "hartmann6_n80",
+        "bioprocess_n40",
+        "bioprocess_n100",
+        "heteroscedastic_n40"
+       ],
+       "seeds_per_scenario": 40
+      }
+     },
+     "0.95": {
+      "basis": "simulation",
+      "by_scenario": {
+       "bioprocess_n100": 0.775,
+       "bioprocess_n40": 0.655,
+       "hartmann6_n30": 0.525,
+       "hartmann6_n80": 0.61,
+       "heteroscedastic_n40": 0.585
+      },
+      "measured_max": 0.775,
+      "measured_min": 0.525,
+      "nominal": 0.95,
+      "source": {
+       "benchmark": "python -m kalos.bench.coverage_at_proposals",
+       "doc": "VALIDATION.md#interval-coverage-at-proposals",
+       "kind": "simulation",
+       "measurement": "one fresh simulated measurement per proposal",
+       "proposals_per_seed": 5,
+       "results": "benchmarks/results/coverage_at_proposals_before.json",
+       "scenarios": [
+        "hartmann6_n30",
+        "hartmann6_n80",
+        "bioprocess_n40",
+        "bioprocess_n100",
+        "heteroscedastic_n40"
+       ],
+       "seeds_per_scenario": 40
+      }
+     }
+    },
     "gp_posterior": {
      "expected_improvement": "latent mean (no observation noise)",
      "gp_intervals": "observation (latent + observation noise), one new measurement",
@@ -6471,10 +7727,44 @@
       "rank": 24
      }
     ],
-    "method": "conformal_normalized",
+    "method": "conformal_selection_aware",
+    "method_by_level": {
+     "0.9": "conformal_selection_aware",
+     "0.95": "conformal_selection_aware"
+    },
     "n_calibration": 24,
     "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
     "score": "abs(y - mu_oof) / sigma_oof",
+    "selection_aware": {
+     "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+     "coverage_guarantee": "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are correlated; the coverage at proposals is measured in simulation and shipped with the band",
+     "levels": [
+      {
+       "available": true,
+       "coverage": 0.9,
+       "n_pooled": 48,
+       "n_selected": 20,
+       "q_sel": 4.9815,
+       "rank": 19
+      },
+      {
+       "available": true,
+       "coverage": 0.95,
+       "n_pooled": 48,
+       "n_selected": 20,
+       "q_sel": 5.0188,
+       "rank": 20
+      }
+     ],
+     "method": "conformal_selection_aware",
+     "n_pooled": 48,
+     "n_selected": 20,
+     "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+     "selection": "in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the fold model ranked best (highest prediction; lowest when minimizing)",
+     "sigma_floor": 0.1534,
+     "sigma_floor_quantile": 0.9,
+     "top_fraction": 0.3
+    },
     "sigma": "gp_predictive_sd",
     "sigma_source": "surrogate_fitted_noise"
    },
@@ -6639,20 +7929,21 @@
    ],
    "orientation": null,
    "promotion": {
-    "failures": [
-     "feasibility_auc missing/NaN (unmeasured)",
-     "ece missing/NaN (unmeasured)",
-     "brier missing/NaN (unmeasured)"
-    ],
+    "failures": [],
     "meaning": "passed=false means \"not yet shown fit to promote\", which includes the case where a required metric is unmeasurable on this data (e.g. an all-producer sheet with no non-producers to score feasibility against). It is not a rejection of the analysis.",
     "metrics": {
      "surrogate_spearman": 0.9426086956521739
     },
     "not_judged": [
+     "feasibility_auc: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
+     "ece: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
+     "brier: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
      "group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor"
     ],
-    "passed": false,
-    "summary": "GATES FAILED: feasibility_auc missing/NaN (unmeasured); ece missing/NaN (unmeasured); brier missing/NaN (unmeasured) (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)"
+    "passed": true,
+    "status": "passed",
+    "summary": "ALL GATES PASSED (not judged: feasibility_auc: not applicable: too few non-producing runs (0 non-producing runs, need 5); ece: not applicable: too few non-producing runs (0 non-producing runs, need 5); brier: not applicable: too few non-producing runs (0 non-producing runs, need 5); group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)",
+    "unmeasured": []
    },
    "proposal_features": [
     "temp_C",
@@ -6667,6 +7958,17 @@
    },
    "proposal_notice": null,
    "proposal_optimizer": "mixed_exact",
+   "proposal_trust": {
+    "gated": false,
+    "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+    "n_requested": 5,
+    "n_returned": 5,
+    "reasons": [],
+    "rule": "refused -> proposals withheld; not_yet -> exploration_untrusted; reliable -> trusted",
+    "status": "trusted",
+    "verdict": "reliable",
+    "withheld": false
+   },
    "proposals": [
     {
      "expected_improvement": {
@@ -6684,6 +7986,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.1909,
        "lo": 2.7624,
        "method": "gp_posterior",
@@ -6693,6 +8004,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.2319,
        "lo": 2.7214,
        "method": "gp_posterior",
@@ -6703,25 +8023,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.6303,
-       "lo": 2.323,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.0188
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.741,
+       "lo": 2.2123,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 4.9815,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.7412,
-       "lo": 2.2121,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.8701
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7468,
+       "lo": 2.2066,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.0188,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       }
      ],
      "mode": "explore",
@@ -6742,6 +8090,7 @@
      "predictive_std": 0.1302,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 2.7624,
       "p25": 2.8888,
@@ -6757,6 +8106,11 @@
       "temp_C": 36.88
      },
      "std": 0.111,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       36.88,
       6.811
@@ -6778,6 +8132,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.1716,
        "lo": 2.7881,
        "method": "gp_posterior",
@@ -6787,6 +8150,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.2083,
        "lo": 2.7513,
        "method": "gp_posterior",
@@ -6797,25 +8169,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.5649,
-       "lo": 2.3947,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.0188
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7442,
+       "lo": 2.2155,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 4.9815,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.6642,
-       "lo": 2.2955,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.8701
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7499,
+       "lo": 2.2098,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.0188,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       }
      ],
      "mode": "explore",
@@ -6836,6 +8236,7 @@
      "predictive_std": 0.1166,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 2.7881,
       "p25": 2.9012,
@@ -6851,6 +8252,11 @@
       "temp_C": 33.16
      },
      "std": 0.094,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       33.16,
       7.181
@@ -6872,6 +8278,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.1891,
        "lo": 2.755,
        "method": "gp_posterior",
@@ -6881,6 +8296,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.2307,
        "lo": 2.7134,
        "method": "gp_posterior",
@@ -6891,25 +8315,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.6345,
-       "lo": 2.3096,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.0188
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7364,
+       "lo": 2.2077,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 4.9815,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.7468,
-       "lo": 2.1973,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.8701
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7421,
+       "lo": 2.202,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.0188,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       }
      ],
      "mode": "explore",
@@ -6930,6 +8382,7 @@
      "predictive_std": 0.132,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 2.755,
       "p25": 2.883,
@@ -6945,6 +8398,11 @@
       "temp_C": 33.16
      },
      "std": 0.113,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       33.16,
       6.811
@@ -6966,6 +8424,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.1563,
        "lo": 2.8205,
        "method": "gp_posterior",
@@ -6975,6 +8442,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.1885,
        "lo": 2.7883,
        "method": "gp_posterior",
@@ -6985,25 +8461,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.5008,
-       "lo": 2.476,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.0188
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7528,
+       "lo": 2.224,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 4.9815,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.5877,
-       "lo": 2.3891,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.8701
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7585,
+       "lo": 2.2183,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.0188,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       }
      ],
      "mode": "explore",
@@ -7024,6 +8528,7 @@
      "predictive_std": 0.1021,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 2.8205,
       "p25": 2.9195,
@@ -7039,6 +8544,11 @@
       "temp_C": 33.16
      },
      "std": 0.076,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       33.16,
       6.874
@@ -7060,6 +8570,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.1588,
        "lo": 2.8245,
        "method": "gp_posterior",
@@ -7069,6 +8588,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.1909,
        "lo": 2.7925,
        "method": "gp_posterior",
@@ -7079,25 +8607,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.5017,
-       "lo": 2.4816,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.0188
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.756,
+       "lo": 2.2273,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 4.9815,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.5883,
-       "lo": 2.3951,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 5.8701
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7617,
+       "lo": 2.2216,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 5.0188,
+       "sigma_floor": 0.1534,
+       "sigma_used": 0.1534
       }
      ],
      "mode": "explore",
@@ -7118,6 +8674,7 @@
      "predictive_std": 0.1016,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 2.8245,
       "p25": 2.9231,
@@ -7133,6 +8690,11 @@
       "temp_C": 36.88
      },
      "std": 0.075,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       36.88,
       6.864
@@ -7169,6 +8731,7 @@
      "status": "target"
     }
    ],
+   "refusal": null,
    "reliability": {
     "calibration": {
      "available": true,
@@ -7204,7 +8767,10 @@
     ],
     "ci_excludes_zero": true,
     "clears_floor": true,
+    "clears_floor_rule": "held-out Spearman >= 0.2 AND the lower end of its 95% interval > 0, judged only with at least 12 runs and 3 CV groups",
+    "judged": true,
     "n_producers": 24,
+    "not_judged_reason": null,
     "producer_clears_floor": true,
     "producer_spearman": 0.943,
     "producer_threshold": 0.0,
@@ -7214,7 +8780,8 @@
     "unmodeled": [
      "feasibility probability",
      "scale-up transfer"
-    ]
+    ],
+    "verdict": "clears_floor"
    },
    "response_surface": {
     "fixed_recipe": {
@@ -8939,6 +10506,26 @@
     "schema_version": 1,
     "status": "pass_with_warnings"
    },
+   "verdict": {
+    "code": "reliable",
+    "headline": "Kalos put your past runs in the right order, with enough runs to check the ranking, so its suggestions are worth running.",
+    "min_groups": 8,
+    "min_runs": 20,
+    "n_groups": 24,
+    "n_runs": 24,
+    "ordering": {
+     "plain": "The model put past runs it had not seen in the right order most of the time.",
+     "state": "ok"
+    },
+    "range_width": {
+     "code": "bands_narrow",
+     "plain": "The likely range is too narrow: fewer results land inside it than it promises.",
+     "state": "too_narrow"
+    },
+    "reasons": [],
+    "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else.",
+    "state": "reliable"
+   },
    "visualization_reasons": {
     "correlation": null,
     "embedding": null,
@@ -8967,6 +10554,41 @@
    },
    "best": 3.258,
    "categorical_features": [],
+   "conformal_caveat": {
+    "caveat_code": "coverage_lower_at_proposals",
+    "code": "coverage_not_guaranteed",
+    "coverage_at_proposals_estimate": {
+     "basis": "simulation",
+     "by_scenario": {
+      "bioprocess_n100": 0.83,
+      "bioprocess_n40": 0.79,
+      "hartmann6_n30": 0.68,
+      "hartmann6_n80": 0.765,
+      "heteroscedastic_n40": 0.765
+     },
+     "measured_max": 0.83,
+     "measured_min": 0.68,
+     "nominal": 0.9,
+     "source": {
+      "benchmark": "python -m kalos.bench.coverage_at_proposals",
+      "doc": "VALIDATION.md#interval-coverage-at-proposals",
+      "kind": "simulation",
+      "measurement": "one fresh simulated measurement per proposal",
+      "proposals_per_seed": 5,
+      "results": "benchmarks/results/coverage_at_proposals_before.json",
+      "scenarios": [
+       "hartmann6_n30",
+       "hartmann6_n80",
+       "bioprocess_n40",
+       "bioprocess_n100",
+       "heteroscedastic_n40"
+      ],
+      "seeds_per_scenario": 40
+     }
+    },
+    "coverage_basis": "held_out_past_runs",
+    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 90% range covered only 68-83%."
+   },
    "conformal_coverage": 0.9,
    "conformal_q": 1.0866,
    "constraint": {
@@ -9027,6 +10649,34 @@
     "n_groups_used": 12,
     "reason": null,
     "spearman": 0.927
+   },
+   "cv_grouping": {
+    "candidates": [
+     {
+      "basis": "replicate_clusters",
+      "ci95": [
+       0.366,
+       0.952
+      ],
+      "column": null,
+      "evaluable": true,
+      "n_groups": 12,
+      "reason": null,
+      "spearman": 0.771,
+      "used": true
+     }
+    ],
+    "min_groups": 3,
+    "n_exact_recipes": 12,
+    "n_replicate_clusters": 12,
+    "replicate_tolerance": 0.05,
+    "rule": "every evaluable grouping (replicate clusters or the declared group, plus batch, lot, plate, date, round and scale columns and campaign rounds) is cross-validated; the lowest held-out Spearman drives cv_spearman, the reliability verdict and the conformal calibration",
+    "used": {
+     "basis": "replicate_clusters",
+     "column": null,
+     "n_groups": 12
+    },
+    "warnings": []
    },
    "cv_logo": {
     "n_groups": null,
@@ -9288,8 +10938,139 @@
    ],
    "interval_method": {
     "calibrated_on": "grouped_cv_oof",
+    "coverage_at_proposals": {
+     "0.9": {
+      "code": "coverage_measured_at_proposals",
+      "coverage_at_proposals_estimate": {
+       "basis": "simulation",
+       "by_scenario": {
+        "bioprocess_n100": 0.99,
+        "bioprocess_n40": 0.92,
+        "hartmann6_n30": 0.935,
+        "hartmann6_n80": 0.94,
+        "heteroscedastic_n40": 0.96
+       },
+       "measured_max": 0.99,
+       "measured_min": 0.92,
+       "nominal": 0.9,
+       "source": {
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "doc": "VALIDATION.md#interval-coverage-at-proposals",
+        "kind": "simulation",
+        "measurement": "one fresh simulated measurement per proposal",
+        "proposals_per_seed": 5,
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
+        "scenarios": [
+         "hartmann6_n30",
+         "hartmann6_n80",
+         "bioprocess_n40",
+         "bioprocess_n100",
+         "heteroscedastic_n40"
+        ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
+        "seeds_per_scenario": 40
+       }
+      },
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+     },
+     "0.95": {
+      "code": "coverage_measured_at_proposals",
+      "coverage_at_proposals_estimate": {
+       "basis": "simulation",
+       "by_scenario": {
+        "bioprocess_n100": 0.995,
+        "bioprocess_n40": 0.965,
+        "hartmann6_n30": 0.97,
+        "hartmann6_n80": 0.97,
+        "heteroscedastic_n40": 0.995
+       },
+       "measured_max": 0.995,
+       "measured_min": 0.965,
+       "nominal": 0.95,
+       "source": {
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "doc": "VALIDATION.md#interval-coverage-at-proposals",
+        "kind": "simulation",
+        "measurement": "one fresh simulated measurement per proposal",
+        "proposals_per_seed": 5,
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
+        "scenarios": [
+         "hartmann6_n30",
+         "hartmann6_n80",
+         "bioprocess_n40",
+         "bioprocess_n100",
+         "heteroscedastic_n40"
+        ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
+        "seeds_per_scenario": 40
+       }
+      },
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+     }
+    },
+    "coverage_basis": "held_out_past_runs",
     "coverage_guarantee": "approximate: out-of-fold scores come from grouped-CV fold models and are not exactly exchangeable with a proposal from the full-data model",
     "empirical_oof_coverage_note": "in-sample: counted on the same scores that set q_norm, so it is >= rank / n by construction; coverage_by_sigma_half shows whether the band adapts to the model's sd",
+    "gp_coverage_at_proposals": {
+     "0.9": {
+      "basis": "simulation",
+      "by_scenario": {
+       "bioprocess_n100": 0.725,
+       "bioprocess_n40": 0.635,
+       "hartmann6_n30": 0.5,
+       "hartmann6_n80": 0.57,
+       "heteroscedastic_n40": 0.53
+      },
+      "measured_max": 0.725,
+      "measured_min": 0.5,
+      "nominal": 0.9,
+      "source": {
+       "benchmark": "python -m kalos.bench.coverage_at_proposals",
+       "doc": "VALIDATION.md#interval-coverage-at-proposals",
+       "kind": "simulation",
+       "measurement": "one fresh simulated measurement per proposal",
+       "proposals_per_seed": 5,
+       "results": "benchmarks/results/coverage_at_proposals_before.json",
+       "scenarios": [
+        "hartmann6_n30",
+        "hartmann6_n80",
+        "bioprocess_n40",
+        "bioprocess_n100",
+        "heteroscedastic_n40"
+       ],
+       "seeds_per_scenario": 40
+      }
+     },
+     "0.95": {
+      "basis": "simulation",
+      "by_scenario": {
+       "bioprocess_n100": 0.775,
+       "bioprocess_n40": 0.655,
+       "hartmann6_n30": 0.525,
+       "hartmann6_n80": 0.61,
+       "heteroscedastic_n40": 0.585
+      },
+      "measured_max": 0.775,
+      "measured_min": 0.525,
+      "nominal": 0.95,
+      "source": {
+       "benchmark": "python -m kalos.bench.coverage_at_proposals",
+       "doc": "VALIDATION.md#interval-coverage-at-proposals",
+       "kind": "simulation",
+       "measurement": "one fresh simulated measurement per proposal",
+       "proposals_per_seed": 5,
+       "results": "benchmarks/results/coverage_at_proposals_before.json",
+       "scenarios": [
+        "hartmann6_n30",
+        "hartmann6_n80",
+        "bioprocess_n40",
+        "bioprocess_n100",
+        "heteroscedastic_n40"
+       ],
+       "seeds_per_scenario": 40
+      }
+     }
+    },
     "gp_posterior": {
      "expected_improvement": "latent mean (no observation noise)",
      "gp_intervals": "observation (latent + observation noise), one new measurement",
@@ -9338,10 +11119,44 @@
       "rank": 24
      }
     ],
-    "method": "conformal_normalized",
+    "method": "conformal_selection_aware",
+    "method_by_level": {
+     "0.9": "conformal_selection_aware",
+     "0.95": "conformal_selection_aware"
+    },
     "n_calibration": 24,
     "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
     "score": "abs(y - mu_oof) / sigma_oof",
+    "selection_aware": {
+     "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+     "coverage_guarantee": "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are correlated; the coverage at proposals is measured in simulation and shipped with the band",
+     "levels": [
+      {
+       "available": true,
+       "coverage": 0.9,
+       "n_pooled": 48,
+       "n_selected": 20,
+       "q_sel": 1.6742,
+       "rank": 19
+      },
+      {
+       "available": true,
+       "coverage": 0.95,
+       "n_pooled": 48,
+       "n_selected": 20,
+       "q_sel": 3.5334,
+       "rank": 20
+      }
+     ],
+     "method": "conformal_selection_aware",
+     "n_pooled": 48,
+     "n_selected": 20,
+     "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+     "selection": "in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the fold model ranked best (highest prediction; lowest when minimizing)",
+     "sigma_floor": 0.3572,
+     "sigma_floor_quantile": 0.9,
+     "top_fraction": 0.3
+    },
     "sigma": "gp_predictive_sd",
     "sigma_source": "latent_plus_assay_noise_floor"
    },
@@ -9500,9 +11315,6 @@
    "orientation": null,
    "promotion": {
     "failures": [
-     "feasibility_auc missing/NaN (unmeasured)",
-     "ece missing/NaN (unmeasured)",
-     "brier missing/NaN (unmeasured)",
      "surrogate does not beat the group-mean floor: paired difference -0.1562 with 95% CI lower bound -0.5941 <= 0"
     ],
     "meaning": "passed=false means \"not yet shown fit to promote\", which includes the case where a required metric is unmeasurable on this data (e.g. an all-producer sheet with no non-producers to score feasibility against). It is not a rejection of the analysis.",
@@ -9510,9 +11322,15 @@
      "group_mean_margin_ci_lo": -0.5941,
      "surrogate_spearman": 0.7707088262513022
     },
-    "not_judged": [],
+    "not_judged": [
+     "feasibility_auc: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
+     "ece: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
+     "brier: not applicable: too few non-producing runs (0 non-producing runs, need 5)"
+    ],
     "passed": false,
-    "summary": "GATES FAILED: feasibility_auc missing/NaN (unmeasured); ece missing/NaN (unmeasured); brier missing/NaN (unmeasured); surrogate does not beat the group-mean floor: paired difference -0.1562 with 95% CI lower bound -0.5941 <= 0"
+    "status": "failed",
+    "summary": "GATES FAILED: surrogate does not beat the group-mean floor: paired difference -0.1562 with 95% CI lower bound -0.5941 <= 0 (not judged: feasibility_auc: not applicable: too few non-producing runs (0 non-producing runs, need 5); ece: not applicable: too few non-producing runs (0 non-producing runs, need 5); brier: not applicable: too few non-producing runs (0 non-producing runs, need 5))",
+    "unmeasured": []
    },
    "proposal_features": [
     "feed_pct",
@@ -9527,6 +11345,17 @@
    },
    "proposal_notice": null,
    "proposal_optimizer": "continuous",
+   "proposal_trust": {
+    "gated": false,
+    "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+    "n_requested": 5,
+    "n_returned": 5,
+    "reasons": [],
+    "rule": "refused -> proposals withheld; not_yet -> exploration_untrusted; reliable -> trusted",
+    "status": "trusted",
+    "verdict": "reliable",
+    "withheld": false
+   },
    "proposals": [
     {
      "expected_improvement": {
@@ -9544,6 +11373,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.4251,
        "lo": 2.8191,
        "method": "gp_posterior",
@@ -9553,6 +11391,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.4832,
        "lo": 2.761,
        "method": "gp_posterior",
@@ -9563,25 +11410,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.5515,
-       "lo": 2.6927,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.3307
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7202,
+       "lo": 2.524,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 1.6742,
+       "sigma_floor": 0.3572,
+       "sigma_used": 0.3572
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.7731,
-       "lo": 2.4711,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 3.5334
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 4.3843,
+       "lo": 1.8599,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 3.5334,
+       "sigma_floor": 0.3572,
+       "sigma_used": 0.3572
       }
      ],
      "mode": "explore",
@@ -9602,6 +11477,7 @@
      "predictive_std": 0.1842,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 2.8191,
       "p25": 2.9978,
@@ -9616,6 +11492,11 @@
       "pH": 7.24
      },
      "std": 0.107,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       5.87,
       7.24
@@ -9637,6 +11518,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.3646,
        "lo": 2.7881,
        "method": "gp_posterior",
@@ -9646,6 +11536,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.4198,
        "lo": 2.7329,
        "method": "gp_posterior",
@@ -9656,25 +11555,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.4848,
-       "lo": 2.6679,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.3307
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.6745,
+       "lo": 2.4783,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 1.6742,
+       "sigma_floor": 0.3572,
+       "sigma_used": 0.3572
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.6956,
-       "lo": 2.4572,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 3.5334
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 4.3386,
+       "lo": 1.8141,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 3.5334,
+       "sigma_floor": 0.3572,
+       "sigma_used": 0.3572
       }
      ],
      "mode": "explore",
@@ -9695,6 +11622,7 @@
      "predictive_std": 0.1752,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 2.7881,
       "p25": 2.9582,
@@ -9709,6 +11637,11 @@
       "pH": 7.24
      },
      "std": 0.09,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       5.537,
       7.24
@@ -9730,6 +11663,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 2.8134,
        "lo": 2.287,
        "method": "gp_posterior",
@@ -9739,6 +11681,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 2.8639,
        "lo": 2.2366,
        "method": "gp_posterior",
@@ -9749,25 +11700,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 2.9232,
-       "lo": 2.1773,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.3307
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.1483,
+       "lo": 1.9521,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 1.6742,
+       "sigma_floor": 0.3572,
+       "sigma_used": 0.3572
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.1156,
-       "lo": 1.9848,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 3.5334
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.8125,
+       "lo": 1.288,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 3.5334,
+       "sigma_floor": 0.3572,
+       "sigma_used": 0.3572
       }
      ],
      "mode": "explore",
@@ -9788,6 +11767,7 @@
      "predictive_std": 0.16,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 2.287,
       "p25": 2.4423,
@@ -9802,6 +11782,11 @@
       "pH": 6.778
      },
      "std": 0.055,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       4.03,
       6.778
@@ -9823,6 +11808,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 2.9368,
        "lo": 2.4009,
        "method": "gp_posterior",
@@ -9832,6 +11826,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 2.9881,
        "lo": 2.3496,
        "method": "gp_posterior",
@@ -9842,25 +11845,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.0485,
-       "lo": 2.2892,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.3307
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.2669,
+       "lo": 2.0708,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 1.6742,
+       "sigma_floor": 0.3572,
+       "sigma_used": 0.3572
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.2444,
-       "lo": 2.0933,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 3.5334
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.9311,
+       "lo": 1.4066,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 3.5334,
+       "sigma_floor": 0.3572,
+       "sigma_used": 0.3572
       }
      ],
      "mode": "explore",
@@ -9881,6 +11912,7 @@
      "predictive_std": 0.1629,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 2.4009,
       "p25": 2.559,
@@ -9895,6 +11927,11 @@
       "pH": 6.74
      },
      "std": 0.063,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       4.378,
       6.74
@@ -9916,6 +11953,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.3913,
        "lo": 2.8399,
        "method": "gp_posterior",
@@ -9925,6 +11971,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.4441,
        "lo": 2.7871,
        "method": "gp_posterior",
@@ -9935,25 +11990,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.5062,
-       "lo": 2.725,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.3307
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 3.7137,
+       "lo": 2.5175,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 1.6742,
+       "sigma_floor": 0.3572,
+       "sigma_used": 0.3572
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.7078,
-       "lo": 2.5234,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 3.5334
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 4.3778,
+       "lo": 1.8534,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 3.5334,
+       "sigma_floor": 0.3572,
+       "sigma_used": 0.3572
       }
      ],
      "mode": "explore",
@@ -9974,6 +12057,7 @@
      "predictive_std": 0.1676,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 2.8399,
       "p25": 3.0026,
@@ -9988,6 +12072,11 @@
       "pH": 6.961
      },
      "std": 0.074,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       5.87,
       6.961
@@ -10017,6 +12106,7 @@
      "status": "target"
     }
    ],
+   "refusal": null,
    "reliability": {
     "calibration": {
      "available": true,
@@ -10052,7 +12142,10 @@
     ],
     "ci_excludes_zero": true,
     "clears_floor": true,
+    "clears_floor_rule": "held-out Spearman >= 0.2 AND the lower end of its 95% interval > 0, judged only with at least 12 runs and 3 CV groups",
+    "judged": true,
     "n_producers": 24,
+    "not_judged_reason": null,
     "producer_clears_floor": true,
     "producer_spearman": 0.771,
     "producer_threshold": 0.0,
@@ -10062,7 +12155,8 @@
     "unmodeled": [
      "feasibility probability",
      "scale-up transfer"
-    ]
+    ],
+    "verdict": "clears_floor"
    },
    "response_surface": {
     "fixed_recipe": {
@@ -11744,6 +13838,26 @@
     "schema_version": 1,
     "status": "pass_with_warnings"
    },
+   "verdict": {
+    "code": "reliable",
+    "headline": "Kalos put your past runs in the right order, with enough runs to check the ranking, so its suggestions are worth running.",
+    "min_groups": 8,
+    "min_runs": 20,
+    "n_groups": 12,
+    "n_runs": 24,
+    "ordering": {
+     "plain": "The model put past runs it had not seen in the right order most of the time.",
+     "state": "ok"
+    },
+    "range_width": {
+     "code": "bands_narrow",
+     "plain": "The likely range is too narrow: fewer results land inside it than it promises.",
+     "state": "too_narrow"
+    },
+    "reasons": [],
+    "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else.",
+    "state": "reliable"
+   },
    "visualization_reasons": {
     "correlation": null,
     "embedding": null,
@@ -11772,6 +13886,41 @@
    },
    "best": 5.615,
    "categorical_features": [],
+   "conformal_caveat": {
+    "caveat_code": "coverage_lower_at_proposals",
+    "code": "coverage_not_guaranteed",
+    "coverage_at_proposals_estimate": {
+     "basis": "simulation",
+     "by_scenario": {
+      "bioprocess_n100": 0.83,
+      "bioprocess_n40": 0.79,
+      "hartmann6_n30": 0.68,
+      "hartmann6_n80": 0.765,
+      "heteroscedastic_n40": 0.765
+     },
+     "measured_max": 0.83,
+     "measured_min": 0.68,
+     "nominal": 0.9,
+     "source": {
+      "benchmark": "python -m kalos.bench.coverage_at_proposals",
+      "doc": "VALIDATION.md#interval-coverage-at-proposals",
+      "kind": "simulation",
+      "measurement": "one fresh simulated measurement per proposal",
+      "proposals_per_seed": 5,
+      "results": "benchmarks/results/coverage_at_proposals_before.json",
+      "scenarios": [
+       "hartmann6_n30",
+       "hartmann6_n80",
+       "bioprocess_n40",
+       "bioprocess_n100",
+       "heteroscedastic_n40"
+      ],
+      "seeds_per_scenario": 40
+     }
+    },
+    "coverage_basis": "held_out_past_runs",
+    "message": "The +/- conformal_q band's coverage was measured on held-out past runs. It is not guaranteed for proposals, especially those far from the data or at the box edge. Proposals are chosen for high predicted values, so coverage at proposed recipes is lower: in simulation this 90% range covered only 68-83%."
+   },
    "conformal_coverage": 0.9,
    "conformal_q": 0.8913,
    "constraint": {
@@ -11833,6 +13982,34 @@
     "n_groups_used": 0,
     "reason": "only 0 recipes have 2+ rows; need at least 5 to compute a group-mean floor",
     "spearman": null
+   },
+   "cv_grouping": {
+    "candidates": [
+     {
+      "basis": "replicate_clusters",
+      "ci95": [
+       0.891,
+       0.99
+      ],
+      "column": null,
+      "evaluable": true,
+      "n_groups": 24,
+      "reason": null,
+      "spearman": 0.971,
+      "used": true
+     }
+    ],
+    "min_groups": 3,
+    "n_exact_recipes": 24,
+    "n_replicate_clusters": 24,
+    "replicate_tolerance": 0.05,
+    "rule": "every evaluable grouping (replicate clusters or the declared group, plus batch, lot, plate, date, round and scale columns and campaign rounds) is cross-validated; the lowest held-out Spearman drives cv_spearman, the reliability verdict and the conformal calibration",
+    "used": {
+     "basis": "replicate_clusters",
+     "column": null,
+     "n_groups": 24
+    },
+    "warnings": []
    },
    "cv_logo": {
     "n_groups": null,
@@ -12123,8 +14300,139 @@
    ],
    "interval_method": {
     "calibrated_on": "grouped_cv_oof",
+    "coverage_at_proposals": {
+     "0.9": {
+      "code": "coverage_measured_at_proposals",
+      "coverage_at_proposals_estimate": {
+       "basis": "simulation",
+       "by_scenario": {
+        "bioprocess_n100": 0.99,
+        "bioprocess_n40": 0.92,
+        "hartmann6_n30": 0.935,
+        "hartmann6_n80": 0.94,
+        "heteroscedastic_n40": 0.96
+       },
+       "measured_max": 0.99,
+       "measured_min": 0.92,
+       "nominal": 0.9,
+       "source": {
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "doc": "VALIDATION.md#interval-coverage-at-proposals",
+        "kind": "simulation",
+        "measurement": "one fresh simulated measurement per proposal",
+        "proposals_per_seed": 5,
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
+        "scenarios": [
+         "hartmann6_n30",
+         "hartmann6_n80",
+         "bioprocess_n40",
+         "bioprocess_n100",
+         "heteroscedastic_n40"
+        ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
+        "seeds_per_scenario": 40
+       }
+      },
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+     },
+     "0.95": {
+      "code": "coverage_measured_at_proposals",
+      "coverage_at_proposals_estimate": {
+       "basis": "simulation",
+       "by_scenario": {
+        "bioprocess_n100": 0.995,
+        "bioprocess_n40": 0.965,
+        "hartmann6_n30": 0.97,
+        "hartmann6_n80": 0.97,
+        "heteroscedastic_n40": 0.995
+       },
+       "measured_max": 0.995,
+       "measured_min": 0.965,
+       "nominal": 0.95,
+       "source": {
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "doc": "VALIDATION.md#interval-coverage-at-proposals",
+        "kind": "simulation",
+        "measurement": "one fresh simulated measurement per proposal",
+        "proposals_per_seed": 5,
+        "results": "benchmarks/results/coverage_at_proposals_after.json",
+        "scenarios": [
+         "hartmann6_n30",
+         "hartmann6_n80",
+         "bioprocess_n40",
+         "bioprocess_n100",
+         "heteroscedastic_n40"
+        ],
+        "seeds": "100-139 (fresh; the method's parameters were chosen on seeds 0-39)",
+        "seeds_per_scenario": 40
+       }
+      },
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+     }
+    },
+    "coverage_basis": "held_out_past_runs",
     "coverage_guarantee": "approximate: out-of-fold scores come from grouped-CV fold models and are not exactly exchangeable with a proposal from the full-data model",
     "empirical_oof_coverage_note": "in-sample: counted on the same scores that set q_norm, so it is >= rank / n by construction; coverage_by_sigma_half shows whether the band adapts to the model's sd",
+    "gp_coverage_at_proposals": {
+     "0.9": {
+      "basis": "simulation",
+      "by_scenario": {
+       "bioprocess_n100": 0.725,
+       "bioprocess_n40": 0.635,
+       "hartmann6_n30": 0.5,
+       "hartmann6_n80": 0.57,
+       "heteroscedastic_n40": 0.53
+      },
+      "measured_max": 0.725,
+      "measured_min": 0.5,
+      "nominal": 0.9,
+      "source": {
+       "benchmark": "python -m kalos.bench.coverage_at_proposals",
+       "doc": "VALIDATION.md#interval-coverage-at-proposals",
+       "kind": "simulation",
+       "measurement": "one fresh simulated measurement per proposal",
+       "proposals_per_seed": 5,
+       "results": "benchmarks/results/coverage_at_proposals_before.json",
+       "scenarios": [
+        "hartmann6_n30",
+        "hartmann6_n80",
+        "bioprocess_n40",
+        "bioprocess_n100",
+        "heteroscedastic_n40"
+       ],
+       "seeds_per_scenario": 40
+      }
+     },
+     "0.95": {
+      "basis": "simulation",
+      "by_scenario": {
+       "bioprocess_n100": 0.775,
+       "bioprocess_n40": 0.655,
+       "hartmann6_n30": 0.525,
+       "hartmann6_n80": 0.61,
+       "heteroscedastic_n40": 0.585
+      },
+      "measured_max": 0.775,
+      "measured_min": 0.525,
+      "nominal": 0.95,
+      "source": {
+       "benchmark": "python -m kalos.bench.coverage_at_proposals",
+       "doc": "VALIDATION.md#interval-coverage-at-proposals",
+       "kind": "simulation",
+       "measurement": "one fresh simulated measurement per proposal",
+       "proposals_per_seed": 5,
+       "results": "benchmarks/results/coverage_at_proposals_before.json",
+       "scenarios": [
+        "hartmann6_n30",
+        "hartmann6_n80",
+        "bioprocess_n40",
+        "bioprocess_n100",
+        "heteroscedastic_n40"
+       ],
+       "seeds_per_scenario": 40
+      }
+     }
+    },
     "gp_posterior": {
      "expected_improvement": "latent mean (no observation noise)",
      "gp_intervals": "observation (latent + observation noise), one new measurement",
@@ -12173,10 +14481,44 @@
       "rank": 24
      }
     ],
-    "method": "conformal_normalized",
+    "method": "conformal_selection_aware",
+    "method_by_level": {
+     "0.9": "conformal_selection_aware",
+     "0.95": "conformal_selection_aware"
+    },
     "n_calibration": 24,
     "quantile": "k-th smallest score, k = ceil((n + 1) * coverage)",
     "score": "abs(y - mu_oof) / sigma_oof",
+    "selection_aware": {
+     "band": "pred +/- q_sel * max(predictive_sd, sigma_floor)",
+     "coverage_guarantee": "none: held-out top-ranked runs are a proxy for proposals and the pooled repeats are correlated; the coverage at proposals is measured in simulation and shipped with the band",
+     "levels": [
+      {
+       "available": true,
+       "coverage": 0.9,
+       "n_pooled": 48,
+       "n_selected": 20,
+       "q_sel": 2.149,
+       "rank": 19
+      },
+      {
+       "available": true,
+       "coverage": 0.95,
+       "n_pooled": 48,
+       "n_selected": 20,
+       "q_sel": 2.241,
+       "rank": 20
+      }
+     ],
+     "method": "conformal_selection_aware",
+     "n_pooled": 48,
+     "n_selected": 20,
+     "score": "abs(y - mu_oof) / sigma_oof over the selected held-out runs",
+     "selection": "in every fold of every CV repeat, the ceil(top_fraction * n_fold) held-out runs the fold model ranked best (highest prediction; lowest when minimizing)",
+     "sigma_floor": 0.2771,
+     "sigma_floor_quantile": 0.9,
+     "top_fraction": 0.3
+    },
     "sigma": "gp_predictive_sd",
     "sigma_source": "surrogate_fitted_noise"
    },
@@ -12335,20 +14677,21 @@
    ],
    "orientation": null,
    "promotion": {
-    "failures": [
-     "feasibility_auc missing/NaN (unmeasured)",
-     "ece missing/NaN (unmeasured)",
-     "brier missing/NaN (unmeasured)"
-    ],
+    "failures": [],
     "meaning": "passed=false means \"not yet shown fit to promote\", which includes the case where a required metric is unmeasurable on this data (e.g. an all-producer sheet with no non-producers to score feasibility against). It is not a rejection of the analysis.",
     "metrics": {
      "surrogate_spearman": 0.9713043478260868
     },
     "not_judged": [
+     "feasibility_auc: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
+     "ece: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
+     "brier: not applicable: too few non-producing runs (0 non-producing runs, need 5)",
      "group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor"
     ],
-    "passed": false,
-    "summary": "GATES FAILED: feasibility_auc missing/NaN (unmeasured); ece missing/NaN (unmeasured); brier missing/NaN (unmeasured) (not judged: group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)"
+    "passed": true,
+    "status": "passed",
+    "summary": "ALL GATES PASSED (not judged: feasibility_auc: not applicable: too few non-producing runs (0 non-producing runs, need 5); ece: not applicable: too few non-producing runs (0 non-producing runs, need 5); brier: not applicable: too few non-producing runs (0 non-producing runs, need 5); group-mean floor: only 0 recipes have 2+ rows; need at least 5 to form a group-mean floor)",
+    "unmeasured": []
    },
    "proposal_features": [
     "feed_a",
@@ -12364,6 +14707,17 @@
    },
    "proposal_notice": null,
    "proposal_optimizer": "continuous",
+   "proposal_trust": {
+    "gated": false,
+    "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+    "n_requested": 5,
+    "n_returned": 5,
+    "reasons": [],
+    "rule": "refused -> proposals withheld; not_yet -> exploration_untrusted; reliable -> trusted",
+    "status": "trusted",
+    "verdict": "reliable",
+    "withheld": false
+   },
    "proposals": [
     {
      "expected_improvement": {
@@ -12381,6 +14735,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 2.0471,
        "lo": 1.5709,
        "method": "gp_posterior",
@@ -12390,6 +14753,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 2.0927,
        "lo": 1.5253,
        "method": "gp_posterior",
@@ -12400,25 +14772,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 2.1165,
-       "lo": 1.5014,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.1246
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 2.4045,
+       "lo": 1.2135,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.149,
+       "sigma_floor": 0.2771,
+       "sigma_used": 0.2771
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 2.1201,
-       "lo": 1.4979,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.149
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 2.43,
+       "lo": 1.188,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.241,
+       "sigma_floor": 0.2771,
+       "sigma_used": 0.2771
       }
      ],
      "mode": "explore",
@@ -12439,6 +14839,7 @@
      "predictive_std": 0.1448,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 1.5709,
       "p25": 1.7113,
@@ -12454,6 +14855,11 @@
       "temp_C": 36.733
      },
      "std": 0.1,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       0.276,
       36.733,
@@ -12476,6 +14882,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 5.1128,
        "lo": 4.626,
        "method": "gp_posterior",
@@ -12485,6 +14900,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 5.1594,
        "lo": 4.5794,
        "method": "gp_posterior",
@@ -12495,25 +14919,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 5.1837,
-       "lo": 4.555,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.1246
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.4649,
+       "lo": 4.2739,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.149,
+       "sigma_floor": 0.2771,
+       "sigma_used": 0.2771
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 5.1873,
-       "lo": 4.5514,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.149
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.4904,
+       "lo": 4.2484,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.241,
+       "sigma_floor": 0.2771,
+       "sigma_used": 0.2771
       }
      ],
      "mode": "explore",
@@ -12534,6 +14986,7 @@
      "predictive_std": 0.148,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 4.626,
       "p25": 4.7696,
@@ -12549,6 +15002,11 @@
       "temp_C": 34.286
      },
      "std": 0.105,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       4.216,
       34.286,
@@ -12571,6 +15029,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.814,
        "lo": 3.0547,
        "method": "gp_posterior",
@@ -12580,6 +15047,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 3.8868,
        "lo": 2.982,
        "method": "gp_posterior",
@@ -12590,25 +15066,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 3.9248,
-       "lo": 2.944,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.1246
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 4.0299,
+       "lo": 2.8389,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.149,
+       "sigma_floor": 0.2771,
+       "sigma_used": 0.2771
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 3.9304,
-       "lo": 2.9384,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.149
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 4.0553,
+       "lo": 2.8134,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.241,
+       "sigma_floor": 0.2771,
+       "sigma_used": 0.2771
       }
      ],
      "mode": "explore",
@@ -12629,6 +15133,7 @@
      "predictive_std": 0.2308,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 3.0547,
       "p25": 3.2787,
@@ -12644,6 +15149,11 @@
       "temp_C": 36.82
      },
      "std": 0.206,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       2.216,
       36.82,
@@ -12666,6 +15176,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 4.3128,
        "lo": 3.8935,
        "method": "gp_posterior",
@@ -12675,6 +15194,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 4.3529,
        "lo": 3.8533,
        "method": "gp_posterior",
@@ -12685,25 +15213,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 4.3739,
-       "lo": 3.8324,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.1246
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 4.6986,
+       "lo": 3.5076,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.149,
+       "sigma_floor": 0.2771,
+       "sigma_used": 0.2771
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 4.377,
-       "lo": 3.8293,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.149
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 4.7241,
+       "lo": 3.4822,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.241,
+       "sigma_floor": 0.2771,
+       "sigma_used": 0.2771
       }
      ],
      "mode": "explore",
@@ -12724,6 +15280,7 @@
      "predictive_std": 0.1274,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 3.8935,
       "p25": 4.0172,
@@ -12739,6 +15296,11 @@
       "temp_C": 34.37
      },
      "std": 0.073,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       2.977,
       34.37,
@@ -12761,6 +15323,15 @@
       {
        "available": true,
        "coverage": 0.9,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.725,
+        "measured_min": 0.5,
+        "nominal": 0.9,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 5.2219,
        "lo": 4.2795,
        "method": "gp_posterior",
@@ -12770,6 +15341,15 @@
       {
        "available": true,
        "coverage": 0.95,
+       "coverage_at_proposals_estimate": {
+        "basis": "simulation",
+        "benchmark": "python -m kalos.bench.coverage_at_proposals",
+        "measured_max": 0.775,
+        "measured_min": 0.525,
+        "nominal": 0.95,
+        "source": "interval_method.gp_coverage_at_proposals"
+       },
+       "coverage_basis": "model_based",
        "hi": 5.3121,
        "lo": 4.1892,
        "method": "gp_posterior",
@@ -12780,25 +15360,53 @@
      "intervals": [
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.99,
+         "measured_min": 0.92,
+         "nominal": 0.9,
+         "source": "interval_method.coverage_at_proposals.0.9"
+        },
+        "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.9,
-       "empirical_oof_coverage": 0.9583,
-       "hi": 5.3593,
-       "lo": 4.142,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.1246
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.3663,
+       "lo": 4.135,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.149,
+       "sigma_floor": 0.2771,
+       "sigma_used": 0.2865
       },
       {
        "available": true,
-       "calibrated_on": "grouped_cv_oof",
+       "calibrated_on": "grouped_cv_oof_top_ranked",
+       "caveat": {
+        "code": "coverage_measured_at_proposals",
+        "coverage_at_proposals_estimate": {
+         "basis": "simulation",
+         "benchmark": "python -m kalos.bench.coverage_at_proposals",
+         "measured_max": 0.995,
+         "measured_min": 0.965,
+         "nominal": 0.95,
+         "source": "interval_method.coverage_at_proposals.0.95"
+        },
+        "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed)."
+       },
        "coverage": 0.95,
-       "empirical_oof_coverage": 1.0,
-       "hi": 5.3663,
-       "lo": 4.135,
-       "method": "conformal_normalized",
-       "n_calibration": 24,
-       "q_norm": 2.149
+       "coverage_basis": "held_out_top_ranked_runs",
+       "hi": 5.3926,
+       "lo": 4.1087,
+       "method": "conformal_selection_aware",
+       "n_calibration": 20,
+       "q_sel": 2.241,
+       "sigma_floor": 0.2771,
+       "sigma_used": 0.2865
       }
      ],
      "mode": "explore",
@@ -12819,6 +15427,7 @@
      "predictive_std": 0.2865,
      "quantiles": {
       "basis": "gp_posterior",
+      "coverage_basis": "model_based",
       "note": "model-based, not held-out calibrated",
       "p05": 4.2795,
       "p25": 4.5574,
@@ -12834,6 +15443,11 @@
       "temp_C": 33.009
      },
      "std": 0.267,
+     "trust": {
+      "message": "The model ranked held-out past runs well enough to trust: these are model-guided recipes.",
+      "status": "trusted",
+      "verdict": "reliable"
+     },
      "vals": [
       4.837,
       33.009,
@@ -12871,6 +15485,7 @@
      "status": "target"
     }
    ],
+   "refusal": null,
    "reliability": {
     "calibration": {
      "available": true,
@@ -12906,7 +15521,10 @@
     ],
     "ci_excludes_zero": true,
     "clears_floor": true,
+    "clears_floor_rule": "held-out Spearman >= 0.2 AND the lower end of its 95% interval > 0, judged only with at least 12 runs and 3 CV groups",
+    "judged": true,
     "n_producers": 24,
+    "not_judged_reason": null,
     "producer_clears_floor": true,
     "producer_spearman": 0.971,
     "producer_threshold": 0.0,
@@ -12916,7 +15534,8 @@
     "unmodeled": [
      "feasibility probability",
      "scale-up transfer"
-    ]
+    ],
+    "verdict": "clears_floor"
    },
    "response_surface": {
     "fixed_recipe": {
@@ -14884,6 +17503,26 @@
     "n_rows": 24,
     "schema_version": 1,
     "status": "pass_with_warnings"
+   },
+   "verdict": {
+    "code": "reliable",
+    "headline": "Kalos put your past runs in the right order, with enough runs to check the ranking, so its suggestions are worth running.",
+    "min_groups": 8,
+    "min_runs": 20,
+    "n_groups": 24,
+    "n_runs": 24,
+    "ordering": {
+     "plain": "The model put past runs it had not seen in the right order most of the time.",
+     "state": "ok"
+    },
+    "range_width": {
+     "code": "bands_ok",
+     "plain": "The likely range is about the right width.",
+     "state": "ok"
+    },
+    "reasons": [],
+    "rule": "Refused: no held-out score, fewer than 3 groups of runs, or the upper end of the score's 95% interval at or below 0. Reliable: score at or above the floor, the lower end of its 95% interval above 0, at least 20 runs and 8 groups of runs. Not yet: everything else.",
+    "state": "reliable"
    },
    "visualization_reasons": {
     "correlation": null,

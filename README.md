@@ -138,16 +138,33 @@ More in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Validation and its limits
 
-- **Intervals.** The 90% band is calibrated on held-out runs (split-conformal
-  on grouped cross-validation). On new runs that resemble past runs it covers
-  about 90% or slightly more, in simulation and on the example datasets. At the
-  recipes Kalos proposes, coverage is lower: about 60-80% for the nominal 90%
-  band in simulation, because proposals are chosen where predictions are high
-  and uncertain. This is being fixed; until then, read the band at a proposal as
-  optimistic.
-- **Reliability verdict.** Cross-validation groups replicates of the same
-  recipe. Batch, day or round effects can make the verdict look better than it
-  is unless that column is declared as the group (`roles.groups`).
+- **Intervals.** The global 90% band (`conformal_q`) is calibrated on held-out
+  runs (split-conformal on grouped cross-validation); on new runs that resemble
+  past runs it covers about 90% or slightly more. Proposals are not like past
+  runs: they are chosen where predictions are high. Each proposal's 90% and 95%
+  range is therefore sized on the held-out runs each fold model ranked highest,
+  to mimic that selection. Measured at proposed recipes in simulation (five
+  scenarios, 40 fresh seeds each), the 90% range covered 92-99% and the 95%
+  range 96-99%; the ranges are about 2.5-3x wider than the plain band, which
+  covered only 60-81% (90%) at proposals. This is simulation evidence, not a
+  guarantee. Each proposal interval carries a caveat with the coverage measured
+  at proposals and its source; when too few held-out runs are ranked high
+  enough, the plain band is shown with its lower measured coverage
+  ([`VALIDATION.md`](VALIDATION.md#interval-coverage-at-proposals)).
+- **Grouped cross-validation.** Runs that cannot be independent are held out
+  together: as-run replicates (settings within 5% of each input's range),
+  declared groups, batch, lot, plate, block, round, date and week columns,
+  scale columns, and campaign rounds. Batch-like columns are not fitted or
+  proposed. Every evaluable grouping is cross-validated and the lowest held-out
+  score drives the verdict and the interval calibration (`cv_grouping` reports
+  each candidate).
+- **Verdict and refusals.** `verdict` is `reliable` (at least 20 runs and 8 CV
+  groups, with held-out ordering better than chance), `not_yet` (proposals are
+  returned but labeled exploration), or `refused`: fewer than 3 CV groups, or a
+  held-out score whose 95% interval does not exceed 0. A refusal withholds the
+  proposals and says why and what would help (`refusal`, `proposal_trust`).
+  Below 12 runs the held-out score is not judged at all
+  (`reliability.verdict: not_judged`, `clears_floor: null`).
 - **Optimizer.** On synthetic problems with known optima it beats random search
   and matches a well-configured plain BoTorch qLogNEI. In a retrospective replay
   of six published media datasets it needed about 4x fewer experiments than
