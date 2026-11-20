@@ -115,7 +115,8 @@ and is enough for the `kalos.kit` helpers.
 | `KALOS_CORS_ORIGINS` | localhost | Browser origins allowed to call the engine |
 | `KALOS_ANON_SALT` | dev salt | Salt for anonymized identifiers; required off loopback |
 | `KALOS_LLM_PROVIDER` | `ollama` on desktop, else `none` | Model for the assistant and header normalization |
-| `KALOS_TORCH_THREADS` | `min(4, cpus)` | Torch threads per analysis (`0` = do not pin) |
+| `KALOS_TORCH_THREADS` | `1` | Torch threads per analysis process (`0` = do not pin) |
+| `KALOS_ANALYSIS_WORKERS` | `auto` | Worker processes per analysis for CV fits, fit starts and per-level acquisition solves; same results as serial ([`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)). `1` = serial |
 | `KALOS_JOBS_ENABLED` | on | `0` turns off background jobs |
 | `KALOS_DATASETS_DIR` | `~/kalos/datasets` | Local copy of the public datasets for the planted-fault suite's optional Kaggle cases |
 

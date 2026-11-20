@@ -57,6 +57,10 @@ env:
   # runner and slow GP fits 10x or more on linux. tests/conftest.py defaults to 1
   # as well; this makes the CI setting explicit.
   KALOS_TORCH_THREADS: "1"
+  # No analysis worker pool (kalos/core/parallel.py) inside xdist workers: one
+  # pool per worker would oversubscribe the 4-vCPU runner. tests/conftest.py
+  # defaults to 1 too; tests/test_parallel_identity.py turns the pool on per test.
+  KALOS_ANALYSIS_WORKERS: "1"
   # CPU-only torch, from PyTorch's CPU wheel index, as in deploy/engine/Containerfile.
   # The default PyPI torch wheel on linux pulls about 3 GB of CUDA libraries that
   # no runner uses. `uv run --no-sync` below keeps `uv run` from re-syncing the
@@ -131,9 +135,11 @@ jobs:
     name: pytest (serial determinism)
     # Determinism tests compare analysis output for exact equality and must NOT
     # run under parallel xdist (float results vary per worker even with threads
-    # pinned). A handful of tests, so a quick serial job.
+    # pinned). A handful of tests, plus the serial-vs-pool identity test.
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # About 9 min since tests/test_parallel_identity.py (serial vs pooled full
+    # analyses); the cap is a hang guard.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - *setup-uv

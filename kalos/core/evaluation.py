@@ -29,6 +29,84 @@ def grouped_folds(groups: Sequence, n_splits: int = 5) -> Iterator[tuple[np.ndar
     yield from make_splits(np.zeros((n, 1)), np.zeros(n), groups, n_splits=n_splits)
 
 
+def _fit_fold(X_train, y_train, X_test, bounds, cat_dims):
+    """One CV fold: fit on the training rows, predictive (mean, sd) on the held-out
+    rows. A module-level function so `kalos.core.parallel` can run it in a worker."""
+    s = Surrogate().fit(X_train, y_train, bounds=bounds, cat_dims=cat_dims)
+    return s.posterior(X_test, observation_noise=True)
+
+
+def _oof_plan(X, y, groups, n_splits, bounds, shuffle: bool = False, random_state: int = 42):
+    """The folds `_oof` fits: (X, y, groups, bounds, [(train, test), ...]) after the
+    same coercions, with the too-small folds already dropped."""
+    X = np.asarray(X, float)
+    y = np.asarray(y, float).reshape(-1)
+    if groups is None:
+        groups = row_hash_groups(X)
+    groups = np.asarray(groups)
+    # One normalization box for every fold AND for production. Fitting each fold
+    # to its own training-data envelope (the old default) measures a different
+    # input transform than the shipped model, so the CV number would not describe
+    # what actually ships.
+    if bounds is None and len(X):
+        bounds = np.vstack([X.min(axis=0), X.max(axis=0)])
+    folds = [
+        (tr, te)
+        for tr, te in make_splits(X, y, groups, n_splits=n_splits, shuffle=shuffle, random_state=random_state)
+        if not (len(tr) < 4 or len(te) < 1)
+    ]
+    return X, y, groups, bounds, folds
+
+
+def _fit_folds(plans: list, cat_dims) -> list[list]:
+    """Fit every fold of every plan, in plan order then fold order (the order the
+    serial loop fits them), in the analysis worker pool when it is in use
+    (`kalos.core.parallel`: identical results). Returns per plan the list of
+    (mean, std) per fold."""
+    from . import parallel
+    from .surrogate import Surrogate as _RealSurrogate
+
+    tasks = [
+        (X[tr], y[tr], X[te], bounds, cat_dims)
+        for X, y, _g, bounds, folds in plans
+        for tr, te in folds
+    ]
+    if Surrogate is _RealSurrogate:
+        flat = parallel.run_ordered(_fit_fold, tasks)
+    else:  # a test replaced the model class: keep it in this process
+        flat = [_fit_fold(*t) for t in tasks]
+    out: list[list] = []
+    k = 0
+    for plan in plans:
+        n = len(plan[4])
+        out.append(flat[k:k + n])
+        k += n
+    return out
+
+
+def _oof_assemble(plan, fits, index_out: list[int] | None = None, fold_out: list[int] | None = None):
+    """`_oof`'s return value from a plan and its fold fits."""
+    _X, y, groups, _bounds, folds = plan
+    pred, sd, actual, grp, n_folds = [], [], [], [], 0
+    for (_tr, te), (mean, std) in zip(folds, fits):
+        n_folds += 1
+        pred.extend(np.asarray(mean).ravel().tolist())
+        sd.extend(np.asarray(std).ravel().tolist())
+        actual.extend(y[te].tolist())
+        grp.extend(groups[te].tolist())
+        if index_out is not None:
+            index_out.extend(int(i) for i in te)
+        if fold_out is not None:
+            fold_out.extend([n_folds - 1] * len(te))
+    return (
+        np.asarray(pred),
+        np.asarray(sd),
+        np.asarray(actual),
+        np.asarray(grp, dtype=object),
+        n_folds,
+    )
+
+
 def _oof(
     X, y, groups, n_splits, bounds, cat_dims=None, shuffle: bool = False, random_state: int = 42,
     index_out: list[int] | None = None, fold_out: list[int] | None = None,
@@ -56,40 +134,14 @@ def _oof(
 
     `cat_dims` (optional) marks categorical columns so each fold is fit with the
     same mixed GP the deployed model uses; omitted, every fold is the continuous
-    SingleTaskGP (unchanged behavior)."""
-    X = np.asarray(X, float)
-    y = np.asarray(y, float).reshape(-1)
-    if groups is None:
-        groups = row_hash_groups(X)
-    groups = np.asarray(groups)
-    # One normalization box for every fold AND for production. Fitting each fold
-    # to its own training-data envelope (the old default) measures a different
-    # input transform than the shipped model, so the CV number would not describe
-    # what actually ships.
-    if bounds is None and len(X):
-        bounds = np.vstack([X.min(axis=0), X.max(axis=0)])
-    pred, sd, actual, grp, n_folds = [], [], [], [], 0
-    for tr, te in make_splits(X, y, groups, n_splits=n_splits, shuffle=shuffle, random_state=random_state):
-        if len(tr) < 4 or len(te) < 1:
-            continue
-        n_folds += 1
-        s = Surrogate().fit(X[tr], y[tr], bounds=bounds, cat_dims=cat_dims)
-        mean, std = s.posterior(X[te], observation_noise=True)
-        pred.extend(np.asarray(mean).ravel().tolist())
-        sd.extend(np.asarray(std).ravel().tolist())
-        actual.extend(y[te].tolist())
-        grp.extend(groups[te].tolist())
-        if index_out is not None:
-            index_out.extend(int(i) for i in te)
-        if fold_out is not None:
-            fold_out.extend([n_folds - 1] * len(te))
-    return (
-        np.asarray(pred),
-        np.asarray(sd),
-        np.asarray(actual),
-        np.asarray(grp, dtype=object),
-        n_folds,
-    )
+    SingleTaskGP (unchanged behavior).
+
+    The fold fits are independent and run in the analysis worker pool when it is
+    in use (`kalos.core.parallel`), with results identical to fitting them here
+    one after the other."""
+    plan = _oof_plan(X, y, groups, n_splits, bounds, shuffle=shuffle, random_state=random_state)
+    (fits,) = _fit_folds([plan], cat_dims)
+    return _oof_assemble(plan, fits, index_out=index_out, fold_out=fold_out)
 
 
 def _spearman(pred, actual) -> float:
@@ -188,26 +240,32 @@ def grouped_cv_report(
     index0: list[int] = []
     rng = np.random.default_rng(random_state)
     boot: list[float] = []
+    # Every repeat's partition is fixed up front (make_splits is deterministic and
+    # draws from no global RNG), so all the fold fits, every repeat, go to the
+    # worker pool in one batch, in the order the serial loop fits them.
+    plans = []
     for r in range(n_repeats_eff):
         if r == 0:
             # Unshuffled: the exact partition every existing caller already
             # gets, so the point estimate and OOF arrays are unchanged.
-            fold_r: list[int] = []
-            pred, sd, actual, grp, n_folds = _oof(
-                X_arr, y, groups, n_splits, bounds, cat_dims=cat_dims, index_out=index0, fold_out=fold_r,
-            )
-            n_folds0 = n_folds
+            plans.append(_oof_plan(X_arr, y, groups, n_splits, bounds))
         else:
             # A distinct deterministic seed per repeat: simple integer offset
             # from the caller's random_state, not cryptographic separation -
             # all that matters is each repeat draws a different shuffled
             # GroupKFold partition, reproducibly.
             seed_r = (int(random_state) + r) & 0x7FFFFFFF
-            fold_r = []
-            pred, sd, actual, grp, _n_folds = _oof(
-                X_arr, y, groups, n_splits, bounds, cat_dims=cat_dims,
-                shuffle=True, random_state=seed_r, fold_out=fold_r,
+            plans.append(_oof_plan(X_arr, y, groups, n_splits, bounds, shuffle=True, random_state=seed_r))
+    fits_per_plan = _fit_folds(plans, cat_dims)
+    for r in range(n_repeats_eff):
+        fold_r: list[int] = []
+        if r == 0:
+            pred, sd, actual, grp, n_folds = _oof_assemble(
+                plans[0], fits_per_plan[0], index_out=index0, fold_out=fold_r,
             )
+            n_folds0 = n_folds
+        else:
+            pred, sd, actual, grp, _n_folds = _oof_assemble(plans[r], fits_per_plan[r], fold_out=fold_r)
         preds.append(pred)
         sds.append(sd)
         actuals.append(actual)

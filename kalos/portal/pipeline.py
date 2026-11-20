@@ -42,10 +42,14 @@ ProgressFn = Callable[[str, float], None]
 
 # --- CPU thread budget (moved from app.py; re-exported there) ---------------- #
 # See the KALOS_TORCH_THREADS comment in kalos/portal/app.py's history: 0 means
-# DO NOT PIN (the container default), the bare-metal default is min(4, cpus).
-TORCH_THREADS = int(
-    os.environ.get("KALOS_TORCH_THREADS", "").strip() or str(min(4, os.cpu_count() or 1))
-)
+# DO NOT PIN (the container default). The bare-metal default is 1 (it was
+# min(4, cpus)): the GP fits and the acquisition work on tiny matrices and are
+# dominated by Python overhead, so 4 threads were slower (101 s vs 112 s for the
+# 160-row example's acquisition) and gave identical results (measured on macOS,
+# docs/PERFORMANCE.md). The cores are used by the analysis worker pool instead
+# (KALOS_ANALYSIS_WORKERS, kalos/core/parallel.py), which is used only when this
+# process runs at 1 thread, so a pooled result equals the serial one.
+TORCH_THREADS = int(os.environ.get("KALOS_TORCH_THREADS", "").strip() or "1")
 _torch_threads_configured = False
 
 

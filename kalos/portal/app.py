@@ -129,9 +129,10 @@ UPLOAD_PATHS = frozenset({"/api/run", "/api/scale/readout", "/api/scale/readout.
 # reference container, the 4-thread pin took the demo analyze from 47s
 # (unpinned) to over 600s - a >12x pathological slowdown from the pin
 # interacting with that build's OpenBLAS threading, measured 2026-09-10 on
-# the first real compose deployment. The 4-thread default is kept for bare
-# metal (where it was tuned and behaves); containers, which already isolate
-# CPU, should set 0 - deploy/compose.yaml now does.
+# the first real compose deployment. Containers, which already isolate CPU,
+# set 0 - deploy/compose.yaml does. The bare-metal default is now 1 thread
+# (it was 4; see kalos/portal/pipeline.py and docs/PERFORMANCE.md): the cores go
+# to the analysis worker pool (KALOS_ANALYSIS_WORKERS, kalos/core/parallel.py).
 # The value and the pin live in `kalos.portal.pipeline` (shared with the
 # background-job worker process); re-exported under the historical names.
 from kalos.portal.pipeline import TORCH_THREADS as _TORCH_THREADS  # noqa: E402,F401

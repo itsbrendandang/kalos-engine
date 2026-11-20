@@ -58,12 +58,15 @@ from botorch.acquisition.objective import GenericMCObjective
 from botorch.models.model_list_gp_regression import ModelListGP
 from botorch.optim import (
     optimize_acqf,
-    optimize_acqf_mixed,
     optimize_acqf_mixed_alternating,
 )
 from botorch.utils.sampling import draw_sobol_samples
 
 from .feasibility import FeasibilityClassifier
+
+# botorch's `optimize_acqf_mixed`, with the per-level solves in the analysis worker
+# pool when it is in use (identical result; kalos/core/mixed_parallel.py).
+from .mixed_parallel import optimize_acqf_mixed
 from .surrogate import DEVICE, DTYPE, Surrogate, sanitize_bounds
 
 logger = logging.getLogger(__name__)
@@ -213,6 +216,30 @@ class _FeasibilityGatedLogNEI(AcquisitionFunction):
         log_ei = self.base_acqf(X)
         log_pf = self.gate.log_p_feasible(X).sum(dim=-1)  # sum over q, see class docstring
         return log_ei + log_pf
+
+
+# The acquisition's objective and constraint callables are module-level (not
+# lambdas) so the acquisition can be pickled to the analysis worker pool
+# (kalos/core/mixed_parallel.py). Same arithmetic as the lambdas they replace.
+def _first_output(Y: torch.Tensor, X: torch.Tensor | None = None) -> torch.Tensor:
+    """The target, output 0 of the posterior samples."""
+    return Y[..., 0]
+
+
+def _negated_first_output(Y: torch.Tensor, X: torch.Tensor | None = None) -> torch.Tensor:
+    """The negated target (goal: minimize)."""
+    return -Y[..., 0]
+
+
+class _FloorConstraint:
+    """qLogNEI constraint `floor - Y[..., 1]`: satisfied (<= 0) where the
+    constraint outcome is at least `floor`."""
+
+    def __init__(self, floor: float) -> None:
+        self.floor = floor
+
+    def __call__(self, Y: torch.Tensor) -> torch.Tensor:
+        return self.floor - Y[..., 1]
 
 
 def proposal_separation(
@@ -622,16 +649,16 @@ def propose_batch(
             # contract) where its output is < 0, i.e. constraint_floor - value <= 0
             # <=> value >= constraint_floor.
             objective = (
-                GenericMCObjective(lambda Y, X=None: Y[..., 0])
+                GenericMCObjective(_first_output)
                 if maximize
-                else GenericMCObjective(lambda Y, X=None: -Y[..., 0])
+                else GenericMCObjective(_negated_first_output)
             )
             floor = float(constraint_floor)  # type: ignore[arg-type]
-            constraints = [lambda Y: floor - Y[..., 1]]
+            constraints = [_FloorConstraint(floor)]
         else:
             model = surrogate.model
             # Minimizing: negate the single output's samples (see `maximize`).
-            objective = None if maximize else GenericMCObjective(lambda Y, X=None: -Y[..., 0])
+            objective = None if maximize else GenericMCObjective(_negated_first_output)
             constraints = None
         acq: AcquisitionFunction = qLogNoisyExpectedImprovement(
             model,

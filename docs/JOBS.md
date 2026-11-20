@@ -281,9 +281,13 @@ process on a modest machine.
 - Each worker is a separate process: a fit that crashes or runs away cannot
   take the engine's interpreter with it, and a timeout or cancel is a kill.
 - Each worker applies the same torch thread budget as the engine
-  (`KALOS_TORCH_THREADS`, `kalos/portal/pipeline.py`). Total CPU threads are
-  therefore about `KALOS_JOB_WORKERS` times that budget: on a shared machine,
-  lower one or the other.
+  (`KALOS_TORCH_THREADS`, `kalos/portal/pipeline.py`, default 1) and starts its
+  own analysis pool of `KALOS_ANALYSIS_WORKERS` processes (default
+  `cpus // KALOS_JOB_WORKERS`, at most 5; docs/PERFORMANCE.md). With the defaults
+  the analyses running at once use about every CPU and no more. The pool's
+  processes are in the worker's process group, so a cancel or timeout kills them
+  with it. On a shared machine, lower `KALOS_JOB_WORKERS` or set
+  `KALOS_ANALYSIS_WORKERS`.
 
 Invalid values for any `KALOS_JOB*` variable (non-numeric, non-finite such as
 `nan` or `inf`, out of range, a job upload limit above the engine cap,

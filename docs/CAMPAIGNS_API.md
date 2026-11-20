@@ -287,7 +287,9 @@ acquisition optimum moved by whole units. Small sheets do repeat
 same file. The cause is not isolated yet (the usual suspect is acquisition
 optimizer RNG or state that `_seeded_analysis` does not reset). A different
 torch or botorch version, or a different thread count, can also change the
-numbers. Compare `run` and `proposal_provenance` before comparing proposals;
+numbers. The analysis worker pool (`KALOS_ANALYSIS_WORKERS`, docs/PERFORMANCE.md)
+does not: the full response is byte-identical with and without it
+(`tests/test_parallel_identity.py`). Compare `run` and `proposal_provenance` before comparing proposals;
 equal provenance does not mean equal proposals.
 
 ### Proposal provenance
