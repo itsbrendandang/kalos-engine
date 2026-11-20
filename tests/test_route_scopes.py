@@ -73,6 +73,11 @@ def test_manifest_covers_every_openapi_operation(manifest):
     ("POST", f"{CID}/operating-ranges", ["write"]),
     ("GET", f"{CID}/operating-ranges", ["write"]),  # refits the GP (E-S3)
     ("POST", "/api/scale/readout.json", ["write"]),
+    ("GET", f"{CID}/track-record", ["read"]),  # schema v8 prediction history (BRE-32)
+    ("GET", f"{CID}/track-record/runs", ["read"]),
+    ("GET", f"{CID}/runs/{{run_id}}/history", ["read"]),
+    ("GET", f"{CID}/analyses", ["read"]),
+    ("GET", f"{CID}/analyses/{{snapshot_id}}", ["read"]),
     ("GET", "/api/campaigns", ["read"]),
     ("POST", "/api/assist/ask", ["read"]),
     ("GET", "/healthz", []),
