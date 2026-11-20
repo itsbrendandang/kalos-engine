@@ -113,6 +113,10 @@ def _anonymize_result(
             {**p, "recipe": alias_recipe(p["recipe"])} if isinstance(p, dict) and "recipe" in p else p
             for p in out["proposals"]
         ]
+    if isinstance(out.get("exploration_design"), dict):
+        out["exploration_design"] = _alias_exploration_design(
+            out["exploration_design"], alias, alias_level, alias_recipe,
+        )
     corr = out.get("correlation")
     if isinstance(corr, dict) and isinstance(corr.get("labels"), list):
         out["correlation"] = {**corr, "labels": [alias(str(c)) for c in corr["labels"]]}
@@ -190,6 +194,56 @@ def _anonymize_result(
                 alias(str(c)): n for c, n in drops.get("blank_cells_as_absent", {}).items()
             },
         }
+    return out
+
+
+def _alias_exploration_design(
+    block: dict, alias: Callable[[str], str], alias_level: Callable[[str, object], object],
+    alias_recipe: Callable[[object], object],
+) -> dict:
+    """`exploration_design` (cold start): recipe keys and identifier/clone level
+    values, factor names and levels, and the level-count tables."""
+    def level(column: str, value: object) -> object:
+        return alias_level(column, value)
+
+    out = dict(block)
+    if isinstance(out.get("rows"), list):
+        out["rows"] = [
+            {**r, "recipe": alias_recipe(r["recipe"])} if isinstance(r, dict) and "recipe" in r else r
+            for r in out["rows"]
+        ]
+    if isinstance(out.get("factors"), list):
+        fs = []
+        for f in out["factors"]:
+            if not isinstance(f, dict) or "name" not in f:
+                fs.append(f)
+                continue
+            name = str(f["name"])
+            g = {**f, "name": alias(name)}
+            if f.get("kind") in ("categorical", "clone") and isinstance(f.get("levels"), list):
+                g["levels"] = [level(name, v) for v in f["levels"]]
+            if f.get("held_level") is not None:
+                g["held_level"] = level(name, f["held_level"])
+            fs.append(g)
+        out["factors"] = fs
+    if isinstance(out.get("levels"), dict):
+        out["levels"] = {
+            alias(str(k)): {
+                **v,
+                "held_level": level(str(k), v.get("held_level")),
+                "design_counts": {level(str(k), lv): c for lv, c in (v.get("design_counts") or {}).items()},
+                "existing_counts": (
+                    {level(str(k), lv): c for lv, c in v["existing_counts"].items()}
+                    if isinstance(v.get("existing_counts"), dict) else v.get("existing_counts")
+                ),
+            } if isinstance(v, dict) else v
+            for k, v in out["levels"].items()
+        }
+    if isinstance(out.get("not_designed"), list):
+        out["not_designed"] = [
+            {**e, "column": alias(str(e["column"]))} if isinstance(e, dict) and "column" in e else e
+            for e in out["not_designed"]
+        ]
     return out
 
 

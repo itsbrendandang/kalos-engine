@@ -80,6 +80,7 @@ def test_an_ordinary_learnable_target_can_be_promoted_and_is_trusted():
     assert r["verdict"]["state"] == "reliable"
     assert r["proposal_trust"]["status"] == "trusted" and len(r["proposals"]) == 5
     assert all(p["trust"]["status"] == "trusted" for p in r["proposals"])
+    assert "exploration_design" not in r  # a trusted model gets no cold-start plan
     json.dumps(r, allow_nan=False)
 
 
@@ -92,6 +93,7 @@ def test_pure_noise_is_labelled_exploration_or_withheld():
     r = _analyze(df, target="titer")
     assert r["reliability"]["clears_floor"] is False
     assert r["proposal_trust"]["status"] in {"exploration_untrusted", "withheld"}
+    assert r["exploration_design"]["available"] is True  # withheld or exploration: a concrete plan
     if r["proposal_trust"]["withheld"]:
         assert r["proposals"] == [] and r["proposal_notice"]["code"] == "model_refused"
     else:
@@ -110,6 +112,15 @@ def test_small_sheet_is_not_judged():
     assert "too_few_rows_to_judge" in [x["code"] for x in r["verdict"]["reasons"]]
     assert all(p["trust"]["status"] == "exploration_untrusted" for p in r["proposals"])
     assert rel["space_filling_advice"]
+    # Cold start: the advice comes with a concrete plan, labelled, with no prediction in it.
+    ed = r["exploration_design"]
+    assert ed["available"] is True and ed["label"] == "exploration design, no model yet"
+    assert ed["model_not_used"]["code"] == "n_below_trust_threshold"
+    assert ed["answers"] == "reliability.space_filling_advice"
+    assert ed["existing"]["n_used_for_gap_filling"] == 10 and len(ed["rows"]) == 5
+    assert all(set(row) == {"row", "run_label", "role", "replicate_of", "recipe", "label", "model_used"}
+               for row in ed["rows"])
+    assert all(set(row["recipe"]) == {"Methanol", "pH"} for row in ed["rows"])
 
 
 def test_cv_topk_scores_the_lowest_runs_when_minimizing():
