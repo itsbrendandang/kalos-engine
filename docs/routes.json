@@ -423,6 +423,19 @@
   },
   {
     "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/lineage",
+    "module": "kalos.api.routers.lineage",
+    "endpoint": "get_campaign_lineage",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
     "path": "/api/campaigns/{campaign_id}/operating-ranges",
     "module": "kalos.portal.exports_api",
     "endpoint": "operating_ranges_get",
@@ -656,10 +669,231 @@
     "response_model": "dict"
   },
   {
+    "method": "POST",
+    "path": "/api/lineage/links",
+    "module": "kalos.api.routers.lineage",
+    "endpoint": "create_link",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": 201,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/lineage/links/{link_id}",
+    "module": "kalos.api.routers.lineage",
+    "endpoint": "get_link",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/lineage/links/{link_id}/retract",
+    "module": "kalos.api.routers.lineage",
+    "endpoint": "retract_link",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/lineage/relations",
+    "module": "kalos.api.routers.lineage",
+    "endpoint": "get_relations",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
     "method": "GET",
     "path": "/api/multi",
     "module": "kalos.portal.app",
     "endpoint": "run_multi",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/project-statuses",
+    "module": "kalos.api.routers.projects",
+    "endpoint": "get_project_statuses",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects",
+    "module": "kalos.api.routers.projects",
+    "endpoint": "list_projects",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/projects",
+    "module": "kalos.api.routers.projects",
+    "endpoint": "create_project",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": 201,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}",
+    "module": "kalos.api.routers.projects",
+    "endpoint": "get_project",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/projects/{project_id}",
+    "module": "kalos.api.routers.projects",
+    "endpoint": "patch_project",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/projects/{project_id}/campaigns/{campaign_id}",
+    "module": "kalos.api.routers.projects",
+    "endpoint": "detach_campaign",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "PUT",
+    "path": "/api/projects/{project_id}/campaigns/{campaign_id}",
+    "module": "kalos.api.routers.projects",
+    "endpoint": "attach_campaign",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/projects/{project_id}/factors",
+    "module": "kalos.api.routers.projects",
+    "endpoint": "delete_factor",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}/factors",
+    "module": "kalos.api.routers.projects",
+    "endpoint": "get_factors",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "PUT",
+    "path": "/api/projects/{project_id}/factors",
+    "module": "kalos.api.routers.projects",
+    "endpoint": "put_factor",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}/factors/setup-bounds",
+    "module": "kalos.api.routers.projects",
+    "endpoint": "get_setup_bounds",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}/lineage",
+    "module": "kalos.api.routers.projects",
+    "endpoint": "get_project_lineage",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}/outcomes",
+    "module": "kalos.api.routers.projects",
+    "endpoint": "get_outcomes",
     "scopes": [
       "read"
     ],
@@ -725,6 +959,19 @@
     "path": "/api/single",
     "module": "kalos.portal.app",
     "endpoint": "run_single",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/units",
+    "module": "kalos.api.routers.units",
+    "endpoint": "get_units",
     "scopes": [
       "read"
     ],

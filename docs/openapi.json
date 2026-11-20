@@ -156,6 +156,72 @@
         "title": "Body_upload_to_campaign_api_campaigns__campaign_id__upload_post",
         "type": "object"
       },
+      "FactorPut": {
+        "additionalProperties": false,
+        "description": "One factor definition (a create or a whole replace, keyed by `name`).",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the factor is (up to 300 characters).",
+            "title": "Description"
+          },
+          "lower_bound": {
+            "description": "Lowest value worth trying, in `unit`. Strictly below upper_bound.",
+            "title": "Lower Bound",
+            "type": "number"
+          },
+          "name": {
+            "description": "The factor, as the run-sheet column it maps onto (e.g. glucose_g_L).",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "default": "setting",
+            "description": "setting: the optimizer proposes it; covariate: measured and fitted, never proposed.",
+            "enum": [
+              "setting",
+              "covariate"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A unit from GET /api/units (e.g. g/L, °C, %); empty for a dimensionless count.",
+            "title": "Unit"
+          },
+          "upper_bound": {
+            "description": "Highest value worth trying, in `unit`.",
+            "title": "Upper Bound",
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "lower_bound",
+          "upper_bound"
+        ],
+        "title": "FactorPut",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -167,6 +233,245 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LinkCreate": {
+        "additionalProperties": false,
+        "description": "A parent -> child lineage link between two campaigns, or two of their runs.",
+        "properties": {
+          "child_campaign_id": {
+            "description": "The later campaign (cmp_...).",
+            "maxLength": 36,
+            "minLength": 36,
+            "title": "Child Campaign Id",
+            "type": "string"
+          },
+          "child_run_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional: the child run (a run id of the child campaign).",
+            "title": "Child Run Id"
+          },
+          "child_stage": {
+            "anyOf": [
+              {
+                "maxLength": 17,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional recorded stage key of the child (e.g. S3); defaults to the campaign's current stage.",
+            "title": "Child Stage"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional note; required for relation 'derived'.",
+            "title": "Note"
+          },
+          "parent_campaign_id": {
+            "description": "The earlier campaign (cmp_...).",
+            "maxLength": 36,
+            "minLength": 36,
+            "title": "Parent Campaign Id",
+            "type": "string"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional: the parent run (a run id of the parent campaign).",
+            "title": "Parent Run Id"
+          },
+          "parent_stage": {
+            "anyOf": [
+              {
+                "maxLength": 17,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional recorded stage key of the parent (e.g. S2); defaults to the campaign's current stage.",
+            "title": "Parent Stage"
+          },
+          "relation": {
+            "description": "How the child relates to the parent; see GET /api/lineage/relations.",
+            "enum": [
+              "next_round",
+              "scale_up",
+              "scale_down",
+              "follow_up",
+              "replicate",
+              "derived"
+            ],
+            "title": "Relation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent_campaign_id",
+          "child_campaign_id",
+          "relation"
+        ],
+        "title": "LinkCreate",
+        "type": "object"
+      },
+      "LinkRetract": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "description": "Why the link is withdrawn. The link and the reason are both kept.",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "LinkRetract",
+        "type": "object"
+      },
+      "ProjectCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "Project name, unique within the tenant (1-80 characters).",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "objective": {
+            "description": "What the project is for, in plain words (up to 500 characters).",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Objective",
+            "type": "string"
+          },
+          "sponsor": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional free-text sponsor or client label. Stored and shown, never interpreted.",
+            "title": "Sponsor"
+          },
+          "status": {
+            "default": "drafting",
+            "description": "Lifecycle status; see GET /api/project-statuses.",
+            "enum": [
+              "drafting",
+              "in_progress",
+              "completed",
+              "terminated"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "objective"
+        ],
+        "title": "ProjectCreate",
+        "type": "object"
+      },
+      "ProjectUpdate": {
+        "additionalProperties": false,
+        "description": "A partial update: only the keys sent change. `sponsor: null` clears it.",
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New project name.",
+            "title": "Name"
+          },
+          "objective": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New objective.",
+            "title": "Objective"
+          },
+          "sponsor": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New sponsor label, or null to clear it.",
+            "title": "Sponsor"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "drafting",
+                  "in_progress",
+                  "completed",
+                  "terminated"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New lifecycle status.",
+            "title": "Status"
+          }
+        },
+        "title": "ProjectUpdate",
         "type": "object"
       },
       "ValidationError": {
@@ -2983,6 +3288,82 @@
         "summary": "Submit Job"
       }
     },
+    "/api/campaigns/{campaign_id}/lineage": {
+      "get": {
+        "description": "Where this campaign came from and what came of it: ancestors and\ndescendants over active links, up to `depth` hops each way, with each\ncampaign's name and recorded stage. `include_outcomes` adds, for each link\nend that names a run, its measured result and its prediction at start.",
+        "operationId": "get_campaign_lineage_api_campaigns__campaign_id__lineage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "depth",
+            "required": false,
+            "schema": {
+              "default": 6,
+              "maximum": 32,
+              "minimum": 1,
+              "title": "Depth",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_outcomes",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Outcomes",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Campaign Lineage"
+      }
+    },
     "/api/campaigns/{campaign_id}/operating-ranges": {
       "get": {
         "description": "The GET form of the operating-ranges route (query parameters). `write`\nscope, like POST: it runs the same GP refit in the analysis slot, so a\nread-only token must not be able to spend engine CPU through it.",
@@ -4257,6 +4638,222 @@
         "summary": "Latest"
       }
     },
+    "/api/lineage/links": {
+      "post": {
+        "description": "Record that `child` came from `parent`. Refused: a campaign or run the\ncaller cannot see (404), a self-link, a duplicate, or a cycle (409).",
+        "operationId": "create_link_api_lineage_links_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Link"
+      }
+    },
+    "/api/lineage/links/{link_id}": {
+      "get": {
+        "operationId": "get_link_api_lineage_links__link_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "title": "Link Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Link"
+      }
+    },
+    "/api/lineage/links/{link_id}/retract": {
+      "post": {
+        "description": "Withdraw a link. The link row and the retraction (with its reason) are\nboth kept; a retracted link no longer counts in lineage or cycle checks.",
+        "operationId": "retract_link_api_lineage_links__link_id__retract_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "title": "Link Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkRetract"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retract Link"
+      }
+    },
+    "/api/lineage/relations": {
+      "get": {
+        "operationId": "get_relations_api_lineage_relations_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Relations"
+      }
+    },
     "/api/multi": {
       "get": {
         "operationId": "run_multi_api_multi_get",
@@ -4323,6 +4920,811 @@
           }
         },
         "summary": "Run Multi"
+      }
+    },
+    "/api/project-statuses": {
+      "get": {
+        "description": "The project status vocabulary, in lifecycle order.",
+        "operationId": "get_project_statuses_api_project_statuses_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Project Statuses"
+      }
+    },
+    "/api/projects": {
+      "get": {
+        "description": "The caller's projects, most recently updated first, with campaign counts.",
+        "operationId": "list_projects_api_projects_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Projects"
+      },
+      "post": {
+        "description": "Create a project. 409 when the name is taken or the tenant is at its limit.",
+        "operationId": "create_project_api_projects_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Project"
+      }
+    },
+    "/api/projects/{project_id}": {
+      "get": {
+        "description": "One project with its campaigns (name, recorded stage) and factors.",
+        "operationId": "get_project_api_projects__project_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Project"
+      },
+      "patch": {
+        "description": "Change a project's name, objective, status or sponsor (keys sent only).",
+        "operationId": "patch_project_api_projects__project_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Project"
+      }
+    },
+    "/api/projects/{project_id}/campaigns/{campaign_id}": {
+      "delete": {
+        "description": "Remove a campaign from the project. The campaign and its data are\nuntouched; lineage links that involve it are kept. The campaign itself is\nnot looked up, so a campaign that was deleted or can no longer be read can\nstill be detached; the membership row is tenant-scoped, so another tenant's\nid answers the same 404 `not_attached` as an id that was never attached.",
+        "operationId": "detach_campaign_api_projects__project_id__campaigns__campaign_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Detach Campaign"
+      },
+      "put": {
+        "description": "Add one of the caller's campaigns to the project (idempotent). A campaign\nbelongs to at most one project: 409 if it is in another.",
+        "operationId": "attach_campaign_api_projects__project_id__campaigns__campaign_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Attach Campaign"
+      }
+    },
+    "/api/projects/{project_id}/factors": {
+      "delete": {
+        "description": "Remove one factor definition. Campaign setups already filled from it are\nnot changed.",
+        "operationId": "delete_factor_api_projects__project_id__factors_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Factor"
+      },
+      "get": {
+        "operationId": "get_factors_api_projects__project_id__factors_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Factors"
+      },
+      "put": {
+        "description": "Create or replace one factor (keyed by `name`). The range is refused when\nthe unit is unknown or it is physically impossible for the unit or name.",
+        "operationId": "put_factor_api_projects__project_id__factors_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FactorPut"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Factor"
+      }
+    },
+    "/api/projects/{project_id}/factors/setup-bounds": {
+      "get": {
+        "description": "The project's `setting` factors as a campaign setup `bounds` object.\nWith `campaign_id` (a campaign of this project), factors that are not columns\nof its latest analysis are listed as skipped. Nothing is written.",
+        "operationId": "get_setup_bounds_api_projects__project_id__factors_setup_bounds_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "campaign_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 36,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Campaign Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Setup Bounds"
+      }
+    },
+    "/api/projects/{project_id}/lineage": {
+      "get": {
+        "description": "The project's campaigns and every active lineage link among them\n(Voyager's project-wide experiment-link view).",
+        "operationId": "get_project_lineage_api_projects__project_id__lineage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Project Lineage"
+      }
+    },
+    "/api/projects/{project_id}/outcomes": {
+      "get": {
+        "description": "Every run of the project's campaigns that has a recorded prediction or\nresult: the newest measured value (and its version count) beside the\nprediction recorded at start. Measured and predicted are never merged.",
+        "operationId": "get_outcomes_api_projects__project_id__outcomes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Outcomes"
       }
     },
     "/api/providers": {
@@ -4637,6 +6039,51 @@
           }
         },
         "summary": "Run Single"
+      }
+    },
+    "/api/units": {
+      "get": {
+        "description": "Every registered unit: its canonical symbol, dimension, name, accepted\nspellings, and whether a cell value in it is converted on upload.",
+        "operationId": "get_units_api_units_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Units"
       }
     },
     "/healthz": {

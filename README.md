@@ -122,6 +122,7 @@ and is enough for the `kalos.kit` helpers.
 | `KALOS_TORCH_THREADS` | `min(4, cpus)` | Torch threads per analysis (`0` = do not pin) |
 | `KALOS_JOBS_ENABLED` | on | `0` turns off background jobs |
 | `KALOS_DATABASE_URL` | unset (SQLite) | `postgresql://...` puts the records tables (projects, factors, lineage) in PostgreSQL; campaigns stay in SQLite for now ([`docs/MIGRATIONS.md`](docs/MIGRATIONS.md), "PostgreSQL backend") |
+| `KALOS_DATABASE_MIGRATE_URL` | unset | The PostgreSQL schema OWNER's URL, used only by `python -m kalos.storage.migrations.pg_runner up`; the engine itself should connect as a non-owner runtime role (`deploy/postgres/grants.sql`) |
 | `KALOS_LOG_FORMAT` | `text` | `json` writes one JSON object per log line; every line carries the request id (`X-Request-ID`) |
 | `KALOS_DATASETS_DIR` | `~/kalos/datasets` | Local copy of the public datasets for the planted-fault suite's optional Kaggle cases |
 

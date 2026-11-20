@@ -32,7 +32,14 @@ tenant is always the verified token's. Malformed, missing and other-tenant ids
 get one byte-identical 404. Errors use the engine envelope `{"error", "code"}`
 and never echo what was sent. Every successful write has its audit row in the
 same transaction, carrying the request id; a refused write gets a best-effort
-audit row with the refusal code only.
+audit row with the refusal code only, at most 20 per token per minute (the
+rest are counted in one `records.refusals_suppressed` row).
+
+Text fields (project name, objective and sponsor; factor name and description;
+link note and retraction reason) are stored and returned exactly as typed after
+trimming. No export includes them today; when one does, it must escape cells
+that start with `=`, `+`, `-`, `@`, TAB or CR (spreadsheet formulas) with the
+engine's export sanitiser (tracked in Linear BRE-151).
 
 | Method | Path | Scope | What |
 | --- | --- | --- | --- |
@@ -42,7 +49,7 @@ audit row with the refusal code only.
 | GET | `/api/projects/{project_id}` | read | the project, its campaigns (name, archived, recorded current stage) and factors |
 | PATCH | `/api/projects/{project_id}` | write | any of `name`, `objective`, `status`, `sponsor` (`null` clears it) |
 | PUT | `/api/projects/{project_id}/campaigns/{campaign_id}` | write | attach one of your campaigns (idempotent); 409 `campaign_in_other_project`; at most 200 per project |
-| DELETE | `/api/projects/{project_id}/campaigns/{campaign_id}` | write | detach; the campaign and its links are untouched |
+| DELETE | `/api/projects/{project_id}/campaigns/{campaign_id}` | write | detach; the campaign and its links are untouched; works for a campaign that can no longer be read |
 | GET | `/api/projects/{project_id}/factors` | read | factor definitions |
 | PUT | `/api/projects/{project_id}/factors` | write | create or replace one factor by `name`; 400 `invalid_bounds`, `unknown_unit`, `impossible_bounds`; at most 64 |
 | DELETE | `/api/projects/{project_id}/factors?name=` | write | remove a factor definition |
@@ -53,7 +60,7 @@ audit row with the refusal code only.
 | POST | `/api/lineage/links` | write | `{parent_campaign_id, child_campaign_id, relation, parent_run_id?, child_run_id?, parent_stage?, child_stage?, note?}` |
 | GET | `/api/lineage/links/{link_id}` | read | one link with its retraction, if any |
 | POST | `/api/lineage/links/{link_id}/retract` | write | `{reason}`; the link and the reason are both kept; 409 `already_retracted` |
-| GET | `/api/campaigns/{campaign_id}/lineage?depth=&include_outcomes=` | read | ancestors and descendants over active links (depth 1..32, default 6; ≤ 500 campaigns; ≤ 2000 links); `truncated` names any bound that cut the answer; `include_outcomes` adds the measured result and prediction at start of each run named by a link |
+| GET | `/api/campaigns/{campaign_id}/lineage?depth=&include_outcomes=` | read | ancestors and descendants over active links, walked one indexed query per hop (depth 1..32, default 6; ≤ 500 campaigns; ≤ 2000 links); `truncated` names any bound that cut the answer; `include_outcomes` adds the measured result and prediction at start of each run named by a link |
 | GET | `/api/units` | read | the units registry |
 
 Lineage rules: both ends must be the caller's campaigns (a foreign id is a 404,

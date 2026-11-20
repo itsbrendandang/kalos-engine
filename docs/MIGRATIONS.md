@@ -151,7 +151,10 @@ caller's tenant before they write it.
 indexes and four triggers in the one `BEGIN IMMEDIATE` transaction. No existing
 row changes. `down` (v9 -> v8) takes a `pre-down-<ts>` backup, drops the triggers
 and indexes and renames the tables to `<name>_v9_rolledback`, every row kept; a
-v8 engine runs on the result. Tested on a copy of a real v8 database
+v8 engine runs on the result. The renamed `lineage_links_v9_rolledback` and
+`lineage_retractions_v9_rolledback` no longer have their append-only triggers (they
+are dropped with the rename), so their rows can be edited until a re-`up`; treat
+them as a frozen copy and keep the `pre-down` backup as the record of truth. Tested on a copy of a real v8 database
 (`tests/fixtures/portal_v8.db`, produced by running the v8 engine over HTTP;
 `tests/fixtures/make_portal_v8_db.py`).
 
@@ -163,10 +166,17 @@ moves the **records tables (v9)** to PostgreSQL. In this release the campaign,
 analysis, job, result and audit tables of `CampaignStore` stay in `portal.db`;
 they move behind the same storage interface when `CampaignStore` is split into
 `kalos/storage/campaign_repo.py` (REORG_PLAN R06/R12), as a later step of the
-runner below. Until then, with a PostgreSQL URL:
+runner below.
+
+**Accepted until R06/R12 (decision recorded for PR #176; Linear BRE-152, linked
+to BRE-45 and BRE-44).** With a PostgreSQL URL:
 
 - records writes and their audit rows go to PostgreSQL's `audit_log`, in the
-  same transaction; campaign audit rows stay in `portal.db`;
+  same transaction; campaign audit rows stay in `portal.db`. The audit trail is
+  split across the two stores, and `GET .../audit` and the exports read only
+  `portal.db`;
+- `KALOS_AUDIT_RETENTION_DAYS` archives `portal.db` only: PostgreSQL's
+  `audit_log` has no archive job yet (its rows are kept; none is deleted);
 - the outcome views read results and predictions from `portal.db`.
 
 Rules (code: `kalos/storage/backend.py`, `kalos/storage/migrations/pg_runner.py`):
@@ -175,33 +185,59 @@ Rules (code: `kalos/storage/backend.py`, `kalos/storage/migrations/pg_runner.py`
   `%s` for psycopg); ids come back with `RETURNING id`; upserts use `ON CONFLICT
   ... DO UPDATE`; JSON is TEXT on SQLite and JSONB on PostgreSQL behind one
   helper; a SQLite-only construct fails loudly on PostgreSQL.
-- A write transaction takes one database-wide advisory lock first, so writers
-  serialize as they do under SQLite's `BEGIN IMMEDIATE`; a read is one REPEATABLE
-  READ READ ONLY snapshot.
+- A write transaction first takes the schema's advisory lock (a stable hash of
+  `kalos:<schema>`, `write_lock_key`), so writers on one schema serialize as
+  they do under SQLite's `BEGIN IMMEDIATE`, and two schemas in one database
+  never block each other. `pg_runner` takes the same lock. A read is one
+  REPEATABLE READ READ ONLY snapshot.
 - Append-only tables (`audit_log`, `lineage_links`, `lineage_retractions`) reject
-  UPDATE, DELETE and TRUNCATE with a trigger function raising SQLSTATE 23000. A
-  superuser can still disable triggers: run the engine as an ordinary role.
+  UPDATE, DELETE and TRUNCATE with a trigger function raising SQLSTATE 23000.
 - PostgreSQL starts at v9 with a BASELINE step: `schema_migrations`, `audit_log`
   (with its append-only triggers) and the v9 tables, in one transaction.
-- An **empty** database is created at the current version on engine startup.
-  A database at an **older** version is refused at startup; upgrade it with
-  `python -m kalos.storage.migrations.pg_runner up`, which takes a
-  `pg_dump --format=custom` into `--backup-dir` and VERIFIES it with
+- **Startup.** The engine opens the PostgreSQL backend in its startup hook,
+  before the first request. An **empty** schema is created at the current
+  version (one transaction). A schema that is not Kalos's (tables but no
+  `schema_migrations`), a damaged one (a table or trigger missing), an **older**
+  one, a **newer** one, or an unreachable server stops the boot with the reason.
+  If the database fails later, while serving, records requests answer `503` with
+  `Retry-After`, and the engine retries the connection only once per backoff
+  window (5 s, doubling up to 5 min), never once per request.
+- **Upgrades.** `python -m kalos.storage.migrations.pg_runner up` takes a
+  `pg_dump --format=custom` of the engine's schema and VERIFIES it with
   `pg_restore --list` (every table of the old version must be listed) before it
-  migrates, in one transaction. Without `pg_dump` on the box, take the dump
-  yourself and pass `--confirm-backup`. A **newer** database is refused.
-  `status` prints the version. There is no `down` on PostgreSQL: restore the
-  dump instead.
-- The URL is read from `KALOS_DATABASE_URL` only (never from the command line)
-  and every message redacts the password. `pg_dump` receives the password in
-  `PGPASSWORD`, not in its argv.
-- With `KALOS_ENV=production`, a URL to another host must ask for TLS
-  (`sslmode=require`, `verify-ca` or `verify-full`) or the engine refuses to
-  start. Pool size: `KALOS_DB_POOL_MIN` (default 1), `KALOS_DB_POOL_MAX` (default
-  10), `KALOS_DB_CONNECT_TIMEOUT` seconds (default 10).
+  migrates, in one transaction. The dump goes to `--backup-dir`, by default
+  `<KALOS_STATE_DIR>/pg-backups`, created mode 0700, and is written owner-only
+  (umask 077, then 0600). Without `pg_dump` on the box, take the dump yourself and
+  pass `--confirm-backup`. `status` prints the version. There is no `down` on
+  PostgreSQL: restore the dump instead.
+- **Roles.** Use two roles. The OWNER owns the schema and its tables; only
+  `pg_runner up` uses it, through `KALOS_DATABASE_MIGRATE_URL`. The RUNTIME role
+  is what the engine connects as (`KALOS_DATABASE_URL`); after `up`, grant it
+  with `deploy/postgres/grants.sql` (SELECT/INSERT on the append-only tables,
+  SELECT/INSERT/UPDATE/DELETE on projects, project_campaigns and
+  project_factors, USAGE on the schema and its sequences). Not owning the
+  tables, it cannot drop or disable the append-only triggers, ALTER, TRUNCATE or
+  create tables. On an empty schema it cannot create the tables either, so the
+  engine refuses to start and says to run `up` as the owner. A superuser can
+  disable any trigger: never run the engine as one.
+- **Credentials.** The URLs are read from the environment only (never from the
+  command line). Every message and log line describes the database by user,
+  host, port and name only, rebuilt from libpq's own parse of the URL
+  (`redact_dsn`); a URL that does not parse cleanly is shown as
+  `postgresql://***`. `pg_dump` gets `--host/--port/--username/--dbname` from the
+  same parse, the password only in `PGPASSWORD`, and every other parameter in its
+  `PG*` variable; an unknown parameter is refused.
+- **Production.** With `KALOS_ENV=production`, if any endpoint libpq will use
+  (every host and `hostaddr` in the URL, else `PGHOST` / `PGHOSTADDR`) is off
+  this machine, the effective sslmode (the URL's, else `PGSSLMODE`) must be
+  `verify-full`, or the engine refuses to start. A unix socket or loopback
+  address needs none. Pool size: `KALOS_DB_POOL_MIN` (default 1),
+  `KALOS_DB_POOL_MAX` (default 10), `KALOS_DB_CONNECT_TIMEOUT` seconds (default
+  10).
 - Tests: every records test runs on SQLite and, when
   `KALOS_TEST_DATABASE_URL` is set, again on PostgreSQL in a fresh schema
-  (`-m postgres`); CI runs them against a PostgreSQL 16 service container.
+  (`-m postgres`); CI runs them against a PostgreSQL 16 service container, with
+  `pg_dump` required (`KALOS_REQUIRE_PG_TOOLS=1`).
 
 ## Schema v8: prediction history
 
@@ -267,7 +303,10 @@ indexes, and renames the tables to `<name>_v8_rolledback` with every row kept. A
 v7 engine runs on the result (the `seed_id` key in the campaign state is
 ignored by v7), and drops predictions again at its next fold. A later `up`
 creates fresh tables and copies the then in-flight runs again; a second `down`
-renames to `<name>_v8_rolledback_2`, and so on.
+renames to `<name>_v8_rolledback_2`, and so on. The same holds
+for every `down` that renames an append-only table aside (v5-v9; v4's `down` drops the
+audit_log triggers in place): the renamed copy
+has no triggers, so the `pre-down` backup is the record of truth.
 
 The v7 -> v8 step is tested on a copy of a real v7 database
 (`tests/fixtures/portal_v7.db`, produced by running the v7 engine over HTTP;
