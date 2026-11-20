@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import threading
 from collections.abc import Iterator, Mapping, Sequence
@@ -46,7 +47,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit, urlunsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from kalos.envconfig import ConfigError, env_enum, env_int
 
@@ -106,24 +107,52 @@ def backend_from_env(environ: Mapping[str, str] | None = None) -> BackendConfig:
     )
 
 
-def redact_dsn(dsn: str) -> str:
-    """The DSN with any password replaced by `***` (URL userinfo, and a
-    `password=` query parameter). Safe to log and to put in an error."""
+REDACTED_DSN = "postgresql://***"
+_PORT_RE = re.compile(r"[0-9]+(,[0-9]+)*")
+
+
+def conninfo(dsn: str) -> dict[str, str] | None:
+    """The connection parameters libpq reads from `dsn` (psycopg's own parser,
+    so `#`, `?` and `/` in a password are handled exactly as libpq does), or
+    None when psycopg is missing or the string does not parse."""
     try:
-        parts = urlsplit(dsn)
-    except ValueError:
-        return "<unparseable database url>"
-    netloc = parts.netloc
-    if "@" in netloc:
-        userinfo, host = netloc.rsplit("@", 1)
-        if ":" in userinfo:
-            userinfo = userinfo.split(":", 1)[0] + ":***"
-        netloc = f"{userinfo}@{host}"
-    query = "&".join(
-        (f"{pair.split('=', 1)[0]}=***" if pair.split("=", 1)[0].lower() == "password" else pair)
-        for pair in (parts.query.split("&") if parts.query else [])
-    )
-    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+        from psycopg.conninfo import conninfo_to_dict
+    except ImportError:
+        return None
+    try:
+        parsed = conninfo_to_dict(dsn)
+    except Exception:  # noqa: BLE001 - any parse failure means "do not show it"
+        return None
+    return {str(k): str(v) for k, v in parsed.items() if v is not None}
+
+
+def redact_dsn(dsn: str) -> str:
+    """A safe description of `dsn` for logs and errors: only the user, host,
+    port and database are kept, rebuilt from the PARSED parameters (never from
+    the raw string), so no part of a password or any other parameter can
+    appear. Anything that does not parse cleanly gives the fixed
+    `postgresql://***`."""
+    params = conninfo(dsn)
+    if params is None:
+        return REDACTED_DSN
+    user, host = params.get("user", ""), params.get("host", "")
+    port, dbname = params.get("port", ""), params.get("dbname", "")
+    password = params.get("password", "")
+    shown = (user, host, port, dbname)
+    # A password with an unencoded '/' or '@' makes libpq read part of it as a
+    # host, port or database: refuse to show anything rather than leak it.
+    if (
+        any("@" in v for v in shown)
+        or (password and any(password in v for v in shown if v))
+        or (port and _PORT_RE.fullmatch(port) is None)
+        or "@" in dsn and not user
+        or any(c in dbname for c in "/?#")
+    ):
+        return REDACTED_DSN
+    netloc = (quote(user, safe="") + "@" if user else "") + quote(host, safe=",")
+    if port:
+        netloc += ":" + port
+    return f"postgresql://{netloc}/{quote(dbname, safe='')}"
 
 
 def _dsn_host_and_sslmode(dsn: str) -> tuple[str, str | None]:

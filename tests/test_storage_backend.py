@@ -37,15 +37,35 @@ def test_other_urls_are_refused_not_guessed(url):
     assert isinstance(exc.value, ConfigError)
 
 
+# Passwords with the characters that broke a URL-splitting redactor (B1): '#'
+# starts a URL fragment, '?' a query, '/' a path; 'Password=' looks like a
+# parameter. In every form the secret part must never be shown.
+_PW_FORMS = ["se#cr3t-Pa55", "se?cr3t-Pa55", "se/cr3t-Pa55", "Password=cr3t-Pa55", "cr3t%23-Pa55"]
+
+
+@pytest.mark.parametrize("pw", _PW_FORMS)
+@pytest.mark.parametrize("form", ["userinfo", "query"])
+def test_redact_dsn_never_shows_any_part_of_the_password(pw, form):
+    pytest.importorskip("psycopg")
+    dsn = (f"postgresql://kalos:{pw}@db.internal:5432/kalos" if form == "userinfo"
+           else f"postgresql://kalos@db.internal:5432/kalos?sslmode=require&password={pw}")
+    shown = sb.redact_dsn(dsn)
+    assert "cr3t" not in shown and "Pa55" not in shown and "se" not in shown.replace("postgresql", "")
+    assert shown in ("postgresql://kalos@db.internal:5432/kalos", sb.REDACTED_DSN)
+    assert "cr3t" not in sb.BackendConfig(sb.POSTGRES, dsn).describe()
+
+
 @pytest.mark.parametrize(("dsn", "shown"), [
-    (f"postgresql://kalos:{SECRET}@db.internal:5432/kalos", "postgresql://kalos:***@db.internal:5432/kalos"),
-    (f"postgresql://db/kalos?user=k&password={SECRET}&sslmode=require",
-     "postgresql://db/kalos?user=k&password=***&sslmode=require"),
-    ("postgresql://kalos@db/kalos", "postgresql://kalos@db/kalos"),
+    (f"postgresql://kalos:{SECRET}@db.internal:5432/kalos", "postgresql://kalos@db.internal:5432/kalos"),
+    (f"postgresql://db/kalos?user=k&password={SECRET}&sslmode=require", "postgresql://k@db/kalos"),
+    ("postgresql://kalos@db/kalos?options=-csearch_path%3Dx", "postgresql://kalos@db/kalos"),
+    ("postgresql://h1:5432,h2:5433/k", "postgresql://h1,h2:5432,5433/k"),
+    (f"postgresql://kalos:{SECRET}@db/k?Password={SECRET}", "postgresql://***"),  # does not parse
+    ("not a url at all", "postgresql://***"),
 ])
-def test_redact_dsn_never_shows_the_password(dsn, shown):
+def test_redact_dsn_keeps_only_user_host_port_db(dsn, shown):
+    pytest.importorskip("psycopg")
     assert sb.redact_dsn(dsn) == shown
-    assert SECRET not in sb.BackendConfig(sb.POSTGRES, dsn).describe()
 
 
 @pytest.mark.parametrize(("sql", "expected"), [
