@@ -1,0 +1,20 @@
+Kalos
+Copyright the Kalos authors. Licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+This product includes work adapted from the following sources.
+
+-------------------------------------------------------------------------------
+bioqore-synthetic-data-project (Bioqore), setpoint snapping
+-------------------------------------------------------------------------------
+
+Source: github.com/Bioqore/bioqore-synthetic-data-project (commit 1cc393e),
+generators/base.py (snap_discrete_setpoints), by Srihan Vege and James Hassett
+for Bioqore.
+
+Idea credit; re-implemented, no code copied. The idea taken is that a lab
+setpoint is not continuous: a generated value is snapped to a level the lab can
+actually make. Kalos applies it to proposed recipes in kalos/core/resolution.py
+(round each input to its declared step, its declared levels or 4 significant
+figures, toward the feasible side of the bounds and linear constraints). The
+repository has no license file; no source line from it is included here.
