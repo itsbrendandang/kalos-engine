@@ -263,6 +263,14 @@
   },
   {
     "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/lineage",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
     "path": "/api/campaigns/{campaign_id}/operating-ranges",
     "scopes": [
       "write"
@@ -406,8 +414,144 @@
     "auth": "required"
   },
   {
+    "method": "POST",
+    "path": "/api/lineage/links",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/lineage/links/{link_id}",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/lineage/links/{link_id}/retract",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/lineage/relations",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
     "method": "GET",
     "path": "/api/multi",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/project-statuses",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/projects",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/projects/{project_id}",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/projects/{project_id}/campaigns/{campaign_id}",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/projects/{project_id}/campaigns/{campaign_id}",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/projects/{project_id}/factors",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}/factors",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/projects/{project_id}/factors",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}/factors/setup-bounds",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}/lineage",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/projects/{project_id}/outcomes",
     "scopes": [
       "read"
     ],
@@ -448,6 +592,14 @@
   {
     "method": "GET",
     "path": "/api/single",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/units",
     "scopes": [
       "read"
     ],
