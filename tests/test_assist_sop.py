@@ -86,6 +86,40 @@ def _seed(store: CampaignStore, tenant: str = "acme") -> tuple[str, list[dict]]:
     return cid, runs
 
 
+def _letter_hex(n: int) -> str:
+    """A 32-character hex string with no decimal digit (base 6 over a-f)."""
+    out = ""
+    while True:
+        n, r = divmod(n, 6)
+        out = "abcdef"[r] + out
+        if n == 0:
+            return out.rjust(32, "a")
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_ids(monkeypatch):
+    """Run and campaign ids (uuid4) are deterministic and digit-free in this
+    module. The revise check refuses a revision that adds a number the draft
+    did not hold, and a draft quotes its run ids; a random hex id could already
+    contain the number a test plants (e.g. "run:30b9..." holds "30"), which made
+    test_revise_refuses_a_number_change pass or fail by chance."""
+    import itertools
+    import uuid
+
+    counter = itertools.count(1)
+    monkeypatch.setattr(uuid, "uuid4", lambda: uuid.UUID(hex=_letter_hex(next(counter))))
+
+
+def test_letter_hex_ids_are_unique_valid_and_digit_free():
+    import uuid
+
+    ids = [_letter_hex(n) for n in range(1, 2000)]
+    assert len(set(ids)) == len(ids)
+    assert all(len(i) == 32 and not re.search(r"\d", i) for i in ids)
+    a, b = uuid.uuid4().hex, uuid.uuid4().hex  # the patched source: distinct, digit-free
+    assert a != b and not re.search(r"\d", a + b)
+
+
 @dataclass
 class FakeModel:
     """A chat model whose reply is a function of the draft it was sent."""
@@ -258,6 +292,49 @@ def _refused(tc, draft_id: str, edit) -> list[str]:
     return body["reasons"]
 
 
+def test_revise_refuses_a_number_hidden_in_a_quoted_run_id(env, monkeypatch):
+    """A run id the draft quotes is not a quantity: digits inside it (here every
+    id starts with "30") must not make an added "30 minutes" look pre-existing."""
+    import itertools
+    import uuid
+
+    counter = itertools.count(1)
+    monkeypatch.setattr(uuid, "uuid4", lambda: uuid.UUID(hex="30" + _letter_hex(next(counter))[2:]))
+    tc, store = env
+    cid, runs = _seed(store)
+    assert all(r["id"].startswith("30") for r in runs)
+    d = _draft(tc, cid, {"round": 0})
+    assert f"run:{runs[0]['id']}" in d["markdown"]
+    reasons = _refused(tc, d["draft_id"], lambda t: t + "\nHold for 30 minutes.\n")
+    assert any("number" in r for r in reasons)
+
+
+def test_revise_refuses_a_number_hidden_in_the_draft_date(env, monkeypatch):
+    """The draft's date is not a quantity either: on the 30th of a month an added
+    "30 minutes" must still be refused."""
+    from datetime import UTC, datetime
+
+    monkeypatch.setattr(sop, "_now", lambda: datetime(2026, 11, 30, 9, 15, tzinfo=UTC))
+    tc, store = env
+    cid, _ = _seed(store)
+    d = _draft(tc, cid, {"round": 0})
+    assert "2026-11-30" in d["markdown"]
+    reasons = _refused(tc, d["draft_id"], lambda t: t + "\nHold for 30 minutes.\n")
+    assert any("number" in r for r in reasons)
+
+
+def test_revise_still_accepts_a_number_the_draft_already_holds(env):
+    """Ignoring ids and dates must not refuse a number the draft holds as a
+    quantity (here the procedure's step 2)."""
+    tc, store = env
+    cid, _ = _seed(store)
+    d = _draft(tc, cid, {"round": 0})
+    _use_model(lambda t: t + "\nSee step 2 above.\n")
+    r = tc.post(f"/api/assist/sop/{d['draft_id']}/revise", json={"instruction": "add a note"},
+                headers=H("a-write"))
+    assert r.status_code == 200, r.text
+
+
 def test_revise_refuses_a_filled_placeholder(env):
     tc, store = env
     cid, _ = _seed(store)
@@ -281,7 +358,8 @@ def test_revise_refuses_a_number_change(env):
     d = _draft(tc, cid, {"round": 0})
     reasons = _refused(tc, d["draft_id"], lambda t: t.replace("| 2.5 |", "| 2.6 |"))
     assert any("number" in r for r in reasons)
-    _refused(tc, d["draft_id"], lambda t: t + "\nHold for 30 minutes.\n")
+    # A value no date or id in the draft can hold (a day-of-month "30" can).
+    _refused(tc, d["draft_id"], lambda t: t + "\nHold for 47.5 minutes.\n")
     _refused(tc, d["draft_id"], lambda t: t.replace("| 4.2 | Measured |", "| 4.2 | Predicted |").replace("| 3.1 | Predicted |", "| 3.1 | Measured |") + "")
 
 
