@@ -45,7 +45,7 @@ MANIFEST = "MANIFEST.json"
 # CPU has (AVX2); arm64 (Apple) ignores them. Applied to the oracle's process
 # only; the engine itself is unchanged.
 KERNEL_PINS = {
-    "MKL_CBWR": "AVX2",  # MKL conditional numerical reproducibility (torch's BLAS/LAPACK on x86-64)
+X
     "MKL_ENABLE_INSTRUCTIONS": "AVX2",
     "OPENBLAS_CORETYPE": "Haswell",  # numpy/scipy's OpenBLAS kernel (Haswell = AVX2)
     "ATEN_CPU_CAPABILITY": "avx2",  # torch's own vectorized CPU kernels
