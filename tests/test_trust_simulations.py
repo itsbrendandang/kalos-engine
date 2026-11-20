@@ -33,11 +33,13 @@ def test_false_trust_stays_low_on_no_signal_sheets(scenario):
 
 @pytest.mark.parametrize("scenario", ["hartmann6_n30", "heteroscedastic_n40"])
 def test_selection_aware_bands_cover_at_the_proposals(scenario):
-    """F15: on fresh seeds the 90% band at proposals covered 0.92-0.99 (40 seeds,
-    benchmarks/results/coverage_at_proposals_after.json; the plain band covered
-    0.60-0.84). On 6 seeds x 5 proposals require >= 0.80 at proposals (the
-    plain band's own 0.60-0.65 on these simulators fails it) and >= 0.85 on
-    random in-box points, at both levels."""
+    """F15: on fresh seeds 100-139 the 90% band at proposals covered 0.86-0.965
+    on Python 3.11 (numpy 2.4.6, scipy 1.17.1) and 0.92-0.99 on Python >= 3.12
+    (numpy 2.5.1, scipy 1.18.0), the two stacks uv.lock pins
+    (benchmarks/results/coverage_at_proposals_main_*.json); the plain band at
+    the same proposals covered 0.545-0.705 on Python 3.11. On 6 seeds x 5
+    proposals require >= 0.80 at proposals (the plain band fails it on these
+    simulators) and >= 0.85 on random in-box points, at both levels."""
     from kalos.bench.coverage_at_proposals import run_one
 
     rows = [run_one(scenario, s) for s in range(200, 206)]

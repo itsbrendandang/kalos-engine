@@ -29,7 +29,16 @@ zero-inflated, 12% multiplicative noise; n=40, 100), a heteroscedastic 3-D bump
         --out benchmarks/results/coverage_at_proposals.json
 
 `--seed-offset` draws fresh seeds (the selection-aware method was chosen on
-seeds 0-39; its reported numbers come from seeds 100-139).
+seeds 0-39; its reported numbers come from seeds 100-139). The served evidence
+(kalos/portal/analysis_parts/coverage_evidence.py) is
+
+    python -m kalos.bench.coverage_at_proposals --seeds 40 --seed-offset 100 \
+        --out benchmarks/results/coverage_at_proposals_main_py311_seeds100.json
+
+run once on each stack uv.lock pins (Python 3.11 and Python >= 3.12: numpy and
+scipy differ, and so do the proposals), then `--print-evidence FILE` for each.
+Every results file records its commit, Python, library versions and thread
+counts in `meta.environment`.
 """
 from __future__ import annotations
 
@@ -299,6 +308,45 @@ def _worker(args: tuple[str, int]) -> dict[str, Any]:
     return run_one(*args)
 
 
+# The served evidence table (kalos/portal/analysis_parts/coverage_evidence.py,
+# MEASURED and CI95) is this function of one results file;
+# tests/test_interval_labels.py asserts it, so the caveat a client shows and
+# the file cannot disagree. Branin is a control and is left out.
+EVIDENCE_SCENARIOS = ("hartmann6_n30", "hartmann6_n80", "bioprocess_n40", "bioprocess_n100",
+                      "heteroscedastic_n40")
+# served method -> (summary field with the coverage, summary field with its CI or None, levels)
+EVIDENCE_FIELDS: dict[str, tuple[str, str | None, tuple[float, ...]]] = {
+    "conformal_selection_aware": ("coverage_at_proposals", "ci95_seed_cluster", LEVELS),
+    "conformal_normalized": ("plain_normalized_coverage_at_proposals", "plain_normalized_ci95_seed_cluster",
+                             LEVELS),
+    "conformal_abs_global": ("conformal_q_coverage_at_proposals", None, (0.9,)),
+    "gp_posterior": ("gp_posterior_coverage_at_proposals", None, LEVELS),
+}
+
+
+def evidence_table(summary: dict[str, Any]) -> tuple[dict[str, dict[str, dict[str, float]]],
+                                                     dict[str, dict[str, dict[str, list[float]]]]]:
+    """`(MEASURED, CI95)` for coverage_evidence.py from a results `summary`:
+    method -> level -> scenario -> coverage (and its seed-cluster 95% CI where
+    the benchmark computes one). The selection-aware rows require that every
+    proposal in the scenario carried the selection-aware band."""
+    measured: dict[str, dict[str, dict[str, float]]] = {}
+    ci95: dict[str, dict[str, dict[str, list[float]]]] = {}
+    for method, (field, ci_field, levels) in EVIDENCE_FIELDS.items():
+        for lv in levels:
+            k = f"{lv:g}"
+            for sc in EVIDENCE_SCENARIOS:
+                entry = summary[sc]["levels"][str(lv)]
+                if method == "conformal_selection_aware" and entry["methods"] != [method]:
+                    raise ValueError(f"{sc} {k}: bands {entry['methods']}, not only {method}")
+                if entry.get(field) is None:
+                    raise ValueError(f"{sc} {k}: no {field} in the results")
+                measured.setdefault(method, {}).setdefault(k, {})[sc] = entry[field]
+                if ci_field is not None and entry.get(ci_field) is not None:
+                    ci95.setdefault(method, {}).setdefault(k, {})[sc] = list(entry[ci_field])
+    return measured, ci95
+
+
 def environment() -> dict[str, Any]:
     """Where a results file came from: commit, stack and thread counts.
 
@@ -357,7 +405,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--procs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     ap.add_argument("--scenarios", default=",".join(SCENARIOS))
     ap.add_argument("--out", default=None, help="write {summary, rows, meta} JSON here")
+    ap.add_argument("--print-evidence", metavar="RESULTS_JSON", default=None,
+                    help="print MEASURED and CI95 for coverage_evidence.py from a results file; run nothing")
     args = ap.parse_args(argv)
+    if args.print_evidence:
+        with open(args.print_evidence) as fh:
+            measured, ci95 = evidence_table(json.load(fh)["summary"])
+        print("MEASURED =", json.dumps(measured, indent=4))
+        print("CI95 =", json.dumps(ci95, indent=4))
+        return 0
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     env = environment()  # before the run: the commit the rows come from
     t_start = time.time()

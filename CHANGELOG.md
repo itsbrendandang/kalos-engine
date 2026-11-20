@@ -4,9 +4,15 @@ Newest first.
 
 ## Unreleased
 
+### Fixed - coverage-at-proposals evidence matches main on both locked stacks (caveat text changes; no model output changes)
+
+- `python -m kalos.bench.coverage_at_proposals --seeds 40 --seed-offset 100` rerun on main @ cf7105c (bench commit 84f044a) on both stacks `uv.lock` pins: it forks numpy/scipy at Python 3.12. Python 3.11.17 (numpy 2.4.6, scipy 1.17.1; the CI stack): the selection-aware 90% band covered 0.86-0.965 at proposals (bioprocess n=40: 0.86 [0.79, 0.92]), 95%: 0.935-0.99. Python 3.12.15 (numpy 2.5.1, scipy 1.18.0; the engine image's stack): 0.92-0.99 and 0.965-0.995, identical row for row (240/240) to the file committed with F15, which was recorded on Python 3.14.7 on the same branch of the lock. scipy is the package that moves the proposals (bisected on 3 seeds); main and the F15 commit 0bbf5ae give identical rows on each stack, so no code drift.
+- The served caveat spans both stacks and, since the lowest value is below nominal, takes the existing "below N% in some cases" wording with `code: coverage_lower_at_proposals`: 90% "covered 86-99%", 95% "covered 93-99%". Plain band at the same proposals: 54-83% (90%) and 64-91% (95%), now measured on main (was 60-81% / 75-85% from engine 0fc05c3). `conformal_q`: 66-87%. GP band: 41-79% / 45-81%.
+- The estimate gains `by_stack` and `ci95_by_stack` (seed-cluster bootstrap); `source.results` lists both files and `source.stacks` records each file's commit, Python, numpy, scipy, torch, botorch, gpytorch and thread count. Results files now carry `meta.environment`. `tests/test_interval_labels.py` fails when the table or the caveat text disagrees with the files.
+
 ### Changed - selection-aware proposal intervals (F15, ML audit B1 fix 2; interval numbers change)
 
-- `proposals[].intervals` are calibrated on the held-out runs each fold model ranked highest (top 30%, both CV repeats) with the proposal sd floored at the 90th percentile of held-out sds (`method: conformal_selection_aware`, `coverage_basis: held_out_top_ranked_runs`). Measured at proposals on fresh simulation seeds: 90% band 0.60-0.83 -> 0.92-0.99, 95% band 0.72-0.92 -> 0.96-0.99, at 2.5-3.2x the median width; in-box coverage 0.98-1.00 (conservative). Per-level fallback to the plain band with `selection_aware_unavailable` when too few runs are selected. VALIDATION.md has the table.
+- `proposals[].intervals` are calibrated on the held-out runs each fold model ranked highest (top 30%, both CV repeats) with the proposal sd floored at the 90th percentile of held-out sds (`method: conformal_selection_aware`, `coverage_basis: held_out_top_ranked_runs`). Measured at proposals on fresh simulation seeds (Python >= 3.12 stack; see the Fixed entry above for Python 3.11): 90% band 0.60-0.83 -> 0.92-0.99, 95% band 0.72-0.92 -> 0.96-0.99, at 2.5-3.2x the median width; in-box coverage 0.98-1.00 (conservative). Per-level fallback to the plain band with `selection_aware_unavailable` when too few runs are selected. VALIDATION.md has the table.
 
 ### Changed - trust gates that gate (F04, ML audit B3; proposals change)
 
@@ -21,7 +27,7 @@ Newest first.
 
 ### Changed - honest interval labels (F02, ML audit B1)
 
-- Proposal caveat wording: no text next to a proposal interval says it "is calibrated". It says what the band was calibrated on and the coverage measured at proposed recipes, e.g. "Based on held-out runs: ... At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)." (95%: 96-99%). Guarded by `tests/test_interval_labels.py`.
+- Proposal caveat wording: no text next to a proposal interval says it "is calibrated". It says what the band was calibrated on and the coverage measured at proposed recipes, e.g. "Based on held-out runs: ... At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)." (95%: 96-99%; numbers corrected in the Fixed entry above). Guarded by `tests/test_interval_labels.py`.
 - Every band carries `coverage_basis`: `held_out_past_runs` for the conformal bands, `model_based` for the GP's own bands and quantiles.
 - Each proposal interval carries `caveat` (`code: coverage_lower_at_proposals`, a plain message and `coverage_at_proposals_estimate` with its source): the band is calibrated on held-out runs similar to past runs, and at proposals it was measured lower in simulation (90%: 60-81%, 95%: 75-85%; `python -m kalos.bench.coverage_at_proposals`, VALIDATION.md).
 - `conformal_caveat` (cherry-picked from `arch-safe-now` 47143f3) labels the global `conformal_q` band the same way (measured 68-83% at proposals).
