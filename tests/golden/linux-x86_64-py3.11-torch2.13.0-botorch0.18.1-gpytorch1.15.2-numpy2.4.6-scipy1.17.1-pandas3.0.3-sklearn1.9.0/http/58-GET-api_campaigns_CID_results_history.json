@@ -1,0 +1,134 @@
+{
+ "request": "GET /api/campaigns/cmp_00000000000000000000000000000034/results/history",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "campaign_id": "cmp_00000000000000000000000000000034",
+  "limit": 100,
+  "results": {
+   "items": [],
+   "has_more": false,
+   "next_before_id": null
+  },
+  "audit": {
+   "items": [
+    {
+     "id": 34,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.export_rows",
+     "campaign_id": "cmp_00000000000000000000000000000034",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": "format=json"
+    },
+    {
+     "id": 33,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.clone.titer_append",
+     "campaign_id": "cmp_00000000000000000000000000000034",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": "label=C1;id=1;basis=harvest_titer;correction=0"
+    },
+    {
+     "id": 32,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.clone.put",
+     "campaign_id": "cmp_00000000000000000000000000000034",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": "label=C1;status=lead;created=1;keys=host"
+    },
+    {
+     "id": 31,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.gate.decide",
+     "campaign_id": "cmp_00000000000000000000000000000034",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": "gate=S1;decision=go;evidence=0;id=1"
+    },
+    {
+     "id": 30,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.stages.update",
+     "campaign_id": "cmp_00000000000000000000000000000034",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": "n_stages=3"
+    },
+    {
+     "id": 29,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.rename",
+     "campaign_id": "cmp_00000000000000000000000000000034",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": null
+    },
+    {
+     "id": 11,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.upload",
+     "campaign_id": "cmp_00000000000000000000000000000034",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": null
+    },
+    {
+     "id": 10,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.setup",
+     "campaign_id": "cmp_00000000000000000000000000000034",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": "goal=maximize bounds=1 constraints=1 unit=set"
+    },
+    {
+     "id": 9,
+     "ts": "<volatile>",
+     "subject": "golden@lab",
+     "auth_method": "static",
+     "action": "campaign.create",
+     "campaign_id": "cmp_00000000000000000000000000000034",
+     "job_id": null,
+     "outcome": "ok",
+     "request_id": null,
+     "detail": null
+    }
+   ],
+   "has_more": false,
+   "next_before_id": null
+  },
+  "notes": {
+   "results": "append-only run_results rows; version 1 is the first value recorded, a row with previous_value is a correction; actor is shown as stored",
+   "audit": "audit_log rows for this campaign; subject and detail are shown as stored"
+  }
+ }
+}

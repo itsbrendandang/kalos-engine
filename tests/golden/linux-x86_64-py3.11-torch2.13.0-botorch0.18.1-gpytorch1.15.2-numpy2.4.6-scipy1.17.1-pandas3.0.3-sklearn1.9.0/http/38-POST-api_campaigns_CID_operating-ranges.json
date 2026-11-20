@@ -1,0 +1,24 @@
+{
+ "request": "POST /api/campaigns/cmp_0000000000000000000000000000001e/operating-ranges",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "campaign_id": "cmp_0000000000000000000000000000001e",
+  "status": "not_computed",
+  "reason_code": "model_not_reliable",
+  "reason": "the model has not shown it can rank held-out runs (grouped cross-validation): clears_floor=false, ci_excludes_zero=false",
+  "what_would_fix_it": "add more measured runs (ideally spread over the design space) and re-analyze until reliability clears the floor",
+  "diagnostics": {
+   "spearman": 0.382,
+   "ci95": [
+    -0.007,
+    0.659
+   ],
+   "spearman_floor": 0.2,
+   "clears_floor": false,
+   "ci_excludes_zero": false
+  }
+ }
+}

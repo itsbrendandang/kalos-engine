@@ -1,0 +1,27 @@
+{
+ "request": "GET /api/campaigns/cmp_00000000000000000000000000000034/gates/S1/history",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "campaign_id": "cmp_00000000000000000000000000000034",
+  "gate": "S1",
+  "limit": 50,
+  "items": [
+   {
+    "id": 1,
+    "gate": "S1",
+    "decision": "go",
+    "note": "screen cleared",
+    "evidence_linked": [],
+    "decided_by": "golden@lab",
+    "auth_method": "static",
+    "decided_at": "<volatile>",
+    "basis": "recorded"
+   }
+  ],
+  "has_more": false,
+  "next_before_id": null
+ }
+}
