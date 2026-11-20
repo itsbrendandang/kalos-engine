@@ -740,9 +740,11 @@ block says so in `not_causal`.
   distinct recipes. Collinearity is still reported.
 - Why subsampling: on a 5-input simulator (2 relevant inputs, n = 20/40/80),
   a Laplace approximation at the fitted hyperparameters called a truly
-  irrelevant input `relevant` in 8-43% of cases; recipe subsampling did so in
+  irrelevant input `relevant` in 1-43% of cases; recipe subsampling did so in
   0-16% and had more power on the relevant inputs (PR description). Cost: 16
-  single-start GP fits, run on the worker pool when present.
+  single-start GP fits, run on the worker pool when present. Reproduce:
+  `python benchmarks/robustness/relevance_interval.py`; cost:
+  `python benchmarks/robustness/stability_cost.py continuous 5`.
 - With `anonymize=True`, identifier-like names are aliased everywhere in the
   block, including inside `detail` text.
 

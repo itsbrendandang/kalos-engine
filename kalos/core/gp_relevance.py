@@ -17,7 +17,7 @@ Why subsampling and not a bootstrap or a Laplace approximation (measured on a
 5-input simulator with 2 relevant inputs, 15-40 seeds per cell, n = 20/40/80;
 docs/CAMPAIGNS_API.md "Driver second opinion"):
 - A Laplace approximation at the fitted hyperparameters is nearly free, but it
-  called a truly irrelevant input "relevant" in 8-43% of cases (overconfident
+  called a truly irrelevant input "relevant" in 1-43% of cases (overconfident
   toward short lengthscales); subsampling did so in 0-16%, with more power on
   the relevant inputs.
 - A with-replacement bootstrap duplicates rows, which a GP reads as exact
