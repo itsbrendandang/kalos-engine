@@ -1,0 +1,156 @@
+{
+ "request": "POST /api/campaigns/cmp_0000000000000000000000000000001e/runs/00000000000000000000000000000050/result",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "id": "00000000000000000000000000000050",
+  "recipe": {
+   "pH": 6.977,
+   "temperature_C": 36.515,
+   "glucose_gL": 10.898
+  },
+  "pred": 0.652,
+  "std": 0.076,
+  "pred_source": "engine",
+  "prediction_at_start": {
+   "available": true,
+   "basis": "predicted",
+   "pred": 0.652,
+   "std": 0.076,
+   "std_method": "gp_posterior",
+   "interval": {
+    "lo": 0.2646,
+    "hi": 1.0394,
+    "half_width": 0.3874,
+    "coverage": 0.9,
+    "method": "conformal_global"
+   },
+   "interval_unavailable_reason": null,
+   "proposal_index": 0,
+   "analysis_provenance": {
+    "provenance_sha256": "5a6c4931b3ee0c8889e5225764d7ec655210b151c74b15a278248d6e630689fb",
+    "input_sha256": "cd8ebefede4a9b1393f97db5f6a1158029551049c9f99e890ff4ab74a953587e",
+    "config_sha256": "c29de881bec3cac9d29d334e5488bd6b716bcb288abfec37a2f32c9d71d93f8c",
+    "engine_version": "0.1.0",
+    "seed": 1234,
+    "timestamp": "<volatile>"
+   },
+   "analysis_generation": "0000000000000000000000000000004f",
+   "recorded_at": "<volatile>",
+   "intervals": [
+    {
+     "coverage": 0.9,
+     "method": "conformal_selection_aware",
+     "calibrated_on": "grouped_cv_oof_top_ranked",
+     "n_calibration": 24,
+     "coverage_basis": "held_out_top_ranked_runs",
+     "caveat": {
+      "code": "coverage_measured_at_proposals",
+      "message": "Based on held-out runs: this 90% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed).",
+      "coverage_at_proposals_estimate": {
+       "nominal": 0.9,
+       "measured_min": 0.92,
+       "measured_max": 0.99,
+       "basis": "simulation",
+       "source": "interval_method.coverage_at_proposals.0.9",
+       "benchmark": "python -m kalos.bench.coverage_at_proposals"
+      }
+     },
+     "available": true,
+     "lo": -0.2927,
+     "hi": 1.5961,
+     "q_sel": 4.2471,
+     "sigma_floor": 0.2224,
+     "sigma_used": 0.2224
+    },
+    {
+     "coverage": 0.95,
+     "method": "conformal_selection_aware",
+     "calibrated_on": "grouped_cv_oof_top_ranked",
+     "n_calibration": 24,
+     "coverage_basis": "held_out_top_ranked_runs",
+     "caveat": {
+      "code": "coverage_measured_at_proposals",
+      "message": "Based on held-out runs: this 95% range was sized on the held-out past runs the model ranked highest, to mimic how proposals are chosen. At proposed recipes this 95% range covered 96-99% in simulation (measured, not guaranteed).",
+      "coverage_at_proposals_estimate": {
+       "nominal": 0.95,
+       "measured_min": 0.965,
+       "measured_max": 0.995,
+       "basis": "simulation",
+       "source": "interval_method.coverage_at_proposals.0.95",
+       "benchmark": "python -m kalos.bench.coverage_at_proposals"
+      }
+     },
+     "available": true,
+     "lo": -0.6324,
+     "hi": 1.9358,
+     "q_sel": 5.7746,
+     "sigma_floor": 0.2224,
+     "sigma_used": 0.2224
+    }
+   ],
+   "gp_intervals": [
+    {
+     "coverage": 0.9,
+     "method": "gp_posterior",
+     "posterior": "observation",
+     "note": "model-based, not held-out calibrated",
+     "coverage_basis": "model_based",
+     "coverage_at_proposals_estimate": {
+      "nominal": 0.9,
+      "measured_min": 0.5,
+      "measured_max": 0.725,
+      "basis": "simulation",
+      "source": "interval_method.gp_coverage_at_proposals",
+      "benchmark": "python -m kalos.bench.coverage_at_proposals"
+     },
+     "available": true,
+     "lo": 0.4103,
+     "hi": 0.8931
+    },
+    {
+     "coverage": 0.95,
+     "method": "gp_posterior",
+     "posterior": "observation",
+     "note": "model-based, not held-out calibrated",
+     "coverage_basis": "model_based",
+     "coverage_at_proposals_estimate": {
+      "nominal": 0.95,
+      "measured_min": 0.525,
+      "measured_max": 0.775,
+      "basis": "simulation",
+      "source": "interval_method.gp_coverage_at_proposals",
+      "benchmark": "python -m kalos.bench.coverage_at_proposals"
+     },
+     "available": true,
+     "lo": 0.364,
+     "hi": 0.9393
+    }
+   ]
+  },
+  "mode": null,
+  "reason": null,
+  "result": 0.662,
+  "round": 1,
+  "created_at": "<volatile>",
+  "measured_at": "<volatile>",
+  "analysis_provenance": {
+   "provenance_sha256": "5a6c4931b3ee0c8889e5225764d7ec655210b151c74b15a278248d6e630689fb",
+   "input_sha256": "cd8ebefede4a9b1393f97db5f6a1158029551049c9f99e890ff4ab74a953587e",
+   "config_sha256": "c29de881bec3cac9d29d334e5488bd6b716bcb288abfec37a2f32c9d71d93f8c",
+   "engine_version": "0.1.0",
+   "seed": 1234,
+   "timestamp": "<volatile>"
+  },
+  "result_version": 1,
+  "residual": 0.01,
+  "residual_basis": "derived",
+  "inside_band": true,
+  "previous_result": null,
+  "result_reason": null,
+  "result_actor": "golden@lab",
+  "result_recorded_at": "<volatile>"
+ }
+}

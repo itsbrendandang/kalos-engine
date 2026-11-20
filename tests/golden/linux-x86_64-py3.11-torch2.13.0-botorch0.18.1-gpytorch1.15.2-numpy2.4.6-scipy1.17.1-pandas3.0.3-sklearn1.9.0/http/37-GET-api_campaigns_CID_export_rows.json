@@ -1,0 +1,274 @@
+{
+ "request": "GET /api/campaigns/cmp_0000000000000000000000000000001e/export/rows",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "campaign_id": "cmp_0000000000000000000000000000001e",
+  "has_data": true,
+  "format": "json",
+  "target": "titer_g_L",
+  "columns": [
+   "pH",
+   "temperature_C",
+   "glucose_gL",
+   "titer_g_L"
+  ],
+  "original_rows_identifiable": true,
+  "original_rows_reason": null,
+  "original_rows": {
+   "origin": "upload",
+   "round": 0,
+   "n": 30,
+   "rows": [
+    {
+     "pH": 6.214,
+     "temperature_C": 34.675,
+     "glucose_gL": 10.014,
+     "titer_g_L": 0.0
+    },
+    {
+     "pH": 6.877,
+     "temperature_C": 38.141,
+     "glucose_gL": 2.984,
+     "titer_g_L": 0.404
+    },
+    {
+     "pH": 6.908,
+     "temperature_C": 35.785,
+     "glucose_gL": 3.212,
+     "titer_g_L": 0.0
+    },
+    {
+     "pH": 7.385,
+     "temperature_C": 38.367,
+     "glucose_gL": 9.312,
+     "titer_g_L": 0.497
+    },
+    {
+     "pH": 6.307,
+     "temperature_C": 34.225,
+     "glucose_gL": 7.281,
+     "titer_g_L": 0.0
+    },
+    {
+     "pH": 6.036,
+     "temperature_C": 31.091,
+     "glucose_gL": 2.246,
+     "titer_g_L": 0.0
+    },
+    {
+     "pH": 6.524,
+     "temperature_C": 36.264,
+     "glucose_gL": 3.645,
+     "titer_g_L": 0.0
+    },
+    {
+     "pH": 6.443,
+     "temperature_C": 30.039,
+     "glucose_gL": 5.32,
+     "titer_g_L": 0.0
+    },
+    {
+     "pH": 6.188,
+     "temperature_C": 37.317,
+     "glucose_gL": 10.84,
+     "titer_g_L": 0.0
+    },
+    {
+     "pH": 6.92,
+     "temperature_C": 33.888,
+     "glucose_gL": 8.721,
+     "titer_g_L": 0.12
+    },
+    {
+     "pH": 6.55,
+     "temperature_C": 37.163,
+     "glucose_gL": 4.598,
+     "titer_g_L": 0.484
+    },
+    {
+     "pH": 6.642,
+     "temperature_C": 34.28,
+     "glucose_gL": 5.116,
+     "titer_g_L": 0.388
+    },
+    {
+     "pH": 6.74,
+     "temperature_C": 38.74,
+     "glucose_gL": 4.638,
+     "titer_g_L": 0.0
+    },
+    {
+     "pH": 6.931,
+     "temperature_C": 32.499,
+     "glucose_gL": 6.166,
+     "titer_g_L": 0.052
+    },
+    {
+     "pH": 7.493,
+     "temperature_C": 32.217,
+     "glucose_gL": 9.411,
+     "titer_g_L": 0.0
+    },
+    {
+     "pH": 7.507,
+     "temperature_C": 35.523,
+     "glucose_gL": 3.083,
+     "titer_g_L": 0.0
+    },
+    {
+     "pH": 6.618,
+     "temperature_C": 33.774,
+     "glucose_gL": 9.01,
+     "titer_g_L": 0.071
+    },
+    {
+     "pH": 6.985,
+     "temperature_C": 36.996,
+     "glucose_gL": 10.898,
+     "titer_g_L": 0.942
+    },
+    {
+     "pH": 6.601,
+     "temperature_C": 37.211,
+     "glucose_gL": 2.133,
+     "titer_g_L": 0.252
+    },
+    {
+     "pH": 6.758,
+     "temperature_C": 31.993,
+     "glucose_gL": 2.56,
+     "titer_g_L": 0.007
+    },
+    {
+     "pH": 6.702,
+     "temperature_C": 37.95,
+     "glucose_gL": 5.962,
+     "titer_g_L": 0.331
+    },
+    {
+     "pH": 6.087,
+     "temperature_C": 36.563,
+     "glucose_gL": 8.618,
+     "titer_g_L": 0.0
+    },
+    {
+     "pH": 6.921,
+     "temperature_C": 30.214,
+     "glucose_gL": 8.339,
+     "titer_g_L": 0.001
+    },
+    {
+     "pH": 6.237,
+     "temperature_C": 34.403,
+     "glucose_gL": 4.446,
+     "titer_g_L": 0.0
+    },
+    {
+     "pH": 6.336,
+     "temperature_C": 35.723,
+     "glucose_gL": 3.909,
+     "titer_g_L": 0.128
+    },
+    {
+     "pH": 6.746,
+     "temperature_C": 33.288,
+     "glucose_gL": 5.612,
+     "titer_g_L": 0.0
+    },
+    {
+     "pH": 7.409,
+     "temperature_C": 38.001,
+     "glucose_gL": 8.679,
+     "titer_g_L": 0.174
+    },
+    {
+     "pH": 6.344,
+     "temperature_C": 38.202,
+     "glucose_gL": 4.035,
+     "titer_g_L": 0.077
+    },
+    {
+     "pH": 6.943,
+     "temperature_C": 30.992,
+     "glucose_gL": 5.308,
+     "titer_g_L": 0.006
+    },
+    {
+     "pH": 7.519,
+     "temperature_C": 32.746,
+     "glucose_gL": 10.075,
+     "titer_g_L": 0.0
+    }
+   ]
+  },
+  "folded_rows": {
+   "origin": "measured_run",
+   "n": 4,
+   "rows": [
+    {
+     "origin": "measured_run",
+     "folded_in_round": 1,
+     "values": {
+      "pH": 6.877,
+      "temperature_C": 37.172,
+      "glucose_gL": 10.898,
+      "titer_g_L": 0.656
+     }
+    },
+    {
+     "origin": "measured_run",
+     "folded_in_round": 1,
+     "values": {
+      "pH": 7.055,
+      "temperature_C": 37.584,
+      "glucose_gL": 10.898,
+      "titer_g_L": 0.709
+     }
+    },
+    {
+     "origin": "measured_run",
+     "folded_in_round": 2,
+     "values": {
+      "pH": 6.977,
+      "temperature_C": 36.515,
+      "glucose_gL": 10.898,
+      "titer_g_L": 0.662
+     }
+    },
+    {
+     "origin": "measured_run",
+     "folded_in_round": 2,
+     "values": {
+      "pH": 6.036,
+      "temperature_C": 30.039,
+      "glucose_gL": 10.898,
+      "titer_g_L": 0.057
+     }
+    }
+   ]
+  },
+  "unattributed_rows": null,
+  "anonymization": {
+   "applied": false
+  },
+  "csv_formula_neutralization": "CSV only: text cells and headers starting with = + - @ TAB or CR get a leading apostrophe",
+  "provenance": {
+   "campaign_generation": "00000000000000000000000000000059",
+   "campaign_round": 2,
+   "analysis_generation": "00000000000000000000000000000059",
+   "analysis_in_sync": true,
+   "analysis_engine_version": "0.1.0",
+   "export_engine_version": "0.1.0",
+   "analysis_run_kind": "reanalyze",
+   "analysis_input_sha256": "24d0aca1d0ac2c3384553bbd4d24178388779110758366ac565c563afd459df7",
+   "analysis_input_describes": "the folded dataset as CSV (run_record.fold_bytes)",
+   "provenance_sha256": "760c66f527e4dfbf9b651daf31566aa773a4e23bc353450d9603fa2177d2176d",
+   "dataset": "campaign round 2",
+   "anonymized": false,
+   "exported_at": "<volatile>"
+  }
+ }
+}

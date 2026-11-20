@@ -1,0 +1,11 @@
+{
+ "request": "PUT /api/campaigns/cmp_00000000000000000000000000000034/setup",
+ "status": 400,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "error": "invalid request body: <key>: Input should be 'maximize' or 'minimize'",
+  "code": "invalid_body"
+ }
+}

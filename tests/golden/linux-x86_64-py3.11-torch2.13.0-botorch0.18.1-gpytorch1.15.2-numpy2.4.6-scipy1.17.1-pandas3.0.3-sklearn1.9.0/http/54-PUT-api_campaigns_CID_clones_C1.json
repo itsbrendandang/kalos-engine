@@ -1,0 +1,20 @@
+{
+ "request": "PUT /api/campaigns/cmp_00000000000000000000000000000034/clones/C1",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "campaign_id": "cmp_00000000000000000000000000000034",
+  "clone": {
+   "label": "C1",
+   "status": "lead",
+   "fields": {
+    "host": "CHO-K1"
+   },
+   "updated_at": "<volatile>",
+   "updated_by": "golden@lab",
+   "created": true
+  }
+ }
+}

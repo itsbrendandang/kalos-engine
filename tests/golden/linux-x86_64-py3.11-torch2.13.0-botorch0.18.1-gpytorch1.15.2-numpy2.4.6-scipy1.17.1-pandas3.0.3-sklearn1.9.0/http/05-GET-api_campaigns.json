@@ -1,0 +1,10 @@
+{
+ "request": "GET /api/campaigns",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "campaigns": []
+ }
+}

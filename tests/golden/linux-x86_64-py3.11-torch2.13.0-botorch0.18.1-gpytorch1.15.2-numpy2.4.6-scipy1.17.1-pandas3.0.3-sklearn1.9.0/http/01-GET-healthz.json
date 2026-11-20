@@ -1,0 +1,10 @@
+{
+ "request": "GET /healthz",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "status": "ok"
+ }
+}

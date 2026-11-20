@@ -1,0 +1,14 @@
+{
+ "request": "GET /api/campaigns/cmp_0000000000000000000000000000001e/operating-ranges",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "campaign_id": "cmp_0000000000000000000000000000001e",
+  "status": "not_computed",
+  "reason_code": "threshold_missing",
+  "reason": "no threshold was given; an operating range is the region meeting a threshold on the target",
+  "what_would_fix_it": "pass 'threshold' (target units) and optionally 'probability' (0.5 to 0.99)"
+ }
+}

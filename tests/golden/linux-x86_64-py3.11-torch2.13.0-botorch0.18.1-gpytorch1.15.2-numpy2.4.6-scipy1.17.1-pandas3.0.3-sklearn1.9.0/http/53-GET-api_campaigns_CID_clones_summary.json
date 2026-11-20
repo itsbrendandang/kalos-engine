@@ -1,0 +1,12 @@
+{
+ "request": "GET /api/campaigns/cmp_00000000000000000000000000000034/clones/summary",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "campaign_id": "cmp_00000000000000000000000000000034",
+  "available": false,
+  "reason": "no clone column: declare one (strain_column in the campaign setup, or roles.strain) to see per-clone results"
+ }
+}
