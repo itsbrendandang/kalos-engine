@@ -1,0 +1,9 @@
+{
+ "arm": "kalos_ref",
+ "spec": "kalos.bench.ml_v2.arms.kalos_ref:make_arm",
+ "config": {},
+ "config_hash": "98c2bcaf9584b22a",
+ "shippable": true,
+ "frozen_from_commit": "e135205c75793c75840215dd9eb561951da3db6d",
+ "note": "reference arm: the production _analyze path of the engine at the commit a held-out run names"
+}

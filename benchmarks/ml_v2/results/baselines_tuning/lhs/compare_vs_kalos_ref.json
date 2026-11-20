@@ -1,0 +1,203 @@
+{
+ "protocol": "ml_v2.0",
+ "n_pairs": 428,
+ "criteria": {
+  "C1a_regret": {
+   "pass": false,
+   "mean_diff_synthetic": 0.1522,
+   "ci95": [
+    0.105,
+    0.1992
+   ],
+   "n": 96,
+   "mean_diff_real_pool": 0.1032,
+   "n_real": 18
+  },
+  "C1b_width": {
+   "pass": false,
+   "ratio": null,
+   "ci95": null
+  },
+  "C2_coverage_at_proposals": {
+   "pass": false,
+   "0.9": {
+    "pooled": null,
+    "n": 0,
+    "tasks_ci_below_nominal": [],
+    "pass": false
+   },
+   "0.95": {
+    "pooled": null,
+    "n": 0,
+    "tasks_ci_below_nominal": [],
+    "pass": false
+   }
+  },
+  "C3_heldout_coverage": {
+   "pass": true,
+   "0.9": {
+    "pooled": null,
+    "n": 0,
+    "pass": true
+   },
+   "0.95": {
+    "pooled": null,
+    "n": 0,
+    "pass": true
+   }
+  },
+  "C4_false_trust": {
+   "pass": true,
+   "candidate": 0.0,
+   "reference": 0.0833,
+   "n": 96,
+   "scenarios_worse": {}
+  },
+  "C5_planted_faults": {
+   "pass": false,
+   "regressions": null,
+   "note": "fault scorecards not supplied"
+  },
+  "C6_no_hidden_loss": {
+   "pass": false,
+   "losses": {
+    "closed_loop|mixed": {
+     "mean_diff": 0.2147,
+     "p_holm": 0.0322
+    }
+   },
+   "per_task": {
+    "closed_loop|batch": {
+     "mean_diff": 0.1325,
+     "n": 12,
+     "p_holm": 1.0
+    },
+    "closed_loop|bioprocess": {
+     "mean_diff": 0.1388,
+     "n": 12,
+     "p_holm": 0.6123
+    },
+    "closed_loop|bumps": {
+     "mean_diff": 0.0696,
+     "n": 12,
+     "p_holm": 1.0
+    },
+    "closed_loop|clones": {
+     "mean_diff": 0.1682,
+     "n": 12,
+     "p_holm": 1.0
+    },
+    "closed_loop|constrained": {
+     "mean_diff": 0.0916,
+     "n": 12,
+     "p_holm": 1.0
+    },
+    "closed_loop|hartmann6": {
+     "mean_diff": 0.2254,
+     "n": 12,
+     "p_holm": 0.3223
+    },
+    "closed_loop|heteroscedastic": {
+     "mean_diff": 0.1765,
+     "n": 12,
+     "p_holm": 0.0513
+    },
+    "closed_loop|mixed": {
+     "mean_diff": 0.2147,
+     "n": 12,
+     "p_holm": 0.0322
+    },
+    "emulator|gp:amii/DBO_rat_myocyte": {
+     "mean_diff": 0.0275,
+     "n": 4,
+     "p_holm": 1.0
+    },
+    "emulator|gp:amii/HeLa_timesaving": {
+     "mean_diff": 0.0,
+     "n": 4,
+     "p_holm": 1.0
+    },
+    "emulator|gp:amii/Tcell_expansion": {
+     "mean_diff": 0.2037,
+     "n": 4,
+     "p_holm": 1.0
+    },
+    "emulator|gp:olympus/hplc": {
+     "mean_diff": -0.0479,
+     "n": 4,
+     "p_holm": 1.0
+    },
+    "emulator|rf:amii/DBO_rat_myocyte": {
+     "mean_diff": 0.3032,
+     "n": 4,
+     "p_holm": 1.0
+    },
+    "emulator|rf:amii/HeLa_timesaving": {
+     "mean_diff": 0.103,
+     "n": 4,
+     "p_holm": 1.0
+    },
+    "emulator|rf:amii/Tcell_expansion": {
+     "mean_diff": 0.0072,
+     "n": 4,
+     "p_holm": 1.0
+    },
+    "emulator|rf:olympus/hplc": {
+     "mean_diff": -0.0308,
+     "n": 4,
+     "p_holm": 1.0
+    },
+    "pool|amii/DBO_rat_myocyte": {
+     "mean_diff": 0.3866,
+     "n": 6,
+     "p_holm": 1.0
+    },
+    "pool|amii/HeLa_timesaving": {
+     "mean_diff": -0.1717,
+     "n": 6,
+     "p_holm": 1.0
+    },
+    "pool|amii/Tcell_expansion": {
+     "mean_diff": 0.0948,
+     "n": 6,
+     "p_holm": 1.0
+    },
+    "pool|fixture/synthetic_bioprocess": {
+     "mean_diff": 0.0167,
+     "n": 6,
+     "p_holm": 1.0
+    },
+    "pool|fixture/synthetic_scaleup": {
+     "mean_diff": -0.0028,
+     "n": 6,
+     "p_holm": 1.0
+    },
+    "pool|olympus/hplc": {
+     "mean_diff": 0.049,
+     "n": 6,
+     "p_holm": 1.0
+    }
+   }
+  },
+  "C7_noninferior": {
+   "pass": true
+  },
+  "C8_backtest_no_loss": {
+   "pass": true,
+   "mean_diff": 0.0758,
+   "ci95": [
+    -0.0101,
+    0.1393
+   ],
+   "n": 23
+  }
+ },
+ "ships": false,
+ "candidate": "lhs",
+ "reference": "kalos_ref",
+ "split": "tuning",
+ "shippable_arm": false,
+ "decision_valid": false,
+ "why_not_decisive": "only a held-out run of a shippable (engine-patch) arm can ship",
+ "baselines": {}
+}
