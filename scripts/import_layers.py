@@ -120,6 +120,7 @@ PLACEMENT: dict[str, str] = {
     "kalos.portal.prediction_history": "campaigns",  # arriving with feat/prediction-history
     "kalos.portal.track_record": "campaigns",  # arriving with feat/prediction-history
     "kalos.portal.result_referee": "campaigns",  # arriving with feat/data-checks
+    "kalos.records": "campaigns",  # projects, factors, lineage, outcomes (feat/voyager-records)
     # jobs
     "kalos.jobs": "jobs",
     "kalos.portal.jobs": "jobs",

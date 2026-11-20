@@ -72,6 +72,8 @@ def test_rules_are_layered(layers: ModuleType) -> None:
     ("kalos.portal.analysis_parts.columns", "analysis"),
     ("kalos.analysis.stages.trust", "analysis"),
     ("kalos.portal.campaign", "campaigns"),
+    ("kalos.records.lineage", "campaigns"),
+    ("kalos.storage.records_repo", "storage"),
     ("kalos.campaigns.service", "campaigns"),
     ("kalos.portal.migrate", "storage"),
     ("kalos.storage.migrations.v8", "storage"),
