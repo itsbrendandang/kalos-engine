@@ -14,7 +14,7 @@ import itertools
 
 import pytest
 import records_helpers
-from records_helpers import H
+from records_helpers import BODIES, ROUTES, H
 
 # Fixtures shared with tests/test_storage_backend.py (assigned, not imported, so
 # the parameter names below are the fixtures, not shadowed imports).
@@ -377,36 +377,6 @@ def test_units_registry_read_only(records_env):
 
 
 # --- scopes, isolation, audit and request ids for EVERY new route ----------------------------- #
-
-ROUTES = [
-    ("GET", "/api/project-statuses", "read"),
-    ("GET", "/api/projects", "read"),
-    ("POST", "/api/projects", "write"),
-    ("GET", "/api/projects/{pid}", "read"),
-    ("PATCH", "/api/projects/{pid}", "write"),
-    ("PUT", "/api/projects/{pid}/campaigns/{cid}", "write"),
-    ("DELETE", "/api/projects/{pid}/campaigns/{cid}", "write"),
-    ("GET", "/api/projects/{pid}/factors", "read"),
-    ("PUT", "/api/projects/{pid}/factors", "write"),
-    ("DELETE", "/api/projects/{pid}/factors?name=x", "write"),
-    ("GET", "/api/projects/{pid}/factors/setup-bounds", "read"),
-    ("GET", "/api/projects/{pid}/outcomes", "read"),
-    ("GET", "/api/projects/{pid}/lineage", "read"),
-    ("GET", "/api/lineage/relations", "read"),
-    ("POST", "/api/lineage/links", "write"),
-    ("GET", "/api/lineage/links/{lid}", "read"),
-    ("POST", "/api/lineage/links/{lid}/retract", "write"),
-    ("GET", "/api/campaigns/{cid}/lineage", "read"),
-    ("GET", "/api/units", "read"),
-]
-BODIES = {
-    ("POST", "/api/projects"): {"name": "n2", "objective": "o"},
-    ("PATCH", "/api/projects/{pid}"): {"status": "completed"},
-    ("PUT", "/api/projects/{pid}/factors"): {"name": "x", "lower_bound": 0, "upper_bound": 1},
-    ("POST", "/api/lineage/links"): {"parent_campaign_id": "{cid}", "child_campaign_id": "{cid2}", "relation": "replicate"},
-    ("POST", "/api/lineage/links/{lid}/retract"): {"reason": "r"},
-}
-
 
 def _fixture_ids(env) -> dict[str, str]:
     pid = _pid(env)
