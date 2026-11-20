@@ -1,4 +1,7 @@
 {
+    "tests/contract/test_openapi_drift.py::test_checked_in_openapi_has_not_drifted": 0.09767426800000578,
+    "tests/contract/test_openapi_drift.py::test_document_lists_exactly_the_served_routes": 0.0026414190000139115,
+    "tests/contract/test_openapi_drift.py::test_export_is_deterministic": 0.11333364699999038,
     "tests/test_alternative_scale.py::test_added_runtime_is_bounded_relative_to_baseline": 9.529,
     "tests/test_alternative_scale.py::test_alternative_scale_uses_log_offset_not_log1p_offset": 0.002,
     "tests/test_alternative_scale.py::test_block_is_json_safe": 9.256,
@@ -893,6 +896,7 @@
     "tests/test_deploy_config.py::test_compose_engine_auth_and_salt_env_are_wired_from_env_file": 0.006,
     "tests/test_deploy_config.py::test_compose_engine_binds_state_dir_to_engine_home_and_backup_reads_it_readonly": 0.006,
     "tests/test_deploy_config.py::test_compose_engine_has_no_replicas_override": 0.006,
+    "tests/test_deploy_config.py::test_compose_engine_trusts_the_web_jwks_and_only_web_holds_the_private_key": 0.008597406999967916,
     "tests/test_deploy_config.py::test_compose_file_parses_as_yaml": 0.008,
     "tests/test_deploy_config.py::test_compose_publishes_only_the_web_front_door": 0.007,
     "tests/test_deploy_config.py::test_compose_restart_policies_match_reference_pattern": 0.006,
