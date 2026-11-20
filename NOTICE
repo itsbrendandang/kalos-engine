@@ -1,0 +1,20 @@
+Kalos
+Copyright the Kalos authors. Licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+This product includes work adapted from the following sources.
+
+-------------------------------------------------------------------------------
+voyager-brain-rebuild (Bioqore): carry-forward baseline
+-------------------------------------------------------------------------------
+
+Source: github.com/Bioqore/voyager-brain-rebuild (commit 45ccce8),
+voyager_rebuild/core/evaluation.py (`_carry_forward_col`) and REBUILD.md §3-4.
+License: proprietary to Bioqore.
+
+Idea credit; re-implemented, no code copied. The idea: a model that predicts a
+unit's value at a larger scale must beat that unit's own earlier-scale
+measurement carried forward. Kalos's version is
+kalos/core/baselines.py (`carry_forward_rank_agreement`): Spearman and top-k
+agreement on per-unit means, a cluster-bootstrap CI, a paired comparison with
+the model, and refusals below 5 shared units.
