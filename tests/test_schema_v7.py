@@ -20,6 +20,7 @@ import pytest
 
 from kalos.portal import campaign_settings, clone_registry, migrate
 from kalos.portal.campaign import CampaignStore
+from kalos.storage.migrations import v9 as _v9
 
 RECIPE = {"recipe": {"Methanol": 2.0, "pH": 6.0}, "pred": 1.0, "std": 0.1, "mode": "explore", "reason": "x"}
 _V7_TABLES = {"campaign_clones", "clone_titer_history"}
@@ -83,7 +84,7 @@ def _make_v6(state: Path) -> tuple[Path, dict[str, str]]:
     conn = sqlite3.connect(str(db))
     for t in ("campaign_clones_v7_rolledback", "clone_titer_history_v7_rolledback",
               "analysis_snapshots_v8_rolledback", "run_predictions_v8_rolledback",
-              "run_folds_v8_rolledback"):
+              "run_folds_v8_rolledback", *(f"{t}_v9_rolledback" for t in _v9.TABLES)):
         conn.execute(f'DROP TABLE "{t}"')
     conn.commit()
     conn.close()
@@ -138,6 +139,8 @@ def test_v6_to_v7_keeps_every_row_and_takes_a_verified_backup(tmp_path):
     assert after.pop("campaign_clones") == [] and after.pop("clone_titer_history") == []
     for t in ("analysis_snapshots", "run_predictions", "run_folds"):  # v8, tests/test_schema_v8.py
         after.pop(t)
+    for t in _v9.TABLES:  # v9 (records), tests/test_schema_v9.py
+        assert after.pop(t) == []
     after.pop("sqlite_sequence", None)
     before.pop("sqlite_sequence", None)
     assert after == before

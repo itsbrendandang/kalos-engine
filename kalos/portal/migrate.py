@@ -60,7 +60,12 @@ upgrade copies the current `analyses` rows and the in-flight runs' recorded
 predictions into them (rows are read, never changed); runs folded before v8 lost
 their predictions in v7 and are not invented. `down` renames the tables aside
 (`<name>_v8_rolledback`). The remaining Crux items (result check, decision
-ledger) take v9 or later. See kalos/portal/prediction_history.py.
+ledger) take v10 or later. See kalos/portal/prediction_history.py.
+
+Schema v9 adds the records ported from Voyager (kalos/storage/migrations/v9.py,
+docs/RECORDS.md): `projects`, `project_campaigns`, `project_factors`, and the
+append-only `lineage_links` + `lineage_retractions` (the same two-trigger guard).
+Additive; `down` renames the five tables aside (`<name>_v9_rolledback`).
 
 This module is torch-free and FastAPI-free on purpose: the CLI must run on a
 box where the engine itself is stopped.
@@ -82,10 +87,11 @@ from pathlib import Path
 from typing import Any
 
 from kalos.portal.tenancy import is_valid_tenant_id
+from kalos.storage.migrations import v9 as _v9
 
 log = logging.getLogger("kalos.portal")
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 V2 = 2  # the multi-campaign schema; v1 <-> v2 code below is keyed on it
 V3 = 3  # the background-job queue
 V4 = 4  # the append-only audit log
@@ -93,7 +99,8 @@ V5 = 5  # the append-only result history
 V6 = 6  # campaign settings + scale-up stage gate decisions
 V7 = 7  # label-only clone registry + append-only clone titer history
 V8 = 8  # prediction history: analysis snapshots, run predictions, run folds (BRE-32)
-# The remaining Crux items (result check, decision ledger) take v9 or later.
+V9 = _v9.V9  # records: projects, factors, lineage (kalos/storage/migrations/v9.py)
+# The remaining Crux items (result check, decision ledger) take v10 or later.
 V2_NAME = "multi-campaign storage"
 V3_NAME = "background jobs"
 V4_NAME = "append-only audit log"
@@ -101,6 +108,7 @@ V5_NAME = "append-only result history"
 V6_NAME = "campaign settings and stage gate decisions"
 V7_NAME = "clone registry and clone titer history"
 V8_NAME = "prediction history: analysis snapshots, run predictions and run folds"
+V9_NAME = _v9.V9_NAME
 BUSY_TIMEOUT_MS = 5000
 DB_FILENAME = "portal.db"
 
@@ -113,7 +121,7 @@ CAMPAIGN_ID_PATTERN = re.compile(r"cmp_[0-9a-f]{32}")
 TENANT_TABLES = (
     "campaigns", "analyses", "tenant_defaults", "audit_log", "jobs", "run_results",
     "campaign_settings", "gate_decisions", "campaign_clones", "clone_titer_history",
-    "analysis_snapshots", "run_predictions", "run_folds",
+    "analysis_snapshots", "run_predictions", "run_folds", *_v9.TABLES,
 )
 
 # A job id is `job_` + uuid4().hex (kalos/portal/jobs.py), validated the same way.
@@ -773,6 +781,8 @@ def _assert_v2_shape(conn: sqlite3.Connection, version: int | None = None) -> No
     if v >= V8:
         missing += [t for t in _V8_TABLES if t not in tables]
         missing += [f"trigger {t}" for t in _V8_TRIGGERS if t not in triggers]
+    if v >= V9:
+        missing += _v9.missing_sqlite(tables, triggers)
     cols = {str(r[1]) for r in _columns(conn, "campaigns")}
     missing_cols = sorted(_V2_CAMPAIGN_COLUMNS - cols)
     if missing or missing_cols:
@@ -925,6 +935,8 @@ class UpPlan:
                     "in-flight run's recorded prediction -> run_predictions (read only; no existing "
                     "row changes; runs folded before v8 have no recorded prediction to copy)"
                 )
+            if self.from_version < V9:
+                lines += _v9.render_up()
             return "\n".join(lines)
         lines = [f"{self.db_path}: schema v{self.from_version} -> v{V2}"]
         if self.from_version > 0:
@@ -945,7 +957,7 @@ class UpPlan:
         for sk in self.latest_skipped:
             lines.append(f"  skip: latest/{sk.filename} ({sk.reason})")
         lines.append("  latest/ files are left in place")
-        lines.append(f"  then: schema v{V2} -> v{SCHEMA_VERSION} (create the jobs table; add the audit_log triggers; create run_results; create campaign_settings and gate_decisions; create campaign_clones and clone_titer_history; create analysis_snapshots, run_predictions and run_folds)")
+        lines.append(f"  then: schema v{V2} -> v{SCHEMA_VERSION} (create the jobs table; add the audit_log triggers; create run_results; create campaign_settings and gate_decisions; create campaign_clones and clone_titer_history; create analysis_snapshots, run_predictions and run_folds; create the v9 records tables)")
         return "\n".join(lines)
 
 
@@ -1422,6 +1434,9 @@ def migrate_up(
                 _apply_v7_in_txn(conn)
             if now_version < V8:
                 warnings += _apply_v8_in_txn(conn)
+            if now_version < V9:
+                warnings += _v9.apply_sqlite(conn)
+                _record_version(conn, V9, V9_NAME)
             conn.execute("COMMIT")
         except BaseException:
             if conn.in_transaction:
@@ -1736,7 +1751,15 @@ def _down_goal(version: int, target: int | None) -> int | None:
     return goal
 
 
+def _render_down_v9(db_path: Path, conn: sqlite3.Connection) -> str:
+    lines = [f"{db_path}: schema v{V9} -> v{V8}", *_v9.render_down(conn)]
+    lines.append("  every v8 table: unchanged")
+    return "\n".join(lines)
+
+
 def _render_down_step(db_path: Path, conn: sqlite3.Connection, step_from: int) -> str:
+    if step_from == V9:
+        return _render_down_v9(db_path, conn)
     if step_from == V8:
         return _render_down_v8(db_path, conn)
     if step_from == V7:
@@ -1762,6 +1785,9 @@ def migrate_down(
     """Roll the database back, ONE version by default, or down to `target`
     (1 .. current - 1). Each step is listed in the plan:
 
+    v9 -> v8: drops the lineage triggers and the records indexes and renames
+    projects, project_campaigns, project_factors, lineage_links and
+    lineage_retractions to `<name>_v9_rolledback` (kept).
     v8 -> v7: drops the six prediction-history triggers and two indexes and
     renames analysis_snapshots, run_predictions and run_folds to
     `<name>_v8_rolledback` (kept).
@@ -1818,7 +1844,10 @@ def migrate_down(
         conn.execute("BEGIN IMMEDIATE")
         try:
             for step in range(version, goal, -1):
-                if step == V8:
+                if step == V9:
+                    parts.append(_render_down_v9(db, conn))
+                    _v9.down_sqlite(conn)
+                elif step == V8:
                     parts.append(_render_down_v8(db, conn))
                     _down_v8_in_txn(conn)
                 elif step == V7:
@@ -1968,7 +1997,7 @@ def _default_state_dir() -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m kalos.portal.migrate",
-        description="Inspect, apply or roll back the kalos portal.db schema migrations (v1 .. v8).",
+        description="Inspect, apply or roll back the kalos portal.db schema migrations (v1 .. v9).",
     )
     parser.add_argument("command", choices=["up", "down", "status"])
     parser.add_argument("--dry-run", action="store_true", help="print the plan; change nothing")

@@ -5,7 +5,9 @@ loop: campaigns, their published analyses, the tenant's default campaign, and
 an audit log. Its schema is versioned in `schema_migrations`. The code is
 `kalos/portal/migrate.py`; the tests are `tests/test_campaign_schema_v2.py` and,
 for v6, `tests/test_schema_v6.py`, for v7, `tests/test_schema_v7.py`, and for v8,
-`tests/test_schema_v8.py` (run on a copy of a real v7 database).
+`tests/test_schema_v8.py` (run on a copy of a real v7 database), and for v9,
+`tests/test_schema_v9.py` (run on a copy of a real v8 database). The PostgreSQL
+backend (`KALOS_DATABASE_URL`, below) is `kalos/storage/migrations/pg_runner.py`.
 
 | Version | Shape | Code |
 | --- | --- | --- |
@@ -16,10 +18,11 @@ for v6, `tests/test_schema_v6.py`, for v7, `tests/test_schema_v7.py`, and for v8
 | v5 | adds `run_results` (append-only result history) with UPDATE/DELETE triggers | `SCHEMA_VERSION = 5` |
 | v6 | adds `campaign_settings` and `gate_decisions` (append-only stage gate decisions; below) | `SCHEMA_VERSION = 6` |
 | v7 | adds `campaign_clones` (label-only clone registry) and `clone_titer_history` (append-only; below) | `SCHEMA_VERSION = 7` |
-| v8 | adds `analysis_snapshots`, `run_predictions` and `run_folds` (append-only prediction history, BRE-32; below) | current (`SCHEMA_VERSION = 8`) |
+| v8 | adds `analysis_snapshots`, `run_predictions` and `run_folds` (append-only prediction history, BRE-32; below) | `SCHEMA_VERSION = 8` |
+| v9 | adds `projects`, `project_campaigns`, `project_factors`, `lineage_links` and `lineage_retractions` (records ported from Voyager; the two lineage tables append-only; below) | current (`SCHEMA_VERSION = 9`, `kalos/storage/migrations/v9.py`) |
 
 Schema v8 carries the prediction history and track record (BRE-32, Crux Rank 2).
-The remaining Crux items (result check, decision ledger) take v9 or later.
+The remaining Crux items (result check, decision ledger) take v10 or later.
 
 A v1 database has no `schema_migrations` table.
 
@@ -110,6 +113,95 @@ recovery. Nothing is repaired automatically. Recovery, with the engine stopped:
 2. **Or start from a fresh state directory** (`KALOS_STATE_DIR` set to a new empty
    directory) and import the campaign data. There is no import command yet: read
    the rows from the `campaigns_backup_N` table with `sqlite3` and re-enter them.
+
+## Schema v9: records (projects, factors, lineage)
+
+Schema v9 adds the records ported from the Voyager backend (docs/RECORDS.md,
+NOTICE). DDL: `kalos/storage/migrations/v9.py`, for SQLite and PostgreSQL; the
+SQLite step is called from `migrate.py` like every other version. Every table
+carries `tenant`; every statement filters on it.
+
+- `projects(id, tenant, name, objective, status, sponsor, created_at,
+  created_by, updated_at, updated_by)`: `id` is `prj_` plus 32 hex characters;
+  `UNIQUE (tenant, name)`; `status IN ('drafting', 'in_progress', 'completed',
+  'terminated')`; lengths are CHECKed (name 1..80, objective 1..500, sponsor
+  1..120 or NULL).
+- `project_campaigns(tenant, campaign_id, project_id, added_at, added_by)`:
+  `PRIMARY KEY (tenant, campaign_id)` (a campaign is in at most one project),
+  `FOREIGN KEY (project_id, tenant) REFERENCES projects (id, tenant)`.
+- `project_factors(tenant, project_id, name, description, lower_bound,
+  upper_bound, unit, dimension, role, updated_at, updated_by)`: `PRIMARY KEY
+  (tenant, project_id, name)`; `CHECK (lower_bound < upper_bound)`; `role IN
+  ('setting', 'covariate')`.
+- `lineage_links(id, tenant, parent_campaign_id, parent_run_id,
+  child_campaign_id, child_run_id, relation, parent_stage, child_stage, note,
+  created_at, created_by)`: APPEND-ONLY (`lineage_links_no_update`,
+  `lineage_links_no_delete`). A run id of `''` means the whole campaign. A link
+  joining an end to itself is refused by a CHECK. Indexes on the parent and the
+  child campaign.
+- `lineage_retractions(id, tenant, link_id, reason, created_at, created_by)`:
+  APPEND-ONLY; `UNIQUE (tenant, link_id)`; the reason is required (CHECK).
+
+There is no foreign key from these tables to `campaigns`: with
+`KALOS_DATABASE_URL` set they live in PostgreSQL while the campaign tables are
+still in `portal.db` (below). The routes resolve every campaign id under the
+caller's tenant before they write it.
+
+`up` from v8 takes a `pre-v9-<ts>` backup and creates the five tables, four
+indexes and four triggers in the one `BEGIN IMMEDIATE` transaction. No existing
+row changes. `down` (v9 -> v8) takes a `pre-down-<ts>` backup, drops the triggers
+and indexes and renames the tables to `<name>_v9_rolledback`, every row kept; a
+v8 engine runs on the result. Tested on a copy of a real v8 database
+(`tests/fixtures/portal_v8.db`, produced by running the v8 engine over HTTP;
+`tests/fixtures/make_portal_v8_db.py`).
+
+## PostgreSQL backend
+
+SQLite in the state directory stays the default. `KALOS_DATABASE_URL=postgresql://
+user:pass@host:5432/db` (the `postgres` extra: `pip install 'kalos[postgres]'`)
+moves the **records tables (v9)** to PostgreSQL. In this release the campaign,
+analysis, job, result and audit tables of `CampaignStore` stay in `portal.db`;
+they move behind the same storage interface when `CampaignStore` is split into
+`kalos/storage/campaign_repo.py` (REORG_PLAN R06/R12), as a later step of the
+runner below. Until then, with a PostgreSQL URL:
+
+- records writes and their audit rows go to PostgreSQL's `audit_log`, in the
+  same transaction; campaign audit rows stay in `portal.db`;
+- the outcome views read results and predictions from `portal.db`.
+
+Rules (code: `kalos/storage/backend.py`, `kalos/storage/migrations/pg_runner.py`):
+
+- SQL is written once, dialect-neutral, with `?` placeholders (translated to
+  `%s` for psycopg); ids come back with `RETURNING id`; upserts use `ON CONFLICT
+  ... DO UPDATE`; JSON is TEXT on SQLite and JSONB on PostgreSQL behind one
+  helper; a SQLite-only construct fails loudly on PostgreSQL.
+- A write transaction takes one database-wide advisory lock first, so writers
+  serialize as they do under SQLite's `BEGIN IMMEDIATE`; a read is one REPEATABLE
+  READ READ ONLY snapshot.
+- Append-only tables (`audit_log`, `lineage_links`, `lineage_retractions`) reject
+  UPDATE, DELETE and TRUNCATE with a trigger function raising SQLSTATE 23000. A
+  superuser can still disable triggers: run the engine as an ordinary role.
+- PostgreSQL starts at v9 with a BASELINE step: `schema_migrations`, `audit_log`
+  (with its append-only triggers) and the v9 tables, in one transaction.
+- An **empty** database is created at the current version on engine startup.
+  A database at an **older** version is refused at startup; upgrade it with
+  `python -m kalos.storage.migrations.pg_runner up`, which takes a
+  `pg_dump --format=custom` into `--backup-dir` and VERIFIES it with
+  `pg_restore --list` (every table of the old version must be listed) before it
+  migrates, in one transaction. Without `pg_dump` on the box, take the dump
+  yourself and pass `--confirm-backup`. A **newer** database is refused.
+  `status` prints the version. There is no `down` on PostgreSQL: restore the
+  dump instead.
+- The URL is read from `KALOS_DATABASE_URL` only (never from the command line)
+  and every message redacts the password. `pg_dump` receives the password in
+  `PGPASSWORD`, not in its argv.
+- With `KALOS_ENV=production`, a URL to another host must ask for TLS
+  (`sslmode=require`, `verify-ca` or `verify-full`) or the engine refuses to
+  start. Pool size: `KALOS_DB_POOL_MIN` (default 1), `KALOS_DB_POOL_MAX` (default
+  10), `KALOS_DB_CONNECT_TIMEOUT` seconds (default 10).
+- Tests: every records test runs on SQLite and, when
+  `KALOS_TEST_DATABASE_URL` is set, again on PostgreSQL in a fresh schema
+  (`-m postgres`); CI runs them against a PostgreSQL 16 service container.
 
 ## Schema v8: prediction history
 
