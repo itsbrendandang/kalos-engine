@@ -213,12 +213,24 @@ def run_one(name: str, seed: int) -> dict[str, Any]:
             g = next((e for e in p.get("gp_intervals", []) if abs(float(e["coverage"]) - lv) < 1e-9), None)
             if g and g.get("available"):
                 gp_in.append(bool(g["lo"] <= p_y[i] <= g["hi"]))
+        # The plain normalized band (the fallback when the selection-aware band is
+        # unavailable) at the same proposals: pred +/- q_norm * predictive sd.
+        # Deterministic given the response; draws no random numbers.
+        q_norm = next((float(c["q_norm"]) for c in res["interval_method"].get("levels", [])
+                       if abs(float(c["coverage"]) - lv) < 1e-9 and c.get("available")), None)
+        plain_in, plain_w = [], []
+        for i, p in enumerate(props):
+            sp = p.get("predictive_std")
+            if q_norm is not None and sp is not None and np.isfinite(sp) and sp > 0:
+                plain_in.append(bool(abs(p_y[i] - p["pred"]) <= q_norm * sp))
+                plain_w.append(2 * q_norm * sp / yrange)
         cq = res.get("conformal_q")
         cq_in = ([bool(abs(p_y[i] - p["pred"]) <= cq) for i, p in enumerate(props)]
                  if cq is not None and abs(float(res.get("conformal_coverage", 0)) - lv) < 1e-9 else [])
         out["levels"][str(lv)] = {"inside": inside, "width": widths, "available": avail,
                                   "random_coverage": r_in, "random_width": r_w, "method": method,
-                                  "gp_inside": gp_in, "conformal_q_inside": cq_in}
+                                  "gp_inside": gp_in, "conformal_q_inside": cq_in,
+                                  "plain_inside": plain_in, "plain_width": plain_w}
     return out
 
 
@@ -260,6 +272,9 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             methods = sorted({r["levels"][k]["method"] for r in rs if r["levels"][k]["method"]})
             gp = [b for r in rs for b in r["levels"][k].get("gp_inside", [])]
             cqi = [b for r in rs for b in r["levels"][k].get("conformal_q_inside", [])]
+            plain_seed = [r["levels"][k].get("plain_inside", []) for r in rs]
+            plain = [b for s in plain_seed for b in s]
+            plain_w = [x for r in rs for x in r["levels"][k].get("plain_width", [])]
             sc["levels"][k] = {
                 "coverage_at_proposals": round(float(np.mean(flat)), 3) if flat else None,
                 "ci95_seed_cluster": _cluster_ci(per_seed),
@@ -271,6 +286,10 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "methods": methods,
                 "gp_posterior_coverage_at_proposals": round(float(np.mean(gp)), 3) if gp else None,
                 "conformal_q_coverage_at_proposals": round(float(np.mean(cqi)), 3) if cqi else None,
+                "plain_normalized_coverage_at_proposals": round(float(np.mean(plain)), 3) if plain else None,
+                "plain_normalized_ci95_seed_cluster": _cluster_ci(plain_seed),
+                "plain_normalized_median_width_at_proposals": round(float(np.median(plain_w)), 3)
+                if plain_w else None,
             }
         out[name] = sc
     return out
