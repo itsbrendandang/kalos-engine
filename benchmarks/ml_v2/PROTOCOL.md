@@ -363,4 +363,17 @@ MultiFidelity surrogates as existing candidates.
 
 ## Amendments
 
-None.
+**A1 (2026-11-20): Anagram recipe identity.** Reported by bq-synth. The S26JAN06 loader
+(`backtest._anagram_jan06`) used the sample ID as the recipe ID. Sample IDs and input
+vectors disagree (36 IDs vs 38 distinct input vectors in `anagram_compiled.csv`; on the
+3 mL bench rows, 32 IDs vs 33 vectors, because one replicate of sample 32 has a
+different zinc value), so replicate groups were wrong and grouped CV could leak.
+From this amendment on, **a recipe is the identical input vector** (all inputs after
+rounding to 9 decimals; constant columns cannot change identity) for every dataset in
+this protocol, including S26JAN06; this overrides REAL_BACKTEST_PLAN.md's "recipe =
+sample ID" where the two differ (only sample 32's odd replicate becomes its own recipe
+on the bench rows). Results affected: none. The Anagram backtests are held-out only and
+had never been run by this harness (no smoke, tuning or held-out job used the loader).
+The reference numbers in `~/.kalos-dev/REAL_BACKTEST.md` were computed by agent
+real-backtest with sample-ID recipes; they are not results of this harness and are
+labelled as such wherever cited. No other constant changes.

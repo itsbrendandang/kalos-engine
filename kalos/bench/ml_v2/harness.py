@@ -32,8 +32,10 @@ from .suites import SUITES, run_job, tasks_for
 REPO = Path(__file__).resolve().parents[3]
 FREEZE_DIR = REPO / "benchmarks" / "ml_v2" / "freeze"
 LEDGER = REPO / "benchmarks" / "ml_v2" / "results" / "heldout_ledger.jsonl"
-# Expensive suites first so the pool drains evenly.
-_COST = {"emulator": 0, "closed_loop": 1, "pool": 2, "internal": 3, "snapshot_real": 4, "snapshot": 5}
+# Job order: cheap, single-analysis suites first so a run interrupted on a busy
+# machine still has broad coverage; the loops follow, one task at a time across seeds.
+_COST = {"snapshot": 0, "internal": 1, "scale": 2, "backtest": 3, "snapshot_real": 4, "closed_loop": 5,
+         "pool": 6, "emulator": 7}
 
 
 def seeds_for(suite: str, split: str) -> tuple[int, ...]:
@@ -161,7 +163,7 @@ def run(spec: str, config: dict[str, Any], out: Path, split: str, *, suites: lis
                              str(leadgene_path) if leadgene_path else None, str(f)))
     (out / "run_meta.json").write_text(json.dumps(meta, indent=1, default=str) + "\n", encoding="utf-8")
     _prefit_emulators(jobs, cache, user_data, log)
-    jobs.sort(key=lambda j: (_COST.get(j[2], 9), j[3], j[4]))
+    jobs.sort(key=lambda j: (_COST.get(j[2], 9), j[4], j[3]))
     log(f"{len(jobs)} job(s) to run with {workers} worker(s) -> {out}")
     t0 = time.perf_counter()
     if workers <= 1:

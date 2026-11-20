@@ -108,7 +108,7 @@ def _external_root() -> Path:
 
 
 def _anagram_jan06() -> Ordered:
-    """S26JAN06 bench rows (3 mL), recipe = sample ID; no real order (one plate)."""
+    """S26JAN06 bench rows (3 mL), recipe = identical input vector; no real order (one plate)."""
     path = _external_root() / "bioqore" / "bioqore-synthetic-data-project" / "data" / "raw" / "anagram_compiled.csv"
     if not path.is_file():
         raise FileNotFoundError("anagram_compiled.csv: set KALOS_EXTERNAL_DATA (internal data)")
@@ -118,9 +118,12 @@ def _anagram_jan06() -> Ordered:
     cols = [c for c in df.columns if c not in drop and pd.to_numeric(df[c], errors="coerce").nunique() > 1]
     out = df[cols].apply(pd.to_numeric, errors="coerce")
     out["lipase_g_L"] = pd.to_numeric(df["lipase_g.L"], errors="coerce")
-    out["_recipe"] = pd.factorize(df["sample"])[0]
     out["_step"] = np.nan
     out = out.dropna(subset=[*cols, "lipase_g_L"])
+    # Recipe = the identical input vector, NOT the sample ID: sample IDs and input
+    # vectors disagree (36 IDs vs 38 vectors in the file), so grouping by ID would put
+    # different recipes in one replicate group and leak in CV (amendment A1).
+    out["_recipe"] = _recipe_ids(out, cols)
     return Ordered("internal/anagram_S26JAN06", "internal", out.reset_index(drop=True), "lipase_g_L", cols,
                    real_order=False, label="internal, data rights unconfirmed")
 
