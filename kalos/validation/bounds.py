@@ -36,6 +36,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from kalos.normalize.header_units import parse_header_unit, unit_atoms
+
 # --- range definitions ----------------------------------------------------- #
 
 
@@ -64,12 +66,14 @@ _INF = float("inf")
 DIMENSION_BOUNDS: dict[str, DimensionBounds] = {
     # pH: 0-14 is the textbook range for the aqueous [H+] scale used in every
     # bioprocess context here; going outside it is not "unusual", it is not
-    # pH. Typical band 4-9 is a convention (not physics) wide enough to cover
-    # both microbial fermentation (E. coli ~6.8-7.4, yeast ~4-6) and mammalian
-    # culture (~6.8-7.4) with margin on both sides; a reading outside that but
-    # inside 0-14 is possible (a failed pH probe, an off-spec run) but worth a
-    # human looking at it.
-    "ph": DimensionBounds("ph", hard_lo=0.0, hard_hi=14.0, typical_lo=4.0, typical_hi=9.0, unit=""),
+    # pH. Typical band 3-9 is a convention (not physics) wide enough to cover
+    # microbial fermentation (E. coli ~6.8-7.4), mammalian culture (~6.8-7.4)
+    # and the acidic fungal and yeast processes (Trichoderma and Aspergillus
+    # fermentations and yeast ethanol runs routinely sit at pH 3-4; the earlier
+    # 4.0 floor flagged them as atypical). A reading outside 3-9 but inside 0-14
+    # is possible (a failed pH probe, an off-spec run, a citric-acid process) but
+    # worth a human looking at it.
+    "ph": DimensionBounds("ph", hard_lo=0.0, hard_hi=14.0, typical_lo=3.0, typical_hi=9.0, unit=""),
     # Temperature, base Celsius (per units.py). Hard range -20..150 C is the
     # spec's own choice: -20 C covers a freezer/cold-chain misread and 150 C
     # covers autoclave/CIP temperatures (typically ~121-134 C) with headroom;
@@ -196,7 +200,10 @@ _DIMENSION_HINTS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("od", re.compile(r"\bod\d*\b|optical.?density", re.I)),
     (
         "percent",
-        re.compile(r"\bdo\b|dissolved.?oxygen|viability|purity|%|percent", re.I),
+        # BRE-117: `\bdo\b` never matched "DO_pct" (`_` is a word character), so
+        # the shipped example's DO column had no bounds at all and DO = 140 %
+        # passed silently. The token must stand alone between non-letters.
+        re.compile(r"(?<![a-z])do(?![a-z])|dissolved.?oxygen|viability|purity|%|percent", re.I),
     ),
     # Concentration covers both the product titer and the named metabolites and
     # ions a real run sheet carries. The named-analyte vocabulary below is taken
@@ -252,13 +259,175 @@ def infer_dimension(column_name: str) -> str | None:
     return None
 
 
-def bounds_for_column(column_name: str) -> tuple[DimensionBounds, str] | None:
-    """The bounds that apply to a column, with a plain note of where they came
-    from, or None when the column's kind is not recognised."""
-    dim = infer_dimension(column_name)
+# --- unit-aware column bounds (BRE-117) -------------------------------------- #
+#
+# Name matching alone missed `DO_pct` and cannot tell `antifoam_mgL` (mg/L) from
+# a g/L column. `column_bounds` reads the UNIT the header states first
+# (`kalos.normalize.header_units.parse_header_unit`: `titer_g_L`, `DO (%)`,
+# `glutamine_mM`, `airflow_L_per_min`) and takes the bounds from the table below,
+# expressed in that unit. Only when the header states no unit does it fall back
+# to the name hints above. The hard floor of every non-negative quantity holds in
+# any unit; the typical bands are given per unit where one is known.
+
+
+@dataclass(frozen=True)
+class ColumnBounds:
+    """The bounds one column is judged against, in the unit the header states.
+
+    `source` says, in plain words, where they came from (the header's unit or
+    the column name). `note` is an optional sentence for the finding (why a
+    value outside is not possible). `cell_dimension` is the `DIMENSION_BOUNDS`
+    key used for a cell that carries its own unit token ("98.6 F"), which is
+    converted to that dimension's base unit first.
+    """
+
+    dimension: str
+    hard_lo: float
+    hard_hi: float
+    typical_lo: float
+    typical_hi: float
+    unit: str
+    source: str
+    note: str = ""
+    cell_dimension: str | None = None
+
+
+_NONNEG = (0.0, _INF, 0.0, _INF)
+
+# unit (as `parse_header_unit` spells it, scale prefix removed) -> (dimension,
+# hard_lo, hard_hi, typical_lo, typical_hi, cell_dimension). Typical bands follow
+# the base-unit bands of DIMENSION_BOUNDS, converted.
+_UNIT_BOUNDS: dict[str, tuple[str, float, float, float, float, str | None]] = {
+    "°C": ("temperature", -20.0, 150.0, 15.0, 45.0, "temperature_c"),
+    "K": ("temperature", 253.15, 423.15, 288.15, 318.15, "temperature_c"),
+    "g/L": ("concentration", 0.0, _INF, 0.0, 500.0, "concentration"),
+    "mg/mL": ("concentration", 0.0, _INF, 0.0, 500.0, "concentration"),
+    "mg/L": ("concentration", 0.0, _INF, 0.0, 500_000.0, "concentration"),
+    "µg/mL": ("concentration", 0.0, _INF, 0.0, 500_000.0, "concentration"),
+    "mOsm": ("osmolality", 0.0, _INF, 200.0, 600.0, None),
+    "mOsm/kg": ("osmolality", 0.0, _INF, 200.0, 600.0, None),
+    "mOsm/L": ("osmolality", 0.0, _INF, 200.0, 600.0, None),
+    "h": ("time", 0.0, _INF, 0.0, 720.0, "time_h"),
+    "d": ("time", 0.0, _INF, 0.0, 30.0, "time_h"),
+    "min": ("time", 0.0, _INF, 0.0, 43_200.0, "time_h"),
+    "rpm": ("agitation", *_NONNEG, None),
+    "vvm": ("gas flow per volume", *_NONNEG, None),
+}
+# Atoms that only ever measure a non-negative amount: a quantity made of them
+# (a mass, a volume, an amount, a count, an activity, or a ratio of these such
+# as g/L, mM, cells/mL, U/mL) cannot be negative. A ratio with a time in the
+# denominator is a rate; only a volume per time (a flow) is non-negative by
+# definition, while a net production or uptake rate (g/L/h) can be negative.
+_AMOUNT_ATOMS = frozenset({
+    "g", "mg", "µg", "ng", "kg", "L", "mL", "µL", "mol", "mmol", "µmol",
+    "M", "mM", "µM", "nM", "mOsm", "cells", "U", "IU",
+})
+_VOLUME_ATOMS = frozenset({"L", "mL", "µL"})
+_TIME_ATOMS = frozenset({"h", "min", "s", "d"})
+
+# Percent columns. A share of a whole cannot leave 0-100 (DO as % of air
+# saturation, viability, purity, aggregate or glycan fractions). A relative
+# measure can (recovery, % of control, % change, yield vs theory, inhibition):
+# no bound is asserted for those. Any other percent: 0-100 is the typical band
+# (a warning outside), and only a negative value is impossible.
+_PERCENT_OF_WHOLE = re.compile(
+    r"(?<![a-z])do(?![a-z])|dissolved.?oxygen|o2.?sat|(?<![a-z])dot(?![a-z])|viab|purity|saturat"
+    r"|aggregat|monomer|(?<![a-z])[hl]mw(?![a-z])|fragment|glycan|galactos|fucos|mannos|sialyl"
+    r"|confluen|humidity|main.?peak|acidic|basic",
+    re.I,
+)
+_PERCENT_RELATIVE = re.compile(
+    r"change|delta|diff|increase|decrease|relative|(?<![a-z])rel(?![a-z])|(?<![a-z])vs(?![a-z])"
+    r"|of.?control|recovery|yield|growth|inhibit|error|(?<![a-z])cv(?![a-z])|rsd|deviation|bias"
+    r"|efficien",
+    re.I,
+)
+_DO_NOTE = (
+    "A probe calibrated to air reads above 100 % only with oxygen-enriched gas or overpressure; "
+    "on a run sheet such a value is almost always a typo."
+)
+
+
+def _percent_bounds(name: str, unit: str, source: str) -> ColumnBounds | None:
+    if _PERCENT_RELATIVE.search(name):
+        return None
+    if _PERCENT_OF_WHOLE.search(name):
+        is_do = bool(re.search(r"(?<![a-z])do[t]?(?![a-z])|dissolved.?oxygen|o2.?sat", name, re.I))
+        return ColumnBounds(
+            "dissolved oxygen (% of air saturation)" if is_do else "a share of a whole",
+            0.0, 100.0, 0.0, 100.0, unit, source,
+            note=_DO_NOTE if is_do else "A share of a whole cannot be below 0 % or above 100 %.",
+            cell_dimension="percent",
+        )
+    return ColumnBounds("percent", 0.0, _INF, 0.0, 100.0, unit, source, cell_dimension="percent")
+
+
+def _unit_rule(name: str, unit: str) -> ColumnBounds | None:
+    source = f"unit '{unit}' in the header"
+    if unit == "%":
+        return _percent_bounds(name, unit, source)
+    atoms = unit_atoms(unit)
+    key = "/".join(atoms)
+    if key in _UNIT_BOUNDS:
+        dim, hlo, hhi, tlo, thi, cell = _UNIT_BOUNDS[key]
+        return ColumnBounds(dim, hlo, hhi, tlo, thi, unit, source, cell_dimension=cell)
+    if not atoms:
+        return None
+    if all(a in _AMOUNT_ATOMS for a in atoms):
+        kind = "amount" if len(atoms) == 1 else "concentration"
+        return ColumnBounds(kind, *_NONNEG, unit, source)
+    if len(atoms) == 2 and atoms[0] in _VOLUME_ATOMS and atoms[1] in _TIME_ATOMS:
+        return ColumnBounds("flow rate", *_NONNEG, unit, source, cell_dimension="flow_rate")
+    return None
+
+
+def column_bounds(column_name: str) -> ColumnBounds | None:
+    """The bounds a column is judged against, or None when neither its header's
+    unit nor its name says what it measures (silence, not a guess).
+
+    The header's unit wins (`DO_pct` is a percentage, `antifoam_mgL` is mg/L,
+    `glutamine_mM` is a non-negative concentration); a header with no
+    recognised unit falls back to the name hints (`temperature_C`, `pH`)."""
+    name = str(column_name)
+    unit = parse_header_unit(name)
+    # pH is read from the name even when a unit-like token follows ("pH (units)").
+    if unit is not None and infer_dimension(name) != "ph":
+        rule = _unit_rule(name, unit)
+        if rule is not None or unit == "%":
+            return rule
+    dim = infer_dimension(name)
     if dim is None:
         return None
-    return DIMENSION_BOUNDS[dim], f"read as {dim.replace('_', ' ')} from the column name"
+    b = DIMENSION_BOUNDS[dim]
+    label = _DIMENSION_WORDS.get(dim, dim.replace("_", " "))
+    note = _DO_NOTE if dim == "percent" and re.search(r"(?<![a-z])do(?![a-z])|dissolved.?oxygen", name, re.I) else ""
+    return ColumnBounds(
+        label, b.hard_lo, b.hard_hi, b.typical_lo, b.typical_hi,
+        _NAME_UNITS.get(dim, ""), f"read as {label} from the column name",
+        note=note, cell_dimension=dim,
+    )
 
 
-__all__ = ["DIMENSION_BOUNDS", "DimensionBounds", "bounds_for_column", "infer_dimension"]
+# Plain words for the name-hint dimensions, and the unit the values are assumed
+# to be in when only the name is known (pH and temperature conventions; for the
+# others the bounds are a non-negative floor that holds in any unit).
+_DIMENSION_WORDS = {
+    "ph": "pH", "temperature_c": "temperature", "percent": "percent", "od": "optical density",
+    "concentration": "concentration", "flow_rate": "flow rate", "time_h": "elapsed time",
+    "cell_density": "cell density", "osmolality": "osmolality", "partial_pressure": "partial pressure",
+    "nonneg_count": "count",
+}
+_NAME_UNITS = {"temperature_c": "°C", "percent": "%"}
+
+
+def bounds_for_column(column_name: str) -> tuple[ColumnBounds, str] | None:
+    """`column_bounds` with its source, for callers that print where the bounds
+    came from (the result-entry checks)."""
+    cb = column_bounds(column_name)
+    return None if cb is None else (cb, cb.source)
+
+
+__all__ = [
+    "DIMENSION_BOUNDS", "ColumnBounds", "DimensionBounds", "bounds_for_column", "column_bounds",
+    "infer_dimension",
+]

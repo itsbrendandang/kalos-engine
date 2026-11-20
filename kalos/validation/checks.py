@@ -44,7 +44,7 @@ from scipy.stats import spearmanr
 from kalos.core.replicates import noise_report
 from kalos.normalize import units
 
-from .bounds import DIMENSION_BOUNDS, infer_dimension
+from .bounds import DIMENSION_BOUNDS, column_bounds
 from .report import Finding, UnitConversion, cap_rows
 
 __all__ = [
@@ -237,94 +237,103 @@ def check_units_consistency(
 
 
 def check_physical_bounds(df: pd.DataFrame) -> list[Finding]:
-    """Flag values outside a column's inferred dimension's HARD or TYPICAL range.
+    """Flag values outside a column's HARD (ERROR) or TYPICAL (WARNING) range.
 
-    Dimension is inferred from the header (`bounds.infer_dimension`); a
-    column with no recognizable dimension is silently skipped - no bounds
-    check without a confident guess at what the column measures. Every cell
-    is converted to its dimension's base unit via `units.parse_value` +
-    `units.convert` before comparison, so a Fahrenheit cell in a Celsius
-    column is judged correctly instead of compared as a raw number.
+    The bounds come from `bounds.column_bounds`: the unit the header states
+    (`DO_pct` is a percentage, `antifoam_mgL` is mg/L) through a unit-aware
+    table, else the column name (`temperature_C`, `pH`). A column whose unit and
+    name say nothing is skipped: no bounds check without a confident reading of
+    what the column measures.
+
+    A bare number is judged in the header's unit. A cell carrying its own unit
+    token ("94.3 F") is converted to its dimension's base unit
+    (`units.convert`) and judged against that dimension's base-unit bounds, so a
+    Fahrenheit cell in a Celsius column is judged correctly instead of compared
+    as a raw number.
 
     Outside HARD range -> ERROR (physically impossible). Inside HARD but
-    outside TYPICAL range -> WARNING (possible but operationally suspect).
-    Each finding's `detail` carries the offending rows' min/max seen value
-    (in base units) alongside the capped row list.
+    outside TYPICAL -> WARNING (possible but operationally suspect). Each
+    finding names an example row and value, the allowed range, and where the
+    bounds came from; `detail` carries min/max seen and the capped row list.
     """
     findings: list[Finding] = []
 
     for col in df.columns:
         name = str(col)
-        dim = infer_dimension(name)
-        if dim is None:
+        cb = column_bounds(name)
+        if cb is None:
             continue
-        bounds = DIMENSION_BOUNDS[dim]
         series = df[col]
         mask = _nonblank_mask(series)
         if not mask.any():
             continue
 
-        error_rows: list[int] = []
-        error_vals: list[float] = []
-        warning_rows: list[int] = []
-        warning_vals: list[float] = []
+        error: list[tuple[int, float]] = []
+        warning: list[tuple[int, float]] = []
         for idx, raw in series[mask].items():
             value, token = units.parse_value(raw)
             if value is None:
                 continue
-            base_value, _ = units.convert(value, token)
-            if base_value < bounds.hard_lo or base_value > bounds.hard_hi:
-                error_rows.append(_row_index(idx))
-                error_vals.append(base_value)
-            elif base_value < bounds.typical_lo or base_value > bounds.typical_hi:
-                warning_rows.append(_row_index(idx))
-                warning_vals.append(base_value)
+            lo, hi, tlo, thi = cb.hard_lo, cb.hard_hi, cb.typical_lo, cb.typical_hi
+            if token is not None:
+                base_value, suffix = units.convert(value, token)
+                dim = _SUFFIX_DIMENSION.get(suffix)
+                if dim is None or not units.is_known_unit(token):
+                    continue  # a unit of another kind: check_units_consistency's job
+                if dim != cb.cell_dimension:
+                    b = DIMENSION_BOUNDS[dim]
+                    lo, hi, tlo, thi = b.hard_lo, b.hard_hi, b.typical_lo, b.typical_hi
+                value = base_value
+            if value < lo or value > hi:
+                error.append((_row_index(idx), value))
+            elif value < tlo or value > thi:
+                warning.append((_row_index(idx), value))
 
-        if error_rows:
-            capped, total = cap_rows(error_rows)
+        unit = f" {cb.unit}" if cb.unit and cb.unit != "%" else cb.unit
+        for severity, hits, rng, what in (
+            ("error", error, (cb.hard_lo, cb.hard_hi), "not physically possible"),
+            ("warning", warning, (cb.typical_lo, cb.typical_hi), "possible but outside the usual range"),
+        ):
+            if not hits:
+                continue
+            rows = [r for r, _ in hits]
+            vals = [v for _, v in hits]
+            capped, total = cap_rows(rows)
+            lo_txt = f"{rng[0]:g}"
+            allowed = (f"{lo_txt}{unit} or more" if np.isinf(rng[1])
+                       else f"{lo_txt} to {rng[1]:g}{unit}")
+            note = f" {cb.note}" if severity == "error" and cb.note else ""
             findings.append(
                 Finding(
                     check="physical_bounds",
-                    severity="error",
+                    severity=severity,  # type: ignore[arg-type]
                     message=(
-                        f"column '{name}' (inferred dimension '{dim}') has values outside "
-                        f"the physically possible range [{bounds.hard_lo}, {bounds.hard_hi}]"
+                        f"column '{name}': {total} value(s) are {what} for {cb.dimension} "
+                        f"({allowed}; {cb.source}), e.g. {hits[0][1]:g} in row {hits[0][0]}."
+                        f"{note} Check the source record; nothing was changed."
                     ),
                     column=name,
                     rows=capped,
                     detail={
-                        "dimension": dim,
-                        "hard_range": [bounds.hard_lo, bounds.hard_hi],
-                        "min_seen": min(error_vals),
-                        "max_seen": max(error_vals),
-                        "n_rows_affected": total,
-                    },
-                )
-            )
-        if warning_rows:
-            capped, total = cap_rows(warning_rows)
-            findings.append(
-                Finding(
-                    check="physical_bounds",
-                    severity="warning",
-                    message=(
-                        f"column '{name}' (inferred dimension '{dim}') has values outside "
-                        f"the typical range [{bounds.typical_lo}, {bounds.typical_hi}] "
-                        "though within physical limits"
-                    ),
-                    column=name,
-                    rows=capped,
-                    detail={
-                        "dimension": dim,
-                        "typical_range": [bounds.typical_lo, bounds.typical_hi],
-                        "min_seen": min(warning_vals),
-                        "max_seen": max(warning_vals),
+                        "dimension": cb.dimension,
+                        "unit": cb.unit,
+                        "bounds_source": cb.source,
+                        ("hard_range" if severity == "error" else "typical_range"): [rng[0], rng[1]],
+                        "min_seen": min(vals),
+                        "max_seen": max(vals),
                         "n_rows_affected": total,
                     },
                 )
             )
 
     return findings
+
+
+# Base-unit suffix (kalos.normalize.units) -> DIMENSION_BOUNDS key, for cells
+# that carry their own unit token.
+_SUFFIX_DIMENSION = {
+    "_c": "temperature_c", "_pct": "percent", "_g_l": "concentration", "_ml_h": "flow_rate", "_h": "time_h",
+}
 
 
 # --- 3. duplicate rows -------------------------------------------------------- #
