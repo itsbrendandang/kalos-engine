@@ -81,16 +81,17 @@ def _populate(state: Path) -> tuple[CampaignStore, dict[str, str]]:
 
 def _make_v5(state: Path) -> tuple[Path, dict[str, str]]:
     """A v5 database as a v5 engine leaves it: populated through the store, rolled
-    back one step, and the (empty) renamed-aside v6 tables dropped so no v6 trace
-    remains."""
+    back to v5 (through v7 -> v6), and the (empty) renamed-aside v6 and v7 tables
+    dropped so no v6/v7 trace remains."""
     store, ids = _populate(state)
     store.close()
     db = state / "portal.db"
-    migrate.migrate_down(db)
+    migrate.migrate_down(db, target=5)
     for b in state.glob("portal.db.pre-*"):
         b.unlink()
     conn = sqlite3.connect(str(db))
-    for t in ("campaign_settings_v6_rolledback", "gate_decisions_v6_rolledback"):
+    for t in ("campaign_settings_v6_rolledback", "gate_decisions_v6_rolledback",
+              "campaign_clones_v7_rolledback", "clone_titer_history_v7_rolledback"):
         conn.execute(f'DROP TABLE "{t}"')
     conn.commit()
     conn.close()
@@ -138,7 +139,7 @@ def test_v5_to_v6_keeps_every_row_and_takes_a_verified_backup(tmp_path):
     assert len(before["run_results"]) == 4 and len(before["audit_log"]) >= 2 and before["jobs"]
 
     plan = migrate.migrate_up(db, dry_run=True).plan_text
-    assert "schema v5 -> v6" in plan and "campaign_settings" in plan and "gate_decisions" in plan
+    assert "schema v5 -> v7" in plan and "campaign_settings" in plan and "gate_decisions" in plan
     assert "pre-v6" in plan and "jobs table" not in plan  # only the remaining step is listed
     assert _snapshot(db) == before  # dry run changed nothing
 
@@ -150,9 +151,10 @@ def test_v5_to_v6_keeps_every_row_and_takes_a_verified_backup(tmp_path):
     after = _snapshot(db)
     schema_rows = after.pop("schema_migrations")
     before_schema = before.pop("schema_migrations")
-    assert [r[0] for r in schema_rows] == [2, 3, 4, 5, 6]
+    assert [r[0] for r in schema_rows] == [2, 3, 4, 5, 6, 7]
     assert schema_rows[:4] == before_schema
     assert after.pop("campaign_settings") == [] and after.pop("gate_decisions") == []
+    assert after.pop("campaign_clones") == [] and after.pop("clone_titer_history") == []
     after.pop("sqlite_sequence", None)
     before.pop("sqlite_sequence", None)
     assert after == before
@@ -181,7 +183,7 @@ def test_plan_text_from_v1_mentions_the_v6_tables(tmp_path):
     conn.commit()
     conn.close()
     plan = migrate.migrate_up(db, dry_run=True).plan_text
-    assert "v2 -> v6" in plan and "campaign_settings and gate_decisions" in plan
+    assert "v2 -> v7" in plan and "campaign_settings and gate_decisions" in plan
 
 
 # --- constraints --------------------------------------------------------------- #
@@ -264,13 +266,13 @@ def test_down_renames_both_tables_aside_and_re_up_is_clean(tmp_path):
     db = tmp_path / "portal.db"
     blob_before = _q(db, "SELECT state FROM campaigns WHERE id = ?", (cid,))
 
-    dry = migrate.migrate_down(db, dry_run=True).plan_text
-    assert "schema v6 -> v5" in dry
+    dry = migrate.migrate_down(db, dry_run=True, target=5).plan_text
+    assert "schema v7 -> v6" in dry and "schema v6 -> v5" in dry
     assert "campaign_settings -> campaign_settings_v6_rolledback (kept, not dropped; 1 row(s))" in dry
     assert "gate_decisions -> gate_decisions_v6_rolledback (kept, not dropped; 1 row(s))" in dry
-    assert "schema v5 -> v4" not in dry  # one step by default
+    assert "schema v5 -> v4" not in dry  # stops at the target
 
-    result = migrate.migrate_down(db)
+    result = migrate.migrate_down(db, target=5)
     assert result.action == "rolled_back" and result.backup_path is not None
     assert _q(db, "SELECT MAX(version) FROM schema_migrations") == [(5,)]
     tables = _names(db, "table")
@@ -301,9 +303,9 @@ def test_down_renames_both_tables_aside_and_re_up_is_clean(tmp_path):
     store.close()
 
     # a second rollback never reuses the first one's names
-    dry2 = migrate.migrate_down(db, dry_run=True).plan_text
+    dry2 = migrate.migrate_down(db, dry_run=True, target=5).plan_text
     assert "campaign_settings -> campaign_settings_v6_rolledback_2 (kept, not dropped; 1 row(s))" in dry2
-    migrate.migrate_down(db)
+    migrate.migrate_down(db, target=5)
     assert {"campaign_settings_v6_rolledback_2", "gate_decisions_v6_rolledback_2"} <= _names(db, "table")
     assert _q(db, "SELECT COUNT(*) FROM campaign_settings_v6_rolledback") == [(1,)]
     assert migrate.migrate_up(db).action == "migrated"
@@ -319,17 +321,17 @@ def test_down_to_v4_passes_through_v6_and_v5(tmp_path):
     assert {"campaign_settings_v6_rolledback", "gate_decisions_v6_rolledback",
             "run_results_v5_rolledback"} <= _names(db, "table")
     assert migrate.migrate_up(db).action == "migrated"
-    assert _q(db, "SELECT MAX(version) FROM schema_migrations") == [(6,)]
+    assert _q(db, "SELECT MAX(version) FROM schema_migrations") == [(migrate.SCHEMA_VERSION,)]
 
 
 def test_status_shows_v6_and_pending_from_v5(tmp_path):
     state = tmp_path / "s"
     db, _ = _make_v5(state)
     report, healthy = migrate.status_report(db)
-    assert healthy and "schema version: v5 (this code: v6)" in report and "schema v5 -> v6" in report
+    assert healthy and "schema version: v5 (this code: v7)" in report and "schema v5 -> v7" in report
     migrate.migrate_up(db)
     report, healthy = migrate.status_report(db)
-    assert healthy and "schema version: v6" in report and "shape check: ok" in report
+    assert healthy and "schema version: v7" in report and "shape check: ok" in report
 
 
 # --- shape check ----------------------------------------------------------------- #

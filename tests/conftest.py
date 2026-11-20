@@ -137,6 +137,35 @@ def pytest_configure(config: pytest.Config) -> None:
     global _SESSION_STATE
     _SESSION_STATE = tempfile.mkdtemp(prefix="kalos-session-state-")
     os.environ["KALOS_STATE_DIR"] = _SESSION_STATE
+    _preimport_warning_modules_in_xdist_controller(config)
+
+
+# Warning modules the GP stack emits from workers (NumericalWarning,
+# OptimizationWarning, NumericsWarning, InputDataWarning, ...).
+_WORKER_WARNING_MODULES = (
+    "linear_operator.utils.warnings", "gpytorch.utils.warnings",
+    "botorch.exceptions.warnings", "sklearn.exceptions",
+)
+
+
+def _preimport_warning_modules_in_xdist_controller(config: pytest.Config) -> None:
+    """Under xdist the controller re-creates each warning a worker reports by
+    importing the warning's module (xdist `unserialize_warning_message`), on the
+    receiver thread of THAT worker. Two workers reporting GP-stack warnings at
+    the same moment made two threads import torch/linear_operator concurrently,
+    and CI died with `_DeadlockError: deadlock detected by
+    _ModuleLock('linear_operator.utils.warnings')` (INTERNALERROR, node down).
+    Importing those modules once here, before any worker starts, removes the
+    race. Workers and plain (non-xdist) runs skip this."""
+    if hasattr(config, "workerinput") or not config.getoption("numprocesses", None):
+        return
+    import importlib
+
+    for name in _WORKER_WARNING_MODULES:
+        try:
+            importlib.import_module(name)
+        except ImportError:  # the ml extra is not installed
+            pass
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:

@@ -22,11 +22,23 @@ Newest first.
 ### Changed - honest interval labels (F02, ML audit B1)
 
 - Proposal caveat wording: no text next to a proposal interval says it "is calibrated". It says what the band was calibrated on and the coverage measured at proposed recipes, e.g. "Based on held-out runs: ... At proposed recipes this 90% range covered 92-99% in simulation (measured, not guaranteed)." (95%: 96-99%). Guarded by `tests/test_interval_labels.py`.
-
 - Every band carries `coverage_basis`: `held_out_past_runs` for the conformal bands, `model_based` for the GP's own bands and quantiles.
 - Each proposal interval carries `caveat` (`code: coverage_lower_at_proposals`, a plain message and `coverage_at_proposals_estimate` with its source): the band is calibrated on held-out runs similar to past runs, and at proposals it was measured lower in simulation (90%: 60-81%, 95%: 75-85%; `python -m kalos.bench.coverage_at_proposals`, VALIDATION.md).
 - `conformal_caveat` (cherry-picked from `arch-safe-now` 47143f3) labels the global `conformal_q` band the same way (measured 68-83% at proposals).
 - No number changes; the fields are additive.
+
+### Added - production clones and strains (schema v7, `docs/CLONES.md`)
+
+- A clone / strain column is always an unordered label, even when numeric (no more `clone: 329.44` proposals). Declare it with setup `strain_column` (policy `fixed`, the default, holds every proposal at one clone; `factor` lets proposals choose) or upload `roles.strain`; with no roles a `clone` / `strain` / `cell line` column is detected and reported.
+- Covariates (passage, generation, PDL, thaw, vial, cell bank) are never proposed: numeric ones stay model inputs held at a reference value (`proposals[].held`).
+- New analysis blocks: `strain_summary` (per-clone measured stats with n and a 95% t-interval only for n >= 3, process-adjusted clone effect with empirical-Bayes shrinkage and data weight, GP prediction at one reference process, balance / confounding flags, clone x input interaction screen, leave-one-clone-out, refusals), `slices_by_level`, `oof_levels`, `covariates`, `categorical_effects`, `drivers_skipped`, `correlation_skipped`.
+- Label-only clone registry and append-only titer history (schema v7, five routes under `/api/campaigns/{id}/clones`). Schema v8 is reserved for the Crux items.
+
+### Fixed - mixed (categorical) fits
+
+- `gp_shapes` no longer fails on a mixed fit ("posterior sweep failed: RuntimeError"): the sweep passed only the continuous columns to a GP fit on continuous + categorical columns.
+- A clone column plus a linear constraint no longer withholds every proposal (ML_AUDIT N2): a fixed clone is held, and in `factor` mode the constraints run through the exact mixed enumeration. Campaigns with categorical inputs and no clone column are unchanged (still `constraints_with_categoricals`).
+- Analyses of sheets without a clone or covariate column are byte-identical (`tests/test_strain_golden_no_clone.py`).
 
 ### Added - ESMC protein embeddings and an open-source catalog
 

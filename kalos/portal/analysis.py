@@ -43,6 +43,12 @@ from kalos.portal.analysis_parts.anonymize import (
     anonymize_sheet_rejection,
     sheet_alias,
 )
+from kalos.portal.analysis_parts.categorical_effects import (
+    categorical_effects,
+)
+from kalos.portal.analysis_parts.categorical_effects import (
+    skipped as categorical_skipped,
+)
 from kalos.portal.analysis_parts.columns import (
     AUTO_CATEGORICAL_MAX_LEVELS,
     _dedupe_columns,
@@ -114,6 +120,12 @@ from kalos.portal.analysis_parts.refusals import (
     _validate_constraint,
 )
 from kalos.portal.analysis_parts.setup_apply import _propose_with_setup, withheld_batch
+from kalos.portal.analysis_parts.strain_roles import resolve_strain
+from kalos.portal.analysis_parts.strain_state import (
+    StrainState,
+    covariates_block,
+    strain_outputs,
+)
 from kalos.portal.analysis_parts.trust_gate import clears_floor as trust_clears_floor
 from kalos.portal.analysis_parts.trust_gate import label_proposals, proposal_trust
 from kalos.portal.analysis_parts.units import target_unit_block
@@ -425,16 +437,34 @@ def _analyze_body(
     target, cont_feats, cat_feats, gcol, declared = _resolve_columns(
         df, num, target, roles, profile
     )
+    # Clone / strain and covariate roles (docs/CLONES.md): the clone is always an
+    # unordered label (never `clone: 329.44`), covariates are never proposed. With
+    # neither column present this returns the feature lists unchanged.
+    df, cont_feats, cat_feats, strain_plan = resolve_strain(
+        df, target=str(target), roles=roles, setup=setup,
+        cont_feats=list(cont_feats), cat_feats=list(cat_feats),
+        keep=classify_cells(df[target]).to_numpy(object) == NUMERIC,
+    )
     # With no declared roles, text factors are auto-detected (see `_auto_categorical`);
     # they are reported as findings so the uploader can confirm or override them.
     # F05 / audit S1: a batch, lot, plate, block, date, week or round column is
     # the run's circumstances, never a setpoint. It is not fitted or proposed
     # (unless the caller declared it a feature); it becomes a CV-group candidate.
-    batch_cols = [c for c in [*cont_feats, *cat_feats] if is_batch_like(str(c)) and c not in declared]
+    # The clone column and covariates keep the roles `resolve_strain` gave them.
+    _strain_cols = {
+        c for c in (strain_plan.column, *strain_plan.covariates_numeric, *strain_plan.covariates_label)
+        if c is not None
+    }
+    batch_cols = [
+        c for c in [*cont_feats, *cat_feats]
+        if is_batch_like(str(c)) and c not in declared and str(c) not in _strain_cols
+    ]
     if batch_cols:
         cont_feats = [c for c in cont_feats if c not in batch_cols]
         cat_feats = [c for c in cat_feats if c not in batch_cols]
-    auto_cats = list(cat_feats) if roles is None else []
+    auto_cats = (
+        [c for c in cat_feats if str(c) != strain_plan.column] if roles is None else []
+    )
     # PART 2 leakage guard: the constraint column (e.g. "purity_pct") is
     # normally already excluded from the feature set by `profile.outcome_hint`
     # (the same mechanism that excludes the target itself), same as the
@@ -658,11 +688,26 @@ def _analyze_body(
     bounds = design.bounds()
     cat_dims = design.cat_dims or None
     cat_cardinalities = design.cat_cardinalities or None
-    # Campaign setup (goal, user bounds, linear constraints): None = today's path.
-    setup_plan = None if setup is None else plan_setup(
-        setup, names=design.names, categorical=[str(c) for c in kept_cats], bounds=bounds,
-        target=str(target), converted=[str(c.column) for c in validation.conversions],
+    # Clone policy and covariates: which dims every proposal HOLDS (never proposes).
+    strain = StrainState.build(
+        strain_plan, df=df, keep_index=keep_index, X=X, bounds=bounds,
+        cont_feats=cont_feats, kept_cats=kept_cats, cat_dims_map=cat_dims_map,
     )
+    # Campaign setup (goal, user bounds, linear constraints): None = today's path.
+    if setup is None:
+        setup_plan = None
+    elif strain.active:
+        setup_plan = plan_setup(
+            setup, names=design.names, categorical=[str(c) for c in kept_cats], bounds=bounds,
+            target=str(target), converted=[str(c.column) for c in validation.conversions],
+            held=strain.held_names, mixed_constraints_ok=strain.mixed_constraints_ok(
+                cat_dims or [], cat_cardinalities or [], MAX_MIXED_COMBOS),
+        )
+    else:
+        setup_plan = plan_setup(
+            setup, names=design.names, categorical=[str(c) for c in kept_cats], bounds=bounds,
+            target=str(target), converted=[str(c.column) for c in validation.conversions],
+        )
     _minimize = setup_plan is not None and setup_plan.minimize
 
     # PART 2: constrained single-objective proposals. Fit a SECOND `Surrogate`
@@ -1365,7 +1410,8 @@ def _analyze_body(
     # level cannot be placed in the design at all), so the count actually used is
     # reported rather than assumed equal to what the caller passed.
     X_pending, n_pending_dropped = _encode_pending(
-        pending, cont_feats, kept_cats, code_maps, X.shape[1],
+        strain.pending(pending) if strain.active else pending,
+        cont_feats, kept_cats, code_maps, X.shape[1],
         absent_zero=absent_zero & set(map(str, cont_feats)),
     )
     n_pending = 0 if X_pending is None else int(X_pending.shape[0])
@@ -1374,8 +1420,11 @@ def _analyze_body(
     # batch comes back SHORT, and `proposal_notice` below says so.
     if setup_plan is not None and setup_plan.refused:
         proposal = withheld_batch(setup_plan, q=5, d=X.shape[1])
+    elif strain.refusal is not None:
+        proposal = strain.withheld_batch(q=5, d=X.shape[1])
     else:
         proposal = _propose_with_setup(propose_batch, setup_plan, dict(
+        **strain.propose_kwargs(),
         surrogate=s,
         bounds=bounds,
         q=5,
@@ -1394,8 +1443,10 @@ def _analyze_body(
         constraint_floor=constraint_floor_val if constraint_applied else None,
     ), d=X.shape[1])
     batch = proposal.X if setup_plan is None else setup_plan.post_check(proposal.X)
-    show = [d["name"] for d in drv[:4]]
-    show_idx = [d["_idx"] for d in drv[:4]]  # carry the feature index, not a name lookup
+    # Covariates are held, not proposed, so they are not among the shown features.
+    _shown = [d for d in drv if d["name"] not in strain.held_covariates][:4]
+    show = [d["name"] for d in _shown]
+    show_idx = [d["_idx"] for d in _shown]  # carry the feature index, not a name lookup
     for d in drv:
         d.pop("_idx", None)  # internal-only; not part of the returned API surface
     p_mean, p_std = s.posterior(batch) if len(batch) else (np.empty(0), np.empty(0))
@@ -1452,13 +1503,19 @@ def _analyze_body(
     # inside a GP that never saw that row. The observed spread it compares peak
     # height against would be the raw spread too, assay noise included, which
     # makes a real bump read as flat.
+    #
+    # The FULL design rows are passed with the continuous columns to sweep: a mixed
+    # GP takes d columns, and handing it only the d_cont continuous slice made
+    # every mixed fit report "posterior sweep failed: RuntimeError" (the input
+    # transform's tensor-size check). Categorical codes are held at the incumbent.
     gp_shapes = gp_shape_report(
         s,
-        X_fit[:, : len(cont_feats)] if cont_feats else np.empty((len(y_fit), 0)),
+        X_fit if cont_feats else np.empty((len(y_fit), 0)),
         y_fit,
         feature_names=[str(c) for c in cont_feats],
         cv_spearman=None if rho != rho else float(rho),
         rho_floor=RELIABILITY_SPEARMAN_FLOOR,
+        sweep_columns=list(range(len(cont_feats))) if cont_feats else None,
     ).to_dict()
 
     # VISUALIZATION PAYLOADS: embedding (PCA), correlation (Spearman), and
@@ -1516,6 +1573,21 @@ def _analyze_body(
     )
     viz_reasons["slices"] = _sl["reason"]
 
+    # Per-clone predicted pieces (slices per level, the GP at one reference
+    # process per clone, predicted optimum per clone), read off this same GP.
+    strain_pred = strain.predicted(
+        s, X_fit=X_fit, y_fit=y_fit, cont_feats=cont_feats, kept_cats=kept_cats,
+        cat_dims_map=cat_dims_map or {}, bounds=bounds, drv=drv,
+        replicate_aware=replicate_aware, incumbent=incumbent,
+        interval_fields=lambda pts, m, sd, _s=s: proposal_interval_fields(
+            m, sd,
+            proposal_predictive_std(
+                _s, pts, sd, float(nr["noise_var"]) if replicate_aware else None)[0],
+            interval_cal, INTERVAL_LEVELS, incumbent,
+            "best_reproducible_mean" if replicate_aware else "best_measured_single",
+            maximize=not _minimize),
+    )
+
     # Release the fitted GP(s) (hold torch/gpytorch tensors + parameter/prior
     # back-references that can form reference cycles refcounting alone won't
     # break) as soon as their last use is done, rather than waiting on
@@ -1552,6 +1624,47 @@ def _analyze_body(
         het, X, y, groups=groups, bounds=bounds, cat_dims=cat_dims,
         grouped_cv_report=grouped_cv_report, interval_calibration=interval_calibration,
     )
+
+    # Per-clone summary (docs/CLONES.md). Also after every proposal-path fit for
+    # the same reason as the block above: its process-only CV and
+    # leave-one-clone-out fits draw from the seeded RNG.
+    if strain.has_clone:
+        _units = {
+            str(c): target_unit_block(
+                str(c), (user_target_unit if user_target_unit is not None
+                         else (setup or {}).get("user_target_unit")) if str(c) == str(target) else None,
+            ).get("unit")
+            for c in candidate_targets
+        }
+        _direction = {str(target): "lower_is_better" if _minimize else "higher_is_better"}
+        if constraint_applied and constraint_col is not None:
+            _direction[constraint_col] = "floor"
+        strain_summary, oof_levels = strain_outputs(
+            strain, df=df, target=str(target),
+            outcomes=[str(c) for c in candidate_targets if str(c) in {str(x) for x in df.columns}],
+            outcome_units=_units, outcome_direction=_direction, keep_index=keep_index,
+            y=y, X=X, kept_cats=kept_cats,
+            features=[str(c) for c in cont_feats] + [str(c) for c in kept_cats],
+            maximize=not _minimize, seed=ANALYZE_SEED, anonymize=anonymize,
+            predicted=strain_pred, groups=groups, bounds=bounds, cat_dims=cat_dims,
+            oof_index=rep["oof_index"], oof_a=oof_a, oof_p=oof_p, oof_s=oof_s,
+            interval_cal=interval_cal, grouped_cv_report=grouped_cv_report,
+            logo_report=logo_report,
+        )
+    else:
+        strain_summary, oof_levels = strain_outputs(
+            strain, df=df, target=str(target), outcomes=[], outcome_units={},
+            outcome_direction={}, keep_index=keep_index, y=y, X=X, kept_cats=kept_cats,
+            features=[], maximize=not _minimize, seed=ANALYZE_SEED, anonymize=anonymize,
+            predicted=None, groups=groups, bounds=bounds, cat_dims=cat_dims, oof_index=[],
+            oof_a=[], oof_p=[], oof_s=[], interval_cal={}, grouped_cv_report=grouped_cv_report,
+            logo_report=logo_report,
+        )
+    _cat_effects = categorical_effects(
+        y, {str(c): df.loc[keep_index, c].fillna("").astype(str).str.strip().tolist()
+            for c in kept_cats},
+        list(recipe_key), fdr_q=DRIVER_FDR_Q,
+    ) if kept_cats else None
 
     # per-column provenance: what was kept as a feature, used as the target, or
     # dropped (id / other output / constant / sparse), so the client is never left
@@ -1740,7 +1853,7 @@ def _analyze_body(
                     by_column, n_rows_dropped, n_censored_rows, zero_filled,
                     auto_cats=[str(c) for c in auto_cats if c in kept_cats],
                     header=header_info,
-                ),
+                ) + list(strain_plan.findings),
             )
         ),
         # Features whose search range was narrowed because some observed cells
@@ -1769,6 +1882,34 @@ def _analyze_body(
     }
     if setup_plan is not None:
         result.update(setup_plan.result_fields())  # `goal` + the `setup` block
+    # Clone / strain and covariates (docs/CLONES.md). Additive keys: a sheet with
+    # no clone column gets `strain_summary.available: false` and empty blocks.
+    if strain.active:
+        # A fitted covariate can rank as a driver; it is labeled, never a setpoint.
+        result["drivers"] = [
+            {**d, "role": "covariate"} if d["name"] in strain.held_covariates else d
+            for d in result["drivers"]
+        ]
+        result["proposals"] = strain.annotate_proposals(
+            result["proposals"], batch, X, bounds, cat_dims, nearest_training_distance,
+        )
+    result["strain_summary"] = strain_summary
+    _pred = strain_pred if isinstance(strain_pred, dict) and "error" not in strain_pred else None
+    result["slices_by_level"] = (_pred or {}).get("slices_by_level") or {}
+    result["slices_by_level_skipped"] = (_pred or {}).get("slices_by_level_skipped") or {}
+    result["oof_levels"] = oof_levels
+    result["covariates"] = covariates_block(strain.plan, strain.held_info)
+    # Categorical inputs are never silently absent from the rank panels.
+    result["drivers_skipped"] = categorical_skipped([str(c) for c in kept_cats])
+    result["correlation_skipped"] = categorical_skipped([str(c) for c in kept_cats])
+    result["categorical_effects"] = _cat_effects
+    if strain.active:
+        _roles = {strain.plan.column: "strain"} if strain.plan.column else {}
+        _roles.update({c: "covariate" for c in covariates_block(strain.plan, {})["columns"]})
+        result["provenance"] = [
+            {**row, "role": _roles[row["name"]]} if row.get("name") in _roles else row
+            for row in result["provenance"]
+        ]
     if refusal is not None:  # verdict `refused`: no recipes, and the notice says why
         result["proposals"] = []
         result["proposal_notice"] = refusal_notice(refusal, 5)
@@ -1780,5 +1921,6 @@ def _analyze_body(
         result = _anonymize_result(
             result,
             categorical_levels={str(c): cat_dims_map[c] for c in kept_cats},
+            label_columns=[strain.plan.column] if strain.plan.column else [],
         )
     return result

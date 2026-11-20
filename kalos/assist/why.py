@@ -138,6 +138,8 @@ GLOSSARY: dict[str, str] = {
     'model_check': 'A check the model has not passed means its suggestions have not been tested that way.',
     # Sheet facts from the upload (how Kalos read the sheet)
     'auto_categorical': 'A text column was read as a set of labels, so Kalos compares each label with the others instead of treating it as a number.',
+    'strain_column_detected': 'A column named like a clone or strain was read as a set of labels, so a numeric clone ID is never treated as a quantity; declare it to hold proposals at one clone.',
+    'covariate_columns_detected': 'A passage, generation, PDL or thaw column was read as a recorded run property, so it is never proposed as a setpoint.',
     'blank_as_absent': 'Blank cells in this column were read as "none added"; if a blank meant "not recorded", the model learns from a value the lab never set.',
     'censored_rows': 'Runs whose result is only "below detection" have no exact value, so they are left out and teach the model nothing.',
     'censored_values': 'A value like "below detection" has no exact number, so it is not used as a number and that run teaches the model less.',
@@ -193,6 +195,7 @@ GLOSSARY: dict[str, str] = {
     'reason_required': 'Changing a result already recorded needs a reason, so the record shows why it changed; nothing was saved without one.',
     'invalid_result': 'A result must be a number, so nothing was saved for this run.',
     'invalid_body': 'Kalos could not read what was sent, so nothing was saved.',
+    'invalid_field': 'One field was not a finite number or a short label, so nothing was saved.',
     'invalid_request': 'Kalos could not use what was sent, so nothing was saved.',
     'validation_error': 'Kalos could not read what was sent, so nothing was saved.',
     'auth_not_configured': 'Sign-in is not set up, so Kalos refuses all work from other computers; nothing is lost.',
