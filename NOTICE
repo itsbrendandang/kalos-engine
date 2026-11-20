@@ -4,7 +4,8 @@ Licensed under the Apache License, Version 2.0 (see LICENSE).
 This product includes ideas and test fixtures from the following earlier work.
 
 ------------------------------------------------------------------------------
-BayOp (Bioqore "voyager-ml-bayop")
+BayOp (Bioqore "voyager-ml-bayop", commit ff590f1), Latin-hypercube mode:
+idea credit; re-implemented, no code copied.
 Authors: Kai Suematsu and joshBioqore, Bioqore.
 Used with the permission of its owner, the author of this repository, who
 asked for the BayOp work to be taken into Kalos (recorded 2026-11-20 on branch
