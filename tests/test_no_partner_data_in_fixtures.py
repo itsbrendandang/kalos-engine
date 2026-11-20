@@ -7,16 +7,14 @@ customer name, or a clone composite-ID shape (S1N.., S2N.., S3N..). A failure
 names `path:line (marker type)` only; the matched text is never printed.
 
 Scope is git-tracked files (what a commit ships), so ignored local copies of
-external data do not trip it. KNOWN_HITS lists findings that are on main and
-reported, each pinned to its exact count: it cannot grow, and an entry whose
-finding is gone fails until it is removed.
+external data do not trip it. There is no allowlist: a finding is fixed, not
+excused.
 """
 
 from __future__ import annotations
 
 import re
 import subprocess
-from collections import Counter
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -50,12 +48,6 @@ MARKERS: list[tuple[str, re.Pattern[str]]] = [
     ("clone composite ID shape (S1N/S2N/S3N)", re.compile(r"(?<![A-Za-z0-9])S[123]N[0-9]+(?![0-9])")),
 ]
 
-# Findings already on main, reported (2026-11-20) to bq-lead and integrator for
-# the owner to clean up; nothing here was removed by this guard. Exact counts.
-KNOWN_HITS: dict[tuple[str, str], int] = {
-    # A comment naming a customer run code (no data values).
-    ("examples/run_on_media_data.py", "lab run code (S26...)"): 1,
-}
 
 
 def _tracked_data_files() -> list[str]:
@@ -104,20 +96,12 @@ def test_scope_covers_the_data_roots() -> None:
 
 
 def test_no_partner_or_customer_markers_in_test_data_goldens_results_or_examples() -> None:
-    hits = _scan()
-    counts = Counter((path, kind) for path, _, kind in hits)
-    new = [f"{p}:{n} ({k})" for p, n, k in hits if (p, k) not in KNOWN_HITS]
-    grown = [f"{key[0]} ({key[1]}): {counts[key]} > {cap}" for key, cap in KNOWN_HITS.items() if counts[key] > cap]
-    assert not new and not grown, (
+    found = [f"{p}:{n} ({k})" for p, n, k in _scan()]
+    assert not found, (
         "partner/customer markers in committed data (fixtures copy headers only; see AGENTS.md §3):\n  "
-        + "\n  ".join(new + grown)
+        + "\n  ".join(found)
     )
 
-
-def test_known_hits_are_still_present_so_the_list_only_shrinks() -> None:
-    counts = Counter((path, kind) for path, _, kind in _scan())
-    stale = [f"{p} ({k})" for (p, k), cap in KNOWN_HITS.items() if counts[(p, k)] != cap]
-    assert not stale, "KNOWN_HITS entries no longer match main; update or delete them:\n  " + "\n  ".join(stale)
 
 
 # Markers are assembled from parts so this file holds no complete run code or ID.
