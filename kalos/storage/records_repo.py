@@ -227,10 +227,49 @@ _ACTIVE = (
 )
 
 
-def active_links(conn: Conn, *, tenant: str, limit: int) -> list[dict[str, Any]]:
-    """The tenant's active (not retracted) links, oldest first, at most `limit`."""
-    rows = conn.execute(_ACTIVE + " ORDER BY l.id LIMIT ?", (tenant, limit)).fetchall()
+def cross_links_from(
+    conn: Conn, *, tenant: str, campaign_ids: list[str], direction: str, limit: int,
+) -> list[dict[str, Any]]:
+    """One hop of the campaign graph: active links between two DIFFERENT
+    campaigns whose parent (`direction='down'`) or child (`'up'`) is among
+    `campaign_ids`. Uses lineage_links_parent_idx / lineage_links_child_idx."""
+    if not campaign_ids:
+        return []
+    end = "l.parent_campaign_id" if direction == "down" else "l.child_campaign_id"
+    marks = ", ".join("?" for _ in campaign_ids)
+    rows = conn.execute(
+        _ACTIVE + f" AND {end} IN ({marks}) AND l.parent_campaign_id <> l.child_campaign_id "
+        "ORDER BY l.id LIMIT ?",
+        (tenant, *campaign_ids, limit),
+    ).fetchall()
     return [dict(zip(_LINK_COLS, r)) for r in rows]
+
+
+def run_links_within(
+    conn: Conn, *, tenant: str, campaign_id: str, parent_run_ids: list[str], limit: int,
+) -> list[dict[str, Any]]:
+    """One hop of a campaign's run graph: active links inside `campaign_id`
+    whose parent run is among `parent_run_ids`."""
+    if not parent_run_ids:
+        return []
+    marks = ", ".join("?" for _ in parent_run_ids)
+    rows = conn.execute(
+        _ACTIVE + " AND l.parent_campaign_id = ? AND l.child_campaign_id = ? "
+        f"AND l.parent_run_id IN ({marks}) ORDER BY l.id LIMIT ?",
+        (tenant, campaign_id, campaign_id, *parent_run_ids, limit),
+    ).fetchall()
+    return [dict(zip(_LINK_COLS, r)) for r in rows]
+
+
+def active_duplicate_exists(
+    conn: Conn, *, tenant: str, parent_campaign_id: str, parent_run_id: str, child_campaign_id: str,
+    child_run_id: str, relation: str,
+) -> bool:
+    return conn.execute(
+        _ACTIVE + " AND l.parent_campaign_id = ? AND l.parent_run_id = ? AND l.child_campaign_id = ? "
+        "AND l.child_run_id = ? AND l.relation = ? LIMIT 1",
+        (tenant, parent_campaign_id, parent_run_id, child_campaign_id, child_run_id, relation),
+    ).fetchone() is not None
 
 
 def active_links_of_campaigns(
@@ -296,9 +335,29 @@ def insert_retraction(
 
 
 __all__ = [
-    "active_links", "active_links_of_campaigns", "attach_campaign", "campaign_project",
-    "count_factors", "count_links", "count_projects", "delete_factor", "detach_campaign",
-    "factor_exists", "get_link", "get_project", "insert_audit", "insert_link", "insert_project",
-    "insert_retraction", "list_factors", "list_projects", "project_campaign_counts",
-    "project_campaign_ids", "project_name_taken", "update_project", "upsert_factor",
+    "active_duplicate_exists",
+    "active_links_of_campaigns",
+    "attach_campaign",
+    "campaign_project",
+    "count_factors",
+    "count_links",
+    "count_projects",
+    "cross_links_from",
+    "delete_factor",
+    "detach_campaign",
+    "factor_exists",
+    "get_link",
+    "get_project",
+    "insert_audit",
+    "insert_link",
+    "insert_project",
+    "insert_retraction",
+    "list_factors",
+    "list_projects",
+    "project_campaign_counts",
+    "project_campaign_ids",
+    "project_name_taken",
+    "run_links_within",
+    "update_project",
+    "upsert_factor",
 ]

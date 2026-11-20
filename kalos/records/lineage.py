@@ -25,15 +25,16 @@ campaigns must be the caller's, so a link can never cross tenants):
 - no duplicate active link (the same two ends and relation);
 - traversal is bounded: depth (`MAX_DEPTH`), nodes (`MAX_NODES`) and links
   (`MAX_LINKS_RETURNED`); a cut-off says so (`truncated`) instead of silently
-  returning less. Voyager's unbounded recursive CTE is not ported as is.
+  returning less. It walks one hop at a time (one indexed query per hop and
+  direction), never loading the tenant's whole graph. Voyager's unbounded
+  recursive CTE is not ported as is.
 
 Links are append-only; withdrawing one is a retraction with a reason.
 """
 from __future__ import annotations
 
 import re
-from collections import deque
-from collections.abc import Iterable
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -125,87 +126,93 @@ def check_reason(reason: object) -> str:
     return clean
 
 
-def _reaches(edges: Iterable[tuple[str, str]], start: str, goal: str) -> bool:
-    out: dict[str, list[str]] = {}
-    for a, b in edges:
-        out.setdefault(a, []).append(b)
-    seen, queue = {start}, deque([start])
-    while queue:
-        node = queue.popleft()
-        if node == goal:
+# One hop: given a frontier of node ids, the active links leaving it (down) or
+# entering it (up). The storage layer answers each hop with one indexed query.
+Hop = Callable[[list[str]], list[dict[str, Any]]]
+
+
+def reachable(start: str, goal: str, step: Callable[[list[str]], set[str]], *, max_nodes: int) -> bool:
+    """Whether `goal` can be reached from `start`, walking one hop per call of
+    `step(frontier) -> next nodes`. Exhaustive up to `max_nodes` visited nodes
+    (the graph's size bound), so a cycle check is never cut short by depth."""
+    seen, frontier = {start}, [start]
+    while frontier:
+        if goal in frontier:
             return True
-        for nxt in out.get(node, ()):
-            if nxt not in seen:
-                seen.add(nxt)
-                queue.append(nxt)
+        nxt = sorted(n for n in step(frontier) if n not in seen)
+        seen.update(nxt)
+        if len(seen) > max_nodes:  # pragma: no cover - bounded by MAX_LINKS_PER_TENANT
+            raise RecordsValidationError("graph_too_large", "the lineage graph is too large to check")
+        frontier = nxt
     return False
 
 
-def check_new_link(link: LinkFields, active: list[dict[str, Any]]) -> None:
-    """Refuse a duplicate or a cycle, given the tenant's ACTIVE links touching the
-    graph (the repository passes them inside the write transaction)."""
-    for row in active:
-        if (row["parent_campaign_id"], row["parent_run_id"], row["child_campaign_id"],
-                row["child_run_id"], row["relation"]) == (
-                link.parent_campaign_id, link.parent_run_id, link.child_campaign_id,
-                link.child_run_id, link.relation):
-            raise RecordsValidationError("duplicate_link", "this link already exists")
+def check_new_link(
+    link: LinkFields, *, duplicate: bool, campaign_children: Hop, run_children: Hop,
+) -> None:
+    """Refuse a duplicate or a cycle. `campaign_children(ids)` returns the
+    active cross-campaign links whose parent is in `ids`; `run_children(run_ids)`
+    the active links inside the link's campaign whose parent run is in
+    `run_ids`. Called inside the write transaction."""
+    if duplicate:
+        raise RecordsValidationError("duplicate_link", "this link already exists")
     if link.parent_campaign_id != link.child_campaign_id:
-        cross = [(r["parent_campaign_id"], r["child_campaign_id"]) for r in active
-                 if r["parent_campaign_id"] != r["child_campaign_id"]]
-        if _reaches(cross, link.child_campaign_id, link.parent_campaign_id):
+        def step(ids: list[str]) -> set[str]:
+            return {r["child_campaign_id"] for r in campaign_children(ids)}
+
+        if reachable(link.child_campaign_id, link.parent_campaign_id, step, max_nodes=MAX_LINKS_PER_TENANT + 1):
             raise RecordsValidationError(
                 "cycle", "this link would make a campaign its own ancestor; lineage must not loop"
             )
         return
-    inner = [(r["parent_run_id"], r["child_run_id"]) for r in active
-             if r["parent_campaign_id"] == r["child_campaign_id"] == link.parent_campaign_id]
-    if _reaches(inner, link.child_run_id, link.parent_run_id):
+
+    def run_step(runs: list[str]) -> set[str]:
+        return {r["child_run_id"] for r in run_children(runs)}
+
+    if reachable(link.child_run_id, link.parent_run_id, run_step, max_nodes=MAX_LINKS_PER_TENANT + 1):
         raise RecordsValidationError(
             "cycle", "this link would make a run its own ancestor; lineage must not loop"
         )
 
 
 def lineage_view(
-    start_campaign_id: str, links: list[dict[str, Any]], *, depth: int = DEFAULT_DEPTH,
+    start_campaign_id: str, *, parents_of: Hop, children_of: Hop,
+    links_among: Callable[[list[str]], list[dict[str, Any]]], depth: int = DEFAULT_DEPTH,
 ) -> dict[str, Any]:
-    """Ancestors and descendants of a campaign over the active cross-campaign
-    links, breadth first, up to `depth` hops each way and `MAX_NODES` campaigns;
-    then every active link (cross or within) among the campaigns reached, up to
-    `MAX_LINKS_RETURNED`. `truncated` names each bound that cut the answer."""
+    """Ancestors and descendants of a campaign over active cross-campaign links,
+    breadth first, one query per hop each way (`parents_of(frontier)` returns
+    the links entering the frontier, `children_of(frontier)` those leaving it),
+    up to `depth` hops and `MAX_NODES` campaigns; then every active link (cross
+    or within) among the campaigns reached, via `links_among(ids)` (which
+    returns at most MAX_LINKS_RETURNED + 1). `truncated` names each bound that
+    cut the answer."""
     depth = max(1, min(int(depth), MAX_DEPTH))
-    cross = [r for r in links if r["parent_campaign_id"] != r["child_campaign_id"]]
-    parents: dict[str, set[str]] = {}
-    children: dict[str, set[str]] = {}
-    for r in cross:
-        children.setdefault(r["parent_campaign_id"], set()).add(r["child_campaign_id"])
-        parents.setdefault(r["child_campaign_id"], set()).add(r["parent_campaign_id"])
     truncated: list[str] = []
     level: dict[str, int] = {start_campaign_id: 0}
 
-    def walk(neighbours: dict[str, set[str]], sign: int) -> None:
-        frontier = deque([(start_campaign_id, 0)])
+    def walk(hop: Hop, far_end: str, sign: int) -> None:
+        frontier, d = [start_campaign_id], 0
         while frontier:
-            node, d = frontier.popleft()
-            for nxt in sorted(neighbours.get(node, ())):
-                if nxt in level:
-                    continue
-                if d + 1 > depth:
-                    if "depth" not in truncated:
-                        truncated.append("depth")
-                    continue
+            found = sorted({r[far_end] for r in hop(frontier)} - set(level))
+            if not found:
+                return
+            if d + 1 > depth:
+                if "depth" not in truncated:
+                    truncated.append("depth")
+                return
+            nxt: list[str] = []
+            for node in found:
                 if len(level) >= MAX_NODES:
                     if "nodes" not in truncated:
                         truncated.append("nodes")
                     return
-                level[nxt] = sign * (d + 1)
-                frontier.append((nxt, d + 1))
+                level[node] = sign * (d + 1)
+                nxt.append(node)
+            frontier, d = nxt, d + 1
 
-    walk(parents, -1)
-    walk(children, +1)
-    reached = set(level)
-    among = [r for r in links if r["parent_campaign_id"] in reached and r["child_campaign_id"] in reached]
-    among.sort(key=lambda r: int(r["id"]))
+    walk(parents_of, "parent_campaign_id", -1)
+    walk(children_of, "child_campaign_id", +1)
+    among = sorted(links_among(sorted(level)), key=lambda r: int(r["id"]))
     if len(among) > MAX_LINKS_RETURNED:
         among = among[:MAX_LINKS_RETURNED]
         truncated.append("links")
@@ -221,6 +228,24 @@ def lineage_view(
         "links": among,
         "truncated": truncated,
         "bounds": {"max_depth": MAX_DEPTH, "max_nodes": MAX_NODES, "max_links": MAX_LINKS_RETURNED},
+    }
+
+
+def in_memory_hops(links: list[dict[str, Any]]) -> dict[str, Any]:
+    """`parents_of` / `children_of` / `links_among` / `campaign_children` /
+    `run_children` over a list of links (tests and small callers)."""
+    cross = [r for r in links if r["parent_campaign_id"] != r["child_campaign_id"]]
+
+    def among(ids: list[str]) -> list[dict[str, Any]]:
+        s = set(ids)
+        return [r for r in links if r["parent_campaign_id"] in s and r["child_campaign_id"] in s]
+
+    return {
+        "parents_of": lambda ids: [r for r in cross if r["child_campaign_id"] in set(ids)],
+        "children_of": lambda ids: [r for r in cross if r["parent_campaign_id"] in set(ids)],
+        "links_among": among,
+        "run_children": lambda runs: [r for r in links if r["parent_campaign_id"] == r["child_campaign_id"]
+                                      and r["parent_run_id"] in set(runs)],
     }
 
 

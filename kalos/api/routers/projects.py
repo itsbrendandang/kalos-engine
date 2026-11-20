@@ -33,8 +33,8 @@ from kalos.api.routers._records_common import (
     actor,
     audit_ok,
     audit_refused,
+    campaign_cards,
     campaign_info,
-    current_stage,
     error,
     get_records,
     not_found_project,
@@ -57,18 +57,6 @@ def _project_or_none(rec: Records, tenant: str, project_id: str) -> dict[str, An
         return None
     with rec.records.txn(write=False) as conn:
         return records_repo.get_project(conn, tenant=tenant, project_id=project_id)
-
-
-def _campaign_summary(rec: Records, tenant: str, campaign_id: str) -> dict[str, Any]:
-    info = campaign_info(rec.store, tenant, campaign_id)
-    if info is None:
-        return {"campaign_id": campaign_id, "available": False,
-                "reason": "the campaign is no longer readable"}
-    return {
-        "campaign_id": campaign_id, "available": True, "name": info.get("name"),
-        "archived": info.get("archived_at") is not None,
-        "current_stage": current_stage(rec.store, tenant, campaign_id),
-    }
 
 
 # --- statuses and projects --------------------------------------------------------- #
@@ -153,8 +141,9 @@ def get_project(
     with rec.records.txn(write=False) as conn:
         members = records_repo.project_campaign_ids(conn, tenant=principal.tenant, project_id=project_id)
         factor_rows = records_repo.list_factors(conn, tenant=principal.tenant, project_id=project_id)
+    cards = campaign_cards(rec, principal.tenant, [m["campaign_id"] for m in members])
     campaigns = [
-        {**_campaign_summary(rec, principal.tenant, m["campaign_id"]),
+        {"campaign_id": m["campaign_id"], **cards[m["campaign_id"]],
          "added_at": m["added_at"], "added_by": m["added_by"]}
         for m in members
     ]
@@ -409,8 +398,8 @@ def get_outcomes(
         return not_found_project()
     with rec.records.txn(write=False) as conn:
         members = records_repo.project_campaign_ids(conn, tenant=principal.tenant, project_id=project_id)
-    ids = [m["campaign_id"] for m in members
-           if campaign_info(rec.store, principal.tenant, m["campaign_id"]) is not None]
+    cards = campaign_cards(rec, principal.tenant, [m["campaign_id"] for m in members])
+    ids = [cid for cid, card in cards.items() if card["available"]]
     with rec.campaigns.txn(write=False) as conn:
         keys, has_more = outcomes_repo.run_keys(conn, tenant=principal.tenant, campaign_ids=ids,
                                                 limit=limit, offset=offset)
@@ -446,7 +435,8 @@ def get_project_lineage(
     truncated = len(links) > lineage_rules.MAX_LINKS_RETURNED
     return JSONResponse({
         "project_id": project_id,
-        "campaigns": [_campaign_summary(rec, principal.tenant, cid) for cid in ids],
+        "campaigns": [{"campaign_id": cid, **card}
+                      for cid, card in campaign_cards(rec, principal.tenant, ids).items()],
         "links": links[:lineage_rules.MAX_LINKS_RETURNED],
         "truncated": ["links"] if truncated else [],
     })

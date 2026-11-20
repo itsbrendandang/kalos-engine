@@ -9,6 +9,7 @@ bounds, unknown keys refused).
 """
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 
@@ -173,36 +174,77 @@ def test_link_fields_rules():
     assert (ok.note, ok.parent_stage, ok.parent_run_id) == ("split from the fed-batch arm", "S2", "")
 
 
+def _check(link, links, *, duplicate=False):
+    hops = lineage.in_memory_hops(links)
+    lineage.check_new_link(link, duplicate=duplicate, campaign_children=hops["children_of"],
+                           run_children=hops["run_children"])
+
+
+def _view(start, links, depth):
+    hops = lineage.in_memory_hops(links)
+    return lineage.lineage_view(start, parents_of=hops["parents_of"], children_of=hops["children_of"],
+                                links_among=hops["links_among"], depth=depth)
+
+
 def test_cycles_are_refused_across_and_within_campaigns():
     active = [_row(1, CID_A, CID_B), _row(2, CID_B, CID_C)]
     back = lineage.link_fields(parent_campaign_id=CID_C, child_campaign_id=CID_A, relation="scale_down")
     with pytest.raises(RecordsValidationError) as exc:
-        lineage.check_new_link(back, active)
+        _check(back, active)
     assert exc.value.code == "cycle"
     sideways = lineage.link_fields(parent_campaign_id=CID_A, child_campaign_id=CID_C, relation="follow_up")
-    lineage.check_new_link(sideways, active)  # a DAG may have two paths
+    _check(sideways, active)  # a DAG may have two paths
     inner = [_row(3, CID_A, CID_A, "r1", "r2", "next_round")]
     loop = lineage.link_fields(parent_campaign_id=CID_A, child_campaign_id=CID_A, relation="next_round",
                                parent_run_id="r2", child_run_id="r1")
     with pytest.raises(RecordsValidationError):
-        lineage.check_new_link(loop, inner)
+        _check(loop, inner)
     dup = lineage.link_fields(parent_campaign_id=CID_A, child_campaign_id=CID_B, relation="scale_up")
     with pytest.raises(RecordsValidationError) as exc:
-        lineage.check_new_link(dup, active)
+        _check(dup, active, duplicate=True)
     assert exc.value.code == "duplicate_link"
+
+
+def test_cycle_check_is_not_cut_short_by_depth():
+    chain = [f"cmp_{i:032x}" for i in range(lineage.MAX_DEPTH + 10)]
+    links = [_row(i + 1, a, b) for i, (a, b) in enumerate(itertools.pairwise(chain))]
+    back = lineage.link_fields(parent_campaign_id=chain[-1], child_campaign_id=chain[0], relation="derived",
+                               note="closes the loop")
+    with pytest.raises(RecordsValidationError):
+        _check(back, links)
+
+
+def test_lineage_view_walks_one_hop_per_query():
+    chain = [f"cmp_{i:032x}" for i in range(6)]
+    links = [_row(i + 1, a, b) for i, (a, b) in enumerate(itertools.pairwise(chain))]
+    hops = lineage.in_memory_hops(links)
+    calls: list[tuple[str, list[str]]] = []
+
+    def spy(name):
+        def f(ids):
+            calls.append((name, list(ids)))
+            return hops[name](ids)
+        return f
+
+    view = lineage.lineage_view(chain[2], parents_of=spy("parents_of"), children_of=spy("children_of"),
+                                links_among=hops["links_among"], depth=2)
+    assert [n["generation_offset"] for n in view["nodes"]] == [-2, -1, 0, 1, 2]
+    assert view["truncated"] == ["depth"]
+    assert all(len(ids) == 1 for _, ids in calls)  # each query asks about one frontier
+    assert len(calls) <= 6
 
 
 def test_lineage_view_bounds_nodes(monkeypatch):
     star = [_row(i, CID_A, f"cmp_{i:032x}") for i in range(1, 11)]
     monkeypatch.setattr(lineage, "MAX_NODES", 4)
-    view = lineage.lineage_view(CID_A, star, depth=3)
+    view = _view(CID_A, star, 3)
     assert len(view["nodes"]) == 4 and view["truncated"] == ["nodes"]
     assert all(link["child_campaign_id"] in {n["campaign_id"] for n in view["nodes"]} for link in view["links"])
 
 
 def test_lineage_view_depth_is_clamped():
-    assert lineage.lineage_view(CID_A, [], depth=10_000)["depth"] == lineage.MAX_DEPTH
-    assert lineage.lineage_view(CID_A, [], depth=0)["depth"] == 1
+    assert _view(CID_A, [], 10_000)["depth"] == lineage.MAX_DEPTH
+    assert _view(CID_A, [], 0)["depth"] == 1
 
 
 # --- outcomes ----------------------------------------------------------------------- #

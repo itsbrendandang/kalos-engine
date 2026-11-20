@@ -251,6 +251,29 @@ def current_stage(store: CampaignStore, tenant: str, campaign_id: str) -> str | 
     return stage if isinstance(stage, str) else None
 
 
+def campaign_cards(rec: Records, tenant: str, campaign_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Name, archive state and RECORDED current stage of many campaigns in two
+    queries (kalos/storage/campaign_reads.py). A campaign that is not the
+    caller's (or no longer exists) reads `available: false` with the reason."""
+    from kalos.portal.stages import _doc_from_value
+    from kalos.storage.campaign_reads import campaign_cards as _cards
+
+    valid = [c for c in campaign_ids if isinstance(c, str) and _valid_campaign_id(c)]
+    with rec.campaigns.txn(write=False) as conn:
+        rows = _cards(conn, tenant=tenant, campaign_ids=valid)
+    out: dict[str, dict[str, Any]] = {}
+    for cid in campaign_ids:
+        row = rows.get(cid)
+        if row is None:
+            out[cid] = {"available": False, "reason": "the campaign is no longer readable"}
+            continue
+        doc = _doc_from_value(row["stages"]) if row["stages"] is not None else None
+        stage = doc.get("current_stage") if doc is not None else None
+        out[cid] = {"available": True, "name": row["name"], "archived": row["archived_at"] is not None,
+                    "current_stage": stage if isinstance(stage, str) else None}
+    return out
+
+
 def physical_bounds(name: str, unit: str | None) -> PhysicalBounds | None:
     """The engine's physical-bounds table for a factor (kalos.validation.bounds):
     `column_bounds` when the unit-aware table is present (branch feat/data-checks),

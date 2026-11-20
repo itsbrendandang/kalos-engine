@@ -18,7 +18,6 @@ current stage. Links are append-only.
 from __future__ import annotations
 
 import time
-from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
@@ -29,6 +28,7 @@ from kalos.api.routers._records_common import (
     actor,
     audit_ok,
     audit_refused,
+    campaign_cards,
     campaign_info,
     current_stage,
     error,
@@ -105,8 +105,19 @@ def create_link(
             if records_repo.count_links(conn, tenant=tenant) >= rules.MAX_LINKS_PER_TENANT:
                 raise RecordsValidationError(
                     "too_many_links", f"a tenant can record at most {rules.MAX_LINKS_PER_TENANT} links")
-            active = records_repo.active_links(conn, tenant=tenant, limit=rules.MAX_LINKS_PER_TENANT)
-            rules.check_new_link(link, active)
+            hop_limit = rules.MAX_LINKS_PER_TENANT + 1
+            rules.check_new_link(
+                link,
+                duplicate=records_repo.active_duplicate_exists(
+                    conn, tenant=tenant, parent_campaign_id=link.parent_campaign_id,
+                    parent_run_id=link.parent_run_id, child_campaign_id=link.child_campaign_id,
+                    child_run_id=link.child_run_id, relation=link.relation),
+                campaign_children=lambda ids: records_repo.cross_links_from(
+                    conn, tenant=tenant, campaign_ids=ids, direction="down", limit=hop_limit),
+                run_children=lambda runs: records_repo.run_links_within(
+                    conn, tenant=tenant, campaign_id=link.parent_campaign_id, parent_run_ids=runs,
+                    limit=hop_limit),
+            )
             link_id = records_repo.insert_link(
                 conn, tenant=tenant, parent_campaign_id=link.parent_campaign_id,
                 parent_run_id=link.parent_run_id, child_campaign_id=link.child_campaign_id,
@@ -172,15 +183,6 @@ def retract_link(
     return JSONResponse({"link": row})
 
 
-def _node_details(rec: Records, tenant: str, node: dict[str, Any]) -> dict[str, Any]:
-    info = campaign_info(rec.store, tenant, node["campaign_id"])
-    if info is None:
-        return {**node, "available": False, "reason": "the campaign is no longer readable"}
-    return {**node, "available": True, "name": info.get("name"),
-            "archived": info.get("archived_at") is not None,
-            "current_stage": current_stage(rec.store, tenant, node["campaign_id"])}
-
-
 @router.get("/api/campaigns/{campaign_id}/lineage")
 def get_campaign_lineage(
     campaign_id: str,
@@ -196,10 +198,20 @@ def get_campaign_lineage(
     tenant = principal.tenant
     if campaign_info(rec.store, tenant, campaign_id) is None:
         return campaign_not_found_response()
+    hop_limit = rules.MAX_LINKS_RETURNED + 1
     with rec.records.txn(write=False) as conn:
-        links = records_repo.active_links(conn, tenant=tenant, limit=rules.MAX_LINKS_PER_TENANT)
-    view = rules.lineage_view(campaign_id, links, depth=depth)
-    view["nodes"] = [_node_details(rec, tenant, n) for n in view["nodes"]]
+        view = rules.lineage_view(
+            campaign_id,
+            parents_of=lambda ids: records_repo.cross_links_from(
+                conn, tenant=tenant, campaign_ids=ids, direction="up", limit=hop_limit),
+            children_of=lambda ids: records_repo.cross_links_from(
+                conn, tenant=tenant, campaign_ids=ids, direction="down", limit=hop_limit),
+            links_among=lambda ids: records_repo.active_links_of_campaigns(
+                conn, tenant=tenant, campaign_ids=ids, limit=hop_limit),
+            depth=depth,
+        )
+    cards = campaign_cards(rec, tenant, [n["campaign_id"] for n in view["nodes"]])
+    view["nodes"] = [{**n, **cards[n["campaign_id"]]} for n in view["nodes"]]
     if include_outcomes:
         keys = sorted({(link["parent_campaign_id"], link["parent_run_id"]) for link in view["links"]
                        if link["parent_run_id"]}
