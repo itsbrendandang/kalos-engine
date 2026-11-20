@@ -192,7 +192,9 @@ class _Recorder:
         self.client = client
         self.records: dict[str, Any] = {}
         self.n = 0
-        self.headers = {"Authorization": f"Bearer {TENANT_TOKEN}"}
+        # A fixed request id: a middleware that would otherwise mint one per request
+        # (feat/voyager-records' X-Request-ID) must not consume the id counter.
+        self.headers = {"Authorization": f"Bearer {TENANT_TOKEN}", "X-Request-ID": "golden"}
 
     def call(self, method: str, url: str, *, name: str | None = None, store: bool = True,
              **kwargs: Any) -> Any:
@@ -265,9 +267,12 @@ def run_scenario() -> dict[str, Any]:
         "KALOS_STATE_DIR": state, "KALOS_TORCH_THREADS": "1", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
         "OPENBLAS_NUM_THREADS": "1", "KALOS_AUTH_TOKENS": json.dumps(tokens), "KALOS_ASSIST_DOCS_DIR": str(ASSIST_DOCS),
         "KALOS_LLM_PROVIDER": "none", "KALOS_ASSIST_INDEX_ON_WRITE": "0",
+        # Provenance carries the build SHA (env, else `git rev-parse`): pinned, or
+        # every commit would change the scale readout.
+        "KALOS_BUILD_SHA": "golden-build",
     })
     for var in ("KALOS_AUTH_TOKENS_FILE", "KALOS_JWT_PUBLIC_KEYS_FILE", "KALOS_ENV", "KALOS_ASSIST_SKILLS_DIR",
-                "KALOS_ANON_SALT", "ANTHROPIC_API_KEY"):
+                "KALOS_ANON_SALT", "ANTHROPIC_API_KEY", "KALOS_GIT_SHA"):
         os.environ.pop(var, None)
     _deterministic_ids()
 

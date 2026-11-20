@@ -3419,7 +3419,7 @@
    "max_fit_rows": 2000,
    "sheet_index": null,
    "sheet_hash": null,
-   "build_sha": "unknown",
+   "build_sha": "golden-build",
    "library_versions": {
     "numpy": "2.4.6",
     "pandas": "3.0.3",
@@ -3453,7 +3453,7 @@
   "proposal_provenance": {
    "schema_version": 1,
    "engine_version": "0.1.0",
-   "build_sha": "unknown",
+   "build_sha": "golden-build",
    "library_versions": {
     "torch": "2.13.0",
     "botorch": "0.18.1",
@@ -3483,7 +3483,7 @@
     "proposal_fit_restarts"
    ],
    "model_artifact_stored": false,
-   "provenance_sha256": "f0e7b85e519cf076f0fecf3b5cd7ec8545b750516324fd0f8dee03e031bea7cc",
+   "provenance_sha256": "f3ef07e9684d58715efd0873f33a0264aeaabb9f440d1e26286586c655c7a283",
    "timestamp": "<volatile>",
    "created_at": "<volatile>"
   }

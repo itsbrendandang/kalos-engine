@@ -30,7 +30,7 @@
    "interval_unavailable_reason": null,
    "proposal_index": 0,
    "analysis_provenance": {
-    "provenance_sha256": "4df7ec4d4d055ccb96844cb407604823aaeeb162998bd00c26ea8932709b8b2c",
+    "provenance_sha256": "3b6655e56a0a790505ffa5abf4a58889aa9d2051b5ae875bb9f95f3eddc6e0ec",
     "input_sha256": "26ea541a803e63f0a8f9afd74d9d8a5720c2f3191c2da27f56eb443d37cddcf4",
     "config_sha256": "c29de881bec3cac9d29d334e5488bd6b716bcb288abfec37a2f32c9d71d93f8c",
     "engine_version": "0.1.0",
@@ -137,7 +137,7 @@
   "created_at": "<volatile>",
   "measured_at": "<volatile>",
   "analysis_provenance": {
-   "provenance_sha256": "4df7ec4d4d055ccb96844cb407604823aaeeb162998bd00c26ea8932709b8b2c",
+   "provenance_sha256": "3b6655e56a0a790505ffa5abf4a58889aa9d2051b5ae875bb9f95f3eddc6e0ec",
    "input_sha256": "26ea541a803e63f0a8f9afd74d9d8a5720c2f3191c2da27f56eb443d37cddcf4",
    "config_sha256": "c29de881bec3cac9d29d334e5488bd6b716bcb288abfec37a2f32c9d71d93f8c",
    "engine_version": "0.1.0",

@@ -1041,7 +1041,7 @@
     "scipy": "1.17.1",
     "pandas": "3.0.3"
    },
-   "kalos_git_sha": "4bb477d",
+   "kalos_git_sha": "golden-build",
    "candidate": "v0",
    "raw_upload_sha256": "83ff1310ed22b96e504c872459734d910032151f1a1ce283c12c7103fe023a02",
    "normalized_frame_sha256": "d9dd7699c013eade4a7e980e9cdf01c82dba26225a3accf2dcd29c921a028adb",
