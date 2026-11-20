@@ -20,6 +20,7 @@ from typing import IO
 
 import uvicorn
 
+from kalos.api.request_context import configure_logging
 from kalos.envconfig import ConfigError
 from kalos.portal import engine_lock
 from kalos.portal.auth import AuthConfigError, get_authenticator
@@ -99,6 +100,7 @@ def main() -> None:
     # the open-mode remote guard. Ignore forwarded headers unless the operator names the
     # trusted proxy addresses explicitly.
     trusted = os.environ.get("KALOS_TRUSTED_PROXIES", "").strip()
+    configure_logging()  # request ids on kalos log lines; KALOS_LOG_FORMAT=json (kalos.api.request_context)
     uvicorn.run(
         "kalos.portal.app:app", host=host, port=port, log_level="warning",
         proxy_headers=bool(trusted), forwarded_allow_ips=trusted or None,

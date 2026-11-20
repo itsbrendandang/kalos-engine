@@ -109,6 +109,17 @@ def check_env_settings() -> None:
     validation_mode_setting()
     audit_retention_days()
     provider_setting()
+    check_storage_and_logging_settings()
+
+
+def check_storage_and_logging_settings() -> None:
+    """`KALOS_DATABASE_URL` (+ pool bounds; TLS off-box in production) and
+    `KALOS_LOG_FORMAT` (kalos/storage/backend.py, kalos/api/request_context.py)."""
+    from kalos.api.request_context import log_format_setting
+    from kalos.storage.backend import check_database_settings
+
+    check_database_settings()
+    log_format_setting()
 
 
 def is_production() -> bool:

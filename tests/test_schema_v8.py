@@ -24,6 +24,7 @@ import pytest
 from kalos.portal import migrate
 from kalos.portal.campaign import CampaignStore
 from kalos.portal.prediction_history import prediction_columns, sha256_text
+from kalos.storage.migrations import v9 as _v9
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "portal_v7.db"
 _REPO = Path(__file__).resolve().parents[1]
@@ -68,7 +69,7 @@ def v7_copy(tmp_path) -> Path:
 def test_fresh_store_is_created_at_v8(tmp_path):
     CampaignStore(tmp_path).close()
     db = tmp_path / "portal.db"
-    assert migrate.SCHEMA_VERSION == 8
+    assert migrate.SCHEMA_VERSION >= migrate.V8  # v9 (records) came after
     assert _q(db, "SELECT version, name FROM schema_migrations WHERE version = 8") == [(8, migrate.V8_NAME)]
     assert _names(db, "table") >= V8_TABLES
     assert _names(db, "trigger") >= V8_TRIGGERS
@@ -156,7 +157,7 @@ def test_v7_copy_migrates_with_a_verified_backup_and_keeps_every_row(v7_copy):
     before = _snapshot(db)
 
     plan = migrate.migrate_up(db, dry_run=True).plan_text
-    assert "schema v7 -> v8" in plan and "pre-v8" in plan
+    assert f"schema v7 -> v{migrate.SCHEMA_VERSION}" in plan and "pre-v8" in plan
     assert "analysis_snapshots, run_predictions and run_folds" in plan
     assert "campaign_clones" not in plan  # only the remaining step is listed
     assert _snapshot(db) == before  # the dry run wrote nothing
@@ -167,9 +168,9 @@ def test_v7_copy_migrates_with_a_verified_backup_and_keeps_every_row(v7_copy):
     assert _snapshot(result.backup_path) == before  # the backup is the v7 database
 
     after = _snapshot(db)
-    assert [r[0] for r in after.pop("schema_migrations")] == [2, 3, 4, 5, 6, 7, 8]
+    assert [r[0] for r in after.pop("schema_migrations")] == list(range(2, migrate.SCHEMA_VERSION + 1))
     before.pop("schema_migrations")
-    for t in V8_TABLES:
+    for t in (*V8_TABLES, *_v9.TABLES):
         after.pop(t)
     after.pop("sqlite_sequence", None)
     before.pop("sqlite_sequence", None)
@@ -267,12 +268,12 @@ def test_down_renames_aside_and_a_v7_engine_accepts_it_and_re_up_is_clean(v7_cop
     db = v7_copy
     migrate.migrate_up(db)
     counts = {t: _q(db, f"SELECT COUNT(*) FROM {t}")[0][0] for t in V8_TABLES}  # noqa: S608
-    dry = migrate.migrate_down(db, dry_run=True).plan_text
+    dry = migrate.migrate_down(db, dry_run=True, target=7).plan_text
     assert "schema v8 -> v7" in dry and "schema v7 -> v6" not in dry
     for t in V8_TABLES:
         assert f"rename: {t} -> {t}_v8_rolledback (kept, not dropped; {counts[t]} row(s))" in dry
 
-    result = migrate.migrate_down(db)
+    result = migrate.migrate_down(db, target=7)
     assert result.action == "rolled_back" and result.backup_path is not None
     assert _q(db, "SELECT MAX(version) FROM schema_migrations") == [(7,)]
     tables = _names(db, "table")
@@ -291,16 +292,17 @@ def test_down_renames_aside_and_a_v7_engine_accepts_it_and_re_up_is_clean(v7_cop
 
     assert migrate.migrate_up(db).action == "migrated"
     assert _q(db, "SELECT COUNT(*) FROM run_predictions") == [(counts["run_predictions"],)]
-    migrate.migrate_down(db)
+    migrate.migrate_down(db, target=7)
     assert {f"{t}_v8_rolledback_2" for t in V8_TABLES} <= _names(db, "table")
 
 
 def test_status_shows_v8_and_pending_from_v7(v7_copy):
     report, healthy = migrate.status_report(v7_copy)
-    assert healthy and "schema version: v7 (this code: v8)" in report and "schema v7 -> v8" in report
+    v = migrate.SCHEMA_VERSION
+    assert healthy and f"schema version: v7 (this code: v{v})" in report and f"schema v7 -> v{v}" in report
     migrate.migrate_up(v7_copy)
     report, healthy = migrate.status_report(v7_copy)
-    assert healthy and "schema version: v8" in report and "shape check: ok" in report
+    assert healthy and f"schema version: v{v}" in report and "shape check: ok" in report
 
 
 @pytest.mark.parametrize(("ddl", "missing"), [
@@ -337,5 +339,5 @@ def test_a_corrupt_campaign_state_is_skipped_with_a_warning(v7_copy):
 def test_docs_describe_v8_and_move_the_other_crux_items_on():
     text = (_REPO / "docs" / "MIGRATIONS.md").read_text()
     assert "## Schema v8: prediction history" in text
-    assert "The remaining Crux items (result check, decision ledger) take v9 or later." in text
+    assert "The remaining Crux items (result check, decision ledger) take v10 or later." in text
     assert "reserved" not in text.split("| v8 |")[1].split("\n")[0]

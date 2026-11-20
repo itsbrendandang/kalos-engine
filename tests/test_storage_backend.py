@@ -1,0 +1,425 @@
+"""The storage backend switch (kalos/storage/backend.py) and the PostgreSQL schema
+runner (kalos/storage/migrations/pg_runner.py).
+
+The configuration and SQL-translation tests always run. The `postgres` tests run
+only when KALOS_TEST_DATABASE_URL points at a PostgreSQL server (CI: the postgres
+job's service container); each uses a fresh schema.
+"""
+from __future__ import annotations
+
+import pytest
+import records_helpers
+
+from kalos.envconfig import ConfigError
+from kalos.storage import backend as sb
+from kalos.storage.migrations import pg_runner, v9
+
+SECRET = "s3cr3t-Pa55"
+pg_schema_dsn = records_helpers.pg_schema_dsn  # the shared fixture
+
+# --- configuration (no server needed) ----------------------------------------------- #
+
+
+def test_sqlite_is_the_default():
+    assert sb.backend_from_env({}).kind == sb.SQLITE
+    assert sb.backend_from_env({"KALOS_DATABASE_URL": "   "}).kind == sb.SQLITE
+
+
+@pytest.mark.parametrize("url", ["postgresql://u@h/db", "postgres://u@h/db", "POSTGRESQL://u@h/db"])
+def test_postgres_urls_select_postgres(url):
+    assert sb.backend_from_env({"KALOS_DATABASE_URL": url}).is_postgres
+
+
+@pytest.mark.parametrize("url", ["sqlite:///x.db", "mysql://u:p@h/db", "/var/lib/kalos.db", "file.db"])
+def test_other_urls_are_refused_not_guessed(url):
+    with pytest.raises(sb.StorageConfigError) as exc:
+        sb.backend_from_env({"KALOS_DATABASE_URL": url})
+    assert isinstance(exc.value, ConfigError)
+
+
+# Passwords with the characters that broke a URL-splitting redactor (B1): '#'
+# starts a URL fragment, '?' a query, '/' a path; 'Password=' looks like a
+# parameter. In every form the secret part must never be shown.
+_PW_FORMS = ["se#cr3t-Pa55", "se?cr3t-Pa55", "se/cr3t-Pa55", "Password=cr3t-Pa55", "cr3t%23-Pa55"]
+
+
+@pytest.mark.parametrize("pw", _PW_FORMS)
+@pytest.mark.parametrize("form", ["userinfo", "query"])
+def test_redact_dsn_never_shows_any_part_of_the_password(pw, form):
+    pytest.importorskip("psycopg")
+    dsn = (f"postgresql://kalos:{pw}@db.internal:5432/kalos" if form == "userinfo"
+           else f"postgresql://kalos@db.internal:5432/kalos?sslmode=require&password={pw}")
+    shown = sb.redact_dsn(dsn)
+    assert "cr3t" not in shown and "Pa55" not in shown and "se" not in shown.replace("postgresql", "")
+    assert shown in ("postgresql://kalos@db.internal:5432/kalos", sb.REDACTED_DSN)
+    assert "cr3t" not in sb.BackendConfig(sb.POSTGRES, dsn).describe()
+
+
+@pytest.mark.parametrize(("dsn", "shown"), [
+    (f"postgresql://kalos:{SECRET}@db.internal:5432/kalos", "postgresql://kalos@db.internal:5432/kalos"),
+    (f"postgresql://db/kalos?user=k&password={SECRET}&sslmode=require", "postgresql://k@db/kalos"),
+    ("postgresql://kalos@db/kalos?options=-csearch_path%3Dx", "postgresql://kalos@db/kalos"),
+    ("postgresql://h1:5432,h2:5433/k", "postgresql://h1,h2:5432,5433/k"),
+    (f"postgresql://kalos:{SECRET}@db/k?Password={SECRET}", "postgresql://***"),  # does not parse
+    ("not a url at all", "postgresql://***"),
+])
+def test_redact_dsn_keeps_only_user_host_port_db(dsn, shown):
+    pytest.importorskip("psycopg")
+    assert sb.redact_dsn(dsn) == shown
+
+
+@pytest.mark.parametrize(("sql", "expected"), [
+    ("SELECT * FROM t WHERE a = ? AND b = ?", "SELECT * FROM t WHERE a = %s AND b = %s"),
+    ("SELECT '?' , \"a?\" FROM t WHERE x = ?", "SELECT '?' , \"a?\" FROM t WHERE x = %s"),
+    ("SELECT 'it''s ?' WHERE y LIKE '%a' AND z = ?", "SELECT 'it''s ?' WHERE y LIKE '%%a' AND z = %s"),
+    ("SELECT 5 % 2 WHERE q = ?", "SELECT 5 %% 2 WHERE q = %s"),
+])
+def test_translate_sql(sql, expected):
+    assert sb.translate_sql(sql) == expected
+
+
+@pytest.mark.parametrize(("env", "dsn", "pgenv", "ok"), [
+    ("production", f"postgresql://k:{SECRET}@db.example.com/kalos", {}, False),
+    ("production", f"postgresql://k:{SECRET}@db.example.com/kalos?sslmode=require", {}, False),
+    ("production", f"postgresql://k:{SECRET}@db.example.com/kalos?sslmode=verify-ca", {}, False),
+    ("production", f"postgresql://k:{SECRET}@db.example.com/kalos?sslmode=verify-full", {}, True),
+    ("production", "postgresql://k@127.0.0.1/kalos", {}, True),
+    ("production", "postgresql:///kalos?host=/var/run/postgresql", {}, True),
+    ("production", "postgresql:///kalos", {}, True),  # no host: libpq's unix socket
+    # hostaddr is where libpq really connects, whatever the host name says
+    ("production", "postgresql://k@localhost/kalos?hostaddr=10.1.2.3", {}, False),
+    # several hosts: every one counts
+    ("production", "postgresql://k@127.0.0.1,db.example.com/kalos", {}, False),
+    # libpq's environment defaults when the URL has no host / sslmode
+    ("production", "postgresql:///kalos", {"PGHOST": "db.example.com"}, False),
+    ("production", "postgresql:///kalos", {"PGHOSTADDR": "10.1.2.3"}, False),
+    ("production", "postgresql:///kalos", {"PGHOST": "db.example.com", "PGSSLMODE": "verify-full"}, True),
+    ("production", "postgresql://k@db.example.com/kalos?sslmode=disable", {"PGSSLMODE": "verify-full"}, False),
+    ("development", f"postgresql://k:{SECRET}@db.example.com/kalos", {}, True),
+])
+def test_production_profile_requires_verified_tls_to_any_remote_endpoint(monkeypatch, env, dsn, pgenv, ok):
+    pytest.importorskip("psycopg")
+    for var in ("PGHOST", "PGHOSTADDR", "PGSSLMODE"):
+        monkeypatch.delenv(var, raising=False)
+    for k, v in pgenv.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("KALOS_ENV", env)
+    environ = {"KALOS_DATABASE_URL": dsn}
+    if ok:
+        assert sb.check_database_settings(environ).is_postgres
+    else:
+        with pytest.raises(sb.StorageConfigError) as exc:
+            sb.check_database_settings(environ)
+        assert SECRET not in str(exc.value) and "verify-full" in str(exc.value)
+
+
+def test_write_lock_key_is_per_schema_and_stable():
+    a, b = sb.write_lock_key("public"), sb.write_lock_key("tenant_b")
+    assert a != b and a == sb.write_lock_key("public")
+    assert -(2**63) <= a < 2**63 and -(2**63) <= b < 2**63
+
+
+@pytest.mark.parametrize("pw", ["p#ss?w/rd", "Password=x", "with space"])
+def test_pg_dump_gets_the_password_only_in_its_environment(pw, monkeypatch):
+    pytest.importorskip("psycopg")
+    from urllib.parse import quote
+
+    monkeypatch.setenv("PGSSLMODE", "disable")  # an inherited PG* value is replaced, not mixed in
+    dsn = (f"postgresql://kalos:{quote(pw, safe='')}@db.internal:6543/kalos_db"
+           "?sslmode=verify-full&options=-csearch_path%3Dkt_1&application_name=kalos")
+    args, env = pg_runner.pg_tool_invocation(dsn)
+    assert args == ["--host=db.internal", "--port=6543", "--username=kalos", "--dbname=kalos_db"]
+    assert env["PGPASSWORD"] == pw  # unquoted, exactly as libpq parsed it
+    assert env["PGSSLMODE"] == "verify-full" and env["PGOPTIONS"] == "-csearch_path=kt_1"
+    assert env["PGAPPNAME"] == "kalos" and "KALOS_DATABASE_URL" not in env
+    assert all(pw not in a for a in args)
+    with pytest.raises(pg_runner.PgMigrationError, match="cannot pass"):
+        pg_runner.pg_tool_invocation("postgresql://k@h/d?keepalives=1")
+
+
+@pytest.mark.parametrize(("name", "value"), [
+    ("KALOS_DB_POOL_MAX", "0"), ("KALOS_DB_POOL_MIN", "-1"), ("KALOS_DB_POOL_MAX", "ten"),
+    ("KALOS_DB_CONNECT_TIMEOUT", "0"),
+])
+def test_pool_settings_are_checked_at_startup(monkeypatch, name, value):
+    pytest.importorskip("psycopg")
+    monkeypatch.setenv(name, value)
+    with pytest.raises(sb.StorageConfigError):
+        sb.check_database_settings({"KALOS_DATABASE_URL": "postgresql://k@127.0.0.1/kalos"})
+
+
+def test_startup_check_reads_the_storage_settings(monkeypatch):
+    from kalos.portal.config import check_env_settings
+
+    monkeypatch.setenv("KALOS_DATABASE_URL", "mysql://x@y/z")
+    with pytest.raises(ConfigError):
+        check_env_settings()
+    monkeypatch.delenv("KALOS_DATABASE_URL")
+    monkeypatch.setenv("KALOS_LOG_FORMAT", "yaml")
+    with pytest.raises(ConfigError):
+        check_env_settings()
+
+
+def test_an_unreachable_server_is_refused_without_the_password(monkeypatch):
+    pytest.importorskip("psycopg")
+    monkeypatch.setenv("KALOS_DB_CONNECT_TIMEOUT", "1")
+    with pytest.raises(sb.StorageConfigError) as exc:
+        sb.pg_connect(f"postgresql://kalos:{SECRET}@127.0.0.1:1/kalos")
+    assert SECRET not in str(exc.value) and "postgresql://kalos@127.0.0.1:1/kalos" in str(exc.value)
+
+
+def test_sqlite_backend_dialect_neutral_round_trip(tmp_path):
+    b = sb.Backend(sb.BackendConfig(sb.SQLITE), sqlite_path=tmp_path / "x.db")
+    try:
+        with b.txn(write=True) as conn:
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, doc TEXT)")
+            rid = conn.execute("INSERT INTO t (doc) VALUES (?) RETURNING id",
+                               (conn.json_param({"a": [1, 2]}),)).fetchone()[0]
+        with b.txn(write=False) as conn:
+            (doc,) = conn.execute("SELECT doc FROM t WHERE id = ?", (rid,)).fetchone()
+        assert sb.json_value(doc) == {"a": [1, 2]}
+        with pytest.raises(ValueError), b.txn(write=True) as conn:
+            conn.json_param({"x": float("nan")})
+    finally:
+        b.close()
+
+
+# --- PostgreSQL (needs KALOS_TEST_DATABASE_URL) ---------------------------------------- #
+
+pg = pytest.mark.postgres
+
+
+def _tables(dsn: str) -> set[str]:
+    conn = sb.pg_connect(dsn)
+    try:
+        return pg_runner._tables(conn)
+    finally:
+        conn.raw.close()
+
+
+@pg
+def test_empty_database_is_created_at_v9_in_one_step(pg_schema_dsn):
+    res = pg_runner.ensure_schema(pg_schema_dsn)
+    assert (res.action, res.to_version) == ("created", 9)
+    assert _tables(pg_schema_dsn) >= set(pg_runner.BASELINE_TABLES)
+    conn = sb.pg_connect(pg_schema_dsn)
+    try:
+        assert pg_runner._triggers(conn) >= set(v9.PG_TRIGGERS) | set(pg_runner.AUDIT_TRIGGERS)
+        assert conn.execute("SELECT version, name FROM schema_migrations").fetchall() == [
+            (9, pg_runner.BASELINE_NAME)]
+    finally:
+        conn.raw.close()
+    assert pg_runner.ensure_schema(pg_schema_dsn).action == "noop"
+    assert "schema v9 (current" in pg_runner.status(pg_schema_dsn)
+
+
+@pg
+@pytest.mark.parametrize("table", ["audit_log", "lineage_links", "lineage_retractions"])
+def test_append_only_on_postgres_rejects_update_delete_truncate(pg_schema_dsn, table):
+    import psycopg
+
+    pg_runner.ensure_schema(pg_schema_dsn)
+    b = sb.Backend(sb.BackendConfig(sb.POSTGRES, pg_schema_dsn))
+    try:
+        with b.txn(write=True) as conn:
+            if table == "audit_log":
+                conn.execute("INSERT INTO audit_log (ts, tenant, action, outcome) VALUES (1, 'acme', 'a', 'ok')")
+            else:
+                conn.execute("INSERT INTO lineage_links (tenant, parent_campaign_id, child_campaign_id, relation, "
+                             "created_at) VALUES ('acme', 'cmp_a', 'cmp_b', 'scale_up', 1)")
+                if table == "lineage_retractions":
+                    (lid,) = conn.execute("SELECT id FROM lineage_links").fetchone()
+                    conn.execute("INSERT INTO lineage_retractions (tenant, link_id, reason, created_at) "
+                                 "VALUES ('acme', ?, 'r', 1)", (lid,))
+        for sql in (f"UPDATE {table} SET tenant = 'x'", f"DELETE FROM {table}", f"TRUNCATE {table} CASCADE"):
+            with pytest.raises(psycopg.IntegrityError, match="append-only"), b.txn(write=True) as conn:
+                conn.execute(sql)
+    finally:
+        b.close()
+
+
+@pg
+def test_newer_and_foreign_and_damaged_databases_are_refused(pg_schema_dsn):
+    import psycopg
+
+    raw = psycopg.connect(pg_schema_dsn, autocommit=True)
+    try:
+        raw.execute("CREATE TABLE audit_log (id int)")
+        with pytest.raises(pg_runner.PgMigrationError, match="no schema_migrations"):
+            pg_runner.ensure_schema(pg_schema_dsn)
+        raw.execute("DROP TABLE audit_log")
+        pg_runner.ensure_schema(pg_schema_dsn)
+        raw.execute("DROP TRIGGER lineage_links_no_delete ON lineage_links")
+        with pytest.raises(pg_runner.PgMigrationError, match="lineage_links_no_delete"):
+            pg_runner.ensure_schema(pg_schema_dsn)
+        raw.execute("INSERT INTO schema_migrations VALUES (10, 'future', 0)")
+        with pytest.raises(pg_runner.PgMigrationError, match="newer than this code"):
+            pg_runner.ensure_schema(pg_schema_dsn)
+    finally:
+        raw.close()
+
+
+@pg
+def test_an_older_database_is_not_upgraded_on_startup(pg_schema_dsn, monkeypatch):
+    """A future step appended to STEPS: startup refuses, the CLI upgrades after
+    a backup (here: --confirm-backup), in one transaction."""
+    pg_runner.ensure_schema(pg_schema_dsn)
+    created: list[str] = []
+
+    def step10(conn):
+        conn.execute("CREATE TABLE future_table (id int)")
+        created.append("future_table")
+
+    monkeypatch.setattr(pg_runner, "STEPS", (*pg_runner.STEPS, pg_runner.Step(10, "future", step10, ("future_table",))))
+    monkeypatch.setattr(pg_runner, "LATEST", 10)
+    with pytest.raises(pg_runner.PgMigrationError, match="does not upgrade a server database on startup"):
+        pg_runner.ensure_schema(pg_schema_dsn)
+    assert pg_runner.migrate_up(pg_schema_dsn, dry_run=True).action == "dry-run"
+    assert created == []
+    res = pg_runner.migrate_up(pg_schema_dsn, confirm_backup=True)
+    assert (res.from_version, res.to_version) == (9, 10) and "future_table" in _tables(pg_schema_dsn)
+
+
+@pg
+def test_a_failing_step_leaves_nothing_behind(pg_schema_dsn, monkeypatch):
+    def broken(conn):
+        conn.execute("CREATE TABLE half_done (id int)")
+        raise RuntimeError("step failed midway")
+
+    monkeypatch.setattr(pg_runner, "STEPS", (pg_runner.Step(9, "broken", broken, ("half_done",)),))
+    monkeypatch.setattr(pg_runner, "LATEST", 9)
+    with pytest.raises(RuntimeError):
+        pg_runner.ensure_schema(pg_schema_dsn)
+    assert _tables(pg_schema_dsn) == set()  # one transaction: nothing was created
+
+
+@pg
+def test_upgrade_needs_a_verified_backup(pg_schema_dsn, monkeypatch, tmp_path):
+    pg_runner.ensure_schema(pg_schema_dsn)
+    monkeypatch.setattr(pg_runner, "STEPS", (*pg_runner.STEPS, pg_runner.Step(10, "f", lambda c: None, ())))
+    monkeypatch.setattr(pg_runner, "LATEST", 10)
+    monkeypatch.setattr(pg_runner.shutil, "which", lambda name: None)
+    with pytest.raises(pg_runner.PgMigrationError, match="--confirm-backup"):
+        pg_runner.migrate_up(pg_schema_dsn, backup_dir=tmp_path)
+    assert "schema v9" in pg_runner.status(pg_schema_dsn)
+
+
+@pg
+def test_verified_pg_dump_backup(pg_schema_dsn, tmp_path, monkeypatch):
+    import os
+    import shutil
+    import stat
+
+    if not (shutil.which("pg_dump") and shutil.which("pg_restore")):
+        if os.environ.get("KALOS_REQUIRE_PG_TOOLS") == "1":  # CI: a missing pg_dump is a failure
+            pytest.fail("pg_dump/pg_restore are required here (KALOS_REQUIRE_PG_TOOLS=1)")
+        pytest.skip("pg_dump/pg_restore not on PATH")
+    pg_runner.ensure_schema(pg_schema_dsn)
+    monkeypatch.setenv("KALOS_STATE_DIR", str(tmp_path / "state"))
+    backup_dir = pg_runner.default_backup_dir()
+    assert backup_dir == tmp_path / "state" / "pg-backups"
+    path = pg_runner.take_verified_backup(
+        pg_schema_dsn, backup_dir, label="pre-v10", expect_tables=pg_runner.BASELINE_TABLES)
+    assert path.exists() and path.stat().st_size > 0
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(backup_dir.stat().st_mode) == 0o700
+    with pytest.raises(pg_runner.PgMigrationError, match="could not be verified"):
+        pg_runner.take_verified_backup(pg_schema_dsn, tmp_path, label="x", expect_tables=("not_a_table",))
+
+
+@pg
+def test_cli_reads_the_url_from_the_environment_only(pg_schema_dsn, monkeypatch, capsys):
+    monkeypatch.setenv("KALOS_DATABASE_URL", pg_schema_dsn)
+    assert pg_runner.main(["up"]) == 0
+    assert pg_runner.main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "schema v9" in out
+    from urllib.parse import urlsplit
+
+    password = urlsplit(pg_schema_dsn).password
+    if password:
+        assert password not in out
+    monkeypatch.delenv("KALOS_DATABASE_URL")
+    assert pg_runner.main(["status"]) == 2
+
+
+def _grants_sql(schema: str, role: str) -> list[str]:
+    """deploy/postgres/grants.sql with its psql variables filled in, as statements."""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[1] / "deploy" / "postgres" / "grants.sql").read_text()
+    body = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("--"))
+    body = body.replace(':"schema"', f'"{schema}"').replace(':"runtime_role"', f'"{role}"')
+    return [stmt.strip() for stmt in body.split(";") if stmt.strip()]
+
+
+def _with_user(dsn: str, user: str, password: str) -> str:
+    from urllib.parse import quote, urlsplit, urlunsplit
+
+    parts = urlsplit(dsn)
+    netloc = f"{quote(user)}:{quote(password, safe='')}@{parts.netloc.rsplit('@', 1)[-1]}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+@pg
+def test_engine_runs_as_a_non_owner_runtime_role(pg_schema_dsn):
+    """N2: the owner creates the schema (pg_runner) and applies grants.sql; the
+    engine's runtime role can read and write records but cannot change history
+    or the schema, and cannot create an empty schema itself."""
+    import uuid
+
+    import psycopg
+    from psycopg import sql
+
+    from kalos.storage import records_repo
+
+    pg_runner.ensure_schema(pg_schema_dsn)  # as the owner
+    role, password = "kalos_rt_" + uuid.uuid4().hex[:8], "rt-" + uuid.uuid4().hex
+    empty_schema = "kt_empty_" + uuid.uuid4().hex[:8]
+    owner = psycopg.connect(pg_schema_dsn, autocommit=True)
+    try:
+        (schema,) = owner.execute("SELECT current_schema()").fetchone()
+        owner.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(
+            sql.Identifier(role), sql.Literal(password)))
+        for stmt in _grants_sql(schema, role):
+            owner.execute(stmt)
+        rt = _with_user(pg_schema_dsn, role, password)
+        assert pg_runner.ensure_schema(rt).action == "noop"  # the runtime role can verify
+        b = sb.Backend(sb.BackendConfig(sb.POSTGRES, rt))
+        try:
+            with b.txn(write=True) as conn:
+                records_repo.insert_project(conn, tenant="acme", project_id="prj_" + "a" * 32, name="P",
+                                            objective="o", status="drafting", sponsor=None, actor="s", now=1.0)
+                lid = records_repo.insert_link(conn, tenant="acme", parent_campaign_id="cmp_a", parent_run_id="",
+                                               child_campaign_id="cmp_b", child_run_id="", relation="scale_up",
+                                               parent_stage=None, child_stage=None, note=None, actor="s", now=1.0)
+                records_repo.insert_audit(conn, tenant="acme", action="t", outcome="ok", subject="s",
+                                          auth_method="static", now=1.0)
+            assert lid >= 1
+            for stmt in ("UPDATE lineage_links SET relation = 'derived'", "DELETE FROM audit_log",
+                         "DROP TRIGGER lineage_links_no_update ON lineage_links",
+                         "ALTER TABLE lineage_links DISABLE TRIGGER ALL", "CREATE TABLE x (i int)"):
+                with pytest.raises(psycopg.Error), b.txn(write=True) as conn:
+                    conn.execute(stmt)
+        finally:
+            b.close()
+        # An EMPTY schema the runtime role may use but not create in: startup refuses.
+        owner.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(empty_schema)))
+        owner.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+            sql.Identifier(empty_schema), sql.Identifier(role)))
+        rt_empty = records_helpers.dsn_with_schema(rt, empty_schema)
+        with pytest.raises(pg_runner.PgMigrationError, match="KALOS_DATABASE_MIGRATE_URL"):
+            pg_runner.ensure_schema(rt_empty)
+    finally:
+        owner.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(empty_schema)))
+        owner.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
+        owner.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
+        owner.close()
+
+
+@pg
+def test_cli_prefers_the_owner_url(pg_schema_dsn, monkeypatch, capsys):
+    monkeypatch.setenv("KALOS_DATABASE_URL", "postgresql://nobody@127.0.0.1:1/nothing")
+    monkeypatch.setenv("KALOS_DATABASE_MIGRATE_URL", pg_schema_dsn)
+    assert pg_runner.main(["up"]) == 0
+    assert "schema v9" in pg_runner.status(pg_schema_dsn)

@@ -32,6 +32,9 @@ protein = ["torch==2.13.0", "transformers>=5.16"]
 # The web portal (FastAPI viewer over the live engine). The portal drives the
 # live GP surrogate, so it needs `ml` too - install as `kalos[ml,portal]`.
 portal = ["fastapi>=0.143.0", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9", "openpyxl>=3.1.5", "PyJWT[crypto]>=2.10.1"]
+# PostgreSQL storage backend (KALOS_DATABASE_URL=postgresql://..., kalos/storage/backend.py,
+# docs/MIGRATIONS.md "PostgreSQL backend"). SQLite stays the default and needs none of this.
+postgres = ["psycopg[binary]>=3.2", "psycopg-pool>=3.2"]
 # The LLM tier of `kalos.normalize` (kalos/normalize/llm.py). Pydantic ships
 # as a transitive dependency of `anthropic` and is not listed separately.
 # The torch-free deterministic core (units/synonyms/plan/apply) and the
@@ -81,6 +84,7 @@ markers = [
     "slow: a GP-heavy test (full BoTorch fit or pool replay); deselect with -m 'not slow'",
     "planted_faults: the planted-fault honesty suite (kalos/bench/faults); its fast tier is torch-free and gates CI against the stored baseline",
     "serial: a determinism test that compares analysis output for exact equality; it must not run under parallel xdist (float results vary by worker). Run it in its own serial job.",
+    "postgres: runs against a real PostgreSQL server; skipped unless KALOS_TEST_DATABASE_URL is set (CI: the postgres job's service container)",
 ]
 
 [tool.ruff]

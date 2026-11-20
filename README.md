@@ -121,6 +121,9 @@ and is enough for the `kalos.kit` helpers.
 | `KALOS_LLM_PROVIDER` | `ollama` on desktop, else `none` | Model for the assistant and header normalization |
 | `KALOS_TORCH_THREADS` | `min(4, cpus)` | Torch threads per analysis (`0` = do not pin) |
 | `KALOS_JOBS_ENABLED` | on | `0` turns off background jobs |
+| `KALOS_DATABASE_URL` | unset (SQLite) | `postgresql://...` puts the records tables (projects, factors, lineage) in PostgreSQL; campaigns stay in SQLite for now ([`docs/MIGRATIONS.md`](docs/MIGRATIONS.md), "PostgreSQL backend") |
+| `KALOS_DATABASE_MIGRATE_URL` | unset | The PostgreSQL schema OWNER's URL, used only by `python -m kalos.storage.migrations.pg_runner up`; the engine itself should connect as a non-owner runtime role (`deploy/postgres/grants.sql`) |
+| `KALOS_LOG_FORMAT` | `text` | `json` writes one JSON object per log line; every line carries the request id (`X-Request-ID`) |
 | `KALOS_DATASETS_DIR` | `~/kalos/datasets` | Local copy of the public datasets for the planted-fault suite's optional Kaggle cases |
 
 Upload limits (`KALOS_MAX_UPLOAD_MB`, `KALOS_MAX_FIT_ROWS`) and the rest are in
@@ -141,6 +144,7 @@ test keeps it equal to the code). `{id}` is a campaign id.
 | Exports | `GET .../{id}/export/rows`, `GET .../{id}/results/history` | read | [`docs/CAMPAIGNS_API.md`](docs/CAMPAIGNS_API.md) |
 | Operating ranges | `GET`/`POST .../{id}/operating-ranges` (both refit the model) | write | `kalos/portal/operating_ranges.py` |
 | Clones | `GET .../{id}/clones`, `GET .../{id}/clones/summary`, `PUT .../{id}/clones/{label}`, `GET`/`POST .../{id}/clones/{label}/titer-history` | read / write | [`docs/CLONES.md`](docs/CLONES.md) |
+| Records | `GET`/`POST /api/projects`, `GET`/`PATCH /api/projects/{project_id}`, `PUT`/`DELETE .../campaigns/{id}`, `GET`/`PUT`/`DELETE .../factors`, `GET .../factors/setup-bounds`, `GET .../outcomes`, `GET .../lineage`, `GET /api/project-statuses`, `POST /api/lineage/links`, `GET /api/lineage/links/{link_id}`, `POST .../retract`, `GET /api/campaigns/{id}/lineage`, `GET /api/units` | read / write | [`docs/RECORDS.md`](docs/RECORDS.md) |
 | Scale-up | `POST /api/scale/readout` (HTML), `POST /api/scale/readout.json` | write | [`docs/SCALE_READOUT.md`](docs/SCALE_READOUT.md) |
 | Assistant | `/api/assist/next`, `/ask`, `/index/*`, `/sop/*` | read / write | [`docs/ASSISTANT.md`](docs/ASSISTANT.md) |
 | Legacy: one sheet per tenant | `POST /api/run`, `GET /api/latest` | write / read | [`docs/UPLOADS.md`](docs/UPLOADS.md) |
@@ -287,4 +291,6 @@ measured on independent data.
 
 ## License
 
-Apache-2.0. See [`LICENSE`](LICENSE).
+Apache-2.0. See [`LICENSE`](LICENSE). The records model, lineage, units registry,
+request validation and request-id logging adapt the Voyager backend; see
+[`NOTICE`](NOTICE).

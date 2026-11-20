@@ -38,6 +38,13 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from kalos.api.request_context import RequestIdMiddleware
+from kalos.api.routers._records_common import (
+    open_records_storage as _open_records_storage,
+)
+from kalos.api.routers.lineage import router as _lineage_router
+from kalos.api.routers.projects import router as _projects_router
+from kalos.api.routers.units import router as _units_router
 from kalos.assist.hooks import after_write as _assist_after_write
 from kalos.assist.routes import router as _assist_router
 from kalos.assist.sop_routes import router as _assist_sop_router
@@ -240,6 +247,8 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
         raise
     except Exception:  # noqa: BLE001 - surfaced by /readyz instead
         log.exception("campaign store could not be opened at startup")
+    if store is not None:  # KALOS_DATABASE_URL: open + check the records schema; a bad one fails the boot
+        _open_records_storage(store.state_dir)
     # The background-job runner (docs/JOBS.md): recovers jobs orphaned by a
     # previous process, then schedules worker processes. KALOS_JOBS_ENABLED=0
     # leaves it off and the job routes answer 503.
@@ -384,6 +393,7 @@ app.add_middleware(
     auth_enforced=lambda: get_authenticator().enforces(),
 )
 app.add_middleware(CORSMiddleware, **cors_config())
+app.add_middleware(RequestIdMiddleware)  # X-Request-ID on every response; log lines + audit rows carry it (kalos.api.request_context)
 
 # Log the effective security posture (auth + CORS) once at import/startup.
 log_security_posture(auth_enforced=_AUTH_ENFORCED_AT_STARTUP)
@@ -922,6 +932,9 @@ app.include_router(_assist_sop_router)  # /api/assist/sop* (kalos.assist.sop)
 app.include_router(_gates_router)  # /api/campaigns/{id}/stages|gates (kalos.portal.gates_api)
 app.include_router(_clones_router)  # /api/campaigns/{id}/clones* (kalos.portal.clones_api)
 app.include_router(_history_router)  # track record + prediction/analysis history (kalos.portal.history_api)
+app.include_router(_projects_router)  # /api/projects*, /api/project-statuses (kalos.api.routers.projects, docs/RECORDS.md)
+app.include_router(_lineage_router)  # /api/lineage/*, /api/campaigns/{id}/lineage (kalos.api.routers.lineage)
+app.include_router(_units_router)  # /api/units (kalos.api.routers.units)
 
 
 _CAMPAIGN_BODY_FIELDS = frozenset(
