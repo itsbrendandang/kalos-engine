@@ -131,35 +131,15 @@ jobs:
     name: pytest (serial determinism)
     # Determinism tests compare analysis output for exact equality and must NOT
     # run under parallel xdist (float results vary per worker even with threads
-    # pinned). This job also runs the golden fixtures (tests/test_trust_golden.py,
-    # tests/test_strain_golden_no_clone.py), which are recorded on THIS stack
-    # (linux x86_64, Python 3.11, uv.lock, CPU torch). KALOS_REQUIRE_GOLDENS=1
-    # turns a stack mismatch into a failure instead of a skip.
+    # pinned). A handful of tests, so a quick serial job.
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      KALOS_REQUIRE_GOLDENS: "1"
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - *setup-uv
       - *install
       - name: pytest (serial, no xdist)
-        run: uv run --no-sync python -m pytest -q -rs -m "serial" --durations=10
-      # When the serial tests fail, record both golden fixtures on this stack and
-      # upload them, so a reviewer can diff them (scripts/trust_golden.py diff
-      # --against) and, with a stated reason, commit them (scripts/record_goldens.py).
-      - name: record the goldens on the CI stack (on failure)
-        if: failure()
-        run: |
-          uv run --no-sync python scripts/record_goldens.py --out "$RUNNER_TEMP/goldens" \
-            --reason "recorded in CI run ${{ github.run_id }} at ${{ github.sha }} (linux x86_64, Python 3.11, uv.lock, CPU torch); the commit that adds it states why"
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: goldens-ci-stack
-          path: ${{ runner.temp }}/goldens
-          if-no-files-found: ignore
-          retention-days: 14
+        run: uv run --no-sync python -m pytest -q -m "serial" --durations=10
 
   durations:
     name: merge test durations

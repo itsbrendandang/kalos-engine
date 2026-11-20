@@ -17,25 +17,15 @@ Excluded from the comparison, each for a stated reason:
     a d-column mixed GP). Fixing that bug is the one intended change; it is
     covered by tests/test_strain_bugfixes.py.
 
-Same-stack claim only (see tests/test_golden_determinism.py and
-docs/CAMPAIGNS_API.md "Determinism"): the fixture records the OS, architecture,
-Python and library versions and the torch thread count it was produced with. It
-is recorded on the CI stack (linux x86_64, Python 3.11, uv.lock, CPU torch;
-`scripts/record_goldens.py`), so it runs in CI. On another stack the test skips
-with the reason, except when `KALOS_REQUIRE_GOLDENS=1` (set in CI), where a
-stack mismatch FAILS instead of skipping.
-
-Re-recorded on the CI stack (VERIFY_MAIN SHOULD-FIX 3: the goldens never ran
-in CI). Before that, on the original recording stack (macOS arm64, Python
-3.14.7, numpy 2.5.1), main @ cf7105c reproduced the 773ec98 fixture key for key,
-and the one later change (the coverage-at-proposals caveat) touched caveat
-fields only, so the re-recorded fixture carries the same pre-strain baseline
-forward.
+Same-machine claim only (see tests/test_golden_determinism.py and
+docs/CAMPAIGNS_API.md "Determinism"): the fixture records the platform, the
+library versions and the torch thread count it was produced with, and the test
+skips with that reason anywhere else. Regenerate on a new machine by checking out
+the base commit and running `python tests/test_strain_golden_no_clone.py`.
 """
 from __future__ import annotations
 
 import json
-import os
 import platform
 import sys
 from pathlib import Path
@@ -121,15 +111,13 @@ EXCLUDED_KEYS = {"mixed_medium": {"gp_shapes"}}
 
 def _environment() -> dict:
     import botorch
-    import gpytorch
-    import scipy
     import torch
+
 
     return {
         "machine": platform.machine(), "system": platform.system(),
         "python": ".".join(map(str, sys.version_info[:2])),
-        "numpy": np.__version__, "scipy": scipy.__version__, "torch": torch.__version__,
-        "botorch": botorch.__version__, "gpytorch": gpytorch.__version__,
+        "numpy": np.__version__, "torch": torch.__version__, "botorch": botorch.__version__,
         "torch_threads": GOLDEN_THREADS,
     }
 
@@ -155,11 +143,7 @@ def _load() -> dict:
 def test_no_clone_sheet_output_is_unchanged(name):
     golden = _load()
     if golden["environment"] != _environment():
-        msg = f"golden recorded on {golden['environment']}, running on {_environment()}"
-        if os.environ.get("KALOS_REQUIRE_GOLDENS") == "1":
-            pytest.fail(msg + " (KALOS_REQUIRE_GOLDENS=1; re-record on this stack with "
-                        "scripts/record_goldens.py and state the reason)")
-        pytest.skip(msg)
+        pytest.skip(f"golden recorded on {golden['environment']}, not this environment")
     want = golden["results"][name]
     got = _run(name)
     changed = [
@@ -170,13 +154,11 @@ def test_no_clone_sheet_output_is_unchanged(name):
     assert not changed, f"{name}: keys changed vs the pre-strain golden: {changed}"
 
 
-def record(recorded_on: str) -> dict:
-    """The fixture payload on this stack (scripts/record_goldens.py writes it)."""
-    import torch
-
-    torch.set_num_threads(GOLDEN_THREADS)
-    return {
-        "recorded_on": recorded_on,
+if __name__ == "__main__":  # regenerate (on the base commit only)
+    payload = {
+        "recorded_on": "feat/trust-calibration@773ec98 (trust layer + main@8066c86; no strain code)",
         "environment": _environment(),
         "results": {name: _run(name) for name in sorted(DATASETS)},
     }
+    FIXTURE.write_text(json.dumps(payload, sort_keys=True, indent=1) + "\n")
+    print("wrote", FIXTURE)

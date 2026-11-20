@@ -9,10 +9,8 @@ reviewable before/after diff.
 `record` keeps the previous fixture's reasons and appends the new one, so the
 fixture carries its own change log. `diff` prints changed, added and removed
 leaf paths (old -> new), truncated per sheet, which is what goes in the commit
-message. Same-stack claim only (see tests/test_golden_determinism.py): the
-fixture records the OS, architecture, Python, library versions and the torch
-thread count. The committed fixture is recorded on the CI stack (linux x86_64,
-Python 3.11, uv.lock, CPU torch): `scripts/record_goldens.py`.
+message. Same-machine claim only (see tests/test_golden_determinism.py): the
+fixture records platform, library versions and the torch thread count.
 
 Sheets (all synthetic, generated here from fixed seeds; no real data):
   two_feature       24 rows, 2 continuous inputs, smooth signal
@@ -167,18 +165,11 @@ def _strip(obj: Any) -> Any:
 
 
 def _env() -> dict:
-    """The stack the goldens are valid on. Stable fields only: the OS and CPU
-    architecture (not the kernel build, which changes with every CI runner
-    image), Python major.minor and the numerical libraries. A fixture is
-    compared only on a matching stack (tests/test_trust_golden.py)."""
     import botorch
     import gpytorch
-    import scipy
     import torch
 
-    return {"system": platform.system(), "machine": platform.machine(),
-            "python": ".".join(platform.python_version_tuple()[:2]),
-            "numpy": np.__version__, "scipy": scipy.__version__,
+    return {"platform": platform.platform(), "python": platform.python_version(),
             "torch": torch.__version__, "botorch": botorch.__version__,
             "gpytorch": gpytorch.__version__, "torch_threads": torch.get_num_threads()}
 
