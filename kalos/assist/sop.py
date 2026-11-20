@@ -48,6 +48,23 @@ TEMPLATES: tuple[Template, ...] = ("batch_recipe", "media_prep", "custom")
 DRAFT_ID_RE = re.compile(r"sop_[0-9a-f]{32}")
 PLACEHOLDER_RE = re.compile(r"\[\[TO FILL: ([a-z][a-z0-9_]*)\]\]")
 NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+# Tokens a draft quotes that are identifiers or dates, not quantities: record
+# references (`run:<id>`, `sheet:<sha256>`, `proposal:<round>.<index>`,
+# `analysis:<section>`), bare hex ids and hashes, and ISO dates/times. Their
+# digits are removed before the revision check compares numbers, so a quoted
+# run id "30b9..." or a draft dated the 30th cannot make an added "30" look
+# like a number the draft already held.
+_NON_QUANTITY_RE = re.compile(
+    r"\b(?:run|sheet|proposal|analysis):[\w.\-]+"
+    r"|\b(?:cmp|job|sop)_[0-9a-f]{32}\b"
+    r"|\b[0-9a-f]{32,64}\b"
+    r"|\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?"
+)
+
+
+def quantities(text: str) -> set[str]:
+    """The numbers in `text` that are quantities (identifiers and dates removed)."""
+    return set(NUMBER_RE.findall(_NON_QUANTITY_RE.sub(" ", text)))
 HEADER_PREFIX = "> Draft prepared with Kalos from campaign records on "
 HEADER_SUFFIX = ". Not reviewed. Not an approved procedure."
 MAX_FILL_CHARS = 500
@@ -761,7 +778,7 @@ def check_revision(previous: Draft, revised: str) -> list[str]:
     new_rows = Counter(ln for ln in new.splitlines() if ln.startswith("|"))
     if any(new_rows[row] < n for row, n in old_rows.items()):
         reasons.append("a table row was changed or removed")
-    new_numbers = set(NUMBER_RE.findall(new)) - set(NUMBER_RE.findall(old))
+    new_numbers = quantities(new) - quantities(old)
     if new_numbers:
         reasons.append(f"{len(new_numbers)} number(s) appear that the previous version did not hold")
     old_tokens, new_tokens = Counter(PLACEHOLDER_RE.findall(old)), Counter(PLACEHOLDER_RE.findall(new))
