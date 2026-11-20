@@ -280,6 +280,57 @@ def _worker(args: tuple[str, int]) -> dict[str, Any]:
     return run_one(*args)
 
 
+def environment() -> dict[str, Any]:
+    """Where a results file came from: commit, stack and thread counts.
+
+    The coverage at the proposals depends on the exact proposals, and those move
+    with the code and the numerical stack (VERIFY_MAIN claim 3: a file recorded
+    on another stack reproduced 1/240 rows on main). Every results file carries
+    this block so a rerun can be compared like for like."""
+    import hashlib
+    import platform
+    import subprocess
+    from importlib import metadata
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+
+    def git(*a: str) -> str | None:
+        try:
+            return subprocess.run(  # noqa: S603 - fixed git argv, no shell
+                ["git", *a], cwd=root, capture_output=True, text=True, check=True, timeout=10,  # noqa: S607
+            ).stdout.strip()
+        except subprocess.TimeoutExpired:
+            return None
+        except (OSError, subprocess.CalledProcessError):
+            return None
+
+    def version(dist: str) -> str | None:
+        try:
+            return metadata.version(dist)
+        except metadata.PackageNotFoundError:
+            return None
+
+    lock = root / "uv.lock"
+    status = git("status", "--porcelain", "--untracked-files=no")
+    return {
+        "git_commit": git("rev-parse", "HEAD"),
+        "git_dirty": None if status is None else bool(status),
+        "uv_lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest() if lock.exists() else None,
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "packages": {d: version(d) for d in ("torch", "botorch", "gpytorch", "numpy", "scipy",
+                                             "pandas", "scikit-learn")},
+        # run_one pins torch to 1 thread in every worker process.
+        "cpu_count": os.cpu_count(),
+        "load_avg_at_start": [round(x, 1) for x in os.getloadavg()] if hasattr(os, "getloadavg") else None,
+        "torch_threads_per_worker": 1,
+        "env_threads": {k: os.environ.get(k) for k in ("KALOS_TORCH_THREADS", "OMP_NUM_THREADS",
+                                                        "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")},
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seeds", type=int, default=40)
@@ -289,6 +340,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", default=None, help="write {summary, rows, meta} JSON here")
     args = ap.parse_args(argv)
     os.environ.setdefault("OMP_NUM_THREADS", "1")
+    env = environment()  # before the run: the commit the rows come from
+    t_start = time.time()
+    started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t_start))
     jobs = [(nm, args.seed_offset + s) for nm in args.scenarios.split(",") for s in range(args.seeds)]
     if args.procs > 1:
         from multiprocessing import get_context
@@ -301,7 +355,10 @@ def main(argv: list[str] | None = None) -> int:
     from kalos import __version__
 
     meta = {"seeds": args.seeds, "seed_offset": args.seed_offset, "engine_version": __version__,
-            "n_random_points": N_RANDOM, "levels": list(LEVELS)}
+            "n_random_points": N_RANDOM, "levels": list(LEVELS), "procs": args.procs,
+            "command": "python -m kalos.bench.coverage_at_proposals " + " ".join(argv or sys.argv[1:]),
+            "started_utc": started, "seconds_wall": round(time.time() - t_start, 1),
+            "environment": env}
     print(json.dumps(summary, indent=1))
     if args.out:
         with open(args.out, "w") as fh:
