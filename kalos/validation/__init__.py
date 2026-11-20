@@ -33,6 +33,7 @@ from .checks import (
     check_provenance_metadata,
     check_replicate_adequacy,
     check_result_duplicates,
+    check_target_leak,
     check_units_consistency,
 )
 from .report import (
@@ -68,6 +69,7 @@ __all__ = [
     "check_provenance_metadata",
     "check_replicate_adequacy",
     "check_result_duplicates",
+    "check_target_leak",
     "check_units_consistency",
     "infer_dimension",
     "report_dict",

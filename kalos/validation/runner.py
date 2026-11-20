@@ -38,6 +38,7 @@ from .checks import (
     check_provenance_metadata,
     check_replicate_adequacy,
     check_result_duplicates,
+    check_target_leak,
     check_units_consistency,
 )
 from .report import Finding, UnitConversion, ValidationReport, build_report
@@ -115,6 +116,7 @@ def validate_frame(
         lambda: check_constant_within_group(df, group_hint=profile.group_hint),
     )
     run("result_duplicate_entry", lambda: check_result_duplicates(df, target))
+    run("target_leak", lambda: check_target_leak(df, target, factor_hint=profile.group_hint))
 
     return build_report(
         mode=mode,

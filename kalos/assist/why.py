@@ -229,6 +229,8 @@ ENGINE_ONLY: dict[str, str] = {
     'result_duplicate_entry': 'Two runs with exactly the same precise result are often one value pasted twice, which hides what the second run really gave.',
     # Sheet check
     'duplicate_ids': 'Two runs under one id cannot be told apart, so a surprising result cannot be traced back to the run that gave it.',
+    'target_leak': 'A column worked out from the result, such as a grade or a tier, makes the model look far better than it is and is not something you can set before a run.',
+    'derived_output': 'A column that is only known after the run is not a setting, so the model does not learn from it or suggest a value for it.',
 }
 
 # The desktop engine names the verdict states reliable / not_yet / refused; the

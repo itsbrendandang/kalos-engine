@@ -60,9 +60,11 @@ __all__ = [
     "check_provenance_metadata",
     "check_replicate_adequacy",
     "check_result_duplicates",
+    "check_target_leak",
     "check_units_consistency",
     "detached_from_reference",
     "significant_digits",
+    "target_leak_evidence",
 ]
 
 
@@ -1454,3 +1456,154 @@ def check_result_duplicates(df: pd.DataFrame, target: str | None) -> list[Findin
         )
     ]
 
+
+
+# --- 13. target leakage --------------------------------------------------------- #
+
+# F06. A column computed FROM the result (a QC grade, a yield tier, the titer in
+# other units) is not a setting: fitting it makes the model look perfect and
+# proposing it is meaningless ("set qc_grade = A"). Flagged on content, so a
+# renamed column is caught too. The thresholds are deliberately strict: only a
+# near-deterministic relation is called leakage.
+_LEAK_MIN_ROWS = 12
+_LEAK_MIN_RANK_AGREEMENT = 0.98  # share of runs a monotone threshold rule on the target explains
+_LEAK_MIN_ABS_SPEARMAN = 0.98
+_LEAK_MAX_LEVELS = 12
+
+
+def _monotone_agreement(y: np.ndarray, labels: np.ndarray) -> tuple[float, list[str]]:
+    """The largest share of runs whose label follows a set of thresholds on the
+    target, with the levels ordered by their median target (the longest
+    non-decreasing run of level ranks in target order, ties placed favourably),
+    and that order (lowest first)."""
+    levels = sorted(set(labels.tolist()), key=lambda lv: (float(np.median(y[labels == lv])), str(lv)))
+    rank = {lv: i for i, lv in enumerate(levels)}
+    order = sorted(range(len(y)), key=lambda i: (y[i], rank[labels[i]]))
+    seq = [rank[labels[i]] for i in order]
+    # longest non-decreasing subsequence, O(n log n)
+    tails: list[int] = []
+    for r in seq:
+        lo, hi = 0, len(tails)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if tails[mid] <= r:
+                lo = mid + 1
+            else:
+                hi = mid
+        if lo == len(tails):
+            tails.append(r)
+        else:
+            tails[lo] = r
+    return len(tails) / len(seq), [str(lv) for lv in levels]
+
+
+def target_leak_evidence(
+    df: pd.DataFrame, target: str | None, *, factor_hint: Pattern[str] | None = None
+) -> dict[str, dict]:
+    """Columns that are, on their content, a near-deterministic function of the
+    target: `{column: evidence}`.
+
+    - A text column with 2-12 levels whose levels sort the runs by the
+      target: thresholds on the target reproduce at least 98 % of its labels (a
+      grade or tier cut from the result). Every level needs at least 2 runs, at
+      least half the levels 2 different results, and the target at least 3
+      distinct values per level (bands, not recipes).
+    - A numeric column whose rank order matches the target's (|Spearman| >=
+      0.98): the result in other units, or a quantity computed from it.
+
+    Only a text/level column can be excluded on content (`exclude`); a numeric
+    column is always reported and kept (see the comment in the loop).
+
+    Needs at least `_LEAK_MIN_ROWS` runs with a numeric target. Evidence says
+    what was measured; it never claims the column WAS computed from the target:
+    a setting with an overwhelming, low-noise effect looks the same. So
+    `exclude` is False when the name reads like a process factor
+    (`factor_hint`, e.g. medium, strain, batch): such a column is reported and
+    kept, and the user can declare it an output. Otherwise it is excluded and
+    the user can declare it a setting.
+    """
+    out: dict[str, dict] = {}
+    if target is None or target not in df.columns:
+        return out
+    y_all = pd.to_numeric(df[target], errors="coerce")
+    ok = y_all.notna()
+    if int(ok.sum()) < _LEAK_MIN_ROWS or y_all[ok].nunique() < 3:
+        return out
+    y = y_all[ok].to_numpy(float)
+    for col in df.columns:
+        if col == target:
+            continue
+        name = str(col)
+        series = df.loc[ok, col]
+        nonblank = _nonblank_mask(series)
+        if int(nonblank.sum()) < _LEAK_MIN_ROWS or nonblank.mean() < 0.9:
+            continue
+        numeric = pd.to_numeric(series[nonblank], errors="coerce")
+        yy = y[nonblank.to_numpy()]
+        if numeric.notna().all() and numeric.nunique() > _LEAK_MAX_LEVELS:
+            rho = float(spearmanr(numeric.to_numpy(float), yy).statistic)
+            if np.isfinite(rho) and abs(rho) >= _LEAK_MIN_ABS_SPEARMAN:
+                # Reported, never excluded on content alone: a clean one-factor
+                # dose-response (a feed sweep with little noise) ranks the runs the
+                # same way, and dropping the sheet's real input would be worse than
+                # the leak. The finding asks the user to declare it if it is an output.
+                out[name] = {"kind": "numeric", "spearman": round(rho, 4), "n": int(len(yy)),
+                             "exclude": False}
+            continue
+        if numeric.notna().all():
+            continue  # a numeric setting with few levels (a 3-level DoE) is not a label
+        labels = series[nonblank].astype(str).str.strip().to_numpy(object)
+        counts = pd.Series(labels).value_counts()
+        if not (2 <= len(counts) <= _LEAK_MAX_LEVELS) or int(counts.min()) < 2:
+            continue
+        # A label cut from the result groups many different results into a few
+        # bands. Levels that each hold a single result value (every run of one
+        # recipe giving the same number) are recipes, not bands. One band may be
+        # a single value (all the zeros of the non-producers).
+        distinct = pd.Series(yy).groupby(labels).nunique()
+        if int((distinct >= 2).sum()) * 2 < len(distinct) or len(np.unique(yy)) < 3 * len(counts):
+            continue
+        share, order = _monotone_agreement(yy, labels)
+        if share >= _LEAK_MIN_RANK_AGREEMENT:
+            out[name] = {"kind": "levels", "agreement": round(share, 4), "levels_low_to_high": order,
+                         "n": int(len(yy)),
+                         "exclude": not (factor_hint is not None and factor_hint.search(name))}
+    return out
+
+
+def check_target_leak(
+    df: pd.DataFrame, target: str | None, *, factor_hint: Pattern[str] | None = None
+) -> list[Finding]:
+    """WARNING per column that looks computed from the target (see
+    `target_leak_evidence`): it would make the model look better than it is and
+    is not a setting anyone can choose before a run."""
+    findings: list[Finding] = []
+    for name, ev in target_leak_evidence(df, target, factor_hint=factor_hint).items():
+        if ev["kind"] == "levels":
+            what = (
+                f"its levels sort the runs by '{target}' ({' < '.join(ev['levels_low_to_high'])}; "
+                f"{ev['agreement']:.0%} of {ev['n']} runs fit simple cut-offs on '{target}')"
+            )
+        else:
+            what = f"it ranks the runs in the same order as '{target}' (Spearman {ev['spearman']:+.2f}, {ev['n']} runs)"
+        findings.append(
+            Finding(
+                check="target_leak",
+                severity="warning",
+                message=(
+                    f"column '{name}' looks computed from the result: {what}. A grade, tier or "
+                    "converted copy of the result is known only after the run, so it is not used "
+                    "as an input or proposed. If it really is a setting chosen before the run, "
+                    "declare it in roles.features (or roles.categoricals)."
+                ) if ev["exclude"] else (
+                    f"column '{name}' follows the result almost perfectly: {what}. A setting with "
+                    "a very strong, low-noise effect can do this, and so can a value computed from "
+                    "the result, so it is not excluded on this evidence"
+                    + (" (its name reads like a process factor or grouping)" if ev["kind"] == "levels" else "")
+                    + ". If it is only known after the run, declare it in roles.outputs."
+                ),
+                column=name,
+                detail={"target": str(target), **ev},
+            )
+        )
+    return findings
