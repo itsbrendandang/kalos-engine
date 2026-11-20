@@ -70,6 +70,11 @@ log = logging.getLogger("kalos.portal")
 DEFAULT_CAMPAIGN_NAME = "Default campaign"
 LEGACY_CREATOR = "legacy-route"
 MAX_CAMPAIGN_NAME_CHARS = 200
+# Per-tenant cap on campaigns (archived ones included), so the unpaginated
+# `GET /api/campaigns` list stays bounded (AGENTS.md 4: responses are bounded).
+# A create beyond it is refused with `CampaignLimitReached` (HTTP 409); nothing
+# existing is touched. Paginated listing: `GET /api/campaigns?summary=true`.
+MAX_CAMPAIGNS_PER_TENANT = 1000
 MAX_AUDIT_FIELD_CHARS = 512
 MAX_RESULT_REASON_CHARS = 256
 # A structured (JSON) audit `detail` is never clipped: clipping would leave
@@ -85,6 +90,7 @@ __all__ = [
     "CampaignArchived",
     "CampaignConflict",
     "CampaignError",
+    "CampaignLimitReached",
     "CampaignNotFound",
     "CampaignReasonRequired",
     "CampaignStore",
@@ -130,6 +136,17 @@ class CampaignReasonRequired(CampaignError):
 
 class CampaignConflict(CampaignError):
     """The compare-and-swap failed: the campaign changed since it was read."""
+
+
+class CampaignLimitReached(CampaignError):
+    """The tenant already has `MAX_CAMPAIGNS_PER_TENANT` campaigns (archived
+    included). Nothing was written (HTTP 409, code `campaign_limit_reached`)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            f"this workspace already has {MAX_CAMPAIGNS_PER_TENANT} campaigns, the limit; "
+            "nothing was created"
+        )
 
 
 def validate_campaign_id(campaign_id: object) -> str:
@@ -405,6 +422,11 @@ class CampaignStore:
         conn: sqlite3.Connection, tenant: str, name: str, created_by: str | None,
         *, make_default: bool,
     ) -> str:
+        (count,) = conn.execute(
+            "SELECT COUNT(*) FROM campaigns WHERE tenant = ?", (tenant,)
+        ).fetchone()
+        if int(count) >= MAX_CAMPAIGNS_PER_TENANT:
+            raise CampaignLimitReached()
         cid = "cmp_" + uuid.uuid4().hex
         now = time.time()
         conn.execute(
