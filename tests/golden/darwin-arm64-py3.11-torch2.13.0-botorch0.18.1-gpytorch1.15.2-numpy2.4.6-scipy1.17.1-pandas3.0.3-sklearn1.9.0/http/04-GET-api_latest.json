@@ -1,0 +1,10 @@
+{
+ "request": "GET /api/latest",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "has_data": false
+ }
+}

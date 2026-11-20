@@ -1,0 +1,37 @@
+{
+ "request": "GET /api/campaigns/cmp_00000000000000000000000000000034/clones/C1/titer-history",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body": {
+  "campaign_id": "cmp_00000000000000000000000000000034",
+  "label": "C1",
+  "limit": 100,
+  "history": {
+   "items": [
+    {
+     "id": 1,
+     "label": "C1",
+     "recorded_at": "<volatile>",
+     "measured_on": "2026-01-02",
+     "basis": "harvest_titer",
+     "value": 3.2,
+     "unit": "g/L",
+     "scale_label": null,
+     "age_kind": null,
+     "age_value": null,
+     "source_note": null,
+     "actor": "golden@lab",
+     "previous_id": null,
+     "reason": null,
+     "basis_kind": "measured",
+     "is_correction": false
+    }
+   ],
+   "has_more": false,
+   "next_before_id": null
+  },
+  "notes": "append-only measured rows; a row with previous_id is a correction of that row"
+ }
+}

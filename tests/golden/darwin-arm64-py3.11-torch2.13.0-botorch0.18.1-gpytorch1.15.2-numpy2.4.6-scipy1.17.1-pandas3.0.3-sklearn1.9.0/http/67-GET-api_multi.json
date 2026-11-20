@@ -1,0 +1,40 @@
+{
+ "request": "GET /api/multi",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json"
+ },
+ "body_shape": {
+  "trajectory": [
+   {
+    "round": "int",
+    "pareto": "int",
+    "best_titer": "float",
+    "best_purity": "float"
+   }
+  ],
+  "pareto": [
+   {
+    "titer": "float",
+    "purity": "float"
+   }
+  ],
+  "all": [
+   {
+    "titer": "float",
+    "purity": "float"
+   }
+  ],
+  "proposals": [
+   {
+    "vals": [
+     "float"
+    ],
+    "pred_titer": "float",
+    "pred_purity": "float",
+    "mode": "str",
+    "reason": "str"
+   }
+  ]
+ }
+}

@@ -1,0 +1,71 @@
+name: golden oracle
+
+# Reorg guard R02 (scripts/golden.py, tests/golden/oracle.py): the engine's
+# HTTP and analysis output on a fixed scenario must stay byte-identical to the
+# records in tests/golden/<env key>/ for this runner's platform and pinned
+# stack. A behaviour-preserving change (every reorg move) leaves them as they
+# are. A change meant to move numbers or wording re-records them: download this
+# workflow's `golden-actual` artifact and run
+#   scripts/golden.py record --reason "<why>" --from <artifact dir>
+# then commit tests/golden/ with the diff explained in the PR.
+# A separate workflow (not a ci.yml job) so it has its own timeout and so the
+# artifact upload is independent of the test shards.
+on:
+  push:
+    branches: [main]
+    paths-ignore: &docs-only
+      - "BENCHMARK.md"
+      - "CHANGELOG.md"
+      - "SECURITY.md"
+      - "TODOS.md"
+      - "VALIDATION.md"
+      - "LICENSE"
+  pull_request:
+    paths-ignore: *docs-only
+  workflow_dispatch:
+
+concurrency:
+  group: golden-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  OMP_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  KALOS_TORCH_THREADS: "1"
+  UV_TORCH_BACKEND: cpu
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  golden:
+    name: golden oracle (byte-identical)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          prune-cache: false
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+      - name: Create a venv and install the locked versions (same as ci.yml)
+        run: |
+          uv venv --python "$PYTHON_VERSION" .venv
+          uv export --frozen --extra ml --extra portal --extra bench --extra dev \
+            --no-emit-project --no-hashes -o "$RUNNER_TEMP/constraints.txt"
+          uv pip install -e ".[ml,portal,bench,dev]" -c "$RUNNER_TEMP/constraints.txt"
+          uv pip show torch numpy botorch | grep -E '^(Name|Version)'
+      - name: golden check
+        run: >
+          uv run --no-sync python scripts/golden.py check --require
+          --actual "$RUNNER_TEMP/golden-actual" --summary-json "$RUNNER_TEMP/golden-summary.json"
+      - name: Upload the computed output (adopt with scripts/golden.py record --from)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-actual
+          path: ${{ runner.temp }}/golden-actual
+          if-no-files-found: ignore
+          retention-days: 14
