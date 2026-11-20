@@ -8,7 +8,10 @@ with main @ 8066c86; re-recorded because F05/F15 change the CV grouping and the
 intervals for every campaign), earlier on main @ 8066c86 and first on
 `feat/web-redesign-apis` @ 2692e7c, and asserts that every key recorded then
 is byte-identical now. New keys may be added (they are additive); no
-recorded key may change.
+recorded key may change. One exception, recorded in the fixture as
+`validation_rerecorded_on`: the `validation` key alone was re-recorded on
+`feat/data-checks` (the sheet checks changed; the strain code does not touch
+them), after checking that no other key changed.
 
 Excluded from the comparison, each for a stated reason:
   - `timestamp` and `model_diagnostics.fit_seconds`: wall clock.

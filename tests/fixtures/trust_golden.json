@@ -15,7 +15,8 @@
   "F04 follow-up: reliability.verdict (not_judged below 12 runs / 3 groups; clears_floor null then)",
   "F15: selection-aware per-proposal intervals (top-30% held-out runs per fold, pooled repeats, sd floored at the 90th percentile)",
   "Caveat wording: proposal caveats say what the band was calibrated on and the coverage measured at proposed recipes, never that the range 'is calibrated' (message text only; no number changed)",
-  "Merge of main (#164 review fixes, #165 clones): additive fields only (cv_topk.direction, p_improve/expected_improvement.description, the strain blocks) plus the intended strain fix gp_shapes available on mixed fits (mixed_medium); no trust-layer number changed"
+  "Merge of main (#164 review fixes, #165 clones): additive fields only (cv_topk.direction, p_improve/expected_improvement.description, the strain blocks) plus the intended strain fix gp_shapes available on mixed fits (mixed_medium); no trust-layer number changed",
+  "data checks (feat/data-checks: BRE-115..118, result-entry checks, F06 target_leak): only the validation key changes on all eight sheets (checks_run, quieter outliers, unit-aware bounds messages); no model output changed"
  ],
  "sheets": {
   "batch_text": {
@@ -3953,6 +3954,7 @@
      "units_consistency",
      "physical_bounds",
      "duplicate_rows",
+     "duplicate_ids",
      "missingness",
      "outliers",
      "provenance_metadata",
@@ -3960,29 +3962,33 @@
      "controls_present",
      "constant_columns",
      "informative_missingness",
-     "constant_within_group"
+     "constant_within_group",
+     "result_duplicate_entry",
+     "target_leak"
     ],
     "conversions": [],
     "counts": {
      "error": 1,
      "info": 0,
-     "warning": 5
+     "warning": 4
     },
     "findings": [
      {
       "check": "physical_bounds",
       "column": "temp_offset",
       "detail": {
-       "dimension": "temperature_c",
+       "bounds_source": "read as temperature from the column name",
+       "dimension": "temperature",
        "max_seen": 0.9473,
        "min_seen": 0.2261,
        "n_rows_affected": 48,
        "typical_range": [
         15.0,
         45.0
-       ]
+       ],
+       "unit": "\u00b0C"
       },
-      "message": "column 'temp_offset' (inferred dimension 'temperature_c') has values outside the typical range [15.0, 45.0] though within physical limits",
+      "message": "column 'temp_offset': 48 value(s) are possible but outside the usual range for temperature (15 to 45 \u00b0C; read as temperature from the column name), e.g. 0.5078 in row 0. Check the source record; nothing was changed.",
       "rows": [
        0,
        1,
@@ -4011,6 +4017,7 @@
       "check": "physical_bounds",
       "column": "titer",
       "detail": {
+       "bounds_source": "read as concentration from the column name",
        "dimension": "concentration",
        "hard_range": [
         0.0,
@@ -4018,9 +4025,10 @@
        ],
        "max_seen": -0.0274,
        "min_seen": -1.4917,
-       "n_rows_affected": 20
+       "n_rows_affected": 20,
+       "unit": ""
       },
-      "message": "column 'titer' (inferred dimension 'concentration') has values outside the physically possible range [0.0, inf]",
+      "message": "column 'titer': 20 value(s) are not physically possible for concentration (0 or more; read as concentration from the column name), e.g. -1.4917 in row 0. Check the source record; nothing was changed.",
       "rows": [
        0,
        1,
@@ -4044,23 +4052,6 @@
        46
       ],
       "severity": "error"
-     },
-     {
-      "check": "outliers",
-      "column": "feed_a",
-      "detail": {
-       "mad": 0.18290177859949522,
-       "median": -0.2821232252691892,
-       "n_rows_affected": 3,
-       "scale": "log10"
-      },
-      "message": "column 'feed_a' has values with MAD-based |z| > 5 (assessed on a log10 scale)",
-      "rows": [
-       2,
-       7,
-       20
-      ],
-      "severity": "warning"
      },
      {
       "check": "provenance_metadata",
@@ -7805,6 +7796,7 @@
      "units_consistency",
      "physical_bounds",
      "duplicate_rows",
+     "duplicate_ids",
      "missingness",
      "outliers",
      "provenance_metadata",
@@ -7812,42 +7804,17 @@
      "controls_present",
      "constant_columns",
      "informative_missingness",
-     "constant_within_group"
+     "constant_within_group",
+     "result_duplicate_entry",
+     "target_leak"
     ],
     "conversions": [],
     "counts": {
      "error": 0,
      "info": 0,
-     "warning": 5
+     "warning": 4
     },
     "findings": [
-     {
-      "check": "outliers",
-      "column": "titer_g_L",
-      "detail": {
-       "mad": 0.0035,
-       "median": 0.0035,
-       "n_rows_affected": 13,
-       "scale": "linear"
-      },
-      "message": "column 'titer_g_L' has values with MAD-based |z| > 5 (assessed on a linear scale)",
-      "rows": [
-       1,
-       3,
-       9,
-       10,
-       11,
-       13,
-       16,
-       17,
-       18,
-       20,
-       24,
-       26,
-       27
-      ],
-      "severity": "warning"
-     },
      {
       "check": "provenance_metadata",
       "column": null,
@@ -11405,6 +11372,7 @@
      "units_consistency",
      "physical_bounds",
      "duplicate_rows",
+     "duplicate_ids",
      "missingness",
      "outliers",
      "provenance_metadata",
@@ -11412,7 +11380,9 @@
      "controls_present",
      "constant_columns",
      "informative_missingness",
-     "constant_within_group"
+     "constant_within_group",
+     "result_duplicate_entry",
+     "target_leak"
     ],
     "conversions": [],
     "counts": {
@@ -11425,6 +11395,7 @@
       "check": "physical_bounds",
       "column": "titer",
       "detail": {
+       "bounds_source": "read as concentration from the column name",
        "dimension": "concentration",
        "hard_range": [
         0.0,
@@ -11432,9 +11403,10 @@
        ],
        "max_seen": -0.0006,
        "min_seen": -0.0006,
-       "n_rows_affected": 1
+       "n_rows_affected": 1,
+       "unit": ""
       },
-      "message": "column 'titer' (inferred dimension 'concentration') has values outside the physically possible range [0.0, inf]",
+      "message": "column 'titer': 1 value(s) are not physically possible for concentration (0 or more; read as concentration from the column name), e.g. -0.0006 in row 1. Check the source record; nothing was changed.",
       "rows": [
        1
       ],
@@ -15588,6 +15560,7 @@
      "units_consistency",
      "physical_bounds",
      "duplicate_rows",
+     "duplicate_ids",
      "missingness",
      "outliers",
      "provenance_metadata",
@@ -15595,7 +15568,9 @@
      "controls_present",
      "constant_columns",
      "informative_missingness",
-     "constant_within_group"
+     "constant_within_group",
+     "result_duplicate_entry",
+     "target_leak"
     ],
     "conversions": [],
     "counts": {
@@ -15608,16 +15583,18 @@
       "check": "physical_bounds",
       "column": "feed_b",
       "detail": {
-       "dimension": "flow_rate",
+       "bounds_source": "read as flow rate from the column name",
+       "dimension": "flow rate",
        "hard_range": [
         0.0,
         null
        ],
        "max_seen": -0.00154,
        "min_seen": -0.00154,
-       "n_rows_affected": 1
+       "n_rows_affected": 1,
+       "unit": ""
       },
-      "message": "column 'feed_b' (inferred dimension 'flow_rate') has values outside the physically possible range [0.0, inf]",
+      "message": "column 'feed_b': 1 value(s) are not physically possible for flow rate (0 or more; read as flow rate from the column name), e.g. -0.00154 in row 13. Check the source record; nothing was changed.",
       "rows": [
        13
       ],
@@ -15627,16 +15604,18 @@
       "check": "physical_bounds",
       "column": "temp_offset",
       "detail": {
-       "dimension": "temperature_c",
+       "bounds_source": "read as temperature from the column name",
+       "dimension": "temperature",
        "max_seen": 0.92717,
        "min_seen": 0.1345,
        "n_rows_affected": 60,
        "typical_range": [
         15.0,
         45.0
-       ]
+       ],
+       "unit": "\u00b0C"
       },
-      "message": "column 'temp_offset' (inferred dimension 'temperature_c') has values outside the typical range [15.0, 45.0] though within physical limits",
+      "message": "column 'temp_offset': 60 value(s) are possible but outside the usual range for temperature (15 to 45 \u00b0C; read as temperature from the column name), e.g. 0.19053 in row 0. Check the source record; nothing was changed.",
       "rows": [
        0,
        1,
@@ -15665,6 +15644,7 @@
       "check": "physical_bounds",
       "column": "titer",
       "detail": {
+       "bounds_source": "read as concentration from the column name",
        "dimension": "concentration",
        "hard_range": [
         0.0,
@@ -15672,9 +15652,10 @@
        ],
        "max_seen": -0.0094,
        "min_seen": -2.3171,
-       "n_rows_affected": 18
+       "n_rows_affected": 18,
+       "unit": ""
       },
-      "message": "column 'titer' (inferred dimension 'concentration') has values outside the physically possible range [0.0, inf]",
+      "message": "column 'titer': 18 value(s) are not physically possible for concentration (0 or more; read as concentration from the column name), e.g. -0.4396 in row 4. Check the source record; nothing was changed.",
       "rows": [
        4,
        5,
@@ -19080,6 +19061,7 @@
      "units_consistency",
      "physical_bounds",
      "duplicate_rows",
+     "duplicate_ids",
      "missingness",
      "outliers",
      "provenance_metadata",
@@ -19087,30 +19069,17 @@
      "controls_present",
      "constant_columns",
      "informative_missingness",
-     "constant_within_group"
+     "constant_within_group",
+     "result_duplicate_entry",
+     "target_leak"
     ],
     "conversions": [],
     "counts": {
      "error": 0,
      "info": 0,
-     "warning": 5
+     "warning": 4
     },
     "findings": [
-     {
-      "check": "outliers",
-      "column": "impurity_pct",
-      "detail": {
-       "mad": 0.21457956432860908,
-       "median": 0.4894464438633078,
-       "n_rows_affected": 1,
-       "scale": "log10"
-      },
-      "message": "column 'impurity_pct' has values with MAD-based |z| > 5 (assessed on a log10 scale)",
-      "rows": [
-       23
-      ],
-      "severity": "warning"
-     },
      {
       "check": "provenance_metadata",
       "column": null,
@@ -22552,6 +22521,7 @@
      "units_consistency",
      "physical_bounds",
      "duplicate_rows",
+     "duplicate_ids",
      "missingness",
      "outliers",
      "provenance_metadata",
@@ -22560,13 +22530,15 @@
      "constant_columns",
      "informative_missingness",
      "constant_within_group",
+     "result_duplicate_entry",
+     "target_leak",
      "data_accounting"
     ],
     "conversions": [],
     "counts": {
      "error": 0,
      "info": 1,
-     "warning": 4
+     "warning": 5
     },
     "findings": [
      {
@@ -22604,6 +22576,25 @@
       "column": null,
       "detail": {},
       "message": "no control/blank/reference/baseline label found - no internal reference to detect batch or calibration drift",
+      "rows": [],
+      "severity": "warning"
+     },
+     {
+      "check": "target_leak",
+      "column": "medium",
+      "detail": {
+       "agreement": 1.0,
+       "exclude": false,
+       "kind": "levels",
+       "levels_low_to_high": [
+        "MedA",
+        "MedB",
+        "MedC"
+       ],
+       "n": 24,
+       "target": "titer_g_L"
+      },
+      "message": "column 'medium' follows the result almost perfectly: its levels sort the runs by 'titer_g_L' (MedA < MedB < MedC; 100% of 24 runs fit simple cut-offs on 'titer_g_L'). A setting with a very strong, low-noise effect can do this, and so can a value computed from the result, so it is not excluded on this evidence (its name reads like a process factor or grouping). If it is only known after the run, declare it in roles.outputs.",
       "rows": [],
       "severity": "warning"
      },
@@ -26147,6 +26138,7 @@
      "units_consistency",
      "physical_bounds",
      "duplicate_rows",
+     "duplicate_ids",
      "missingness",
      "outliers",
      "provenance_metadata",
@@ -26154,29 +26146,33 @@
      "controls_present",
      "constant_columns",
      "informative_missingness",
-     "constant_within_group"
+     "constant_within_group",
+     "result_duplicate_entry",
+     "target_leak"
     ],
     "conversions": [],
     "counts": {
      "error": 0,
      "info": 0,
-     "warning": 6
+     "warning": 5
     },
     "findings": [
      {
       "check": "physical_bounds",
       "column": "temp_offset",
       "detail": {
-       "dimension": "temperature_c",
+       "bounds_source": "read as temperature from the column name",
+       "dimension": "temperature",
        "max_seen": 0.9465,
        "min_seen": 0.0017,
        "n_rows_affected": 20,
        "typical_range": [
         15.0,
         45.0
-       ]
+       ],
+       "unit": "\u00b0C"
       },
-      "message": "column 'temp_offset' (inferred dimension 'temperature_c') has values outside the typical range [15.0, 45.0] though within physical limits",
+      "message": "column 'temp_offset': 20 value(s) are possible but outside the usual range for temperature (15 to 45 \u00b0C; read as temperature from the column name), e.g. 0.811 in row 0. Check the source record; nothing was changed.",
       "rows": [
        0,
        1,
@@ -26198,21 +26194,6 @@
        17,
        18,
        19
-      ],
-      "severity": "warning"
-     },
-     {
-      "check": "outliers",
-      "column": "feed_b",
-      "detail": {
-       "mad": 0.1515933770585613,
-       "median": -0.2736895470446794,
-       "n_rows_affected": 1,
-       "scale": "log10"
-      },
-      "message": "column 'feed_b' has values with MAD-based |z| > 5 (assessed on a log10 scale)",
-      "rows": [
-       2
       ],
       "severity": "warning"
      },
@@ -29582,6 +29563,7 @@
      "units_consistency",
      "physical_bounds",
      "duplicate_rows",
+     "duplicate_ids",
      "missingness",
      "outliers",
      "provenance_metadata",
@@ -29589,19 +29571,22 @@
      "controls_present",
      "constant_columns",
      "informative_missingness",
-     "constant_within_group"
+     "constant_within_group",
+     "result_duplicate_entry",
+     "target_leak"
     ],
     "conversions": [],
     "counts": {
      "error": 1,
      "info": 0,
-     "warning": 5
+     "warning": 4
     },
     "findings": [
      {
       "check": "physical_bounds",
       "column": "lipase_titer",
       "detail": {
+       "bounds_source": "read as concentration from the column name",
        "dimension": "concentration",
        "hard_range": [
         0.0,
@@ -29609,9 +29594,10 @@
        ],
        "max_seen": -0.165,
        "min_seen": -0.762,
-       "n_rows_affected": 4
+       "n_rows_affected": 4,
+       "unit": ""
       },
-      "message": "column 'lipase_titer' (inferred dimension 'concentration') has values outside the physically possible range [0.0, inf]",
+      "message": "column 'lipase_titer': 4 value(s) are not physically possible for concentration (0 or more; read as concentration from the column name), e.g. -0.51 in row 2. Check the source record; nothing was changed.",
       "rows": [
        2,
        3,
@@ -29619,23 +29605,6 @@
        13
       ],
       "severity": "error"
-     },
-     {
-      "check": "outliers",
-      "column": "Methanol",
-      "detail": {
-       "mad": 0.17558069115500718,
-       "median": 0.3611646580411052,
-       "n_rows_affected": 3,
-       "scale": "log10"
-      },
-      "message": "column 'Methanol' has values with MAD-based |z| > 5 (assessed on a log10 scale)",
-      "rows": [
-       3,
-       11,
-       20
-      ],
-      "severity": "warning"
      },
      {
       "check": "provenance_metadata",
