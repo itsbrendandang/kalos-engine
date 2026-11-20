@@ -660,6 +660,96 @@ scope checked first, default JSON body cap, writes audited without field values.
 Schema v7 adds `campaign_clones` and `clone_titer_history` (docs/MIGRATIONS.md);
 v8 is reserved for the Crux items.
 
+### Proposal stability across seeds (opt-in; off by default)
+
+Off unless `KALOS_PROPOSAL_STABILITY_SEEDS` is set to K (2..10; `0`, `1` or unset
+= off; any other value refuses to start, like every bounded `KALOS_*` setting).
+`_analyze(..., stability_seeds=K)` overrides it per call. **Off adds nothing**:
+no `proposal_stability` key, no `proposals[].stability`, no rerun, so the
+response is byte-identical to one computed before the feature existed
+(tests/test_robustness.py, tests/fixtures/trust_golden.json).
+
+On, the proposal step (hyperparameter restarts when the served fit used more
+than one start, then the multi-start acquisition optimizer) is rerun with K-1
+more seeds (`seeds[k] = seed + 7919 k`) on the same data, box, setup, pending
+runs, gates and constraints. **The served batch is always the seed-0 output.**
+The reruns run in a forked RNG, so every other number in the response is the
+same with the check on or off (tested). Reruns go to the analysis worker pool
+(`kalos.core.parallel.run_ordered`, perf/parallel-analysis) when it is present
+and enabled, else run serially.
+
+- `proposals[i].stability`: `{agreement, seeds_matched, seeds_compared,
+  median_nearest_distance, unstable, label}`. `agreement` = the fraction of the
+  rerun seeds whose batch contains a recipe within `tolerance` of this one;
+  `label` is `"unstable across seeds"` when `agreement < unstable_below` (0.5),
+  else `null`.
+- `proposal_stability`: `{enabled, available, reason, n_seeds, seeds,
+  served_seed, varied, held_fixed, tolerance, distance, unstable_below,
+  what_it_measures, batch_stability, n_unstable, n_reruns_compared,
+  n_reruns_failed, per_proposal[], seconds, workers}`. `batch_stability` is the
+  mean agreement over the served proposals. `per_proposal[]` adds
+  `nearest_distance_per_seed`. A rerun that raised is counted in
+  `n_reruns_failed`, never silently dropped. `available: false` with a `reason`
+  when nothing was proposed (withheld setup or clone) or every rerun failed.
+  When the verdict is `refused` the block is still computed on the batch the
+  optimizer produced (which is withheld) and its `reason` says so.
+- Distance: the optimizer's own "same recipe" rule (`proposal_separation`):
+  each continuous input divided by its design range, largest difference
+  (Chebyshev), a differing categorical level = 1.0. `tolerance` = 0.05 =
+  `NEAR_DUPLICATE_TOL`.
+- What it measures: how sensitive the SEARCH is to its seed on this data. It is
+  not a quality score for a proposal and not data uncertainty (rows are not
+  resampled). A proposal flagged unstable is one draw among several roughly
+  equally good recipes the optimizer can land on.
+- Cost: K-1 extra proposal steps (measured numbers in the PR and CHANGELOG).
+  `seconds` and `workers` are wall-clock facts of the run and vary run to run.
+
+### Driver second opinion (additive; analyses computed after this change)
+
+`driver_second_opinion` sits next to `drivers` and `gp_shapes`. It compares two
+readings of every tested continuous input (not only the top-k shown in
+`drivers`) and flags where they disagree. **Neither reading is causal**, and the
+block says so in `not_causal`.
+
+- `features[]`: `{name, rank_rho, rank_ci95, rank_significant, gp_relevance,
+  gp_relevance_ci95, gp_lengthscale, gp_lengthscale_ci95, gp_status,
+  collinear_with, flags}`, sorted by |rank_rho|. Rank = the `drivers` numbers
+  (Spearman on recipe means, bootstrap 95% CI, BH). GP relevance = share of
+  inverse ARD lengthscale of the proposal GP (inputs normalized to the design
+  box, so lengthscales are in fractions of each input's range); the point is the
+  served fit, the 95% interval is the central range over 16 refits on random
+  80% subsamples of the recipes (replicates kept together;
+  `gp.method: recipe_subsample_refit`). `gp_status`: `relevant` (whole
+  lengthscale interval <= 1.0), `negligible` (whole interval >= 2.0), `unclear`,
+  or `not_judged` (no GP reading).
+- `disagreements[]`: `{name, kind, label, detail}` with `kind`:
+  `rank_only` ("strong by rank, irrelevant to the GP": rank-significant and GP
+  `negligible`), `gp_only` ("relevant to the GP, missed by rank": GP `relevant`
+  and the rank CI spans 0; usually an interior optimum or an interaction, see
+  `gp_shapes`), `collinear` ("collinear: effects cannot be separated").
+- `collinearity`: `{method, pair_threshold (0.9), vif_threshold (10), label,
+  pairs[{a, b, r}], vif{name: value|null}, vif_perfect[], vif_reason, flagged[],
+  groups[][]}`, Pearson r and VIF on the recipe means the driver panel uses.
+  An exact linear combination has VIF `null` and is listed in `vif_perfect`.
+  `vif_reason` says why VIF was not computed (too few recipes for the inputs).
+- `gp.available: false` (with `reason`) and every `gp_status: not_judged` when
+  the GP is mixed (categorical and continuous kernels each carry their own
+  lengthscales, so one relevance per input is not defined), when the
+  out-of-fold Spearman does not clear the 0.20 floor (a model that cannot
+  predict held-out runs fits lengthscales to noise), or with fewer than 8
+  distinct recipes. Collinearity is still reported.
+- Why subsampling: on a 5-input simulator (2 relevant inputs, n = 20/40/80),
+  a Laplace approximation at the fitted hyperparameters called a truly
+  irrelevant input `relevant` in 1-43% of cases; recipe subsampling did so in
+  0-16% and had more power on the relevant inputs (PR description). Cost: 16
+  single-start GP fits, run on the worker pool when present. Reproduce:
+  `python benchmarks/robustness/relevance_interval.py`; cost:
+  `python benchmarks/robustness/stability_cost.py continuous 5`.
+- With `anonymize=True`, identifier-like names are aliased everywhere in the
+  block, including inside `detail` text.
+
+The JSON schema for both blocks is `docs/schemas/analysis-robustness.schema.json`.
+
 ## Not in this slice
 
 - Background jobs for reanalyze (it still runs synchronously; upload has a job route).

@@ -15,7 +15,8 @@
   "F04 follow-up: reliability.verdict (not_judged below 12 runs / 3 groups; clears_floor null then)",
   "F15: selection-aware per-proposal intervals (top-30% held-out runs per fold, pooled repeats, sd floored at the 90th percentile)",
   "Caveat wording: proposal caveats say what the band was calibrated on and the coverage measured at proposed recipes, never that the range 'is calibrated' (message text only; no number changed)",
-  "Merge of main (#164 review fixes, #165 clones): additive fields only (cv_topk.direction, p_improve/expected_improvement.description, the strain blocks) plus the intended strain fix gp_shapes available on mixed fits (mixed_medium); no trust-layer number changed"
+  "Merge of main (#164 review fixes, #165 clones): additive fields only (cv_topk.direction, p_improve/expected_improvement.description, the strain blocks) plus the intended strain fix gp_shapes available on mixed fits (mixed_medium); no trust-layer number changed",
+  "Driver second opinion: additive driver_second_opinion block (rank vs GP relevance, collinearity); no existing number changed"
  ],
  "sheets": {
   "batch_text": {
@@ -228,6 +229,96 @@
     "rows_dropped": 0
    },
    "design_box_exclusions": [],
+   "driver_second_opinion": {
+    "available": true,
+    "collinearity": {
+     "flagged": [],
+     "groups": [],
+     "label": "collinear: effects cannot be separated",
+     "method": "pearson_r_and_vif_on_recipe_means",
+     "pair_threshold": 0.9,
+     "pairs": [],
+     "vif": {
+      "feed_a": 1.104,
+      "feed_b": 1.143,
+      "temp_offset": 1.115
+     },
+     "vif_perfect": [],
+     "vif_reason": null,
+     "vif_threshold": 10.0
+    },
+    "disagreements": [],
+    "features": [
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": null,
+      "gp_lengthscale_ci95": null,
+      "gp_relevance": null,
+      "gp_relevance_ci95": null,
+      "gp_status": "not_judged",
+      "name": "feed_a",
+      "rank_ci95": [
+       0.163,
+       0.649
+      ],
+      "rank_rho": 0.434,
+      "rank_significant": true
+     },
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": null,
+      "gp_lengthscale_ci95": null,
+      "gp_relevance": null,
+      "gp_relevance_ci95": null,
+      "gp_status": "not_judged",
+      "name": "temp_offset",
+      "rank_ci95": [
+       -0.565,
+       0.0
+      ],
+      "rank_rho": -0.367,
+      "rank_significant": false
+     },
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": null,
+      "gp_lengthscale_ci95": null,
+      "gp_relevance": null,
+      "gp_relevance_ci95": null,
+      "gp_status": "not_judged",
+      "name": "feed_b",
+      "rank_ci95": [
+       -0.135,
+       0.428
+      ],
+      "rank_rho": 0.14,
+      "rank_significant": false
+     }
+    ],
+    "gp": {
+     "available": false,
+     "fraction": null,
+     "level": null,
+     "method": null,
+     "n_fits_used": null,
+     "n_subsamples": null,
+     "negligible_min_lengthscale": 2.0,
+     "reason": "out-of-fold Spearman (-0.094) does not clear the 0.20 floor; a model that cannot predict held-out runs fits lengthscales to noise, so its relevance is not a finding",
+     "relevant_max_lengthscale": 1.0,
+     "source": "ard_lengthscales_of_the_proposal_gp",
+     "units": "fraction of each input's design range"
+    },
+    "not_causal": "Both readings are associations in observational data. Rank drivers measure a monotonic association with the target; GP relevance measures how fast the fitted response changes along an input. Neither is a causal effect, and lengthscales say nothing about what happens if an input is changed on its own.",
+    "reason": null,
+    "what_it_measures": {
+     "gp_relevance": "share of inverse ARD lengthscale of the proposal GP (inputs normalized to the design box), point from the served fit, interval from refits on recipe subsamples",
+     "gp_status": "relevant: lengthscale interval at or below the relevant bound; negligible: at or above the negligible bound; unclear: otherwise; not_judged: no GP reading",
+     "rank": "Spearman rho with the target on recipe means, bootstrap 95% CI, BH-corrected significance (the `drivers` panel, all tested inputs)"
+    }
+   },
    "driver_selection": {
     "fdr_method": "benjamini_hochberg",
     "fdr_q": 0.05,
@@ -4323,6 +4414,123 @@
     "rows_dropped": 0
    },
    "design_box_exclusions": [],
+   "driver_second_opinion": {
+    "available": true,
+    "collinearity": {
+     "flagged": [],
+     "groups": [],
+     "label": "collinear: effects cannot be separated",
+     "method": "pearson_r_and_vif_on_recipe_means",
+     "pair_threshold": 0.9,
+     "pairs": [],
+     "vif": {
+      "glucose_gL": 1.053,
+      "pH": 1.053,
+      "temperature_C": 1.0
+     },
+     "vif_perfect": [],
+     "vif_reason": null,
+     "vif_threshold": 10.0
+    },
+    "disagreements": [
+     {
+      "detail": "GP lengthscale interval [0.025, 0.6949] is at or below 1, but the rank CI [-0.177, 0.559] spans zero; a monotonic rank statistic cannot see an interior optimum or an interaction (see gp_shapes)",
+      "kind": "gp_only",
+      "label": "relevant to the GP, missed by rank",
+      "name": "pH"
+     }
+    ],
+    "features": [
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": 0.3032,
+      "gp_lengthscale_ci95": [
+       0.05,
+       1.063
+      ],
+      "gp_relevance": 0.4327,
+      "gp_relevance_ci95": [
+       0.0223,
+       0.8342
+      ],
+      "gp_status": "unclear",
+      "name": "temperature_C",
+      "rank_ci95": [
+       0.024,
+       0.704
+      ],
+      "rank_rho": 0.392,
+      "rank_significant": false
+     },
+     {
+      "collinear_with": [],
+      "flags": [
+       "relevant to the GP, missed by rank"
+      ],
+      "gp_lengthscale": 0.3287,
+      "gp_lengthscale_ci95": [
+       0.025,
+       0.6949
+      ],
+      "gp_relevance": 0.399,
+      "gp_relevance_ci95": [
+       0.0771,
+       0.9491
+      ],
+      "gp_status": "relevant",
+      "name": "pH",
+      "rank_ci95": [
+       -0.177,
+       0.559
+      ],
+      "rank_rho": 0.259,
+      "rank_significant": false
+     },
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": 0.7795,
+      "gp_lengthscale_ci95": [
+       0.0493,
+       1.684
+      ],
+      "gp_relevance": 0.1683,
+      "gp_relevance_ci95": [
+       0.0285,
+       0.6635
+      ],
+      "gp_status": "unclear",
+      "name": "glucose_gL",
+      "rank_ci95": [
+       -0.367,
+       0.394
+      ],
+      "rank_rho": -0.003,
+      "rank_significant": false
+     }
+    ],
+    "gp": {
+     "available": true,
+     "fraction": 0.8,
+     "level": 0.95,
+     "method": "recipe_subsample_refit",
+     "n_fits_used": 16,
+     "n_subsamples": 16,
+     "negligible_min_lengthscale": 2.0,
+     "reason": null,
+     "relevant_max_lengthscale": 1.0,
+     "source": "ard_lengthscales_of_the_proposal_gp",
+     "units": "fraction of each input's design range"
+    },
+    "not_causal": "Both readings are associations in observational data. Rank drivers measure a monotonic association with the target; GP relevance measures how fast the fitted response changes along an input. Neither is a causal effect, and lengthscales say nothing about what happens if an input is changed on its own.",
+    "reason": null,
+    "what_it_measures": {
+     "gp_relevance": "share of inverse ARD lengthscale of the proposal GP (inputs normalized to the design box), point from the served fit, interval from refits on recipe subsamples",
+     "gp_status": "relevant: lengthscale interval at or below the relevant bound; negligible: at or above the negligible bound; unclear: otherwise; not_judged: no GP reading",
+     "rank": "Spearman rho with the target on recipe means, bootstrap 95% CI, BH-corrected significance (the `drivers` panel, all tested inputs)"
+    }
+   },
    "driver_selection": {
     "fdr_method": "benjamini_hochberg",
     "fdr_q": 0.05,
@@ -8129,6 +8337,100 @@
     "rows_dropped": 0
    },
    "design_box_exclusions": [],
+   "driver_second_opinion": {
+    "available": true,
+    "collinearity": {
+     "flagged": [],
+     "groups": [],
+     "label": "collinear: effects cannot be separated",
+     "method": "pearson_r_and_vif_on_recipe_means",
+     "pair_threshold": 0.9,
+     "pairs": [],
+     "vif": {
+      "feed_a": 1.056,
+      "feed_b": 1.056
+     },
+     "vif_perfect": [],
+     "vif_reason": null,
+     "vif_threshold": 10.0
+    },
+    "disagreements": [
+     {
+      "detail": "GP lengthscale interval [0.1541, 0.1882] is at or below 1, but the rank CI [-0.077, 0.693] spans zero; a monotonic rank statistic cannot see an interior optimum or an interaction (see gp_shapes)",
+      "kind": "gp_only",
+      "label": "relevant to the GP, missed by rank",
+      "name": "feed_b"
+     }
+    ],
+    "features": [
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": 0.3445,
+      "gp_lengthscale_ci95": [
+       0.2437,
+       0.3633
+      ],
+      "gp_relevance": 0.3382,
+      "gp_relevance_ci95": [
+       0.309,
+       0.4051
+      ],
+      "gp_status": "relevant",
+      "name": "feed_a",
+      "rank_ci95": [
+       0.416,
+       0.826
+      ],
+      "rank_rho": 0.662,
+      "rank_significant": true
+     },
+     {
+      "collinear_with": [],
+      "flags": [
+       "relevant to the GP, missed by rank"
+      ],
+      "gp_lengthscale": 0.1761,
+      "gp_lengthscale_ci95": [
+       0.1541,
+       0.1882
+      ],
+      "gp_relevance": 0.6618,
+      "gp_relevance_ci95": [
+       0.5949,
+       0.691
+      ],
+      "gp_status": "relevant",
+      "name": "feed_b",
+      "rank_ci95": [
+       -0.077,
+       0.693
+      ],
+      "rank_rho": 0.299,
+      "rank_significant": false
+     }
+    ],
+    "gp": {
+     "available": true,
+     "fraction": 0.8,
+     "level": 0.95,
+     "method": "recipe_subsample_refit",
+     "n_fits_used": 16,
+     "n_subsamples": 16,
+     "negligible_min_lengthscale": 2.0,
+     "reason": null,
+     "relevant_max_lengthscale": 1.0,
+     "source": "ard_lengthscales_of_the_proposal_gp",
+     "units": "fraction of each input's design range"
+    },
+    "not_causal": "Both readings are associations in observational data. Rank drivers measure a monotonic association with the target; GP relevance measures how fast the fitted response changes along an input. Neither is a causal effect, and lengthscales say nothing about what happens if an input is changed on its own.",
+    "reason": null,
+    "what_it_measures": {
+     "gp_relevance": "share of inverse ARD lengthscale of the proposal GP (inputs normalized to the design box), point from the served fit, interval from refits on recipe subsamples",
+     "gp_status": "relevant: lengthscale interval at or below the relevant bound; negligible: at or above the negligible bound; unclear: otherwise; not_judged: no GP reading",
+     "rank": "Spearman rho with the target on recipe means, bootstrap 95% CI, BH-corrected significance (the `drivers` panel, all tested inputs)"
+    }
+   },
    "driver_selection": {
     "fdr_method": "benjamini_hochberg",
     "fdr_q": 0.05,
@@ -11719,6 +12021,96 @@
      "upper": 0.9477
     }
    ],
+   "driver_second_opinion": {
+    "available": true,
+    "collinearity": {
+     "flagged": [],
+     "groups": [],
+     "label": "collinear: effects cannot be separated",
+     "method": "pearson_r_and_vif_on_recipe_means",
+     "pair_threshold": 0.9,
+     "pairs": [],
+     "vif": {
+      "feed_a": 1.099,
+      "feed_b": 1.051,
+      "temp_offset": 1.063
+     },
+     "vif_perfect": [],
+     "vif_reason": null,
+     "vif_threshold": 10.0
+    },
+    "disagreements": [],
+    "features": [
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": null,
+      "gp_lengthscale_ci95": null,
+      "gp_relevance": null,
+      "gp_relevance_ci95": null,
+      "gp_status": "not_judged",
+      "name": "feed_b",
+      "rank_ci95": [
+       0.088,
+       0.496
+      ],
+      "rank_rho": 0.313,
+      "rank_significant": true
+     },
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": null,
+      "gp_lengthscale_ci95": null,
+      "gp_relevance": null,
+      "gp_relevance_ci95": null,
+      "gp_status": "not_judged",
+      "name": "temp_offset",
+      "rank_ci95": [
+       -0.345,
+       0.25
+      ],
+      "rank_rho": -0.053,
+      "rank_significant": false
+     },
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": null,
+      "gp_lengthscale_ci95": null,
+      "gp_relevance": null,
+      "gp_relevance_ci95": null,
+      "gp_status": "not_judged",
+      "name": "feed_a",
+      "rank_ci95": [
+       -0.22,
+       0.267
+      ],
+      "rank_rho": 0.036,
+      "rank_significant": false
+     }
+    ],
+    "gp": {
+     "available": false,
+     "fraction": null,
+     "level": null,
+     "method": null,
+     "n_fits_used": null,
+     "n_subsamples": null,
+     "negligible_min_lengthscale": 2.0,
+     "reason": "out-of-fold Spearman (-0.337) does not clear the 0.20 floor; a model that cannot predict held-out runs fits lengthscales to noise, so its relevance is not a finding",
+     "relevant_max_lengthscale": 1.0,
+     "source": "ard_lengthscales_of_the_proposal_gp",
+     "units": "fraction of each input's design range"
+    },
+    "not_causal": "Both readings are associations in observational data. Rank drivers measure a monotonic association with the target; GP relevance measures how fast the fitted response changes along an input. Neither is a causal effect, and lengthscales say nothing about what happens if an input is changed on its own.",
+    "reason": null,
+    "what_it_measures": {
+     "gp_relevance": "share of inverse ARD lengthscale of the proposal GP (inputs normalized to the design box), point from the served fit, interval from refits on recipe subsamples",
+     "gp_status": "relevant: lengthscale interval at or below the relevant bound; negligible: at or above the negligible bound; unclear: otherwise; not_judged: no GP reading",
+     "rank": "Spearman rho with the target on recipe means, bootstrap 95% CI, BH-corrected significance (the `drivers` panel, all tested inputs)"
+    }
+   },
    "driver_selection": {
     "fdr_method": "benjamini_hochberg",
     "fdr_q": 0.05,
@@ -15959,6 +16351,100 @@
     "rows_dropped": 0
    },
    "design_box_exclusions": [],
+   "driver_second_opinion": {
+    "available": true,
+    "collinearity": {
+     "flagged": [],
+     "groups": [],
+     "label": "collinear: effects cannot be separated",
+     "method": "pearson_r_and_vif_on_recipe_means",
+     "pair_threshold": 0.9,
+     "pairs": [],
+     "vif": {
+      "feed_a": 1.001,
+      "temp_C": 1.001
+     },
+     "vif_perfect": [],
+     "vif_reason": null,
+     "vif_threshold": 10.0
+    },
+    "disagreements": [
+     {
+      "detail": "GP lengthscale interval [0.5676, 0.7391] is at or below 1, but the rank CI [-0.64, 0.133] spans zero; a monotonic rank statistic cannot see an interior optimum or an interaction (see gp_shapes)",
+      "kind": "gp_only",
+      "label": "relevant to the GP, missed by rank",
+      "name": "temp_C"
+     }
+    ],
+    "features": [
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": 0.3087,
+      "gp_lengthscale_ci95": [
+       0.2582,
+       0.3582
+      ],
+      "gp_relevance": 0.6876,
+      "gp_relevance_ci95": [
+       0.6632,
+       0.7023
+      ],
+      "gp_status": "relevant",
+      "name": "feed_a",
+      "rank_ci95": [
+       0.398,
+       0.918
+      ],
+      "rank_rho": 0.732,
+      "rank_significant": true
+     },
+     {
+      "collinear_with": [],
+      "flags": [
+       "relevant to the GP, missed by rank"
+      ],
+      "gp_lengthscale": 0.6793,
+      "gp_lengthscale_ci95": [
+       0.5676,
+       0.7391
+      ],
+      "gp_relevance": 0.3124,
+      "gp_relevance_ci95": [
+       0.2977,
+       0.3368
+      ],
+      "gp_status": "relevant",
+      "name": "temp_C",
+      "rank_ci95": [
+       -0.64,
+       0.133
+      ],
+      "rank_rho": -0.24,
+      "rank_significant": false
+     }
+    ],
+    "gp": {
+     "available": true,
+     "fraction": 0.8,
+     "level": 0.95,
+     "method": "recipe_subsample_refit",
+     "n_fits_used": 16,
+     "n_subsamples": 16,
+     "negligible_min_lengthscale": 2.0,
+     "reason": null,
+     "relevant_max_lengthscale": 1.0,
+     "source": "ard_lengthscales_of_the_proposal_gp",
+     "units": "fraction of each input's design range"
+    },
+    "not_causal": "Both readings are associations in observational data. Rank drivers measure a monotonic association with the target; GP relevance measures how fast the fitted response changes along an input. Neither is a causal effect, and lengthscales say nothing about what happens if an input is changed on its own.",
+    "reason": null,
+    "what_it_measures": {
+     "gp_relevance": "share of inverse ARD lengthscale of the proposal GP (inputs normalized to the design box), point from the served fit, interval from refits on recipe subsamples",
+     "gp_status": "relevant: lengthscale interval at or below the relevant bound; negligible: at or above the negligible bound; unclear: otherwise; not_judged: no GP reading",
+     "rank": "Spearman rho with the target on recipe means, bootstrap 95% CI, BH-corrected significance (the `drivers` panel, all tested inputs)"
+    }
+   },
    "driver_selection": {
     "fdr_method": "benjamini_hochberg",
     "fdr_q": 0.05,
@@ -19414,6 +19900,79 @@
     "rows_dropped": 0
    },
    "design_box_exclusions": [],
+   "driver_second_opinion": {
+    "available": true,
+    "collinearity": {
+     "flagged": [],
+     "groups": [],
+     "label": "collinear: effects cannot be separated",
+     "method": "pearson_r_and_vif_on_recipe_means",
+     "pair_threshold": 0.9,
+     "pairs": [],
+     "vif": {
+      "pH": 1.021,
+      "temp_C": 1.021
+     },
+     "vif_perfect": [],
+     "vif_reason": null,
+     "vif_threshold": 10.0
+    },
+    "disagreements": [],
+    "features": [
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": null,
+      "gp_lengthscale_ci95": null,
+      "gp_relevance": null,
+      "gp_relevance_ci95": null,
+      "gp_status": "not_judged",
+      "name": "temp_C",
+      "rank_ci95": [
+       0.006,
+       0.767
+      ],
+      "rank_rho": 0.405,
+      "rank_significant": false
+     },
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": null,
+      "gp_lengthscale_ci95": null,
+      "gp_relevance": null,
+      "gp_relevance_ci95": null,
+      "gp_status": "not_judged",
+      "name": "pH",
+      "rank_ci95": [
+       -0.256,
+       0.537
+      ],
+      "rank_rho": 0.159,
+      "rank_significant": false
+     }
+    ],
+    "gp": {
+     "available": false,
+     "fraction": null,
+     "level": null,
+     "method": null,
+     "n_fits_used": null,
+     "n_subsamples": null,
+     "negligible_min_lengthscale": 2.0,
+     "reason": "the GP is mixed (categorical and continuous kernels, each with its own lengthscales), so one relevance per input is not defined",
+     "relevant_max_lengthscale": 1.0,
+     "source": "ard_lengthscales_of_the_proposal_gp",
+     "units": "fraction of each input's design range"
+    },
+    "not_causal": "Both readings are associations in observational data. Rank drivers measure a monotonic association with the target; GP relevance measures how fast the fitted response changes along an input. Neither is a causal effect, and lengthscales say nothing about what happens if an input is changed on its own.",
+    "reason": null,
+    "what_it_measures": {
+     "gp_relevance": "share of inverse ARD lengthscale of the proposal GP (inputs normalized to the design box), point from the served fit, interval from refits on recipe subsamples",
+     "gp_status": "relevant: lengthscale interval at or below the relevant bound; negligible: at or above the negligible bound; unclear: otherwise; not_judged: no GP reading",
+     "rank": "Spearman rho with the target on recipe means, bootstrap 95% CI, BH-corrected significance (the `drivers` panel, all tested inputs)"
+    }
+   },
    "driver_selection": {
     "fdr_method": "benjamini_hochberg",
     "fdr_q": 0.05,
@@ -22839,6 +23398,96 @@
     "rows_dropped": 0
    },
    "design_box_exclusions": [],
+   "driver_second_opinion": {
+    "available": true,
+    "collinearity": {
+     "flagged": [],
+     "groups": [],
+     "label": "collinear: effects cannot be separated",
+     "method": "pearson_r_and_vif_on_recipe_means",
+     "pair_threshold": 0.9,
+     "pairs": [],
+     "vif": {
+      "feed_a": 1.07,
+      "feed_b": 1.061,
+      "temp_offset": 1.073
+     },
+     "vif_perfect": [],
+     "vif_reason": null,
+     "vif_threshold": 10.0
+    },
+    "disagreements": [],
+    "features": [
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": null,
+      "gp_lengthscale_ci95": null,
+      "gp_relevance": null,
+      "gp_relevance_ci95": null,
+      "gp_status": "not_judged",
+      "name": "temp_offset",
+      "rank_ci95": [
+       -0.257,
+       0.763
+      ],
+      "rank_rho": 0.328,
+      "rank_significant": false
+     },
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": null,
+      "gp_lengthscale_ci95": null,
+      "gp_relevance": null,
+      "gp_relevance_ci95": null,
+      "gp_status": "not_judged",
+      "name": "feed_b",
+      "rank_ci95": [
+       -0.617,
+       0.152
+      ],
+      "rank_rho": -0.241,
+      "rank_significant": false
+     },
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": null,
+      "gp_lengthscale_ci95": null,
+      "gp_relevance": null,
+      "gp_relevance_ci95": null,
+      "gp_status": "not_judged",
+      "name": "feed_a",
+      "rank_ci95": [
+       -0.244,
+       0.567
+      ],
+      "rank_rho": 0.212,
+      "rank_significant": false
+     }
+    ],
+    "gp": {
+     "available": false,
+     "fraction": null,
+     "level": null,
+     "method": null,
+     "n_fits_used": null,
+     "n_subsamples": null,
+     "negligible_min_lengthscale": 2.0,
+     "reason": "out-of-fold Spearman (-0.248) does not clear the 0.20 floor; a model that cannot predict held-out runs fits lengthscales to noise, so its relevance is not a finding",
+     "relevant_max_lengthscale": 1.0,
+     "source": "ard_lengthscales_of_the_proposal_gp",
+     "units": "fraction of each input's design range"
+    },
+    "not_causal": "Both readings are associations in observational data. Rank drivers measure a monotonic association with the target; GP relevance measures how fast the fitted response changes along an input. Neither is a causal effect, and lengthscales say nothing about what happens if an input is changed on its own.",
+    "reason": null,
+    "what_it_measures": {
+     "gp_relevance": "share of inverse ARD lengthscale of the proposal GP (inputs normalized to the design box), point from the served fit, interval from refits on recipe subsamples",
+     "gp_status": "relevant: lengthscale interval at or below the relevant bound; negligible: at or above the negligible bound; unclear: otherwise; not_judged: no GP reading",
+     "rank": "Spearman rho with the target on recipe means, bootstrap 95% CI, BH-corrected significance (the `drivers` panel, all tested inputs)"
+    }
+   },
    "driver_selection": {
     "fdr_method": "benjamini_hochberg",
     "fdr_q": 0.05,
@@ -26478,6 +27127,91 @@
     "rows_dropped": 0
    },
    "design_box_exclusions": [],
+   "driver_second_opinion": {
+    "available": true,
+    "collinearity": {
+     "flagged": [],
+     "groups": [],
+     "label": "collinear: effects cannot be separated",
+     "method": "pearson_r_and_vif_on_recipe_means",
+     "pair_threshold": 0.9,
+     "pairs": [],
+     "vif": {
+      "Methanol": 1.019,
+      "pH": 1.019
+     },
+     "vif_perfect": [],
+     "vif_reason": null,
+     "vif_threshold": 10.0
+    },
+    "disagreements": [],
+    "features": [
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": 0.6434,
+      "gp_lengthscale_ci95": [
+       0.5098,
+       0.9796
+      ],
+      "gp_relevance": 0.6243,
+      "gp_relevance_ci95": [
+       0.4805,
+       0.6897
+      ],
+      "gp_status": "relevant",
+      "name": "Methanol",
+      "rank_ci95": [
+       0.905,
+       0.995
+      ],
+      "rank_rho": 0.978,
+      "rank_significant": true
+     },
+     {
+      "collinear_with": [],
+      "flags": [],
+      "gp_lengthscale": 1.069,
+      "gp_lengthscale_ci95": [
+       0.8869,
+       1.1536
+      ],
+      "gp_relevance": 0.3757,
+      "gp_relevance_ci95": [
+       0.3103,
+       0.5195
+      ],
+      "gp_status": "unclear",
+      "name": "pH",
+      "rank_ci95": [
+       -0.469,
+       0.438
+      ],
+      "rank_rho": -0.05,
+      "rank_significant": false
+     }
+    ],
+    "gp": {
+     "available": true,
+     "fraction": 0.8,
+     "level": 0.95,
+     "method": "recipe_subsample_refit",
+     "n_fits_used": 16,
+     "n_subsamples": 16,
+     "negligible_min_lengthscale": 2.0,
+     "reason": null,
+     "relevant_max_lengthscale": 1.0,
+     "source": "ard_lengthscales_of_the_proposal_gp",
+     "units": "fraction of each input's design range"
+    },
+    "not_causal": "Both readings are associations in observational data. Rank drivers measure a monotonic association with the target; GP relevance measures how fast the fitted response changes along an input. Neither is a causal effect, and lengthscales say nothing about what happens if an input is changed on its own.",
+    "reason": null,
+    "what_it_measures": {
+     "gp_relevance": "share of inverse ARD lengthscale of the proposal GP (inputs normalized to the design box), point from the served fit, interval from refits on recipe subsamples",
+     "gp_status": "relevant: lengthscale interval at or below the relevant bound; negligible: at or above the negligible bound; unclear: otherwise; not_judged: no GP reading",
+     "rank": "Spearman rho with the target on recipe means, bootstrap 95% CI, BH-corrected significance (the `drivers` panel, all tested inputs)"
+    }
+   },
    "driver_selection": {
     "fdr_method": "benjamini_hochberg",
     "fdr_q": 0.05,

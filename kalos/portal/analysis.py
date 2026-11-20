@@ -16,13 +16,14 @@ import numpy as np
 import pandas as pd
 
 from kalos import __version__ as ENGINE_VERSION
+from kalos.core.collinearity import collinearity_report
 from kalos.core.conformal import q_from_residuals
 from kalos.core.drivers import (
     benjamini_hochberg,
     bootstrap_spearman,
     spearman_driver_matrix,
 )
-from kalos.core.gp_shape import gp_shape_report
+from kalos.core.gp_shape import ard_lengthscales, gp_shape_report
 from kalos.core.replicates import (
     aggregate_replicates,
     heteroscedasticity_report,
@@ -71,6 +72,7 @@ from kalos.portal.analysis_parts.diagnostics import (
     _data_findings,
     _with_data_findings,
 )
+from kalos.portal.analysis_parts.driver_opinion import driver_second_opinion
 from kalos.portal.analysis_parts.identifiers import (
     identifier_pattern,
     is_identifier_name,
@@ -119,7 +121,11 @@ from kalos.portal.analysis_parts.refusals import (
     _too_few_rows,
     _validate_constraint,
 )
-from kalos.portal.analysis_parts.setup_apply import _propose_with_setup, withheld_batch
+from kalos.portal.analysis_parts.setup_apply import (
+    _propose_with_setup,
+    resolved_propose_kwargs,
+    withheld_batch,
+)
 from kalos.portal.analysis_parts.strain_roles import resolve_strain
 from kalos.portal.analysis_parts.strain_state import (
     StrainState,
@@ -236,6 +242,7 @@ def _analyze(
     preflight_only: bool = False,
     user_target_unit: str | None = None,
     setup: Mapping[str, Any] | None = None,
+    stability_seeds: int | None = None,
 ) -> dict:
     """See `_analyze_body`. Every fitting analysis runs inside `_seeded_analysis`,
     so its proposals depend only on its inputs, not on other analyses in flight."""
@@ -247,6 +254,8 @@ def _analyze(
     )
     if setup is not None:
         kwargs["setup"] = setup
+    if stability_seeds is not None:
+        kwargs["stability_seeds"] = stability_seeds
     if preflight_only:
         return _analyze_body(df, target, **kwargs)
     with _seeded_analysis(ANALYZE_SEED):
@@ -266,6 +275,7 @@ def _analyze_body(
     preflight_only: bool = False,
     user_target_unit: str | None = None,
     setup: Mapping[str, Any] | None = None,
+    stability_seeds: int | None = None,
 ) -> dict:
     """Run the engine on an arbitrary run sheet: pick the target (the value to
     maximize), use the process INPUTS as features (other measured outputs are
@@ -320,7 +330,14 @@ def _analyze_body(
     goal, user bounds, linear constraints, user target unit, hash). None (the
     default) is today's behavior, byte-identical. Given, proposals honor it
     (`setup_settings.plan_setup`), `best`/the incumbent follow the goal, and the
-    result gains `goal` and a `setup` block."""
+    result gains `goal` and a `setup` block.
+
+    `stability_seeds` (None = `KALOS_PROPOSAL_STABILITY_SEEDS`, default off)
+    reruns the proposal step with that many seeds in total and adds the
+    `proposal_stability` block (analysis_parts/stability.py). Off is
+    byte-identical to an analysis without the feature."""
+    from kalos.portal.analysis_parts.stability import resolve_seeds
+    n_stability_seeds = resolve_seeds(stability_seeds)
     if not preflight_only:
         # Deferred: these transitively import torch/botorch/gpytorch (see the
         # module-level note above). This is the one place in this module that
@@ -1315,6 +1332,7 @@ def _analyze_body(
     # with no replicates every group is a singleton and `aggregate_replicates` is
     # an exact no-op, so unreplicated uploads are unchanged.
     drv: list[dict[str, Any]] = []
+    collinearity: dict[str, Any] | None = None
     n_tested = len(cont_feats)
     n_driver_units = len(y)
     if cont_feats:
@@ -1322,6 +1340,7 @@ def _analyze_body(
         Xr, yr, _rv, _rn = aggregate_replicates(X, y, groups=recipe_key)
         n_driver_units = int(Xr.shape[0])
         Xcont = Xr[:, : len(cont_feats)]
+        collinearity = collinearity_report(Xcont, names)
         matrix = spearman_driver_matrix(Xcont, yr, feature_names=names)
         point = np.asarray(matrix["rho"]).astype(float)
         pvals = np.asarray(matrix["pvals"]).astype(float)
@@ -1350,6 +1369,8 @@ def _analyze_body(
                 }
             )
     drv.sort(key=lambda d: -abs(float(d["rho"])))
+    # Every tested input, for the second opinion below (the panel shows top-k).
+    drv_all = [{k: v for k, v in d.items() if k != "_idx"} for d in drv]
     drv = drv[:DRIVER_TOP_K]
 
     # Replicate structure + assay noise floor (the "SNR lever", BENCHMARK.md).
@@ -1388,6 +1409,10 @@ def _analyze_body(
         if nr["n_recipes"] >= 6 and np.isfinite(sigma2) and sigma2 > 0:
             replicate_aware = True
             per_point_var = float(sigma2) / np.maximum(n_reps_g, 1).astype(float)
+            served_fit_kwargs = dict(
+                bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
+                restarts=proposal_restarts(len(yf), Xf.shape[1], PROPOSAL_FIT_RESTARTS),
+            )
             s = Surrogate().fit(
                 Xf, yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
                 check_conditioning=True,
@@ -1400,6 +1425,10 @@ def _analyze_body(
     # proposed next batch, with predicted target + uncertainty + a why per row
     _progress("proposing", 0.8)
     if not replicate_aware:
+        served_fit_kwargs = dict(
+            bounds=bounds, cat_dims=cat_dims,
+            restarts=proposal_restarts(len(y), X.shape[1], PROPOSAL_FIT_RESTARTS),
+        )
         s = Surrogate().fit(
             X, y, bounds=bounds, cat_dims=cat_dims, check_conditioning=True,
             restarts=proposal_restarts(len(y), X.shape[1], PROPOSAL_FIT_RESTARTS),
@@ -1418,12 +1447,13 @@ def _analyze_body(
     # `propose_batch` never returns two near-duplicate recipes (see its
     # docstring); on a design space with fewer than q distinct candidates the
     # batch comes back SHORT, and `proposal_notice` below says so.
+    served_propose_kwargs: dict[str, Any] | None = None
     if setup_plan is not None and setup_plan.refused:
         proposal = withheld_batch(setup_plan, q=5, d=X.shape[1])
     elif strain.refusal is not None:
         proposal = strain.withheld_batch(q=5, d=X.shape[1])
     else:
-        proposal = _propose_with_setup(propose_batch, setup_plan, dict(
+        served_propose_kwargs = dict(
         **strain.propose_kwargs(),
         surrogate=s,
         bounds=bounds,
@@ -1441,8 +1471,32 @@ def _analyze_body(
         # PART 2: only ever passed when the constraint model actually fit.
         constraint_surrogate=constraint_surrogate if constraint_applied else None,
         constraint_floor=constraint_floor_val if constraint_applied else None,
-    ), d=X.shape[1])
+        )
+        proposal = _propose_with_setup(propose_batch, setup_plan, served_propose_kwargs, d=X.shape[1])
     batch = proposal.X if setup_plan is None else setup_plan.post_check(proposal.X)
+    # Opt-in seed-stability check (analysis_parts/stability.py). Off: nothing
+    # runs and no key is added. On: reruns inside a forked RNG, so every other
+    # number below is the same as with it off.
+    stability_block: dict[str, Any] | None = None
+    if n_stability_seeds >= 2:
+        from kalos.portal.analysis_parts.stability import proposal_stability_block
+        _skip = None
+        if served_propose_kwargs is None:
+            _skip = "proposals were withheld before the optimizer ran"
+        elif setup_plan is not None and setup_plan.refused:
+            _skip = "proposals were withheld because the campaign setup could not be applied"
+        _pk: dict[str, Any] = {}
+        if served_propose_kwargs is not None:
+            _pk = resolved_propose_kwargs(setup_plan, served_propose_kwargs)
+            _pk.pop("surrogate", None)
+            _pk.pop("seed", None)
+        stability_block = proposal_stability_block(
+            n_seeds=n_stability_seeds, base_seed=ANALYZE_SEED, served=batch,
+            X_fit=X_fit, y_fit=y_fit, surrogate=s, fit_kwargs=served_fit_kwargs,
+            propose_kwargs=_pk, cat_dims=cat_dims,
+            post_filter=setup_plan.satisfied if setup_plan is not None else None,
+            skip_reason=_skip,
+        )
     # Covariates are held, not proposed, so they are not among the shown features.
     _shown = [d for d in drv if d["name"] not in strain.held_covariates][:4]
     show = [d["name"] for d in _shown]
@@ -1517,6 +1571,36 @@ def _analyze_body(
         rho_floor=RELIABILITY_SPEARMAN_FLOOR,
         sweep_columns=list(range(len(cont_feats))) if cont_feats else None,
     ).to_dict()
+
+    # Driver second opinion (analysis_parts/driver_opinion.py): GP relevance with
+    # a recipe-subsample interval next to the rank drivers, plus collinearity.
+    # The subsample refits run in a forked RNG, so no other number changes.
+    _cont_names = [str(c) for c in cont_feats]
+    if not cont_feats:
+        _gp_rel: dict[str, Any] = {"available": False, "reason": "no continuous inputs"}
+    elif cat_dims:
+        _gp_rel = {"available": False, "reason": (
+            "the GP is mixed (categorical and continuous kernels, each with its own "
+            "lengthscales), so one relevance per input is not defined")}
+    elif rho != rho or rho < RELIABILITY_SPEARMAN_FLOOR:
+        _gp_rel = {"available": False, "reason": (
+            f"out-of-fold Spearman ({'nan' if rho != rho else f'{rho:.3f}'}) does not clear "
+            f"the {RELIABILITY_SPEARMAN_FLOOR:.2f} floor; a model that cannot predict held-out "
+            "runs fits lengthscales to noise, so its relevance is not a finding")}
+    else:
+        from kalos.core.gp_relevance import subsample_relevance
+        _gp_rel = subsample_relevance(
+            X_fit, y_fit, bounds=bounds,
+            groups=None if replicate_aware else list(recipe_key),
+            noise=served_fit_kwargs.get("noise"),
+            point_lengthscales=ard_lengthscales(s, len(cont_feats)),
+            seed=ANALYZE_SEED,
+        )
+    second_opinion = driver_second_opinion(
+        drv_all, _cont_names,
+        collinearity if collinearity is not None else collinearity_report(np.empty((0, 0)), []),
+        _gp_rel,
+    )
 
     # VISUALIZATION PAYLOADS: embedding (PCA), correlation (Spearman), and
     # response surface from the fitted GP. Computed while the surrogate is alive
@@ -1810,6 +1894,9 @@ def _analyze_body(
         # Response shape per feature, read off the same GP that proposed the
         # batch. Closes the interior-optimum blind spot in the rank drivers.
         "gp_shapes": gp_shapes,
+        # Rank drivers vs GP relevance and collinearity, with disagreements
+        # labelled (docs/CAMPAIGNS_API.md "Driver second opinion"). Not causal.
+        "driver_second_opinion": second_opinion,
         "proposal_features": show,
         # The SEARCH BOX of every continuous input (`design.dims`: the observed range
         # widened to include 0 for absent-as-zero columns, see `_physical_range`), so a
@@ -1917,6 +2004,14 @@ def _analyze_body(
     # every proposal says whether it is model-guided (trusted) or exploration.
     result["proposal_trust"] = proposal_trust(verdict, n_returned=len(result["proposals"]), n_requested=5)
     result["proposals"] = label_proposals(result["proposals"], result["proposal_trust"])
+    if stability_block is not None:
+        from kalos.portal.analysis_parts.stability import annotate_proposals
+        if refusal is not None and stability_block["available"]:
+            stability_block = {**stability_block, "reason": (
+                "measured on the batch the optimizer produced; that batch is withheld "
+                "because the verdict is refused")}
+        result["proposal_stability"] = stability_block
+        result["proposals"] = annotate_proposals(result["proposals"], stability_block)
     if anonymize:
         result = _anonymize_result(
             result,
