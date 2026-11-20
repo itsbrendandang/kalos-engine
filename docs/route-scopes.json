@@ -303,6 +303,14 @@
   },
   {
     "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/search",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
     "path": "/api/campaigns/{campaign_id}/setup",
     "scopes": [
       "read"

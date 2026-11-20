@@ -4,6 +4,8 @@
 - POST /api/assist/ask                   read   a sourced answer, or the guide
 - GET  /api/assist/index/status          read   provider, model, where it runs, index size
 - POST /api/assist/index/rebuild         write  rebuild the index (audited)
+- GET  /api/campaigns/{id}/search?q=&k=  read   semantic search over one campaign's
+                                                records (kalos.assist.semantic)
 
 The tenant is always the caller's (`principal.tenant`). A campaign id that is
 malformed, missing, or another tenant's gets the shared campaign 404. With
@@ -35,6 +37,8 @@ from kalos.assist.llm import (
     get_chat_model,
     model_info,
 )
+from kalos.assist.semantic import MAX_K, MAX_QUERY_CHARS
+from kalos.assist.semantic import search as semantic_search
 from kalos.assist.state import campaign_inputs
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
 from kalos.portal.campaign import CampaignNotFound, CampaignStore, get_campaign_store
@@ -114,6 +118,36 @@ def assist_ask(
     log.info("assist ask: hits=%d sources=%d abstained=%s path=%s", len(hits), len(result["sources"]),
              result["abstained"], result.get("provider_path"))
     return JSONResponse(result)
+
+
+@router.get("/api/campaigns/{campaign_id}/search")
+def campaign_search(
+    campaign_id: str,
+    q: Annotated[str, Query(min_length=1, max_length=MAX_QUERY_CHARS)],
+    k: Annotated[int, Query(ge=1, le=MAX_K)] = 10,
+    principal: Principal = Depends(require_scope(READ)),
+    store: CampaignStore = Depends(get_campaign_store),
+) -> JSONResponse:
+    """Ranked records of one campaign (runs, sheet rows, columns, notes, the
+    assistant index) for `q`: by meaning with the local embedding model, by
+    shared words otherwise (`retriever`, `fallback_reason`). Records only;
+    nothing is generated. Works with `KALOS_LLM_PROVIDER=none` (keyword)."""
+    if not _valid_campaign_id(campaign_id):
+        return campaign_not_found_response()
+    try:
+        store.campaign_info(tenant=principal.tenant, campaign_id=campaign_id)
+    except CampaignNotFound:
+        return campaign_not_found_response()
+    wait = ratelimit.check(principal.tenant, f"{principal.subject or ''}\x00search")
+    if wait:
+        return JSONResponse(
+            {"error": "too many searches in a short time; try again shortly", "code": "rate_limited"},
+            status_code=429, headers={"Retry-After": str(wait)},
+        )
+    result = semantic_search(store, principal.tenant, campaign_id, q, k=k)
+    log.info("campaign search: retriever=%s docs=%d hits=%d", result["retriever"],
+             result["n_documents"], len(result["hits"]))
+    return JSONResponse({"campaign_id": campaign_id, **result})
 
 
 def _status(store: CampaignStore, tenant: str, *, build: bool = False) -> dict[str, Any]:

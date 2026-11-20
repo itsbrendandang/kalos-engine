@@ -90,7 +90,10 @@ With `anthropic` both tiers are the same remote model, and the same checks apply
 | `KALOS_OLLAMA_MODEL` | unset | older setting. Set on its own, it is the only model (both tiers, no cascade); set with `KALOS_LLM_FAST_MODEL`, it is the quality model |
 | `KALOS_OLLAMA_TIMEOUT_S` | `120` | how long to wait for an answer |
 | `KALOS_ASSIST_ANTHROPIC_MODEL` | `claude-sonnet-5` | the Anthropic model to use |
-| `KALOS_ASSIST_EMBED` | `1` | `0` turns off local embeddings |
+| `KALOS_ASSIST_EMBED` | `1` | `0` turns off local embeddings for the question index |
+| `KALOS_EMBED_MODEL` | `nomic-embed-text` | the Ollama embedding model for semantic search |
+| `KALOS_SEMANTIC_SEARCH` | `1` | `0`: campaign search is keyword search only |
+| `KALOS_EMBED_CACHE_MAX` | `20000` | most vectors kept per tenant |
 | `KALOS_ASSIST_EMBED_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | local embedding model, used only if already on disk |
 | `KALOS_ASSIST_DOCS_DIR` | the repo's `docs/` | docs to include in the index |
 | `KALOS_ASSIST_SKILLS_DIR` | unset | an extra folder of `<slug>/SKILL.md` files to include |
@@ -108,6 +111,18 @@ To answer a question, the assistant first finds the pieces of your data that mat
 - It is derived data. Deleting the folder loses nothing; it is rebuilt from the campaign record.
 
 Install: `uv sync --extra assist` (BM25 and the .docx export). The `assist-embed` extra is optional.
+
+## Semantic search
+
+`GET /api/campaigns/{id}/search?q=...&k=10` (read scope) ranks one campaign's own records for a query: each started run (recipe, measured result, the reason given when it was started), each row of the uploaded sheet, each column and what Kalos did with it, the reason recorded with each corrected result, and the assistant index chunks for the campaign (sheet, findings, rounds, model checks, proposals). Nothing is generated: every hit is a record quoted from the campaign, so there is nothing to validate but the order.
+
+- With `KALOS_LLM_PROVIDER=ollama`, records are ranked by meaning with a small local embedding model, [`nomic-embed-text`](https://ollama.com/library/nomic-embed-text) (Apache-2.0; `ollama pull nomic-embed-text`). `retriever` is `embeddings`.
+- Otherwise, or when the model is not pulled or does not answer, records are ranked by shared words (BM25). `retriever` is `keyword` and `fallback_reason` says why. Search text is never sent to a remote provider.
+- Identity columns (operator, sample name, ...) are removed from rows and recipes before anything is embedded, by the same header screen the header mapping uses.
+- Bounds: a query of at most 500 characters, `k` at most 25, at most 3000 records per campaign (1000 sheet rows), each clipped to 1000 characters; 20 searches a minute per user (`KALOS_ASSIST_ASK_PER_MINUTE`, counted apart from questions).
+- Vectors are cached per tenant in `$KALOS_STATE_DIR/assist/<tenant>/embeddings.sqlite`, keyed by the sha256 of the model and the text, so a record is embedded once; the cache keeps at most `KALOS_EMBED_CACHE_MAX` vectors (default 20000) and drops the least recently used. Deleting it loses nothing.
+
+Response: `{campaign_id, retriever, model, fallback_reason, n_documents, hits[{kind, id, title, text, score}]}`. `score` is a similarity (embeddings) or a BM25 score (keyword); it orders hits and means nothing else.
 
 ## SOP drafts
 
@@ -131,6 +146,7 @@ All routes use the caller's tenant. Read scope unless marked.
 | `POST /api/assist/ask` `{question, campaign_id?}` | `{answer, sources[{kind, id, quote, campaign_id}], abstained, next, provider_path, offline_fallback, model, attempts, checks?}` |
 | `GET /api/assist/index/status` | `{provider, model, local, fast_model?, quality_model?, escalation?, chunks, built_at, building, retriever}` |
 | `POST /api/assist/index/rebuild` (write) | the status. Writes an audit row. |
+| `GET /api/campaigns/{id}/search?q=&k=` | `{campaign_id, retriever, model, fallback_reason, n_documents, hits[{kind, id, title, text, score}]}` |
 | `POST /api/assist/sop/draft` (write) | a draft, version 1. Writes an audit row. |
 | `POST /api/assist/sop/{id}/revise` (write) | the next version, or 422 `revision_refused` |
 | `POST /api/assist/sop/{id}/fill` (write) | the next version, or 400 `unknown_placeholder` |
