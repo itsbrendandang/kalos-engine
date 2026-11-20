@@ -333,6 +333,7 @@ def _patch_ollama(monkeypatch, replies: list[str]) -> list[str]:
     ([GOOD[0]], "schema"),  # a column left out
     ([{**GOOD[0], "note": "titer around 9.5 g/L"}, GOOD[1]], "mismatched_number"),
     ([GOOD[0], {**GOOD[1], "role": "target"}], "schema"),  # two targets
+    ([{**GOOD[0], "role": "feature"}, GOOD[1]], "schema"),  # no target: every column a feature
 ])
 def test_header_plan_failing_a_check_escalates_to_quality(monkeypatch, bad, reason):
     from kalos.normalize.config import load_config

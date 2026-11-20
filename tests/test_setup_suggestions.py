@@ -110,8 +110,14 @@ def test_model_suggestions_get_an_engine_confidence_not_the_models():
     assert s["pH"]["reason_source"] == "model"
     wrong = _reply(titer_x10={"role": "setting", "unit": None, "reason": "A process input."})
     s = _by_col(suggest(_sheet(), target="titer_g_L", cascade=Cascade(Fake("f", wrong), None)))
-    assert s["titer_x10"]["role"] == "setting" and s["titer_x10"]["confidence"] == "low"
-    assert s["titer_x10"]["engine_role"] == "derived_from_target"
+    # The data shows the column sorts runs by the result: the engine's evidence
+    # outranks the model, and both are shown.
+    assert s["titer_x10"]["role"] == "derived_from_target" and s["titer_x10"]["reason_source"] == "engine"
+    assert s["titer_x10"]["model_role"] == "setting" and s["titer_x10"]["confidence"] == "high"
+    wrong = _reply(clone_id={"role": "setting", "unit": None, "reason": "A process input."})
+    s = _by_col(suggest(_sheet(), target="titer_g_L", cascade=Cascade(Fake("f", wrong), None)))
+    assert s["clone_id"]["role"] == "setting" and s["clone_id"]["confidence"] == "low"  # name rule only
+    assert s["clone_id"]["engine_role"] == "clone"
 
 
 @pytest.mark.parametrize("bad, reason", [
@@ -211,3 +217,16 @@ def test_route_reads_only_and_is_tenant_scoped(tmp_path, monkeypatch):
         app.dependency_overrides.pop(get_campaign_store, None)
         app.dependency_overrides.pop(get_chat_model, None)
         ratelimit.reset()
+
+
+def test_leak_evidence_separated_levels_and_observed_names():
+    from kalos.assist.setup_suggest import leak_evidence
+
+    df = _sheet()
+    df["tier"] = np.where(df["titer_g_L"] > df["titer_g_L"].median(), "high", "low")
+    df["medium"] = np.where(df["titer_g_L"] > df["titer_g_L"].median(), "A", "B")  # a factor name: kept
+    df["contamination"] = "N"
+    ev = leak_evidence(df, "titer_g_L")
+    assert ev["tier"]["kind"] == "levels" and ev["titer_x10"]["kind"] == "numeric"
+    assert ev["contamination"]["kind"] == "name"
+    assert "medium" not in ev and "pH" not in ev and "passage" not in ev

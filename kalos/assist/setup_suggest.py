@@ -39,6 +39,7 @@ when there is none.
 """
 from __future__ import annotations
 
+import itertools
 import re
 from typing import Any
 
@@ -92,6 +93,13 @@ Reply with ONE JSON object: {"columns": [{"column": "...", "role": "...", "unit"
 
 
 # --- engine evidence ------------------------------------------------------------- #
+
+# Names of things judged during or after a run (the data-checks profile adds
+# `observed_hint`; this is the fallback until it is merged).
+_OBSERVED_HINT = re.compile(
+    r"contamina|steril|(?:^|_)qc(?:_|$)|(?:^|_)pass(?:_|/|$)|fail|(?:in|out)[ _]of[ _]spec|(?:^|_)oos(?:_|$)|tier|grade|verdict",
+    re.I,
+)
 
 
 def _header_unit(header: str) -> str | None:
@@ -158,6 +166,7 @@ def leak_evidence(df: pd.DataFrame, target: str | None) -> dict[str, dict[str, A
         return {str(k): dict(v) for k, v in (found or {}).items()}
     y = _numeric(df[target])
     out: dict[str, dict[str, Any]] = {}
+    observed = getattr(BIOPROCESS_PROFILE, "observed_hint", None) or _OBSERVED_HINT
     for col in df.columns:
         if col == target:
             continue
@@ -172,13 +181,14 @@ def leak_evidence(df: pd.DataFrame, target: str | None) -> dict[str, dict[str, A
                 out[str(col)] = {"kind": "numeric", "spearman": _round(float(rho)), "n": int(mask.sum())}
         else:
             levels = x[mask].astype(str)
-            if 2 <= levels.nunique() <= 10:
-                yy = y[mask]
-                total = float(((yy - yy.mean()) ** 2).sum())
-                within = float(sum(((g - g.mean()) ** 2).sum() for _, g in yy.groupby(levels)))
-                if total > 0 and 1 - within / total >= 0.9:
-                    out[str(col)] = {"kind": "levels", "share_explained": _round(1 - within / total),
-                                     "n": int(mask.sum())}
+            if 2 <= levels.nunique() <= 10 and not BIOPROCESS_PROFILE.group_hint.search(str(col)):
+                # Each level holds its own band of target values, with no
+                # overlap: the column sorts the runs exactly by the result.
+                spans = sorted((float(g.min()), float(g.max())) for _, g in y[mask].groupby(levels))
+                if all(hi < nxt_lo for (_, hi), (nxt_lo, _) in itertools.pairwise(spans)):
+                    out[str(col)] = {"kind": "levels", "separated_levels": len(spans), "n": int(mask.sum())}
+        if str(col) not in out and observed is not None and observed.search(str(col)):
+            out[str(col)] = {"kind": "name", "note": "the name reads as judged after the run"}
     return out
 
 
@@ -330,6 +340,11 @@ def suggest(df: pd.DataFrame, *, target: str | None, cascade: Cascade | None) ->
         role, reason, source = (m["role"], m["reason"], "model") if m else (e_role, e_reason, "engine")
         if name == target and role != "outcome":
             role, reason, source = "outcome", "This is the target you chose.", "engine"
+        elif (name in leaks and leaks[name].get("kind") != "name" and leaks[name].get("exclude", True)
+              and role not in ("derived_from_target", "outcome")):
+            # Data evidence (the column sorts the runs by the result) outranks
+            # the model: a leaked column is never suggested as an input.
+            role, reason, source = "derived_from_target", e_reason, "engine"
         if evidence and role in evidence:
             confidence = "high"
         elif evidence:
@@ -352,6 +367,7 @@ def suggest(df: pd.DataFrame, *, target: str | None, cascade: Cascade | None) ->
             "confidence": confidence,
             "evidence": [{"role": r, "note": n} for r, n in sorted(evidence.items())],
             "engine_role": e_role,
+            "model_role": m["role"] if m else None,
             "requires_confirmation": True,
         })
     return {

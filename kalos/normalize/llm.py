@@ -95,7 +95,16 @@ For each column in the payload, propose:
   - raw_name: the header exactly as given.
   - canonical_name: a snake_case name for the column, or null if the column \
 should be dropped (identity or free-text).
-  - role: one of "target", "feature", "group", "identity", "freetext", "metadata".
+  - role: one of "target", "feature", "group", "identity", "freetext", "metadata":
+      target   = the ONE main measured result to optimize (titer, yield, product). \
+Exactly one column is the target.
+      feature  = a process input set before the run (pH, temperature, feed, medium).
+      group    = a batch, lot, plate, campaign or replicate label.
+      identity = identifies a run, sample, well or person.
+      freetext = free-text notes.
+      metadata = anything measured or computed AFTER the run other than the \
+target (another measured result, a grade, a tier, pass/fail, contamination), \
+and dates. Never use feature for these.
   - unit_token: the unit the values carry (e.g. "C", "g/L", "mL/h"), or null if \
 the column is unit-less or you are not confident of the unit.
   - is_identity: true if this column, despite surviving the deterministic \
@@ -540,8 +549,10 @@ def plan_validator(
       none is missing (`unknown_column`, `schema`);
     - the role is one of the plan roles (`schema`);
     - a note states no number the payload did not contain (`mismatched_number`);
-    - the merged plan passes `NormalizationPlan.validate` (`schema`: e.g. two
-      targets).
+    - the merged plan passes `NormalizationPlan.validate` and names exactly
+      one target (`schema`: no target or two targets). The evaluation
+      (benchmarks/llm) found a small model calling every column, the result
+      included, a feature; a plan with no target is refused, not used.
     """
     from kalos.providers.cascade import ValidationFailed
     from kalos.providers.grounding import (
@@ -580,6 +591,8 @@ def plan_validator(
             plan.validate()
         except ValueError as exc:
             raise ValidationFailed("schema", "the plan is inconsistent (e.g. two targets)") from exc
+        if sum(1 for c in plan.columns if c.role == "target") != 1:
+            raise ValidationFailed("schema", "the plan must name exactly one target")
         return plan
 
     return validate
