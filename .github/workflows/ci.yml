@@ -176,10 +176,15 @@ jobs:
             --no-emit-project --no-hashes -o "$RUNNER_TEMP/constraints.txt"
           uv pip install -e ".[ml,portal,dev,postgres]" -c "$RUNNER_TEMP/constraints.txt"
       - name: PostgreSQL client tools (the verified-backup test needs pg_dump/pg_restore)
+        # Fails the job when they are missing: the verified backup is part of the
+        # migration contract, so its test must run here, never skip.
         run: |
-          sudo apt-get install -y -qq postgresql-client >/dev/null 2>&1 || true
-          pg_dump --version || echo "pg_dump unavailable: the verified-backup test will skip"
+          command -v pg_dump >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client; }
+          pg_dump --version
+          pg_restore --version
       - name: pytest (-m postgres)
+        env:
+          KALOS_REQUIRE_PG_TOOLS: "1"  # the backup test fails instead of skipping without pg_dump
         run: uv run --no-sync python -m pytest -v -m postgres -n auto -rs
 
   durations:
