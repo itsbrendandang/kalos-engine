@@ -99,6 +99,9 @@ def test_steps_and_levels_snap_to_real_setpoints():
         assert r["temperature_C"] in (30.0, 33.0, 37.0)  # 50 is outside the bounds
     assert res.snapping["factors"]["pH"] == {"step": 0.05}
     assert res.snapping["factors"]["temperature_C"] == {"levels": [30.0, 33.0, 37.0]}
+    # the step grid is absolute (k * step), not anchored at lo
+    off = generate_design([ContinuousFactor("pH", 6.02, 7.5, step=0.05)], n=10, seed=1)
+    assert all(abs(r["pH"] / 0.05 - round(r["pH"] / 0.05)) < 1e-9 and r["pH"] >= 6.05 for r in off.rows)
     # a truly continuous factor is never given a step, only a 1e-4-of-range resolution
     assert res.snapping["factors"]["glucose_gL"] is None
 

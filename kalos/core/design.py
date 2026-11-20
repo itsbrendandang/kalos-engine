@@ -91,7 +91,7 @@ class DesignError(ValueError):
 
 @dataclass(frozen=True)
 class ContinuousFactor:
-    """A numeric setting over [lo, hi]. `step`: values are snapped to lo + k*step.
+    """A numeric setting over [lo, hi]. `step`: values are snapped to the absolute grid k*step inside [lo, hi].
     `levels`: values are snapped to the nearest listed setpoint (inside [lo, hi]).
     At most one of the two; neither means the factor is truly continuous."""
 
@@ -126,8 +126,11 @@ class ContinuousFactor:
         if self.levels is not None:
             return np.array(sorted({float(v) for v in self.levels if self.lo - 1e-12 <= v <= self.hi + 1e-12}))
         assert self.step is not None
-        k = int(math.floor((self.hi - self.lo) / self.step + 1e-9))
-        return np.array([self._round(self.lo + i * self.step) for i in range(k + 1)])
+        # Absolute grid k * step (pipetting / weighing increments; pH 6.05, not
+        # lo + 0.05 when lo = 6.02), the same anchor as kalos.core.resolution.
+        k_lo = int(math.ceil(self.lo / self.step - 1e-9))
+        k_hi = int(math.floor(self.hi / self.step + 1e-9))
+        return np.array([self._round(k * self.step) for k in range(k_lo, k_hi + 1)])
 
     def _round(self, v: float) -> float:
         """Strip binary noise (0.1 * 3 = 0.30000000000000004) to the step's decimals."""
@@ -144,8 +147,8 @@ class ContinuousFactor:
             return g[idx]
         if self.step is not None:
             g = self.grid()
-            k = np.clip(np.rint((values - self.lo) / self.step), 0, len(g) - 1).astype(int)
-            return g[k]
+            idx = np.abs(values[:, None] - g[None, :]).argmin(axis=1)
+            return g[idx]
         # Truly continuous: no step is invented, but 1e-4 of the range is the
         # finest resolution reported (a 15-digit setpoint is noise, not a plan).
         decimals = max(0, int(math.ceil(-math.log10((self.hi - self.lo) / 1e4))))
