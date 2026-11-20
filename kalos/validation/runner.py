@@ -97,7 +97,11 @@ def validate_frame(
     run("physical_bounds", lambda: check_physical_bounds(df))
     run("duplicate_rows", lambda: check_duplicate_rows(df, outcome_hint=profile.outcome_hint))
     run("missingness", lambda: check_missingness(df))
-    run("outliers", lambda: check_outliers(df))
+    outcome_columns = [
+        str(c) for c in df.columns
+        if (target is not None and str(c) == str(target)) or profile.outcome_hint.search(str(c))
+    ]
+    run("outliers", lambda: check_outliers(df, outcome_columns=outcome_columns))
     run("provenance_metadata", lambda: check_provenance_metadata(df, profile.id_hint))
     run("replicate_adequacy", lambda: check_replicate_adequacy(df, target, feats))
     run("controls_present", lambda: check_controls_present(df))

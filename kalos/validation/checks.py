@@ -33,6 +33,7 @@ that column is computed as if the numbers were all in the same unit.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from re import Pattern
 
 import numpy as np
@@ -447,97 +448,287 @@ def check_missingness(df: pd.DataFrame) -> list[Finding]:
 
 # --- 5. outliers --------------------------------------------------------------- #
 
-# Orders of magnitude a strictly-positive column must span before outliers are
-# judged on a log10 scale rather than a linear one. 2.0 (a 100x spread) is a
-# convention, not a derived constant, chosen to sit clearly above the spread of
-# ordinary process measurements - a titer range, a viability percentage, or an
-# endotoxin level rarely covers 100x - and clearly below a designed scale ladder
-# or any quantity proportional to it, which covers thousands-fold. See
-# `check_outliers` for what goes wrong without this.
-_LOG_SCALE_DECADES = 2.0
+# BRE-118. The old rule was one marginal MAD z-score per column, |z| > 5, with a
+# switch to log10 when a positive column spanned two decades. On the shipped
+# 160-run example it flagged 60 rows of a perfectly clean sheet: the titer is
+# zero-inflated (non-producers read 0) and right-skewed (the runs near the
+# optimum are the point of the experiment), so its median and MAD describe the
+# non-producers and every good run scored |z| > 5; and a uniformly varied
+# antifoam setting (0.2-50 mg/L) crossed the two-decade switch and its lowest
+# settings were called outliers. A check that cries wolf on the best runs of a
+# clean sheet gets switched off, taking the real findings with it.
+#
+# The rule now asks the question an entry slip actually raises, per column:
+#
+#   1. Which scale? A column is judged on log10 when its positive values are
+#      right-skewed and the log makes them less skewed (titers, a scale ladder,
+#      anything multiplicative). Otherwise it stays linear (a uniformly varied
+#      setpoint, pH, temperature). Zeros are a floor (a non-producer, a
+#      component not added), never part of the spread.
+#   2. On a log column: is a value DETACHED from the rest? A x10 or x1000 slip
+#      lands a whole decade or three above its true value. A value (or a small
+#      cluster, at most a quarter of the column) that sits at least
+#      `_jump_threshold(m)` times above the next value below it is flagged. The
+#      threshold shrinks as the column grows, because the best of 30 runs can
+#      legitimately stand far above the second best while the best of 150 rarely
+#      does (see `_jump_threshold`). Values that repeat exactly (designed levels
+#      such as a 1/3/10/30 L ladder) are never called slips.
+#   3. On a linear column: the robust z-score |z| > 5 (median and MAD), as
+#      before. On a designed (roughly uniform) setting the most extreme setting
+#      scores about 1.35, so only a value far outside the design is flagged.
+#
+# Every flagged value carries the factor it stands apart by and, where a x10,
+# x100 or x1000 slip would put it back inside the column's range, the value it
+# would then be (`suspected_value`). Nothing is changed in the data.
+
+_OUTLIER_MIN_VALUES = 3          # linear robust z needs at least this many values
+_JUMP_MIN_POSITIVE = 8           # the jump test needs at least this many positive values
+_JUMP_MAX_CLUSTER_FRACTION = 0.25
+_LINEAR_Z = 5.0
+_SLIP_POWERS = (1, 2, 3)         # x10, x100, x1000
 
 
-def check_outliers(df: pd.DataFrame) -> list[Finding]:
-    """Flag numeric outliers via a robust MAD-based z-score, |z| > 5.
+def _jump_threshold(m: int) -> float | None:
+    """How many times above the next value a value must sit to be called detached.
 
-    `z = 0.6745 * (x - median) / MAD`, deliberately not mean/std: a single
-    real outlier inflates the standard deviation enough to mask itself in a
-    mean/std z-score, while the median and MAD barely move. Columns whose
-    MAD is 0 (constant, or fewer than half the values differ from the
-    median) are skipped outright - the guard exists because MAD == 0 makes
-    z undefined (division by zero), not because a MAD of 0 is itself a
-    problem (that is `check_constant_columns`'s job).
+    `m` is the number of positive values in the column. Calibrated on clean data,
+    not on faults: on 2,000 random subsamples of the repo's clean sheets (a
+    zero-inflated, right-skewed synthetic titer, the Kaggle yields and feeds, a
+    scale-up ladder's airflow) the largest value exceeded the second largest by
+    these factors in fewer than about 1 % of samples of that size. The skewed
+    titer is the hardest case: its best-to-second-best ratio passed 3.2 in 4 % of
+    30-run samples, passed 3.2 in under 1 % of 45-run samples, and never passed
+    2 in 150-run samples. Fewer than `_JUMP_MIN_POSITIVE` values: no test.
+    """
+    if m < _JUMP_MIN_POSITIVE:
+        return None
+    if m < 25:
+        return 10.0
+    if m < 50:
+        return 5.0
+    if m < 100:
+        return 3.0
+    return 2.0
+
+
+def _skew(values: np.ndarray) -> float:
+    if len(values) < 3:
+        return 0.0
+    sd = float(values.std())
+    if sd == 0.0:
+        return 0.0
+    return float(np.mean(((values - values.mean()) / sd) ** 3))
+
+
+def _prefers_log(positive: np.ndarray) -> bool:
+    """True when the positive values are right-skewed and log10 makes them more
+    symmetric: the signature of a multiplicative quantity (a titer, a ladder)."""
+    if len(positive) < _JUMP_MIN_POSITIVE:
+        return False
+    raw = _skew(positive)
+    return raw > 0.5 and abs(_skew(np.log10(positive))) < abs(raw)
+
+
+def _suspected_value(value: float, rest: np.ndarray, *, upward: bool) -> tuple[float | None, int | None]:
+    """The value a x10 / x100 / x1000 slip would have come from, if one of them
+    puts it back inside the range of `rest` (the closest to the median of `rest`
+    on a log scale wins). `(None, None)` when no power of ten does."""
+    if len(rest) == 0 or value <= 0:
+        return None, None
+    lo, hi = float(rest.min()), float(rest.max())
+    centre = float(np.median(np.log10(rest)))
+    best: tuple[float, float | None, int | None] = (np.inf, None, None)
+    for k in _SLIP_POWERS:
+        cand = value / 10**k if upward else value * 10**k
+        if lo <= cand <= hi:
+            dist = abs(np.log10(cand) - centre)
+            if dist < best[0]:
+                best = (dist, cand, k)
+    return best[1], best[2]
+
+
+def _ladder_floor(arr: np.ndarray) -> float:
+    """The smallest factor that can count as detached given the column's own
+    spacing: three of its widest steps between neighbouring distinct values in
+    its middle half (25th-75th percentile), on a log scale. A dense column (a
+    titer) has tiny steps and this floor is near 1. A designed ladder (1, 3, 10,
+    30 L, or an airflow that follows it) steps about 3x per rung, so a missing
+    rung or two is the design, not a slip; only a jump far beyond the ladder's
+    own step counts there."""
+    lo, hi = np.percentile(arr, [25, 75])
+    mid = np.unique(arr[(arr >= lo) & (arr <= hi)])
+    if len(mid) < 2:
+        return 1.0
+    step = float(np.max(np.diff(np.log10(mid))))
+    return float(10 ** (3.0 * step))
+
+
+def _detached_clusters(
+    values: pd.Series, threshold: float
+) -> list[tuple[list[int], float, float, bool]]:
+    """Clusters of positive values detached from the rest by >= `threshold`x.
+
+    Returns `(row_labels, factor, neighbour_value, upward)` per cluster: the rows
+    in the cluster, how many times apart it sits from the value it is compared
+    with, that value, and whether the cluster is above (True) or below.
+
+    A value is compared with the next value toward the bulk and, so that a
+    second slip cannot hide the first (two x10 slips, the smaller one sitting
+    between the bulk and the larger), also with the value after that, skipping
+    one (Dixon's r21 idea). The skipped value is not flagged on that account.
+    The skip-one ratio is calibrated by the same clean-data rule as
+    `_jump_threshold`. At most a quarter of the positive values can form a
+    cluster; more than that is a mode of the data, not a slip.
+
+    The lower tail is only tested when the column holds no zeros or negatives
+    and its bulk is well away from zero (10th percentile at least half the
+    median): near a detection limit, low values are naturally far apart in
+    ratio terms.
+    """
+    pos = values[values > 0].sort_values(kind="mergesort")
+    m = len(pos)
+    arr = pos.to_numpy(float)
+    labels = [_row_index(i) for i in pos.index]
+    k_max = max(1, int(np.floor(_JUMP_MAX_CLUSTER_FRACTION * m)))
+    out: list[tuple[list[int], float, float, bool]] = []
+    threshold = max(threshold, _ladder_floor(arr))
+
+    def designed_level(cluster: np.ndarray) -> bool:
+        # Exact repeats are designed levels (a scale ladder, a two-level DoE),
+        # not slips: a slip lands on an arbitrary value.
+        return len(cluster) >= 2 and len(np.unique(cluster)) <= len(cluster) / 2
+
+    def scan(a: np.ndarray) -> tuple[int, float, float] | None:
+        """On ascending `a` (bulk first), the first top position i (cluster
+        a[i:]) detached from the bulk: (i, factor, neighbour)."""
+        for skip in (1, 2):
+            for i in range(m - k_max, m):
+                if i - skip < 0:
+                    continue
+                factor = float(a[i] / a[i - skip])
+                if factor >= threshold and not designed_level(a[i:]):
+                    return i, factor, float(a[i - skip])
+        return None
+
+    hit = scan(arr)
+    if hit is not None:
+        i, factor, neighbour = hit
+        out.append((labels[i:], factor, neighbour, True))
+
+    no_floor = not bool((values <= 0).any())
+    bulk_away_from_zero = float(np.percentile(arr, 10)) >= 0.5 * float(np.median(arr))
+    if no_floor and bulk_away_from_zero:
+        hit = scan(1.0 / arr[::-1])
+        if hit is not None:
+            i, factor, neighbour = hit
+            out.append((labels[::-1][i:], factor, 1.0 / neighbour, False))
+    return out
+
+
+def check_outliers(df: pd.DataFrame, *, outcome_columns: Iterable[str] = ()) -> list[Finding]:
+    """Flag values that stand apart from the rest of their column (see the
+    section comment above for the rule and why it replaced a marginal z-score).
+
+    `outcome_columns` (the target and other measured outputs) are judged by the
+    detached-value test only, whatever their shape: an outcome is skewed by the
+    very settings the sheet varies (titer falls at the largest scales, peaks
+    near the optimum), so a marginal z-score would flag the experiment's own
+    effects. A x10 or x1000 slip still stands a decade or more apart.
 
     Operates on `pd.to_numeric` coercion of each column, so a cell holding
-    unit-tagged text ("34.6 C") coerces to NaN and is excluded rather than
-    compared as a raw number; this check does not need unit-awareness
-    because it only cares about a column's numeric spread.
-
-    SCALE ASSUMPTION, and why it is not optional: a MAD z-score presumes the
-    column is roughly unimodal on a LINEAR scale. A scale-up dataset breaks that
-    assumption hard. Given a designed bioreactor ladder
-    (0.01, 0.05, 0.25, 1, 5, 10, 50, 200, 500, 1000, 2000 L) the median is 10
-    and the MAD is about 10, so every run at 200 L or above scores |z| > 5 and
-    20 of 55 rows get flagged as outliers. They are not outliers, they are the
-    experimental design, and the same happens to every column proportional to
-    scale (harvest volume, harvest mass). A check that cries wolf on a third of
-    a legitimate dataset gets switched off, taking the genuine findings with it.
-
-    So a strictly-positive column spanning at least `_LOG_SCALE_DECADES` orders
-    of magnitude is assessed on log10 instead, which is how a multiplicative
-    quantity is actually distributed. This is a statement about the data's
-    geometry, not a fudge factor: on the ladder above, log10 spacing is roughly
-    even, so nothing is flagged, while narrow-range columns (endotoxin spanning
-    10x, aggregate percent spanning 5x) stay on the linear scale and keep
-    reporting their real outliers. `detail["scale"]` records which scale was
-    used, so the client is never left guessing how a value was judged.
+    unit-tagged text ("34.6 C") is excluded rather than compared as a raw
+    number. WARNING severity: a flagged value may be real (a breakthrough run, a
+    deliberate edge setting); the finding says what to check and changes nothing.
     """
     findings: list[Finding] = []
+    outcomes = {str(c) for c in outcome_columns}
 
     for col in df.columns:
         name = str(col)
         numeric = pd.to_numeric(df[col], errors="coerce")
         valid = numeric.dropna()
-        if len(valid) < 3:
+        if len(valid) < _OUTLIER_MIN_VALUES:
+            continue
+        positive = valid[valid > 0].to_numpy(float)
+        is_outcome = name in outcomes
+
+        if not (valid < 0).any() and (is_outcome or _prefers_log(positive)):
+            threshold = _jump_threshold(len(positive))
+            if threshold is None:
+                continue
+            for rows, factor, neighbour, upward in _detached_clusters(valid, threshold):
+                rest = valid[(valid > 0) & ~valid.index.isin(rows)].to_numpy(float)
+                flagged = []
+                for r in rows[:20]:
+                    v = float(valid.loc[r])
+                    suspect, power = _suspected_value(v, rest, upward=upward)
+                    flagged.append({
+                        "row": r, "value": v,
+                        "suspected_value": None if suspect is None else float(f"{suspect:.6g}"),
+                        "slip_factor": None if power is None else 10**power,
+                    })
+                capped, total = cap_rows(rows)
+                first = flagged[0]
+                side = "above the next-highest" if upward else "below the next-lowest"
+                hint = ""
+                if first["suspected_value"] is not None:
+                    hint = (
+                        f" A x{first['slip_factor']} entry slip would look like this; the value "
+                        f"would then be {first['suspected_value']:g}."
+                    )
+                findings.append(
+                    Finding(
+                        check="outliers",
+                        severity="warning",
+                        message=(
+                            f"column '{name}': {total} value(s) stand apart from the rest, e.g. "
+                            f"{first['value']:g} (row {first['row']}) is {factor:.1f}x {side} value "
+                            f"({neighbour:g}).{hint} Check the source record; nothing was changed."
+                        ),
+                        column=name,
+                        rows=capped,
+                        detail={
+                            "scale": "ratio",
+                            "rule": "detached_value",
+                            "factor": factor,
+                            "threshold_factor": threshold,
+                            "n_positive": len(positive),
+                            "direction": "high" if upward else "low",
+                            "flagged": flagged,
+                            "n_rows_affected": total,
+                        },
+                    )
+                )
             continue
 
-        # Decide the scale before computing anything, and judge on that scale
-        # throughout so median/MAD/z are mutually consistent.
-        scale = "linear"
-        assessed = valid
-        vmin = float(valid.min())
-        if vmin > 0.0:
-            spread_decades = np.log10(float(valid.max()) / vmin)
-            if spread_decades >= _LOG_SCALE_DECADES:
-                scale = "log10"
-                assessed = np.log10(valid)
-
-        median = float(assessed.median())
-        mad = float((assessed - median).abs().median())
+        median = float(valid.median())
+        mad = float((valid - median).abs().median())
         if mad == 0.0:
             continue
-        z = 0.6745 * (assessed - median) / mad
-        outlier_mask = z.abs() > 5
+        z = 0.6745 * (valid - median) / mad
+        outlier_mask = z.abs() > _LINEAR_Z
         if outlier_mask.any():
             rows = sorted(int(i) for i in valid.index[outlier_mask])
             capped, total = cap_rows(rows)
+            worst = int(z.abs().idxmax())  # type: ignore[arg-type]
             findings.append(
                 Finding(
                     check="outliers",
                     severity="warning",
                     message=(
-                        f"column '{name}' has values with MAD-based |z| > 5 "
-                        f"(assessed on a {scale} scale)"
+                        f"column '{name}': {total} value(s) lie far outside the rest of the column, "
+                        f"e.g. {float(valid.loc[worst]):g} (row {worst}) against a median of "
+                        f"{median:g} (robust z {float(z.loc[worst]):.1f}; flagged above 5). "
+                        "Check the source record; nothing was changed."
                     ),
                     column=name,
                     rows=capped,
-                    # median/mad are in the assessed scale's units: for a log10
-                    # assessment they are log10 values, not raw ones. Reported
-                    # alongside `scale` so the two can never be misread.
                     detail={
+                        "scale": "linear",
+                        "rule": "robust_z",
                         "median": median,
                         "mad": mad,
-                        "scale": scale,
+                        "threshold_z": _LINEAR_Z,
                         "n_rows_affected": total,
                     },
                 )

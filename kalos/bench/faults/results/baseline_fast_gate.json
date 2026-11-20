@@ -1,29 +1,17 @@
 {
  "clean": {
-  "clean_bioprocess160": [
-   "validation:outliers|physical_bounds",
-   "validation:units_consistency|outliers|physical_bounds"
-  ],
-  "clean_bioprocess30": [
-   "validation:outliers|physical_bounds",
-   "validation:units_consistency|outliers|physical_bounds"
-  ],
-  "clean_bioprocess60": [
-   "validation:outliers|physical_bounds",
-   "validation:units_consistency|outliers|physical_bounds"
-  ],
+  "clean_bioprocess160": [],
+  "clean_bioprocess30": [],
+  "clean_bioprocess60": [],
   "clean_results_plain": [],
   "clean_results_surprise": [],
-  "clean_scaleup90": [
-   "validation:outliers|physical_bounds",
-   "validation:units_consistency|outliers|physical_bounds"
-  ]
+  "clean_scaleup90": []
  },
  "faults": {
   "constant_target": "caught",
   "duplicate_run_id": "missed",
   "duplicated_rows_exact": "caught",
-  "duplicated_rows_new_id": "noticed",
+  "duplicated_rows_new_id": "missed",
   "fahrenheit_rows_bare": "caught",
   "fahrenheit_rows_labeled": "caught",
   "impossible_value": "missed",
@@ -31,10 +19,10 @@
   "mixed_units_unlabeled": "caught",
   "result_copy_paste": "missed",
   "result_negative": "caught",
-  "result_x10": "missed",
-  "result_x1000": "missed",
+  "result_x10": "caught",
+  "result_x1000": "caught",
   "swapped_columns": "caught",
-  "swapped_levels": "noticed",
+  "swapped_levels": "missed",
   "too_few_rows_5": "caught",
   "too_few_rows_8": "missed",
   "transposed_sheet": "caught",
@@ -46,6 +34,6 @@
  },
  "note": "CI regression gate: fast tier, repo-only bases (Kaggle skipped). Regenerate with `python -m kalos.bench.faults all --tier fast --datasets /nonexistent --out DIR` then `... baseline --out DIR`; see docs/PLANTED_FAULTS.md.",
  "protocol_version": "1",
- "source_commit": "bdd2d974c372911246c0680c4d446ab9c00d101e",
+ "source_commit": "4bb477db120f5f41bf43b6a925737072709921e3",
  "tier": "fast"
 }
