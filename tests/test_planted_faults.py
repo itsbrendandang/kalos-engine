@@ -291,6 +291,16 @@ def test_scorer_matches_hand_labels(tmp_path: Path) -> None:
     assert "missed (blind spot)" in md
 
 
+def test_signals_carry_the_engines_covariate_role() -> None:
+    """The adapter re-labels the engine's `covariates` block as
+    `columns:covariate [col]`, the planned code the catalogue matches on."""
+    from kalos.bench.faults import signals
+
+    out = signals.from_analysis({"covariates": {"columns": ["passage"]}})
+    assert ("columns", "covariate", "passage") in {(s["source"], s["code"], s["column"]) for s in out}
+    assert all(s["code"] != "covariate" for s in signals.from_analysis({"covariates": {"columns": []}}))
+
+
 def test_regression_gate_logic() -> None:
     base = {"faults": {"a": "caught", "b": "noticed", "c": "missed"}, "clean": {"x": [], "y": ["v:outliers"]}}
     same = {"faults": {"a": "caught", "b": "caught", "c": "missed"}, "clean": {"x": [], "y": []}}

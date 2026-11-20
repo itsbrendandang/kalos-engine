@@ -112,6 +112,11 @@ def from_analysis(result: Mapping[str, Any], df: pd.DataFrame | None = None) -> 
         out.append(signal("promotion", "not_passed", message=str(promo.get("summary", ""))))
     for col in result.get("provenance") or []:
         out.append(signal("columns", col.get("status", "unknown"), column=col.get("name")))
+    # Columns the engine itself read as covariates (recorded run properties such
+    # as passage: fitted or not, never proposed; docs/CLONES.md).
+    for col in (result.get("covariates") or {}).get("columns") or []:
+        out.append(signal("columns", "covariate", column=col,
+                          message="engine role: covariate (never proposed)"))
     cats = {str(c) for c in result.get("categorical_features") or []}
     for col in result.get("features") or []:
         out.append(signal("columns", "categorical" if str(col) in cats else "continuous", column=col))
