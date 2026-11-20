@@ -68,9 +68,9 @@ def load(path: Path):
     # score: zero-filling `Ammonia_hydroxide` (25 of 82 rows missing) took the
     # grouped-CV Spearman from 0.46 to 0.76, and on complete cases only the same
     # axis gives 0.36. The hazard is easiest to see in `Potassium_hydroxide`,
-    # where `!= 0` is exactly `Experiment == S26APR07` -- though that column is
-    # inert to the score; it is the imputed dose axis, not the batch label, that
-    # does the damage.
+    # where `!= 0` is exactly membership in one campaign (a single `Experiment`
+    # value) -- though that column is inert to the score; it is the imputed dose
+    # axis, not the batch label, that does the damage.
     unmeasured = {c: int(df[c].isna().sum()) for c in feats if df[c].isna().any()}
     feats = [c for c in feats if c not in unmeasured]
     feats = [c for c in feats if df[c].std() > 1e-9]  # only varying inputs
