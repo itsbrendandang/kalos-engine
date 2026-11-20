@@ -50,7 +50,7 @@ campaign and clone label, allowlisted label fields only) and the append-only
 `clone_titer_history` (the same two-trigger guard as `run_results`). Additive;
 its `down` step renames both tables aside (`<name>_v7_rolledback`).
 
-Schema v8 is RESERVED for the Crux items (see ~/.kalos-dev/CRUX_PORT_PLAN.md);
+Schema v8 is RESERVED for the Crux items (the planned result-check and decision-ledger work, tracked in the kalos-engine project);
 do not reuse v8 for anything else.
 
 This module is torch-free and FastAPI-free on purpose: the CLI must run on a
@@ -83,7 +83,7 @@ V4 = 4  # the append-only audit log
 V5 = 5  # the append-only result history
 V6 = 6  # campaign settings + scale-up stage gate decisions
 V7 = 7  # label-only clone registry + append-only clone titer history
-# V8 is RESERVED for the Crux items (~/.kalos-dev/CRUX_PORT_PLAN.md); never reuse it.
+# V8 is RESERVED for the Crux items (the planned result-check and decision-ledger work, tracked in the kalos-engine project); never reuse it.
 V2_NAME = "multi-campaign storage"
 V3_NAME = "background jobs"
 V4_NAME = "append-only audit log"
@@ -354,7 +354,7 @@ _V6_DDL: tuple[str, ...] = (
 # record of MEASURED titer / qP / space-time-yield values per clone (the same
 # two-trigger guard as `run_results`); a correction is a new row naming the row
 # it supersedes (`previous_id`) with a non-empty `reason`.
-# Schema v8 is RESERVED for the Crux items (see ~/.kalos-dev/CRUX_PORT_PLAN.md);
+# Schema v8 is RESERVED for the Crux items (the planned result-check and decision-ledger work, tracked in the kalos-engine project);
 # do not reuse v8 for anything else.
 _V7_TABLES = ("campaign_clones", "clone_titer_history")
 _V7_TRIGGERS = ("clone_titer_history_no_update", "clone_titer_history_no_delete")

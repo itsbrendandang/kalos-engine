@@ -17,7 +17,7 @@ for v6, `tests/test_schema_v6.py`, and for v7, `tests/test_schema_v7.py`.
 | v7 | adds `campaign_clones` (label-only clone registry) and `clone_titer_history` (append-only; below) | current (`SCHEMA_VERSION = 7`) |
 | v8 | **reserved** for the Crux items | not yet written |
 
-Schema v8 is reserved for the Crux items (see ~/.kalos-dev/CRUX_PORT_PLAN.md); do not reuse v8 for anything else.
+Schema v8 is reserved for the Crux items (the planned result-check and decision-ledger work, tracked in the kalos-engine project); do not reuse v8 for anything else.
 
 A v1 database has no `schema_migrations` table.
 
@@ -136,7 +136,7 @@ Schema v7 adds two tables (docs/CLONES.md). Both carry
   `clone_titer_history_v7_rolledback` with every row kept. A v6 engine runs on the
   result. A later `up` creates fresh, empty v7 tables (rows are not merged back); a
   second `down` renames to `<name>_v7_rolledback_2`, and so on.
-- Schema v8 is reserved for the Crux items (see ~/.kalos-dev/CRUX_PORT_PLAN.md); do
+- Schema v8 is reserved for the Crux items (the planned result-check and decision-ledger work, tracked in the kalos-engine project); do
   not reuse v8 for anything else.
 
 ## Schema v6: campaign settings and stage gate decisions

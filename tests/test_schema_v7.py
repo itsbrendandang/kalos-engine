@@ -314,7 +314,7 @@ def test_shape_check_catches_a_missing_v7_table_or_trigger(tmp_path, ddl, missin
 
 
 def test_v8_is_documented_as_reserved_for_crux():
-    line = ("Schema v8 is reserved for the Crux items (see ~/.kalos-dev/CRUX_PORT_PLAN.md); "
+    line = ("Schema v8 is reserved for the Crux items (the planned result-check and decision-ledger work, tracked in the kalos-engine project); "
             "do not reuse v8 for anything else.")
     assert line in (_REPO / "docs" / "MIGRATIONS.md").read_text()
     source = (_REPO / "kalos" / "portal" / "migrate.py").read_text()
