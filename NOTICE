@@ -1,0 +1,24 @@
+Kalos
+Copyright the Kalos authors. Licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+This product includes work adapted from the following sources.
+
+-------------------------------------------------------------------------------
+Planted-fault catalogue v2 (Bioqore lab-data lessons): idea credit
+-------------------------------------------------------------------------------
+
+Sources (ideas only; re-implemented, no code, text or data copied):
+  - github.com/Bioqore/voyager-brain-rebuild (commit 45ccce8),
+    REBUILD_clonewise.md: a target that is the mean of per-stage titer columns
+    offered as inputs; within-campaign structure that does not transfer.
+  - github.com/Bioqore/bioqore-synthetic-data-project (commit 1cc393e),
+    docs/REPLICATE_SPLIT_FINDINGS.md: replicate groups that straddle a split.
+  - github.com/Bioqore/ad_hoc_data_analyses (commit 82e6ae0), analysis
+    notebooks: non-detects recorded as zeros, plates harvested at different
+    times with no column recording it, sample ids used as recipe ids, per-plate
+    control rules.
+
+Used in: kalos/bench/faults/{PROTOCOL_V2.md,catalogue_v2.py,bases_v2.py,
+plant_v2.py,cases_v2.py}. Every case is generated from synthetic or repo-owned
+data; no partner file, value, sample id or name is used.
