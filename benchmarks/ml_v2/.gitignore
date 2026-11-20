@@ -1,0 +1,5 @@
+# Internal data (rights unconfirmed): never commit raw or row-level outputs.
+results/**/raw/internal/
+results/**/raw/backtest/internal__*/
+results/**/raw/scale/internal__*/
+results/**/_cache/
