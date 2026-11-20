@@ -2,7 +2,6 @@
 reproducibility, and bounds-sanity for the client-facing /api/run path."""
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import re
@@ -96,31 +95,15 @@ def test_upload_routes_never_read_past_the_size_cap(monkeypatch, path, data):
     assert lengths and max(lengths) <= MAX_UPLOAD_BYTES + 1
 
 
-# --- the demo routes: bounded work, token when auth is on ------------------- #
+# --- the demo routes are gone (REORG D5) -------------------------------------- #
 
 @pytest.mark.parametrize("path", ["/api/single", "/api/multi"])
-@pytest.mark.parametrize("params", [{"rounds": 0}, {"rounds": 10_000}, {"q": 0}, {"q": 500}])
-def test_demo_routes_reject_out_of_range_work(path, params):
-    """`rounds`/`q` come straight from the URL; unbounded, one request could
-    queue hours of GP fits (and `rounds=0` crashed with a 500)."""
-    assert client.get(path, params=params).status_code == 422
-
-
-@pytest.mark.parametrize("path", ["/api/single", "/api/multi"])
-def test_demo_routes_need_a_token_when_auth_is_on(monkeypatch, path):
-    monkeypatch.setenv("KALOS_AUTH_TOKENS", json.dumps([{
-        "token_sha256": hashlib.sha256(b"tok").hexdigest(), "subject": "s", "tenant": "t", "scopes": ["read"],
-    }]))
-    monkeypatch.delenv("KALOS_AUTH_TOKENS_FILE", raising=False)
-
-    assert client.get(path, params={"rounds": 1, "q": 1}).status_code == 401
-
-
-@pytest.mark.parametrize("path", ["/api/single", "/api/multi"])
-def test_demo_routes_still_serve_in_bounds_requests(path):
-    resp = client.get(path, params={"rounds": 1, "q": 1})
-    assert resp.status_code == 200
-    assert resp.json()["proposals"]
+@pytest.mark.parametrize("params", [{}, {"rounds": 1, "q": 1}])
+def test_removed_demo_routes_are_404(path, params):
+    """The synthetic GP demos were removed: unseeded, so no two calls agreed,
+    and they ran CPU-heavy loops outside the analysis slot."""
+    resp = client.get(path, params=params)
+    assert resp.status_code == 404
 
 
 def test_wrong_magic_bytes_rejected_400():

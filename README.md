@@ -109,7 +109,7 @@ and is enough for the `kalos.kit` helpers.
 | --- | --- | --- |
 | `KALOS_STATE_DIR` | `~/.kalos` | SQLite database and caches |
 | `KALOS_HOST` / `KALOS_PORT` | `127.0.0.1` / `8050` | Bind address |
-| `KALOS_ENV` | `development` | `production` removes demo routes and `/docs`, and requires auth and a CORS allowlist |
+| `KALOS_ENV` | `development` | `production` removes `/docs`, and requires auth and a CORS allowlist |
 | `KALOS_JWT_PUBLIC_KEYS_FILE` | unset | Ed25519 JWKS for per-user tokens from kalos-web; issuer, audience and TTL knobs in [`docs/ENGINE_TOKEN.md`](docs/ENGINE_TOKEN.md) |
 | `KALOS_AUTH_TOKENS` / `KALOS_AUTH_TOKENS_FILE` | unset | Hashed static tokens for service accounts |
 | `KALOS_CORS_ORIGINS` | localhost | Browser origins allowed to call the engine |
@@ -141,7 +141,6 @@ test keeps it equal to the code). `{id}` is a campaign id.
 | Assistant | `/api/assist/next`, `/ask`, `/index/*`, `/sop/*` | read / write | [`docs/ASSISTANT.md`](docs/ASSISTANT.md) |
 | Legacy: one sheet per tenant | `POST /api/run`, `GET /api/latest` | write / read | [`docs/UPLOADS.md`](docs/UPLOADS.md) |
 | Legacy: default campaign | `GET /api/campaign`, `POST /api/campaign/start`, `/result`, `/reanalyze` | read / write | [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md) |
-| Demo | `GET /api/single`, `GET /api/multi` (synthetic; not served when `KALOS_ENV=production`) | read | |
 | Probes | `GET /healthz`, `GET /readyz` (public), `GET /api/providers` (read) | | |
 
 The legacy routes still work and are tested; they act on one sheet or the

@@ -262,7 +262,7 @@ def test_result_body_is_bounded(client, store, body):
 
 def test_validation_400_is_scoped_to_campaign_routes(client):
     # other routes answer 422 in the one {error, code} envelope, detail kept (#98)
-    r = client.get("/api/single", params={"rounds": 0})
+    r = client.post("/api/scale/readout.json")  # no file, no target
     assert r.status_code == 422
     assert "detail" in r.json()
 
