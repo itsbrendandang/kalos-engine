@@ -15,7 +15,8 @@
   "F04 follow-up: reliability.verdict (not_judged below 12 runs / 3 groups; clears_floor null then)",
   "F15: selection-aware per-proposal intervals (top-30% held-out runs per fold, pooled repeats, sd floored at the 90th percentile)",
   "Caveat wording: proposal caveats say what the band was calibrated on and the coverage measured at proposed recipes, never that the range 'is calibrated' (message text only; no number changed)",
-  "Merge of main (#164 review fixes, #165 clones): additive fields only (cv_topk.direction, p_improve/expected_improvement.description, the strain blocks) plus the intended strain fix gp_shapes available on mixed fits (mixed_medium); no trust-layer number changed"
+  "Merge of main (#164 review fixes, #165 clones): additive fields only (cv_topk.direction, p_improve/expected_improvement.description, the strain blocks) plus the intended strain fix gp_shapes available on mixed fits (mixed_medium); no trust-layer number changed",
+  "Cold-start design (feat/cold-start-design): additive key exploration_design on the 5 untrusted sheets; 0 existing leaf changed, 0 removed"
  ],
  "sheets": {
   "batch_text": {
@@ -529,6 +530,183 @@
     "unit": "run"
    },
    "engine_version": "0.1.0",
+   "exploration_design": {
+    "answers": "reliability.space_filling_advice",
+    "available": true,
+    "constraints": {
+     "design_candidates_drawn": 0,
+     "design_candidates_rejected": 0,
+     "method": "rejection: candidates that break any constraint are discarded and counted",
+     "n_constraints": 0,
+     "pool": "1024 scrambled-Sobol candidates, snapped to the declared setpoints",
+     "pool_acceptance_rate": 1.0,
+     "pool_candidates_drawn": 1024,
+     "pool_candidates_rejected": 0
+    },
+    "deterministic": "the same request on the same campaign data returns the same rows",
+    "existing": {
+     "mode": "augment (fill gaps between existing runs)",
+     "n_awaiting": 0,
+     "n_measured": 48,
+     "n_used_for_gap_filling": 48,
+     "pending_included": false
+    },
+    "factors": [
+     {
+      "bounds_source": "observed_range",
+      "hi": 0.921,
+      "kind": "continuous",
+      "levels": null,
+      "lo": 0.0055,
+      "name": "feed_a",
+      "snapped": false,
+      "step": null
+     },
+     {
+      "bounds_source": "observed_range",
+      "hi": 0.9021,
+      "kind": "continuous",
+      "levels": null,
+      "lo": 0.0644,
+      "name": "feed_b",
+      "snapped": false,
+      "step": null
+     },
+     {
+      "bounds_source": "observed_range",
+      "hi": 0.9473,
+      "kind": "continuous",
+      "levels": null,
+      "lo": 0.2261,
+      "name": "temp_offset",
+      "snapped": false,
+      "step": null
+     }
+    ],
+    "kind": "exploration_design",
+    "label": "exploration design, no model yet",
+    "levels": {},
+    "method": "maximin_fill",
+    "model_not_used": {
+     "code": "model_not_trusted",
+     "message": "The model has not shown it can rank held-out past runs (verdict: not_yet), so this plan fills the gaps between the runs already made instead of following it.",
+     "n_measured": 48,
+     "proposal_trust": "exploration_untrusted",
+     "thresholds": {
+      "min_groups_for_reliable": 8,
+      "min_runs_for_reliable": 20,
+      "min_runs_to_judge": 12
+     },
+     "verdict": "not_yet",
+     "verdict_reasons": [
+      "surrogate_spearman",
+      "too_few_groups"
+     ]
+    },
+    "model_used": false,
+    "n_rows": 5,
+    "next_step": "Run these recipes and record the results (start them as runs with mode 'exploration_design', or download the CSV, fill in the target and upload it). The model is judged from 12 measured runs and can be called reliable from 20.",
+    "not_designed": [],
+    "predictions": null,
+    "predictions_note": "No predicted value, standard deviation or interval is given for any row: no model was used to choose them.",
+    "quality": {
+     "centered_l2_discrepancy": 0.242085,
+     "centered_l2_discrepancy_with_existing": 0.00899,
+     "counted": "distinct design points (space-filling rows plus one centre point; replicates excluded)",
+     "mean_nearest_neighbour_distance": 0.661032,
+     "min_distance_to_existing": 0.344026,
+     "min_pairwise_distance": 0.385822,
+     "n_points": 5,
+     "random_reference": {
+      "basis": "median of 64 random designs of the same size from the same feasible candidates",
+      "centered_l2_discrepancy": 0.124657,
+      "centered_l2_discrepancy_with_existing": 0.01342,
+      "min_distance_to_existing": 0.092786,
+      "min_pairwise_distance": 0.298788
+     },
+     "space": "continuous factors scaled to [0, 1] by their declared ranges"
+    },
+    "requested_method": "sobol",
+    "route": "POST /api/campaigns/{id}/design (more rows, setpoint steps, centre points, CSV)",
+    "rows": [
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.02961,
+       "feed_b": 0.7622,
+       "temp_offset": 0.92305
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 1,
+      "run_label": "design-01"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.91828,
+       "feed_b": 0.13659,
+       "temp_offset": 0.45158
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 2,
+      "run_label": "design-02"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.27639,
+       "feed_b": 0.88827,
+       "temp_offset": 0.75616
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 3,
+      "run_label": "design-03"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.07158,
+       "feed_b": 0.83875,
+       "temp_offset": 0.31788
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 4,
+      "run_label": "design-04"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.13141,
+       "feed_b": 0.08323,
+       "temp_offset": 0.90234
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 5,
+      "run_label": "design-05"
+     }
+    ],
+    "seed": 0,
+    "shortfall": null,
+    "snapping": {
+     "factors": {
+      "feed_a": null,
+      "feed_b": null,
+      "temp_offset": null
+     },
+     "merged_after_snapping": 0
+    },
+    "warnings": []
+   },
    "feature_ranges": {
     "feed_a": [
      0.0055,
@@ -4534,6 +4712,182 @@
     "unit": "run"
    },
    "engine_version": "0.1.0",
+   "exploration_design": {
+    "answers": "reliability.space_filling_advice",
+    "available": true,
+    "constraints": {
+     "design_candidates_drawn": 0,
+     "design_candidates_rejected": 0,
+     "method": "rejection: candidates that break any constraint are discarded and counted",
+     "n_constraints": 0,
+     "pool": "1024 scrambled-Sobol candidates, snapped to the declared setpoints",
+     "pool_acceptance_rate": 1.0,
+     "pool_candidates_drawn": 1024,
+     "pool_candidates_rejected": 0
+    },
+    "deterministic": "the same request on the same campaign data returns the same rows",
+    "existing": {
+     "mode": "augment (fill gaps between existing runs)",
+     "n_awaiting": 0,
+     "n_measured": 30,
+     "n_used_for_gap_filling": 30,
+     "pending_included": false
+    },
+    "factors": [
+     {
+      "bounds_source": "observed_range",
+      "hi": 7.519,
+      "kind": "continuous",
+      "levels": null,
+      "lo": 6.036,
+      "name": "pH",
+      "snapped": false,
+      "step": null
+     },
+     {
+      "bounds_source": "observed_range",
+      "hi": 38.74,
+      "kind": "continuous",
+      "levels": null,
+      "lo": 30.039,
+      "name": "temperature_C",
+      "snapped": false,
+      "step": null
+     },
+     {
+      "bounds_source": "observed_range",
+      "hi": 10.898,
+      "kind": "continuous",
+      "levels": null,
+      "lo": 2.133,
+      "name": "glucose_gL",
+      "snapped": false,
+      "step": null
+     }
+    ],
+    "kind": "exploration_design",
+    "label": "exploration design, no model yet",
+    "levels": {},
+    "method": "maximin_fill",
+    "model_not_used": {
+     "code": "model_not_trusted",
+     "message": "The model has not shown it can rank held-out past runs (verdict: not_yet), so this plan fills the gaps between the runs already made instead of following it.",
+     "n_measured": 30,
+     "proposal_trust": "exploration_untrusted",
+     "thresholds": {
+      "min_groups_for_reliable": 8,
+      "min_runs_for_reliable": 20,
+      "min_runs_to_judge": 12
+     },
+     "verdict": "not_yet",
+     "verdict_reasons": [
+      "surrogate_spearman"
+     ]
+    },
+    "model_used": false,
+    "n_rows": 5,
+    "next_step": "Run these recipes and record the results (start them as runs with mode 'exploration_design', or download the CSV, fill in the target and upload it). The model is judged from 12 measured runs and can be called reliable from 20.",
+    "not_designed": [],
+    "predictions": null,
+    "predictions_note": "No predicted value, standard deviation or interval is given for any row: no model was used to choose them.",
+    "quality": {
+     "centered_l2_discrepancy": 0.149712,
+     "centered_l2_discrepancy_with_existing": 0.016898,
+     "counted": "distinct design points (space-filling rows plus one centre point; replicates excluded)",
+     "mean_nearest_neighbour_distance": 0.741811,
+     "min_distance_to_existing": 0.343324,
+     "min_pairwise_distance": 0.590366,
+     "n_points": 5,
+     "random_reference": {
+      "basis": "median of 64 random designs of the same size from the same feasible candidates",
+      "centered_l2_discrepancy": 0.124657,
+      "centered_l2_discrepancy_with_existing": 0.017746,
+      "min_distance_to_existing": 0.11766,
+      "min_pairwise_distance": 0.298789
+     },
+     "space": "continuous factors scaled to [0, 1] by their declared ranges"
+    },
+    "requested_method": "sobol",
+    "route": "POST /api/campaigns/{id}/design (more rows, setpoint steps, centre points, CSV)",
+    "rows": [
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "glucose_gL": 10.3515,
+       "pH": 6.24,
+       "temperature_C": 30.2346
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 1,
+      "run_label": "design-01"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "glucose_gL": 2.1376,
+       "pH": 7.4257,
+       "temperature_C": 31.0323
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 2,
+      "run_label": "design-02"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "glucose_gL": 6.8457,
+       "pH": 7.5078,
+       "temperature_C": 34.4026
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 3,
+      "run_label": "design-03"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "glucose_gL": 3.6991,
+       "pH": 7.4645,
+       "temperature_C": 38.4726
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 4,
+      "run_label": "design-04"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "glucose_gL": 8.5751,
+       "pH": 6.4748,
+       "temperature_C": 38.5964
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 5,
+      "run_label": "design-05"
+     }
+    ],
+    "seed": 0,
+    "shortfall": null,
+    "snapping": {
+     "factors": {
+      "glucose_gL": null,
+      "pH": null,
+      "temperature_C": null
+     },
+     "merged_after_snapping": 0
+    },
+    "warnings": []
+   },
    "feature_ranges": {
     "glucose_gL": [
      2.133,
@@ -8353,6 +8707,166 @@
     "unit": "run"
    },
    "engine_version": "0.1.0",
+   "exploration_design": {
+    "answers": "reliability.space_filling_advice",
+    "available": true,
+    "constraints": {
+     "design_candidates_drawn": 0,
+     "design_candidates_rejected": 0,
+     "method": "rejection: candidates that break any constraint are discarded and counted",
+     "n_constraints": 0,
+     "pool": "1024 scrambled-Sobol candidates, snapped to the declared setpoints",
+     "pool_acceptance_rate": 1.0,
+     "pool_candidates_drawn": 1024,
+     "pool_candidates_rejected": 0
+    },
+    "deterministic": "the same request on the same campaign data returns the same rows",
+    "existing": {
+     "mode": "augment (fill gaps between existing runs)",
+     "n_awaiting": 0,
+     "n_measured": 35,
+     "n_used_for_gap_filling": 35,
+     "pending_included": false
+    },
+    "factors": [
+     {
+      "bounds_source": "observed_range",
+      "hi": 0.9027,
+      "kind": "continuous",
+      "levels": null,
+      "lo": 0.0183,
+      "name": "feed_a",
+      "snapped": false,
+      "step": null
+     },
+     {
+      "bounds_source": "observed_range",
+      "hi": 0.9759,
+      "kind": "continuous",
+      "levels": null,
+      "lo": 0.0448,
+      "name": "feed_b",
+      "snapped": false,
+      "step": null
+     }
+    ],
+    "kind": "exploration_design",
+    "label": "exploration design, no model yet",
+    "levels": {},
+    "method": "maximin_fill",
+    "model_not_used": {
+     "code": "model_not_trusted",
+     "message": "The model has not shown it can rank held-out past runs (verdict: not_yet), so this plan fills the gaps between the runs already made instead of following it.",
+     "n_measured": 35,
+     "proposal_trust": "exploration_untrusted",
+     "thresholds": {
+      "min_groups_for_reliable": 8,
+      "min_runs_for_reliable": 20,
+      "min_runs_to_judge": 12
+     },
+     "verdict": "not_yet",
+     "verdict_reasons": [
+      "too_few_groups"
+     ]
+    },
+    "model_used": false,
+    "n_rows": 5,
+    "next_step": "Run these recipes and record the results (start them as runs with mode 'exploration_design', or download the CSV, fill in the target and upload it). The model is judged from 12 measured runs and can be called reliable from 20.",
+    "not_designed": [],
+    "predictions": null,
+    "predictions_note": "No predicted value, standard deviation or interval is given for any row: no model was used to choose them.",
+    "quality": {
+     "centered_l2_discrepancy": 0.10149,
+     "centered_l2_discrepancy_with_existing": 0.021099,
+     "counted": "distinct design points (space-filling rows plus one centre point; replicates excluded)",
+     "mean_nearest_neighbour_distance": 0.366373,
+     "min_distance_to_existing": 0.210936,
+     "min_pairwise_distance": 0.295549,
+     "n_points": 5,
+     "random_reference": {
+      "basis": "median of 64 random designs of the same size from the same feasible candidates",
+      "centered_l2_discrepancy": 0.068468,
+      "centered_l2_discrepancy_with_existing": 0.032284,
+      "min_distance_to_existing": 0.033786,
+      "min_pairwise_distance": 0.152935
+     },
+     "space": "continuous factors scaled to [0, 1] by their declared ranges"
+    },
+    "requested_method": "sobol",
+    "route": "POST /api/campaigns/{id}/design (more rows, setpoint steps, centre points, CSV)",
+    "rows": [
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.88444,
+       "feed_b": 0.09867
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 1,
+      "run_label": "design-01"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.03395,
+       "feed_b": 0.58411
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 2,
+      "run_label": "design-02"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.23765,
+       "feed_b": 0.41167
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 3,
+      "run_label": "design-03"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.51352,
+       "feed_b": 0.38709
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 4,
+      "run_label": "design-04"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.11672,
+       "feed_b": 0.0554
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 5,
+      "run_label": "design-05"
+     }
+    ],
+    "seed": 0,
+    "shortfall": null,
+    "snapping": {
+     "factors": {
+      "feed_a": null,
+      "feed_b": null
+     },
+     "merged_after_snapping": 0
+    },
+    "warnings": []
+   },
    "feature_ranges": {
     "feed_a": [
      0.0183,
@@ -12080,6 +12594,182 @@
     "unit": "run"
    },
    "engine_version": "0.1.0",
+   "exploration_design": {
+    "answers": "reliability.space_filling_advice",
+    "available": true,
+    "constraints": {
+     "design_candidates_drawn": 0,
+     "design_candidates_rejected": 0,
+     "method": "rejection: candidates that break any constraint are discarded and counted",
+     "n_constraints": 0,
+     "pool": "1024 scrambled-Sobol candidates, snapped to the declared setpoints",
+     "pool_acceptance_rate": 1.0,
+     "pool_candidates_drawn": 1024,
+     "pool_candidates_rejected": 0
+    },
+    "deterministic": "the same request on the same campaign data returns the same rows",
+    "existing": {
+     "mode": "augment (fill gaps between existing runs)",
+     "n_awaiting": 0,
+     "n_measured": 60,
+     "n_used_for_gap_filling": 60,
+     "pending_included": false
+    },
+    "factors": [
+     {
+      "bounds_source": "observed_range",
+      "hi": 0.94873,
+      "kind": "continuous",
+      "levels": null,
+      "lo": 0.0196,
+      "name": "feed_a",
+      "snapped": false,
+      "step": null
+     },
+     {
+      "bounds_source": "observed_range",
+      "hi": 0.9477,
+      "kind": "continuous",
+      "levels": null,
+      "lo": 0.00141,
+      "name": "feed_b",
+      "snapped": false,
+      "step": null
+     },
+     {
+      "bounds_source": "observed_range",
+      "hi": 0.92717,
+      "kind": "continuous",
+      "levels": null,
+      "lo": 0.1345,
+      "name": "temp_offset",
+      "snapped": false,
+      "step": null
+     }
+    ],
+    "kind": "exploration_design",
+    "label": "exploration design, no model yet",
+    "levels": {},
+    "method": "maximin_fill",
+    "model_not_used": {
+     "code": "model_not_trusted",
+     "message": "The model has not shown it can rank held-out past runs (verdict: not_yet), so this plan fills the gaps between the runs already made instead of following it.",
+     "n_measured": 60,
+     "proposal_trust": "exploration_untrusted",
+     "thresholds": {
+      "min_groups_for_reliable": 8,
+      "min_runs_for_reliable": 20,
+      "min_runs_to_judge": 12
+     },
+     "verdict": "not_yet",
+     "verdict_reasons": [
+      "surrogate_spearman"
+     ]
+    },
+    "model_used": false,
+    "n_rows": 5,
+    "next_step": "Run these recipes and record the results (start them as runs with mode 'exploration_design', or download the CSV, fill in the target and upload it). The model is judged from 12 measured runs and can be called reliable from 20.",
+    "not_designed": [],
+    "predictions": null,
+    "predictions_note": "No predicted value, standard deviation or interval is given for any row: no model was used to choose them.",
+    "quality": {
+     "centered_l2_discrepancy": 0.157042,
+     "centered_l2_discrepancy_with_existing": 0.035744,
+     "counted": "distinct design points (space-filling rows plus one centre point; replicates excluded)",
+     "mean_nearest_neighbour_distance": 0.483141,
+     "min_distance_to_existing": 0.396295,
+     "min_pairwise_distance": 0.388385,
+     "n_points": 5,
+     "random_reference": {
+      "basis": "median of 64 random designs of the same size from the same feasible candidates",
+      "centered_l2_discrepancy": 0.124657,
+      "centered_l2_discrepancy_with_existing": 0.039921,
+      "min_distance_to_existing": 0.14035,
+      "min_pairwise_distance": 0.298781
+     },
+     "space": "continuous factors scaled to [0, 1] by their declared ranges"
+    },
+    "requested_method": "sobol",
+    "route": "POST /api/campaigns/{id}/design (more rows, setpoint steps, centre points, CSV)",
+    "rows": [
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.78823,
+       "feed_b": 0.92981,
+       "temp_offset": 0.35417
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 1,
+      "run_label": "design-01"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.6994,
+       "feed_b": 0.02056,
+       "temp_offset": 0.16813
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 2,
+      "run_label": "design-02"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.3661,
+       "feed_b": 0.71987,
+       "temp_offset": 0.46842
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 3,
+      "run_label": "design-03"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.89231,
+       "feed_b": 0.42929,
+       "temp_offset": 0.53627
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 4,
+      "run_label": "design-04"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.41849,
+       "feed_b": 0.01659,
+       "temp_offset": 0.36135
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 5,
+      "run_label": "design-05"
+     }
+    ],
+    "seed": 0,
+    "shortfall": null,
+    "snapping": {
+     "factors": {
+      "feed_a": null,
+      "feed_b": null,
+      "temp_offset": null
+     },
+     "merged_after_snapping": 0
+    },
+    "warnings": []
+   },
    "feature_ranges": {
     "feed_a": [
      0.0196,
@@ -23000,6 +23690,182 @@
     "unit": "run"
    },
    "engine_version": "0.1.0",
+   "exploration_design": {
+    "answers": "reliability.space_filling_advice",
+    "available": true,
+    "constraints": {
+     "design_candidates_drawn": 0,
+     "design_candidates_rejected": 0,
+     "method": "rejection: candidates that break any constraint are discarded and counted",
+     "n_constraints": 0,
+     "pool": "1024 scrambled-Sobol candidates, snapped to the declared setpoints",
+     "pool_acceptance_rate": 1.0,
+     "pool_candidates_drawn": 1024,
+     "pool_candidates_rejected": 0
+    },
+    "deterministic": "the same request on the same campaign data returns the same rows",
+    "existing": {
+     "mode": "augment (fill gaps between existing runs)",
+     "n_awaiting": 0,
+     "n_measured": 20,
+     "n_used_for_gap_filling": 20,
+     "pending_included": false
+    },
+    "factors": [
+     {
+      "bounds_source": "observed_range",
+      "hi": 0.9848,
+      "kind": "continuous",
+      "levels": null,
+      "lo": 0.0824,
+      "name": "feed_a",
+      "snapped": false,
+      "step": null
+     },
+     {
+      "bounds_source": "observed_range",
+      "hi": 0.9928,
+      "kind": "continuous",
+      "levels": null,
+      "lo": 0.0026,
+      "name": "feed_b",
+      "snapped": false,
+      "step": null
+     },
+     {
+      "bounds_source": "observed_range",
+      "hi": 0.9465,
+      "kind": "continuous",
+      "levels": null,
+      "lo": 0.0017,
+      "name": "temp_offset",
+      "snapped": false,
+      "step": null
+     }
+    ],
+    "kind": "exploration_design",
+    "label": "exploration design, no model yet",
+    "levels": {},
+    "method": "maximin_fill",
+    "model_not_used": {
+     "code": "model_not_trusted",
+     "message": "The model has not shown it can rank held-out past runs (verdict: not_yet), so this plan fills the gaps between the runs already made instead of following it.",
+     "n_measured": 20,
+     "proposal_trust": "exploration_untrusted",
+     "thresholds": {
+      "min_groups_for_reliable": 8,
+      "min_runs_for_reliable": 20,
+      "min_runs_to_judge": 12
+     },
+     "verdict": "not_yet",
+     "verdict_reasons": [
+      "surrogate_spearman"
+     ]
+    },
+    "model_used": false,
+    "n_rows": 5,
+    "next_step": "Run these recipes and record the results (start them as runs with mode 'exploration_design', or download the CSV, fill in the target and upload it). The model is judged from 12 measured runs and can be called reliable from 20.",
+    "not_designed": [],
+    "predictions": null,
+    "predictions_note": "No predicted value, standard deviation or interval is given for any row: no model was used to choose them.",
+    "quality": {
+     "centered_l2_discrepancy": 0.285278,
+     "centered_l2_discrepancy_with_existing": 0.023108,
+     "counted": "distinct design points (space-filling rows plus one centre point; replicates excluded)",
+     "mean_nearest_neighbour_distance": 0.408571,
+     "min_distance_to_existing": 0.390575,
+     "min_pairwise_distance": 0.38123,
+     "n_points": 5,
+     "random_reference": {
+      "basis": "median of 64 random designs of the same size from the same feasible candidates",
+      "centered_l2_discrepancy": 0.124657,
+      "centered_l2_discrepancy_with_existing": 0.037827,
+      "min_distance_to_existing": 0.12996,
+      "min_pairwise_distance": 0.298786
+     },
+     "space": "continuous factors scaled to [0, 1] by their declared ranges"
+    },
+    "requested_method": "sobol",
+    "route": "POST /api/campaigns/{id}/design (more rows, setpoint steps, centre points, CSV)",
+    "rows": [
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.18044,
+       "feed_b": 0.01241,
+       "temp_offset": 0.34539
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 1,
+      "run_label": "design-01"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.09169,
+       "feed_b": 0.89832,
+       "temp_offset": 0.41781
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 2,
+      "run_label": "design-02"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.60674,
+       "feed_b": 0.08333,
+       "temp_offset": 0.48167
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 3,
+      "run_label": "design-03"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.11473,
+       "feed_b": 0.3856,
+       "temp_offset": 0.27686
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 4,
+      "run_label": "design-04"
+     },
+     {
+      "label": "exploration design, no model yet",
+      "model_used": false,
+      "recipe": {
+       "feed_a": 0.12512,
+       "feed_b": 0.7753,
+       "temp_offset": 0.07909
+      },
+      "replicate_of": null,
+      "role": "space_filling",
+      "row": 5,
+      "run_label": "design-05"
+     }
+    ],
+    "seed": 0,
+    "shortfall": null,
+    "snapping": {
+     "factors": {
+      "feed_a": null,
+      "feed_b": null,
+      "temp_offset": null
+     },
+     "merged_after_snapping": 0
+    },
+    "warnings": []
+   },
    "feature_ranges": {
     "feed_a": [
      0.0824,

@@ -4,6 +4,12 @@ Newest first.
 
 ## Unreleased
 
+### Added - cold-start experiment design (`docs/COLD_START_DESIGN.md`)
+
+- `POST /api/campaigns/{id}/design` (scope `write`, at most 96 rows): a space-filling plan for a campaign with no or few measured runs (scrambled Sobol or LHS-maximin, seeded). It respects the setup's bounds and linear constraints (by rejection, with the counts reported), snaps to declared setpoint steps or levels (no step is ever invented), balances categorical levels and follows the clone policy, and adds optional centre points and replicate slots. Existing runs are augmented by gap filling. Every row is labelled "exploration design, no model yet" and carries no predicted value or interval. The response reports quality metrics (minimum pairwise distance, centered L2 discrepancy, a random-design reference) and why the model is not used. `format=csv` returns the plan as a run sheet to fill in and upload.
+- Analyses whose verdict withholds the batch or labels it exploration now carry an additive `exploration_design` (5 gap-filling rows). No other field changes: the trust goldens show 0 changed and 0 removed leaves.
+- Regression tests for BayOp's edge-case fixtures (flat target, single row, NaN, column mismatch); the four upload-side behaviours were already handled on main. Benchmark of starting designs and sizes: `benchmarks/cold_start/`. Idea credit: NOTICE.
+
 ### Changed - selection-aware proposal intervals (F15, ML audit B1 fix 2; interval numbers change)
 
 - `proposals[].intervals` are calibrated on the held-out runs each fold model ranked highest (top 30%, both CV repeats) with the proposal sd floored at the 90th percentile of held-out sds (`method: conformal_selection_aware`, `coverage_basis: held_out_top_ranked_runs`). Measured at proposals on fresh simulation seeds: 90% band 0.60-0.83 -> 0.92-0.99, 95% band 0.72-0.92 -> 0.96-0.99, at 2.5-3.2x the median width; in-box coverage 0.98-1.00 (conservative). Per-level fallback to the plain band with `selection_aware_unavailable` when too few runs are selected. VALIDATION.md has the table.

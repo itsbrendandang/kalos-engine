@@ -318,6 +318,19 @@
     "response_model": null
   },
   {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/design",
+    "module": "kalos.portal.design_api",
+    "endpoint": "design_campaign",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
     "method": "GET",
     "path": "/api/campaigns/{campaign_id}/export/rows",
     "module": "kalos.portal.exports_api",
