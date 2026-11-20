@@ -40,7 +40,7 @@ These rules are non-negotiable. If a task conflicts with one, stop and ask; do n
 - Moves use git mv with import-only edits, in separate PRs from behaviour changes.
 
 ## 7. Workflow
-- Work in your own worktree and branch from origin/main. Never work in ~/kalos/kalos-engine (it serves the live engine on :8050) or in ~/.kalos. Use a temporary KALOS_STATE_DIR for tests.
+- Work in your own worktree and branch from origin/main. Never work in ~/kalos/kalos-engine (it serves the live engine on :8050) or in ~/.kalos. Use a temporary KALOS_STATE_DIR for tests. Never use pkill or killall; stop only the PIDs you started yourself.
 - Before a PR: ruff, mypy, pytest -n 8 with KALOS_TORCH_THREADS=1, all green. Open the PR with CI green.
 - Merges go through the release captain: CI green, a reviewer's SHIP verdict, a verifier's VERIFIED verdict, and no unexplained scoreboard regression.
 
