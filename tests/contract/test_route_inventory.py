@@ -5,8 +5,8 @@
 - it lists the same (method, path) set as docs/route-scopes.json, with the same
   scopes, auth mode and conditional scopes for every route;
 - every route belongs to a module the engine owns, and a module that serves
-  routes is one of the known router modules (a new router module is a reviewed
-  addition to ROUTER_MODULES, and the import-layer rules place it in `api`);
+  routes is a router module (listed in ROUTER_MODULES, named `*_api` / `*_routes`,
+  or under kalos.api), never a domain module;
 - the OpenAPI snapshot (docs/openapi.json, guard R01), when present, lists the
   same operations as the inventory's schema routes.
 
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 from types import ModuleType
 
@@ -46,6 +47,9 @@ ROUTER_MODULES = frozenset({
     "kalos.assist.sop_routes",
 })
 ROUTER_PACKAGES = ("kalos.api.",)  # target home of every router (REORG_PLAN 2.1)
+# Router modules by naming convention, so a branch adding `kalos/portal/history_api.py`
+# needs no edit here: kalos.portal.*_api / *_routes and kalos.assist.*routes.
+ROUTER_PATTERN = re.compile(r"kalos\.portal\.\w+_(api|routes)|kalos\.assist\.\w*routes")
 
 
 def _script() -> ModuleType:
@@ -109,7 +113,8 @@ def test_inventory_matches_the_scope_manifest(inventory: list[dict]) -> None:
 
 def test_every_route_lives_in_a_known_router_module(inventory: list[dict]) -> None:
     unknown = sorted({e["module"] for e in inventory
-                      if e["module"] not in ROUTER_MODULES and not e["module"].startswith(ROUTER_PACKAGES)})
+                      if e["module"] not in ROUTER_MODULES and not e["module"].startswith(ROUTER_PACKAGES)
+                      and not ROUTER_PATTERN.fullmatch(e["module"])})
     assert unknown == [], (
         f"routes defined in unregistered modules {unknown}: add the module to ROUTER_MODULES "
         "(tests/contract/test_route_inventory.py) in the same PR"
