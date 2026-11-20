@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from kalos.api.request_context import current_request_id
@@ -58,41 +58,136 @@ class Records:
 
 
 _CACHE: OrderedDict[tuple[str, str], tuple[Backend, Backend]] = OrderedDict()
-_CACHE_LOCK = threading.Lock()
+_CACHE_LOCK = threading.Lock()  # guards the dicts only; never held while connecting
 _CACHE_MAX = 8
+_OPEN_LOCKS: dict[tuple[str, str], threading.Lock] = {}
+# A failed open is remembered for a short, growing backoff, so a down or
+# misconfigured database costs one connection attempt per window instead of one
+# per request (each attempt can take KALOS_DB_CONNECT_TIMEOUT seconds).
+BACKOFF_FIRST_S = 5.0
+BACKOFF_MAX_S = 300.0
+
+
+@dataclass
+class _Failure:
+    error: Exception
+    until: float
+    attempts: int
+
+
+_FAILURES: dict[tuple[str, str], _Failure] = {}
+
+
+class RecordsStorageUnavailable(RuntimeError):
+    """The records database could not be opened (cached for `retry_after` s).
+    `cause` is the redacted storage error; it never carries the URL's password."""
+
+    def __init__(self, cause: Exception, retry_after: float) -> None:
+        super().__init__(str(cause))
+        self.cause = cause
+        self.retry_after = retry_after
+
+
+def _key(state_dir: Path) -> tuple[str, str]:
+    return (str(state_dir), os.environ.get(DATABASE_URL_ENV, "").strip())
+
+
+def _open(state_dir: Path) -> tuple[Backend, Backend]:
+    """Open both backends. Database driver errors are re-raised as
+    `StorageConfigError` naming only their type (their text could name the host)."""
+    from kalos.storage.backend import DB_ERRORS, StorageConfigError
+
+    try:
+        records = open_backend(state_dir)
+    except DB_ERRORS as exc:
+        raise StorageConfigError(
+            f"the records database could not be opened ({type(exc).__name__})") from None
+    campaigns = (
+        records if records.dialect == SQLITE
+        else Backend(BackendConfig(SQLITE), sqlite_path=state_dir / SQLITE_FILENAME)
+    )
+    return records, campaigns
 
 
 def _backends(state_dir: Path) -> tuple[Backend, Backend]:
-    key = (str(state_dir), os.environ.get(DATABASE_URL_ENV, "").strip())
+    """The cached backends for this state dir and URL. Raises
+    `RecordsStorageUnavailable` while a recent failure is in its backoff."""
+    key = _key(state_dir)
     with _CACHE_LOCK:
         hit = _CACHE.get(key)
         if hit is not None:
             _CACHE.move_to_end(key)
             return hit
-        records = open_backend(state_dir)
-        campaigns = (
-            records if records.dialect == SQLITE
-            else Backend(BackendConfig(SQLITE), sqlite_path=state_dir / SQLITE_FILENAME)
-        )
-        _CACHE[key] = (records, campaigns)
-        while len(_CACHE) > _CACHE_MAX:
-            _, (old_r, old_c) = _CACHE.popitem(last=False)
+        failure = _FAILURES.get(key)
+        if failure is not None and time.monotonic() < failure.until:
+            raise RecordsStorageUnavailable(failure.error, failure.until - time.monotonic())
+        open_lock = _OPEN_LOCKS.setdefault(key, threading.Lock())
+    with open_lock:  # one opener per key; other keys and cache hits are not blocked
+        with _CACHE_LOCK:
+            hit = _CACHE.get(key)
+            if hit is not None:
+                return hit
+            failure = _FAILURES.get(key)
+            if failure is not None and time.monotonic() < failure.until:
+                raise RecordsStorageUnavailable(failure.error, failure.until - time.monotonic())
+        try:
+            opened = _open(state_dir)
+        except Exception as exc:
+            attempts = (failure.attempts + 1) if failure is not None else 1
+            wait = min(BACKOFF_FIRST_S * 2 ** (attempts - 1), BACKOFF_MAX_S)
+            with _CACHE_LOCK:
+                _FAILURES[key] = _Failure(exc, time.monotonic() + wait, attempts)
+            log.warning("records storage unavailable (%s); next attempt in %.0fs",
+                        type(exc).__name__, wait)
+            raise RecordsStorageUnavailable(exc, wait) from None
+        with _CACHE_LOCK:
+            _FAILURES.pop(key, None)
+            _CACHE[key] = opened
+            evicted = []
+            while len(_CACHE) > _CACHE_MAX:
+                evicted.append(_CACHE.popitem(last=False)[1])
+        for old_r, old_c in evicted:
             for b in {id(old_r): old_r, id(old_c): old_c}.values():
                 b.close()
-        return records, campaigns
+        return opened
+
+
+def open_records_storage(state_dir: Path) -> None:
+    """Engine startup (kalos/portal/app.py `_lifespan`): with
+    `KALOS_DATABASE_URL` set, open the PostgreSQL backend now, which creates an
+    empty schema or verifies the current one (pg_runner.ensure_schema). A
+    foreign, damaged, older or newer schema, or an unreachable server, raises
+    (`PgMigrationError` / `StorageConfigError`) and the boot fails. SQLite needs
+    nothing here: `CampaignStore` has already migrated `portal.db`."""
+    if not _key(state_dir)[1]:
+        return
+    with _CACHE_LOCK:
+        _FAILURES.pop(_key(state_dir), None)  # a restart always tries again
+    try:
+        _backends(state_dir)
+    except RecordsStorageUnavailable as exc:
+        raise exc.cause from None
 
 
 def reset_backends() -> None:
-    """Close and forget every cached backend (tests)."""
+    """Close and forget every cached backend and failure (tests)."""
     with _CACHE_LOCK:
-        while _CACHE:
-            _, (r, c) = _CACHE.popitem()
-            for b in {id(r): r, id(c): c}.values():
-                b.close()
+        _FAILURES.clear()
+        items = list(_CACHE.values())
+        _CACHE.clear()
+    for r, c in items:
+        for b in {id(r): r, id(c): c}.values():
+            b.close()
 
 
 def get_records(store: CampaignStore = Depends(get_campaign_store)) -> Records:
-    records, campaigns = _backends(store.state_dir)
+    try:
+        records, campaigns = _backends(store.state_dir)
+    except RecordsStorageUnavailable as exc:
+        raise HTTPException(
+            status_code=503, detail="records storage is unavailable; try again later",
+            headers={"Retry-After": str(max(1, int(exc.retry_after + 0.999)))},
+        ) from None
     return Records(records=records, campaigns=campaigns, store=store)
 
 

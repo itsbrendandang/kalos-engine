@@ -39,6 +39,9 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from kalos.api.request_context import RequestIdMiddleware
+from kalos.api.routers._records_common import (
+    open_records_storage as _open_records_storage,
+)
 from kalos.api.routers.lineage import router as _lineage_router
 from kalos.api.routers.projects import router as _projects_router
 from kalos.api.routers.units import router as _units_router
@@ -244,6 +247,8 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
         raise
     except Exception:  # noqa: BLE001 - surfaced by /readyz instead
         log.exception("campaign store could not be opened at startup")
+    if store is not None:  # KALOS_DATABASE_URL: open + check the records schema; a bad one fails the boot
+        _open_records_storage(store.state_dir)
     # The background-job runner (docs/JOBS.md): recovers jobs orphaned by a
     # previous process, then schedules worker processes. KALOS_JOBS_ENABLED=0
     # leaves it off and the job routes answer 503.
