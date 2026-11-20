@@ -27,8 +27,8 @@ The rules repositories follow:
 - booleans are INTEGER 0/1 and times are epoch seconds (REAL / DOUBLE PRECISION).
 
 Transactions: a write on SQLite is `BEGIN IMMEDIATE` (the database write lock up
-front); on PostgreSQL it is READ COMMITTED and takes one database-wide advisory
-lock first, so writers serialize exactly as on SQLite, across processes. A read
+front); on PostgreSQL it is READ COMMITTED and takes the schema's advisory lock
+(`write_lock_key`) first, so writers serialize exactly as on SQLite, across processes. A read
 is one snapshot (SQLite deferred BEGIN; PostgreSQL REPEATABLE READ READ ONLY).
 
 The DSN is a credential: it is never logged or put in an error unredacted
@@ -36,6 +36,7 @@ The DSN is a credential: it is never logged or put in an error unredacted
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -47,7 +48,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import quote
 
 from kalos.envconfig import ConfigError, env_enum, env_int
 
@@ -63,11 +64,6 @@ SQLITE_BUSY_TIMEOUT_MS = 5000
 SQLITE = "sqlite"
 POSTGRES = "postgres"
 
-# The key of the database-wide write lock (pg_advisory_xact_lock): "kalos" in
-# ASCII. Every write transaction and every migration takes it first.
-WRITE_LOCK_KEY = 0x6B616C6F73
-
-_SAFE_SSLMODES = ("require", "verify-ca", "verify-full")
 _LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1", "")
 
 
@@ -145,7 +141,7 @@ def redact_dsn(dsn: str) -> str:
         any("@" in v for v in shown)
         or (password and any(password in v for v in shown if v))
         or (port and _PORT_RE.fullmatch(port) is None)
-        or "@" in dsn and not user
+        or ("@" in dsn and not user)
         or any(c in dbname for c in "/?#")
     ):
         return REDACTED_DSN
@@ -155,41 +151,65 @@ def redact_dsn(dsn: str) -> str:
     return f"postgresql://{netloc}/{quote(dbname, safe='')}"
 
 
-def _dsn_host_and_sslmode(dsn: str) -> tuple[str, str | None]:
-    parts = urlsplit(dsn)
-    query = parse_qs(parts.query)
-    host = (parts.hostname or "").lower()
-    if not host and "host" in query:  # postgresql:///db?host=/var/run/postgresql
-        host = query["host"][0]
-    sslmode = query.get("sslmode", [None])[0]
-    return host, sslmode
+def resolved_endpoints(dsn: str, environ: Mapping[str, str] | None = None) -> tuple[list[str], str]:
+    """What libpq will actually connect to: every host and hostaddr (a
+    comma-separated list is several), with the `PGHOST` / `PGHOSTADDR` /
+    `PGSSLMODE` environment defaults libpq applies when the URL leaves them
+    out, and the effective sslmode (libpq's default is `prefer`). Raises
+    `StorageConfigError` when the URL does not parse."""
+    env = os.environ if environ is None else environ
+    params = conninfo(dsn)
+    if params is None:
+        raise StorageConfigError(f"{DATABASE_URL_ENV} could not be parsed as a PostgreSQL connection URL")
+    hosts = params.get("host") or env.get("PGHOST", "")
+    addrs = params.get("hostaddr") or env.get("PGHOSTADDR", "")
+    endpoints = [h.strip() for h in f"{hosts},{addrs}".split(",") if h.strip()]
+    sslmode = params.get("sslmode") or env.get("PGSSLMODE") or "prefer"
+    return endpoints, sslmode
+
+
+def _on_box(endpoint: str) -> bool:
+    return endpoint.startswith("/") or endpoint.lower() in _LOOPBACK_HOSTS
 
 
 def check_database_settings(environ: Mapping[str, str] | None = None) -> BackendConfig:
     """Validate the storage settings before the engine binds a socket.
 
     The environment profile (`KALOS_ENV`, kalos/portal/config.py) applies here
-    too: in `production`, a PostgreSQL URL to a host off this machine must ask
-    for TLS (`sslmode=require`, `verify-ca` or `verify-full`); a unix socket or
-    a loopback host needs none. On PostgreSQL the driver and the pool bounds
-    are checked too."""
+    too. In `production`, if ANY endpoint libpq would use (the URL's hosts and
+    hostaddrs, or `PGHOST` / `PGHOSTADDR` when the URL has none) is off this
+    machine, the effective sslmode (the URL's, else `PGSSLMODE`) must be
+    `verify-full`: encrypted AND the server's certificate checked against its
+    host name. A unix socket or a loopback address needs none (no host at all
+    means libpq's default unix socket). On PostgreSQL the driver and the pool
+    bounds are checked too."""
     cfg = backend_from_env(environ)
     if not cfg.is_postgres:
         return cfg
-    production = env_enum("KALOS_ENV", ("development", "production"), "development") == "production"
-    host, sslmode = _dsn_host_and_sslmode(cfg.dsn or "")
-    off_box = not (host in _LOOPBACK_HOSTS or host.startswith("/"))
-    if production and off_box and sslmode not in _SAFE_SSLMODES:
-        raise StorageConfigError(
-            f"KALOS_ENV=production with {DATABASE_URL_ENV} pointing at another host requires "
-            "TLS: add sslmode=require (or verify-ca / verify-full) to the URL"
-        )
     _require_psycopg()
+    production = env_enum("KALOS_ENV", ("development", "production"), "development") == "production"
+    endpoints, sslmode = resolved_endpoints(cfg.dsn or "", None)
+    off_box = any(not _on_box(e) for e in endpoints)
+    if production and off_box and sslmode != "verify-full":
+        raise StorageConfigError(
+            f"KALOS_ENV=production with {DATABASE_URL_ENV} reaching another host requires "
+            "sslmode=verify-full (TLS with the server certificate checked against its name); "
+            f"the effective sslmode is {sslmode[:16]!r}"
+        )
     lo, hi = _pool_bounds()
     if hi < lo:
         raise StorageConfigError(f"{POOL_MAX_ENV} ({hi}) is below {POOL_MIN_ENV} ({lo})")
     _connect_timeout()
     return cfg
+
+
+def write_lock_key(schema: str) -> int:
+    """The advisory-lock key for write transactions on one PostgreSQL schema: a
+    stable signed 64-bit hash of "kalos:<schema>", so two engines (or a test
+    and an engine) on different schemas of one database never block each other,
+    and every writer on the same schema shares one key."""
+    digest = hashlib.sha256(f"kalos:{schema}".encode()).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
 
 
 def _pool_bounds() -> tuple[int, int]:
@@ -352,6 +372,14 @@ class Backend:
             self._sqlite = conn
         else:
             self._pool = _open_pool(config.dsn or "")
+            try:
+                with self._pool.connection() as raw:
+                    (schema,) = raw.execute("SELECT current_schema()").fetchone()
+            except BaseException:
+                self._pool.close()
+                raise
+            # Writers on THIS schema serialize on one advisory lock (write_lock_key).
+            self.lock_key = write_lock_key(str(schema))
 
     def describe(self) -> str:
         return self.config.describe()
@@ -378,7 +406,7 @@ class Backend:
             return
         with self._pool.connection() as raw:
             conn = Conn(raw, POSTGRES)
-            with pg_transaction(conn, write=write):
+            with pg_transaction(conn, write=write, lock_key=self.lock_key):
                 yield conn
 
     def close(self) -> None:
@@ -431,14 +459,14 @@ def pg_connect(dsn: str) -> Conn:
 
 
 @contextmanager
-def pg_transaction(conn: Conn, *, write: bool) -> Iterator[Conn]:
+def pg_transaction(conn: Conn, *, write: bool, lock_key: int) -> Iterator[Conn]:
     """One PostgreSQL transaction with the store's semantics: a write takes the
-    database-wide advisory lock first (serialized writers); a read is one
-    REPEATABLE READ READ ONLY snapshot. Any error rolls back."""
+    schema's advisory lock first (`write_lock_key`; serialized writers); a read
+    is one REPEATABLE READ READ ONLY snapshot. Any error rolls back."""
     if write:
         conn.execute("BEGIN ISOLATION LEVEL READ COMMITTED")
         try:
-            conn.execute("SELECT pg_advisory_xact_lock(?)", (WRITE_LOCK_KEY,))
+            conn.execute("SELECT pg_advisory_xact_lock(?)", (lock_key,))
         except BaseException:
             _rollback_quietly(conn)
             raise
@@ -479,6 +507,6 @@ def open_backend(state_dir: Path, environ: Mapping[str, str] | None = None) -> B
 __all__ = [
     "DATABASE_URL_ENV", "DB_ERRORS", "INTEGRITY_ERRORS", "POSTGRES", "SQLITE",
     "Backend", "BackendConfig", "Conn", "StorageConfigError", "backend_from_env",
-    "check_database_settings", "json_value", "open_backend", "pg_connect",
-    "pg_transaction", "redact_dsn", "translate_sql",
+    "check_database_settings", "conninfo", "json_value", "open_backend", "pg_connect",
+    "pg_transaction", "redact_dsn", "resolved_endpoints", "translate_sql", "write_lock_key",
 ]

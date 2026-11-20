@@ -46,20 +46,26 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
 
 from kalos.storage.backend import (
     DATABASE_URL_ENV,
-    WRITE_LOCK_KEY,
+    DB_ERRORS,
     Conn,
     StorageConfigError,
     backend_from_env,
+    conninfo,
     pg_connect,
     redact_dsn,
+    write_lock_key,
 )
 from kalos.storage.migrations import v9
 
 log = logging.getLogger("kalos.storage")
+
+# The OWNER role's URL for `up` (creates tables and triggers). The engine runs
+# with KALOS_DATABASE_URL, which should be a runtime role without CREATE or
+# ownership (docs/MIGRATIONS.md, "PostgreSQL backend": roles).
+MIGRATE_URL_ENV = "KALOS_DATABASE_MIGRATE_URL"
 
 BASELINE_VERSION = v9.V9
 BASELINE_NAME = "postgres baseline: audit log + " + v9.V9_NAME
@@ -187,8 +193,11 @@ def _record(conn: Conn, version: int, name: str) -> None:
 
 
 def _begin_locked(conn: Conn) -> None:
+    """BEGIN, then the same advisory lock the engine's writers take on this
+    schema (`write_lock_key`), so a migration never interleaves with them."""
     conn.execute("BEGIN ISOLATION LEVEL READ COMMITTED")
-    conn.execute("SELECT pg_advisory_xact_lock(?)", (WRITE_LOCK_KEY,))
+    (schema,) = conn.execute("SELECT current_schema()").fetchone()
+    conn.execute("SELECT pg_advisory_xact_lock(?)", (write_lock_key(str(schema)),))
 
 
 def _rollback(conn: Conn) -> None:

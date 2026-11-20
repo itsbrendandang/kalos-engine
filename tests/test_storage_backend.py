@@ -78,16 +78,31 @@ def test_translate_sql(sql, expected):
     assert sb.translate_sql(sql) == expected
 
 
-@pytest.mark.parametrize(("env", "dsn", "ok"), [
-    ("production", f"postgresql://k:{SECRET}@db.example.com/kalos", False),
-    ("production", f"postgresql://k:{SECRET}@db.example.com/kalos?sslmode=require", True),
-    ("production", f"postgresql://k:{SECRET}@db.example.com/kalos?sslmode=prefer", False),
-    ("production", "postgresql://k@127.0.0.1/kalos", True),
-    ("production", "postgresql:///kalos?host=/var/run/postgresql", True),
-    ("development", f"postgresql://k:{SECRET}@db.example.com/kalos", True),
+@pytest.mark.parametrize(("env", "dsn", "pgenv", "ok"), [
+    ("production", f"postgresql://k:{SECRET}@db.example.com/kalos", {}, False),
+    ("production", f"postgresql://k:{SECRET}@db.example.com/kalos?sslmode=require", {}, False),
+    ("production", f"postgresql://k:{SECRET}@db.example.com/kalos?sslmode=verify-ca", {}, False),
+    ("production", f"postgresql://k:{SECRET}@db.example.com/kalos?sslmode=verify-full", {}, True),
+    ("production", "postgresql://k@127.0.0.1/kalos", {}, True),
+    ("production", "postgresql:///kalos?host=/var/run/postgresql", {}, True),
+    ("production", "postgresql:///kalos", {}, True),  # no host: libpq's unix socket
+    # hostaddr is where libpq really connects, whatever the host name says
+    ("production", "postgresql://k@localhost/kalos?hostaddr=10.1.2.3", {}, False),
+    # several hosts: every one counts
+    ("production", "postgresql://k@127.0.0.1,db.example.com/kalos", {}, False),
+    # libpq's environment defaults when the URL has no host / sslmode
+    ("production", "postgresql:///kalos", {"PGHOST": "db.example.com"}, False),
+    ("production", "postgresql:///kalos", {"PGHOSTADDR": "10.1.2.3"}, False),
+    ("production", "postgresql:///kalos", {"PGHOST": "db.example.com", "PGSSLMODE": "verify-full"}, True),
+    ("production", "postgresql://k@db.example.com/kalos?sslmode=disable", {"PGSSLMODE": "verify-full"}, False),
+    ("development", f"postgresql://k:{SECRET}@db.example.com/kalos", {}, True),
 ])
-def test_production_profile_requires_tls_off_box(monkeypatch, env, dsn, ok):
+def test_production_profile_requires_verified_tls_to_any_remote_endpoint(monkeypatch, env, dsn, pgenv, ok):
     pytest.importorskip("psycopg")
+    for var in ("PGHOST", "PGHOSTADDR", "PGSSLMODE"):
+        monkeypatch.delenv(var, raising=False)
+    for k, v in pgenv.items():
+        monkeypatch.setenv(k, v)
     monkeypatch.setenv("KALOS_ENV", env)
     environ = {"KALOS_DATABASE_URL": dsn}
     if ok:
@@ -95,7 +110,31 @@ def test_production_profile_requires_tls_off_box(monkeypatch, env, dsn, ok):
     else:
         with pytest.raises(sb.StorageConfigError) as exc:
             sb.check_database_settings(environ)
-        assert SECRET not in str(exc.value) and "sslmode=require" in str(exc.value)
+        assert SECRET not in str(exc.value) and "verify-full" in str(exc.value)
+
+
+def test_write_lock_key_is_per_schema_and_stable():
+    a, b = sb.write_lock_key("public"), sb.write_lock_key("tenant_b")
+    assert a != b and a == sb.write_lock_key("public")
+    assert -(2**63) <= a < 2**63 and -(2**63) <= b < 2**63
+
+
+@pytest.mark.parametrize("pw", ["p#ss?w/rd", "Password=x", "with space"])
+def test_pg_dump_gets_the_password_only_in_its_environment(pw, monkeypatch):
+    pytest.importorskip("psycopg")
+    from urllib.parse import quote
+
+    monkeypatch.setenv("PGSSLMODE", "disable")  # an inherited PG* value is replaced, not mixed in
+    dsn = (f"postgresql://kalos:{quote(pw, safe='')}@db.internal:6543/kalos_db"
+           "?sslmode=verify-full&options=-csearch_path%3Dkt_1&application_name=kalos")
+    args, env = pg_runner.pg_tool_invocation(dsn)
+    assert args == ["--host=db.internal", "--port=6543", "--username=kalos", "--dbname=kalos_db"]
+    assert env["PGPASSWORD"] == pw  # unquoted, exactly as libpq parsed it
+    assert env["PGSSLMODE"] == "verify-full" and env["PGOPTIONS"] == "-csearch_path=kt_1"
+    assert env["PGAPPNAME"] == "kalos" and "KALOS_DATABASE_URL" not in env
+    assert all(pw not in a for a in args)
+    with pytest.raises(pg_runner.PgMigrationError, match="cannot pass"):
+        pg_runner.pg_tool_invocation("postgresql://k@h/d?keepalives=1")
 
 
 @pytest.mark.parametrize(("name", "value"), [
@@ -126,7 +165,7 @@ def test_an_unreachable_server_is_refused_without_the_password(monkeypatch):
     monkeypatch.setenv("KALOS_DB_CONNECT_TIMEOUT", "1")
     with pytest.raises(sb.StorageConfigError) as exc:
         sb.pg_connect(f"postgresql://kalos:{SECRET}@127.0.0.1:1/kalos")
-    assert SECRET not in str(exc.value) and "***" in str(exc.value)
+    assert SECRET not in str(exc.value) and "postgresql://kalos@127.0.0.1:1/kalos" in str(exc.value)
 
 
 def test_sqlite_backend_dialect_neutral_round_trip(tmp_path):
