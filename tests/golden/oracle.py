@@ -87,8 +87,15 @@ def env_key() -> str:
 def env_details() -> dict[str, Any]:
     import torch
 
+    cpu = platform.processor()
+    try:
+        with open("/proc/cpuinfo", encoding="utf-8") as f:
+            cpu = next((ln.split(":", 1)[1].strip() for ln in f if ln.startswith("model name")), cpu)
+    except OSError:
+        pass
+    pins = {k: os.environ[k] for k in ("MKL_CBWR", "OPENBLAS_CORETYPE", "ATEN_CPU_CAPABILITY") if k in os.environ}
     return {"key": env_key(), "platform": platform.platform(), "python": platform.python_version(),
-            "torch_threads": torch.get_num_threads()}
+            "torch_threads": torch.get_num_threads(), "cpu": cpu, "kernel_pins": pins}
 
 
 # --- canonical form -------------------------------------------------------------- #

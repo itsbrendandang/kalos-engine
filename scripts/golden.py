@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -36,6 +37,19 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 GOLDEN_DIR = ROOT / "tests" / "golden"
 MANIFEST = "MANIFEST.json"
+
+# CI runners are not all the same CPU, and the BLAS/LAPACK and torch kernels
+# pick code paths by CPU (AVX-512 vs AVX2), which moves the last float digit
+# and from there a proposal. Two CI runs of identical code gave different
+# proposals before these pins. They select one code path that every x86-64 CI
+# CPU has (AVX2); arm64 (Apple) ignores them. Applied to the oracle's process
+# only; the engine itself is unchanged.
+KERNEL_PINS = {
+    "MKL_CBWR": "AVX2",  # MKL conditional numerical reproducibility (torch's BLAS/LAPACK on x86-64)
+    "MKL_ENABLE_INSTRUCTIONS": "AVX2",
+    "OPENBLAS_CORETYPE": "Haswell",  # numpy/scipy's OpenBLAS kernel (Haswell = AVX2)
+    "ATEN_CPU_CAPABILITY": "avx2",  # torch's own vectorized CPU kernels
+} if platform.machine().lower() in ("x86_64", "amd64") else {}
 
 
 def _oracle() -> Any:
@@ -58,7 +72,7 @@ def compute(out: Path) -> None:
     """Run the scenario in a fresh interpreter and write one file per case."""
     out.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "PYTHONHASHSEED": "0", "KALOS_TORCH_THREADS": "1", "OMP_NUM_THREADS": "1",
-           "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"}
+           "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", **KERNEL_PINS}
     proc = subprocess.run([sys.executable, str(Path(__file__).resolve()), "_compute", str(out)], cwd=ROOT,  # noqa: S603 - this script, by path
                           env=env, check=False)
     if proc.returncode != 0:
