@@ -122,7 +122,7 @@ def test_word_document_is_unsupported_not_corrupt(client):
 @pytest.mark.parametrize("content", [
     b"PK\x03\x04" + b"\x00" * 300,                     # zip magic, broken archive
     _xlsx({"Data": _good()})[:2000],                   # a truncated real workbook
-])
+], ids=["zip_magic_broken_archive", "truncated_real_workbook"])  # the workbook's bytes carry a write time
 def test_corrupt_excel(client, content):
     body = _assert_error(_post(client, content, "book.xlsx"), "corrupt_excel")
     assert ".xlsx" in body["error"] and "CSV" in body["error"]
