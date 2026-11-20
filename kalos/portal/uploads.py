@@ -471,6 +471,9 @@ def _apply_orientation_prepass(df: pd.DataFrame) -> pd.DataFrame:
         "orientation": report.orientation,
         "confidence": report.confidence,
         "signals": dict(report.signals),
+        # BRE-115: what the re-orientation kept (every parameter row, the run
+        # labels), in plain words; empty for a standard sheet.
+        "notes": list(report.notes),
     }
     return out
 

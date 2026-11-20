@@ -34,6 +34,6 @@
  },
  "note": "CI regression gate: fast tier, repo-only bases (Kaggle skipped). Regenerate with `python -m kalos.bench.faults all --tier fast --datasets /nonexistent --out DIR` then `... baseline --out DIR`; see docs/PLANTED_FAULTS.md.",
  "protocol_version": "1",
- "source_commit": "0bd4288daefa401fc5e6e74458881504090bff92",
+ "source_commit": "8d1b945ad06ea27363db8d983924db8ea3ced5b1",
  "tier": "fast"
 }
