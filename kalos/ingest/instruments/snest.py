@@ -33,8 +33,12 @@ summary table (`SnestResult.summary`). Every summary column has its formula and
 the readings it was derived from in `meta["summary_columns"]`. Summaries need at
 least `MIN_VALID_POINTS` valid readings of a channel in a well; a well with
 fewer gets NaN for that channel's summaries and a finding, never an
-extrapolated value. Time below a DO threshold needs a user-declared threshold;
-without one that column is refused (NaN, error finding), never defaulted.
+extrapolated value. Readings taken during a recorded pause (the plate is off
+the shaker, so DO falls from lost aeration) are kept in the table but left out
+of every summary. Start and final values carry their time (`*_time_h`), and a
+well whose series ends more than one sampling step before the plate's is
+flagged. Time below a DO threshold needs a user-declared threshold; without
+one that column is refused (NaN, error finding), never defaulted.
 
 The metadata block is kept as recorded: `meta["conditions"]` holds every key
 verbatim with its value and unit as written, `meta["as_run"]` the known plate
@@ -119,8 +123,9 @@ TABLE_COLUMNS = [
 ]
 SUMMARY_COLUMNS = [
     "plate", "well", "well_canonical", "group", "note", "baseline_reference_well",
-    "n_valid_do", "n_valid_ph", "do_min", "do_final", "do_time_below_threshold_h",
-    "do_time_unassessed_h", "ph_start", "ph_final", "ph_drift", "ph_min", "ph_max",
+    "n_valid_do", "n_valid_ph", "do_min", "do_final", "do_final_time_h", "do_time_below_threshold_h",
+    "do_time_unassessed_h", "ph_start", "ph_start_time_h", "ph_final", "ph_final_time_h", "ph_drift",
+    "ph_min", "ph_max",
 ]
 
 
@@ -380,7 +385,7 @@ def parse_snest_text(
     )
     found.extend(data_findings)
     meta.update(data_meta)
-    found.extend(_processing_findings(md, source))
+    found.extend(_processing_findings(md, table, offset_h, source))
     meta["role_suggestions"] = {"plate": "batch_group", "well": "id", "well_canonical": "id"}
     return SnestResult(table, tuple(found), meta)
 
@@ -706,7 +711,22 @@ def _value_findings(table: pd.DataFrame, channel: str, source: str | None) -> li
     return found
 
 
-def _processing_findings(md: dict, source: str | None) -> list[Finding]:
+_NUMBER_WORDS = {"one": 1.0, "two": 2.0, "three": 3.0, "four": 4.0, "five": 5.0, "six": 6.0}
+_CAL_RE = re.compile(r"(\d+(?:\.\d+)?|one|two|three|four|five|six)\s*(min|mins|minutes|h|hr|hrs|hour|hours)"
+                     r"\s+after\s+start", re.I)
+
+
+def _calibration_delay_h(setting: str) -> float | None:
+    """Hours after start at which the sensor calibration runs, if the setting says so plainly."""
+    m = _CAL_RE.search(setting)
+    if not m:
+        return None
+    amount = _NUMBER_WORDS.get(m.group(1).lower()) or float(m.group(1))
+    return amount / 60 if m.group(2).lower().startswith("min") else amount
+
+
+def _processing_findings(md: dict, table: pd.DataFrame, offset_h: float,
+                         source: str | None) -> list[Finding]:
     found: list[Finding] = []
     conds = md["conditions"]
     on = [k for k in ("Moving Average Smoothing", "Baseline Correction")
@@ -721,12 +741,19 @@ def _processing_findings(md: dict, source: str | None) -> list[Finding]:
         ))
     cal = str(conds.get("Sensor calibration", {}).get("value", ""))
     if "after start" in cal.lower():
+        delay = _calibration_delay_h(cal)
+        before = table.index[:0]
+        if delay is not None and not table.empty:
+            since_start = table["time_h"].astype(float) - offset_h
+            before = table.index[since_start < delay]
+        count = (f"{len(before)} reading(s) were taken in the first {delay:g} h, before it. "
+                 if delay is not None else "")
         found.append(finding(
             "sensor_calibration_after_start", "info",
-            f"The sensor calibration setting reads '{cal}': readings before the calibration may be "
-            "off, and pH start is the first valid reading as exported. Check the early readings. "
-            "Nothing was changed.",
-            setting=cal, source=source,
+            f"The sensor calibration setting reads '{cal}', so readings before the calibration may "
+            f"not be calibrated. {count}pH start is the first valid reading as exported; check the "
+            "early readings. They were kept and used as read; nothing was changed.",
+            column="time_h", rows=before, setting=cal, calibration_after_h=delay, source=source,
         ))
     return found
 
@@ -745,44 +772,57 @@ def read_snest_csv(path: str | os.PathLike[str], **kwargs) -> SnestResult:
 
 
 def _summary_columns(do_unit: str | None, threshold: float | None, min_points: int) -> dict:
-    ok_do = "readings of the well with channel == 'DO' and status == 'ok'"
-    ok_ph = "readings of the well with channel == 'pH' and status == 'ok'"
+    valid = "status == 'ok' and in_pause == False (readings during a pause are left out: the plate is " \
+            "off the shaker, so DO falls from lost aeration, not from the culture)"
+    ok_do = f"readings of the well with channel == 'DO', {valid}"
+    ok_ph = f"readings of the well with channel == 'pH', {valid}"
     floor = f"NaN if fewer than {min_points} such readings"
+    used = ["table.value", "table.status", "table.in_pause"]
+    timed = ["table.time_h", "table.status", "table.in_pause"]
     return {
-        "n_valid_do": {"formula": f"count of {ok_do}", "derived_from": ["table.value", "table.status"],
-                       "unit": None, "role": None},
-        "n_valid_ph": {"formula": f"count of {ok_ph}", "derived_from": ["table.value", "table.status"],
-                       "unit": None, "role": None},
+        "n_valid_do": {"formula": f"count of {ok_do}", "derived_from": used, "unit": None, "role": None},
+        "n_valid_ph": {"formula": f"count of {ok_ph}", "derived_from": used, "unit": None, "role": None},
         "do_min": {"formula": f"min(value) over {ok_do}; {floor}",
-                   "derived_from": ["table.value[DO]"], "unit": do_unit, "role": "outcome"},
+                   "derived_from": ["table.value[DO]", "table.status", "table.in_pause"],
+                   "unit": do_unit, "role": "outcome"},
         "do_final": {"formula": f"value at the largest time_h among {ok_do} (last in file order on "
                                 f"a tie); {floor}",
-                     "derived_from": ["table.value[DO]", "table.time_h"], "unit": do_unit,
-                     "role": "outcome"},
+                     "derived_from": ["table.value[DO]", *timed], "unit": do_unit, "role": "outcome"},
+        "do_final_time_h": {"formula": f"time_h of the reading used for do_final; {floor}",
+                            "derived_from": ["table.time_h[DO]", "table.status", "table.in_pause"],
+                            "unit": "h", "role": None},
         "do_time_below_threshold_h": {
-            "formula": ("sum over adjacent readings (consecutive in time_h, both status 'ok') of the "
-                        "time with DO strictly below the declared threshold; within a pair the "
-                        "crossing time is found by straight-line interpolation between the two "
-                        "readings. A pair with a missing or non-numeric reading is not counted (its "
-                        "duration goes to do_time_unassessed_h); nothing before the first or after "
-                        f"the last reading is counted. NaN if no threshold was declared; {floor}"),
-            "derived_from": ["table.value[DO]", "table.time_h", "declared do_threshold"],
+            "formula": ("sum over adjacent readings (consecutive in time_h, both status 'ok' and not "
+                        "in_pause) of the time with DO strictly below the declared threshold; within "
+                        "a pair the crossing time is found by straight-line interpolation between the "
+                        "two readings. A pair with a missing, non-numeric or in-pause reading is not "
+                        "counted (its duration goes to do_time_unassessed_h); nothing before the first "
+                        f"or after the last reading is counted. NaN if no threshold was declared; {floor}"),
+            "derived_from": ["table.value[DO]", *timed, "declared do_threshold"],
             "threshold": threshold, "unit": "h", "role": "outcome"},
         "do_time_unassessed_h": {
             "formula": ("sum of time_h steps between adjacent DO readings where one or both are not "
-                        f"status 'ok' (time that could not be assessed); {floor}"),
-            "derived_from": ["table.status[DO]", "table.time_h"], "unit": "h", "role": None},
+                        "status 'ok' or are in_pause (time that could not be assessed); "
+                        f"{floor}"),
+            "derived_from": ["table.time_h[DO]", "table.status", "table.in_pause"], "unit": "h",
+            "role": None},
         "ph_start": {"formula": f"value at the smallest time_h among {ok_ph}; {floor}",
-                     "derived_from": ["table.value[pH]", "table.time_h"], "unit": "pH",
-                     "role": "covariate"},
+                     "derived_from": ["table.value[pH]", *timed], "unit": "pH", "role": "covariate"},
+        "ph_start_time_h": {"formula": f"time_h of the reading used for ph_start; {floor}",
+                            "derived_from": ["table.time_h[pH]", "table.status", "table.in_pause"],
+                            "unit": "h", "role": None},
         "ph_final": {"formula": f"value at the largest time_h among {ok_ph}; {floor}",
-                     "derived_from": ["table.value[pH]", "table.time_h"], "unit": "pH",
-                     "role": "outcome"},
+                     "derived_from": ["table.value[pH]", *timed], "unit": "pH", "role": "outcome"},
+        "ph_final_time_h": {"formula": f"time_h of the reading used for ph_final; {floor}",
+                            "derived_from": ["table.time_h[pH]", "table.status", "table.in_pause"],
+                            "unit": "h", "role": None},
         "ph_drift": {"formula": "ph_final - ph_start", "derived_from": ["ph_final", "ph_start"],
                      "unit": "pH", "role": "outcome"},
-        "ph_min": {"formula": f"min(value) over {ok_ph}; {floor}", "derived_from": ["table.value[pH]"],
+        "ph_min": {"formula": f"min(value) over {ok_ph}; {floor}",
+                   "derived_from": ["table.value[pH]", "table.status", "table.in_pause"],
                    "unit": "pH", "role": "outcome"},
-        "ph_max": {"formula": f"max(value) over {ok_ph}; {floor}", "derived_from": ["table.value[pH]"],
+        "ph_max": {"formula": f"max(value) over {ok_ph}; {floor}",
+                   "derived_from": ["table.value[pH]", "table.status", "table.in_pause"],
                    "unit": "pH", "role": "outcome"},
     }
 
@@ -886,6 +926,15 @@ def summarize(
             sources=sorted({str(x) for x in keyed.loc[rows, "source"]}),
         ))
     short: list[str] = []
+    early: list[str] = []
+    early_rows: list[int] = []
+    # per plate and channel: the last reading time and the median sampling step (from the data)
+    ends: dict[tuple[str, str], tuple[float, float]] = {}
+    for (p, c), sub in keyed[np.isfinite(keyed["time_h"].astype(float))].groupby(["_plate", "channel"]):
+        steps = np.diff(np.unique(sub["time_h"].to_numpy(dtype=float)))
+        ends[(str(p), str(c))] = (float(sub["time_h"].max()),
+                                  float(np.median(steps)) if len(steps) else math.inf)
+    paused = keyed.index[(keyed["status"] == OK) & keyed["in_pause"].astype(bool)]
     rows_out = []
     for (plate_key, well_key), grp in keyed.groupby(["_plate", "_well"], sort=True):
         plate, well = str(plate_key), str(well_key)
@@ -899,7 +948,7 @@ def summarize(
         for channel in ("DO", "pH"):
             ch = grp[(grp["channel"] == channel) & (grp["status"] != NO_TIME)]
             ch = ch.sort_values("time_h", kind="stable")
-            valid = (ch["status"] == OK).to_numpy()
+            valid = ((ch["status"] == OK) & ~ch["in_pause"].astype(bool)).to_numpy()
             n_valid = int(valid.sum())
             rec["n_valid_do" if channel == "DO" else "n_valid_ph"] = n_valid
             if ch.empty or (plate, channel) in two_files:
@@ -910,9 +959,16 @@ def summarize(
             vals = ch["value"].to_numpy(dtype=float)
             times = ch["time_h"].to_numpy(dtype=float).tolist()
             ok_vals = vals[valid]
+            ok_times = np.asarray(times)[valid]
+            plate_last, step = ends[(plate, channel)]
+            if plate_last - ok_times[-1] > step + 1e-9:
+                early.append(f"{plate}:{well}:{channel} (last valid {ok_times[-1]:.2f} h, plate "
+                             f"{plate_last:.2f} h)")
+                early_rows.extend(ch.index[valid][-1:])
             if channel == "DO":
                 rec["do_min"] = float(ok_vals.min())
                 rec["do_final"] = float(ok_vals[-1])
+                rec["do_final_time_h"] = float(ok_times[-1])
                 if threshold_ok:
                     assert do_threshold is not None
                     rec["do_time_below_threshold_h"], rec["do_time_unassessed_h"] = time_below(
@@ -921,12 +977,33 @@ def summarize(
                     rec["do_time_unassessed_h"] = _unassessed(times, valid.tolist())
             else:
                 rec["ph_start"] = float(ok_vals[0])
+                rec["ph_start_time_h"] = float(ok_times[0])
                 rec["ph_final"] = float(ok_vals[-1])
+                rec["ph_final_time_h"] = float(ok_times[-1])
                 rec["ph_drift"] = rec["ph_final"] - rec["ph_start"]
                 rec["ph_min"] = float(ok_vals.min())
                 rec["ph_max"] = float(ok_vals.max())
         rows_out.append(rec)
     summary = pd.DataFrame.from_records(rows_out, columns=SUMMARY_COLUMNS)
+    if len(paused):
+        found.append(finding(
+            "pause_readings_excluded", "info",
+            f"{len(paused)} reading(s) were taken during a recorded pause, when the plate is off the "
+            "shaker and DO falls from lost aeration rather than from the culture. They are left out "
+            "of every summary and of the valid-reading counts; their time goes to "
+            "do_time_unassessed_h. Check them if a pause was not a shaker stop. They were kept in "
+            "the table as read (in_pause = True).",
+            column="in_pause", rows=paused, wells=sorted(set(keyed.loc[paused, "_well"]))[:_LIST_CAP],
+        ))
+    if early:
+        found.append(finding(
+            "series_ends_early", "warning",
+            f"In {len(early)} well channel(s) the last valid reading is more than one sampling step "
+            "before the plate's last reading, so their 'final' values are from an earlier time than "
+            "other wells'. Compare finals only at matching times (see *_final_time_h). The values "
+            "were kept; nothing was changed.",
+            rows=early_rows, wells=early[:_LIST_CAP],
+        ))
     if short:
         found.append(finding(
             "too_few_points", "warning",

@@ -127,7 +127,7 @@ def test_metadata_block_is_kept_as_run_with_units_as_written(plate):
     assert run["conditions"]["Plate brand"]["section"] == "Sensing setup"
     assert run["conditions"]["Plate layout ID"]["value"] == "0 (24-well DO/pH)"
     assert run["start_time_recorded"] == "2031-03-14 09:00:00" and run["plate_format"] == 24
-    assert run["pauses"][0]["from"] == "2031/3/14 11:00"
+    assert run["pauses"][0]["from"] == "2031/3/14 14:00"
     one = read_snest_csv(DO_CSV)
     assert one.meta["layout"]["C3"] == {"well": "C3", "group": "Medium C", "note": "5"}
     assert one.meta["encoding"] == "utf-8" and one.meta["title"] == "S.NEST Experiment"
@@ -144,9 +144,11 @@ def test_gap_is_kept_and_reported_by_well_and_time(plate):
     assert do_missing.detail["n_rows_affected"] == 2 + 11  # B2 gap + D4's 11 missing readings
     assert "never filled" in do_missing.message
     s = well_row(plate.summary, "B2")
-    assert s["n_valid_do"] == 11 and s["n_valid_ph"] == 12
-    # three 0.5 h steps touch a missing reading: not counted, reported as unassessed
-    assert s["do_time_unassessed_h"] == pytest.approx(1.5)
+    # 13 readings - 2 missing (DO) or 1 missing (pH) - 1 taken during the pause
+    assert s["n_valid_do"] == 10 and s["n_valid_ph"] == 11
+    # three 0.5 h steps touch a missing reading and two touch the in-pause reading: not
+    # counted, reported as unassessed
+    assert s["do_time_unassessed_h"] == pytest.approx(1.5 + 1.0)
     assert s["do_min"] == pytest.approx(64.0)
 
 
@@ -156,7 +158,8 @@ def test_dip_below_declared_threshold(plate):
     # 40 -> 25 crosses 30 at 1/3 of the way back from 25: 0.5 * 10/15 h before the 25 reading;
     # 25 -> 35 crosses at half way. Below from t=1.8333 h to t=3.75 h (shifted by 5 min).
     assert s["do_time_below_threshold_h"] == pytest.approx(3.75 - (1.5 + 0.5 * 10 / 15))
-    assert s["do_time_unassessed_h"] == 0.0
+    assert s["do_time_unassessed_h"] == pytest.approx(1.0)  # the two steps around the pause reading
+    assert s["do_final_time_h"] == pytest.approx(6 + 5 / 60)
     assert (plate.summary.drop(index=plate.summary.index[plate.summary["well"].isin(["C3", "D4"])])
             ["do_time_below_threshold_h"] == 0).all()
     assert plate.meta["do_threshold"] == 30.0
@@ -184,6 +187,8 @@ def test_ph_summaries(plate):
     assert s["ph_start"] == pytest.approx(7.05) and s["ph_final"] == pytest.approx(6.546)
     assert s["ph_drift"] == pytest.approx(6.546 - 7.05)
     assert s["ph_min"] == pytest.approx(6.546) and s["ph_max"] == pytest.approx(7.05)
+    assert s["ph_start_time_h"] == pytest.approx(5 / 60) and s["ph_final_time_h"] == pytest.approx(6 + 5 / 60)
+    assert s["n_valid_ph"] == 12  # the in-pause reading is not counted
     blank = well_row(plate.summary, "A1")
     assert blank["ph_drift"] == 0.0 and bool(blank["baseline_reference_well"])
     assert not bool(s["baseline_reference_well"])
@@ -197,7 +202,7 @@ def test_threshold_must_be_declared():
     assert res.summary["do_time_below_threshold_h"].isna().all()
     assert res.summary["do_min"].notna().sum() == 23  # the other DO summaries are still there
     assert res.meta["do_threshold"] is None
-    assert well_row(res.summary, "B2")["do_time_unassessed_h"] == pytest.approx(1.5)
+    assert well_row(res.summary, "B2")["do_time_unassessed_h"] == pytest.approx(2.5)
     bad = read_snest([DO_CSV], do_threshold=float("nan"))
     assert checks(bad)["do_threshold_invalid"].severity == "error"
     assert bad.summary["do_time_below_threshold_h"].isna().all()
@@ -234,7 +239,7 @@ def test_no_summary_or_metadata_column_is_ever_a_setting(plate):
 def test_pauses_are_recorded_and_readings_inside_flagged(plate):
     t = plate.table
     inside = t[t["in_pause"]]
-    assert set(inside["timestamp"]) == {"2031/3/14 11:05"} and len(inside) == 48
+    assert set(inside["timestamp"]) == {"2031/3/14 14:05"} and len(inside) == 48
     f = checks(plate)["pauses_recorded"]
     assert f.severity == "info" and f.detail["n_rows_affected"] == 24
 
@@ -259,6 +264,63 @@ def test_no_data_block_or_bad_header_is_an_error():
     assert checks(res)["no_data_section"].severity == "error" and res.table.empty
     bad = parse_snest_text(export().replace("Running time(min)", "Elapsed"))
     assert checks(bad)["data_header_unreadable"].severity == "error" and bad.table.empty
+
+
+PAUSE = "***Pause information***\nPause No.,from,to\nPause 1,2031/3/14 10:00,2031/3/14 10:10"
+SERIES = (("2031/3/14 09:05", "5", ("90", "80")), ("2031/3/14 09:35", "35", ("85", "75")),
+          ("2031/3/14 10:05", "65", ("10", "5")), ("2031/3/14 10:35", "95", ("80", "70")),
+          ("2031/3/14 11:05", "125", ("78", "68")))
+
+
+def test_pause_dip_does_not_change_do_min_or_time_below():
+    """During a pause the plate is off the shaker: a DO dip then is lost aeration, not the culture."""
+    res = combine([parse_snest_text(export(rows=SERIES, extra=PAUSE))], do_threshold=30.0)
+    t = res.table
+    dip = t[t["timestamp"] == "2031/3/14 10:05"]
+    assert dip["in_pause"].all() and (dip["status"] == "ok").all() and list(dip["value"]) == [10.0, 5.0]
+    s = well_row(res.summary, "A1")
+    assert s["do_min"] == 78.0 and s["do_time_below_threshold_h"] == 0.0
+    assert s["n_valid_do"] == 4 and s["do_time_unassessed_h"] == pytest.approx(1.0)
+    assert well_row(res.summary, "A2")["do_min"] == 68.0
+    f = checks(res)["pause_readings_excluded"]
+    assert f.detail["n_rows_affected"] == 2 and f.detail["wells"] == ["A1", "A2"]
+    assert "in_pause" in res.meta["summary_columns"]["do_min"]["formula"]
+    assert "table.in_pause" in res.meta["summary_columns"]["do_min"]["derived_from"]
+    # without the pause block the same dip counts
+    plain = combine([parse_snest_text(export(rows=SERIES))], do_threshold=30.0)
+    assert well_row(plain.summary, "A1")["do_min"] == 10.0
+    assert well_row(plain.summary, "A1")["do_time_below_threshold_h"] > 0
+    assert "pause_readings_excluded" not in checks(plain)
+
+
+def test_final_and_start_carry_their_time_and_early_ends_are_flagged():
+    rows = tuple((clk, run, (a, "N/A" if k >= 3 else b)) for k, (clk, run, (a, b)) in enumerate(SERIES))
+    res = combine([parse_snest_text(export(rows=rows))], do_threshold=30.0)
+    a1, a2 = well_row(res.summary, "A1"), well_row(res.summary, "A2")
+    assert a1["do_final_time_h"] == pytest.approx(125 / 60)
+    assert a2["do_final_time_h"] == pytest.approx(65 / 60) and a2["do_final"] == 5.0
+    f = checks(res)["series_ends_early"]
+    assert f.severity == "warning" and f.detail["wells"] == [
+        "Synthetic_PlateZ:A2:DO (last valid 1.08 h, plate 2.08 h)"]
+    for col in ("do_final_time_h", "ph_start_time_h", "ph_final_time_h"):
+        spec = res.meta["summary_columns"][col]
+        assert spec["role"] is None and spec["formula"] and spec["derived_from"] and spec["unit"] == "h"
+        assert col not in res.meta["role_suggestions"]
+    # one step short is within a sampling interval: not flagged
+    one_short = tuple((clk, run, (a, "N/A" if k == 4 else b)) for k, (clk, run, (a, b)) in enumerate(SERIES))
+    assert "series_ends_early" not in checks(combine([parse_snest_text(export(rows=one_short))]))
+
+
+def test_readings_before_sensor_calibration_are_counted_not_dropped(plate):
+    f = next(f for f in plate.findings if f.check == "sensor_calibration_after_start")
+    assert f.detail["calibration_after_h"] == pytest.approx(0.5)
+    assert f.detail["n_rows_affected"] == 24  # the 5 min reading of each well
+    assert "not be calibrated" in f.message and "nothing was changed" in f.message
+    hour = parse_snest_text(export(extra="Sensor calibration:,ON/One hour after start"))
+    g = checks(hour)["sensor_calibration_after_start"]
+    assert g.detail["calibration_after_h"] == 1.0 and g.detail["n_rows_affected"] == 4
+    vague = parse_snest_text(export(extra="Sensor calibration:,ON/after start"))
+    assert checks(vague)["sensor_calibration_after_start"].detail["calibration_after_h"] is None
 
 
 # -- wells ---------------------------------------------------------------------
@@ -419,6 +481,9 @@ def _all_results():
                            start=datetime(2031, 3, 14))
     yield combine([parse_snest_text(export(), source="a"), parse_snest_text(
         export("pH").replace("Temperature:,30", "Temperature:,37"), source="b")])
+    yield combine([parse_snest_text(export(rows=SERIES, extra=PAUSE))])
+    yield combine([parse_snest_text(export(rows=tuple(
+        (clk, run, (a, "N/A" if k >= 3 else b)) for k, (clk, run, (a, b)) in enumerate(SERIES))))])
     yield combine([parse_snest_text(export(), do_unit="%", plate="P1"),
                    parse_snest_text(export(), do_unit="mg/L", plate="P2")])
 
