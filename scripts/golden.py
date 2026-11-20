@@ -18,7 +18,8 @@ tests/golden/CHANGES.md, written by `record --reason`). The diff is printed and
 uploaded as an artifact either way.
 
 `check` compares with committed records for THIS machine's platform and pinned
-stack (tests/golden/<env key>/), a fast local check before pushing a move:
+stack (tests/golden/<env key>/; today darwin-arm64 only). It is a fast local
+check before pushing a move, NOT a CI gate:
 
     python scripts/golden.py check                       # compare
     python scripts/golden.py diff                        # show every changed leaf
@@ -172,7 +173,7 @@ def _log_change(reason: str, key: str) -> None:
     head = CHANGES.read_text(encoding="utf-8") if CHANGES.exists() else (
         "# Golden output changes\n\nOne line per intended change to the engine's output (scripts/golden.py "
         "record --reason). A PR whose output differs from its base must add a line here; the CI gate "
-        "(golden.yml) fails an undeclared difference.\n\n")
+        "(golden.yml, base vs head on one runner) fails an undeclared difference.\n\n")
     CHANGES.write_text(head.rstrip("\n") + f"\n- {stamp} ({key}): {reason}\n", encoding="utf-8")
 
 

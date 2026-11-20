@@ -224,9 +224,9 @@ def _slug(url: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", url.strip("/"))[:80]
 
 
-# Routes whose numbers are NOT reproducible run to run (the demo simulators draw
-# unseeded random data; found by this oracle, see REORG_PLAN R02 notes). Their
-# status, headers and the SHAPE of the body (keys and value types) are pinned.
+# The demo simulators were not reproducible run to run (unseeded; found by this
+# oracle) and are being removed (REORG D5). While a base still serves them only
+# the SHAPE of a 200 body is pinned; their 404 after the removal is pinned in full.
 SHAPE_ONLY = ("/api/single", "/api/multi")
 
 
@@ -242,7 +242,7 @@ def _response_record(method: str, url: str, response: Any) -> dict[str, Any]:
     ctype = response.headers.get("content-type", "")
     headers = {k: v for k, v in sorted(response.headers.items()) if k.lower() not in VOLATILE_HEADERS}
     record: dict[str, Any] = {"request": f"{method} {url}", "status": response.status_code, "headers": headers}
-    if "json" in ctype and url.split("?")[0] in SHAPE_ONLY:
+    if "json" in ctype and url.split("?")[0] in SHAPE_ONLY and response.status_code == 200:
         record["body_shape"] = shape(response.json())
     elif "json" in ctype:
         record["body"] = scrub(response.json())
