@@ -4,6 +4,12 @@ Newest first.
 
 ## Unreleased
 
+### Added - robustness reporting (proposal stability across seeds, opt-in; driver second opinion)
+
+- `KALOS_PROPOSAL_STABILITY_SEEDS=K` (2-10; default off) reruns the proposal step with K-1 more seeds and adds `proposal_stability` and `proposals[].stability` (agreement = fraction of rerun seeds whose batch has a recipe within the optimizer's 5% near-duplicate rule; `"unstable across seeds"` below 0.5). The served batch is the seed-0 output; off adds nothing (byte-identical), on changes no other number (tested). Measured (serial, CPU seconds, this Mac under heavy load): 160-row example (mixed) 222 s analysis + 635 s for K=5; 160-row continuous slice 15 s + 33 s. Reruns use the analysis worker pool when perf/parallel-analysis is present. On the 160-row example none of the 5 served proposals came back in any of 4 reruns (batch_stability 0.0); on the 8 trust-golden sheets batch_stability was 0.05-0.75.
+- `driver_second_opinion` (every analysis): rank drivers next to the proposal GP's ARD relevance with a recipe-subsample interval (16 refits on 80% of recipes), a collinearity check (Pearson pairs >= 0.9, VIF >= 10), and labelled disagreements (`strong by rank, irrelevant to the GP`, `relevant to the GP, missed by rank`, `collinear: effects cannot be separated`). Not causal, stated in the block. Not judged on mixed GPs or when the out-of-fold Spearman is below 0.20. Cost on the 160-row continuous slice: 6 s CPU (16 single-start fits); none on mixed sheets. No existing number changes (trust goldens: only `driver_second_opinion.*` added).
+- Idea credit: Bioqore voyager-ml-pipeline seed sweeps (NOTICE). Schema: `docs/schemas/analysis-robustness.schema.json`.
+
 ### Changed - selection-aware proposal intervals (F15, ML audit B1 fix 2; interval numbers change)
 
 - `proposals[].intervals` are calibrated on the held-out runs each fold model ranked highest (top 30%, both CV repeats) with the proposal sd floored at the 90th percentile of held-out sds (`method: conformal_selection_aware`, `coverage_basis: held_out_top_ranked_runs`). Measured at proposals on fresh simulation seeds: 90% band 0.60-0.83 -> 0.92-0.99, 95% band 0.72-0.92 -> 0.96-0.99, at 2.5-3.2x the median width; in-box coverage 0.98-1.00 (conservative). Per-level fallback to the plain band with `selection_aware_unavailable` when too few runs are selected. VALIDATION.md has the table.
