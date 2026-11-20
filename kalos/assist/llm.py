@@ -17,9 +17,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from kalos.envconfig import env_enum
+
+if TYPE_CHECKING:
+    from kalos.providers.cascade import Cascade
 from kalos.providers.ollama_provider import (
     OllamaProvider,
     OllamaUnavailable,
@@ -78,6 +81,12 @@ class OllamaChat:
         except OllamaUnavailable as exc:
             raise ModelUnavailable(str(exc)) from exc
 
+    def complete_json(self, system: str, prompt: str) -> str:
+        try:
+            return OllamaProvider().chat(system, prompt, model=self.model, json_mode=True)
+        except OllamaUnavailable as exc:
+            raise ModelUnavailable(str(exc)) from exc
+
 
 @dataclass
 class AnthropicChat:
@@ -113,11 +122,34 @@ def model_info() -> dict[str, object]:
     """`{provider, model, local}` for the status route; never a credential."""
     provider = assist_provider()
     if provider == "ollama":
-        return {"provider": "ollama", "model": ollama_model(), "local": is_loopback_url(ollama_url())}
+        from kalos.providers.cascade import models_info
+
+        return {"provider": "ollama", "model": ollama_model(), "local": is_loopback_url(ollama_url()),
+                **models_info()}
     if provider == "anthropic":
         model = os.environ.get(_ANTHROPIC_MODEL_ENV) or _DEFAULT_ANTHROPIC_MODEL
         return {"provider": "anthropic", "model": model, "local": False}
     return {"provider": "none", "model": None, "local": True}
+
+
+def cascade_for(model: ChatModel | None) -> Cascade | None:
+    """The cascade behind a chat model. The configured Ollama model gets the
+    two Ollama tiers (fast, quality: `kalos.providers.cascade`); any other model
+    (the Anthropic API, a test fake) is the only tier. None means no model."""
+    from kalos.providers.cascade import (
+        Cascade,
+        escalation_enabled,
+        fast_model,
+        single_model_cascade,
+    )
+
+    if isinstance(model, OllamaChat):
+        return Cascade(
+            fast=OllamaChat(model=fast_model(), url=model.url),
+            quality=model,
+            escalate=escalation_enabled(),
+        )
+    return single_model_cascade(model)
 
 
 def get_chat_model() -> ChatModel | None:
@@ -138,6 +170,7 @@ __all__ = [
     "ModelUnavailable",
     "OllamaChat",
     "assist_provider",
+    "cascade_for",
     "get_chat_model",
     "model_info",
 ]

@@ -265,7 +265,8 @@ def test_index_status_and_rebuild(env):
     tc, store, _fake = env
     _seed(store, "acme", A_SECRET)
     status = tc.get("/api/assist/index/status", headers=H("a-read")).json()
-    assert set(status) == {"provider", "model", "local", "chunks", "built_at", "building", "retriever"}
+    assert set(status) == {"provider", "model", "local", "chunks", "built_at", "building", "retriever",
+                           "fast_model", "quality_model", "escalation"}  # the two cascade tiers
     assert status["provider"] == "ollama" and status["local"] is True
     assert status["chunks"] > 0 and status["built_at"]  # built on first look
     assert tc.post("/api/assist/index/rebuild", headers=H("a-read")).status_code == 403

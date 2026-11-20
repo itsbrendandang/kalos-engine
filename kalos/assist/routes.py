@@ -28,7 +28,13 @@ from kalos.assist.http import (
     provider_unavailable_response,
 )
 from kalos.assist.index import AssistIndex
-from kalos.assist.llm import ChatModel, ModelUnavailable, get_chat_model, model_info
+from kalos.assist.llm import (
+    ChatModel,
+    ModelUnavailable,
+    cascade_for,
+    get_chat_model,
+    model_info,
+)
 from kalos.assist.state import campaign_inputs
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
 from kalos.portal.campaign import CampaignNotFound, CampaignStore, get_campaign_store
@@ -98,13 +104,15 @@ def assist_ask(
         index.refresh()
     hits = index.search(body.question, campaign_id=cid)
     try:
-        result = ask(body.question, hits, guide, model)
+        cascade = cascade_for(model)
+        assert cascade is not None
+        result = ask(body.question, hits, guide, cascade)
     except ModelUnavailable:
         log.warning("assist: the model did not answer")
         return provider_unavailable_response()
     # Server log: counts only, never the question or the answer.
-    log.info("assist ask: hits=%d sources=%d abstained=%s", len(hits), len(result["sources"]),
-             result["abstained"])
+    log.info("assist ask: hits=%d sources=%d abstained=%s path=%s", len(hits), len(result["sources"]),
+             result["abstained"], result.get("provider_path"))
     return JSONResponse(result)
 
 

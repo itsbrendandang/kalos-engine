@@ -336,7 +336,11 @@ def test_ollama_generate_timeout_falls_back_to_offline(monkeypatch):
 
     plan = propose_plan(_messy_df(), config=load_config())
     assert plan.created_by == "offline"
-    assert fake.calls == ["health", "generate"]
+    # The cascade tries the fast model, then the quality model, then says it
+    # fell back to the offline plan.
+    assert fake.calls == ["health", "generate", "generate"]
+    assert plan.provider_path == "fast>quality>offline"
+    assert [a["outcome"] for a in plan.provider_attempts] == ["unavailable", "unavailable"]
 
 
 # --- anthropic-path default is unaffected ----------------------------------------- #

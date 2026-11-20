@@ -49,11 +49,45 @@ What the model receives:
 
 If you point `KALOS_OLLAMA_URL` at another computer, your data goes to that computer. The status route then reports `local: false`.
 
+### Two local models: fast and quality
+
+With `ollama`, two models share the work (`kalos/providers/cascade.py`):
+
+| Tier | Used for | Default | Licence |
+|---|---|---|---|
+| fast | header mapping, short labels, intent routing, plain wording of engine warnings and refusals, setup suggestions | `phi4-mini` | MIT |
+| quality | answers with sources, SOP revise, summaries | `qwen2.5:7b` | Apache-2.0 |
+
+Older engines defaulted to `llama3.1`, which is under the Llama community licence; the defaults are now MIT and Apache-2.0 models. The choice is measured, not assumed: see [Measured model choice](#measured-model-choice).
+
+**The rule.** A model never produces a number, an interval, a verdict or a proposal. Every reply is checked against the engine's own data before anyone sees it:
+
+- the sources and run ids it cites exist (`nonexistent_citation`);
+- the column names it uses are columns of the sheet (`unknown_column`);
+- every number it states equals a number the engine gave it (`mismatched_number`);
+- JSON replies parse and have the expected fields (`invalid_json`, `schema`);
+- no banned word, and no claim word its sources do not use (`unsupported_claim`).
+
+A reply that fails is never shown. For a fast task, the fast model's failed reply goes to the quality model. If both fail, the engine's own offline path answers (the deterministic header mapper, the keyword router, the engine's original wording, or the next step). Every response that involved a model says which path produced it:
+
+```json
+{"provider_path": "fast>quality>offline", "offline_fallback": true, "model": null,
+ "attempts": [{"tier": "fast", "model": "phi4-mini", "outcome": "invalid", "reason": "unknown_column"},
+              {"tier": "quality", "model": "qwen2.5:7b", "outcome": "invalid", "reason": "invalid_json"}]}
+```
+
+`provider_path` is `fast`, `quality`, `fast>quality`, or any of them followed by `>offline`; `offline` alone means no model was asked (nothing relevant was found, or no model is configured). In an answer, sentences that failed a check are removed and counted in `checks.drop_reasons`; when no sentence is left the answer is the next step and `abstained` is true.
+
+With `anthropic` both tiers are the same remote model, and the same checks apply. Remote models are only used when someone sets `anthropic` on purpose. Identity columns are removed before any sheet content reaches any model (`kalos/normalize/payload.py`).
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `KALOS_LLM_PROVIDER` | `ollama` in desktop mode, else `none` | `ollama`, `anthropic` or `none` |
 | `KALOS_OLLAMA_URL` | `http://localhost:11434` | where Ollama listens |
-| `KALOS_OLLAMA_MODEL` | `llama3.1` | the Ollama model to use |
+| `KALOS_LLM_FAST_MODEL` | `phi4-mini` | the fast Ollama model |
+| `KALOS_LLM_QUALITY_MODEL` | `qwen2.5:7b` | the quality Ollama model |
+| `KALOS_LLM_CASCADE` | `1` | `0`: a fast task uses the fast model only, then the offline path |
+| `KALOS_OLLAMA_MODEL` | unset | older setting. Set on its own, it is the only model (both tiers, no cascade); set with `KALOS_LLM_FAST_MODEL`, it is the quality model |
 | `KALOS_OLLAMA_TIMEOUT_S` | `120` | how long to wait for an answer |
 | `KALOS_ASSIST_ANTHROPIC_MODEL` | `claude-sonnet-5` | the Anthropic model to use |
 | `KALOS_ASSIST_EMBED` | `1` | `0` turns off local embeddings |
@@ -94,8 +128,8 @@ All routes use the caller's tenant. Read scope unless marked.
 | Route | What it returns |
 |---|---|
 | `GET /api/assist/next?campaign_id=` | `{state, step, why, why_it_matters, action_route, blockers[{code, text, why}], campaign_id}` |
-| `POST /api/assist/ask` `{question, campaign_id?}` | `{answer, sources[{kind, id, quote, campaign_id}], abstained, next}` |
-| `GET /api/assist/index/status` | `{provider, model, local, chunks, built_at, building, retriever}` |
+| `POST /api/assist/ask` `{question, campaign_id?}` | `{answer, sources[{kind, id, quote, campaign_id}], abstained, next, provider_path, offline_fallback, model, attempts, checks?}` |
+| `GET /api/assist/index/status` | `{provider, model, local, fast_model?, quality_model?, escalation?, chunks, built_at, building, retriever}` |
 | `POST /api/assist/index/rebuild` (write) | the status. Writes an audit row. |
 | `POST /api/assist/sop/draft` (write) | a draft, version 1. Writes an audit row. |
 | `POST /api/assist/sop/{id}/revise` (write) | the next version, or 422 `revision_refused` |
@@ -105,3 +139,7 @@ All routes use the caller's tenant. Read scope unless marked.
 The next-step states are `no_sheet`, `fit_refused`, `sheet_errors`, `runs_awaiting`, `runs_all_recorded`, `not_trusted`, `sheet_warnings`, `recipes_proposed`, `round_complete` and `no_recipes`. (Earlier engines called the last two `batch_proposed` and `no_batch`.) Exactly one applies to any campaign; `tests/test_assist_guide.py` checks every combination.
 
 The plain sentences behind `why_it_matters` and each blocker's `why` are the same ones the web app shows. They live in `kalos/assist/why.py`.
+
+## Measured model choice
+
+The defaults above are the models the evaluation in `benchmarks/llm/` chose on a fixed test set. The table and how to rerun it are in `benchmarks/llm/RESULTS.md`.

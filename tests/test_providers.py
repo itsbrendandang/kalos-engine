@@ -201,7 +201,8 @@ def test_ollama_chat_posts_one_turn_and_reads_the_reply(monkeypatch):
     assert seen["url"].endswith("/api/chat")
     assert seen["body"]["model"] == "tiny"
     assert seen["body"]["stream"] is False
-    assert seen["body"]["options"] == {"temperature": 0}
+    assert seen["body"]["options"] == {"temperature": 0, "seed": 0}
+    assert "format" not in seen["body"]  # JSON mode only when asked for
 
 
 def test_ollama_unreachable_raises_a_fixed_message(monkeypatch):

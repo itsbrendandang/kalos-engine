@@ -11,7 +11,7 @@ committed JSON, not from re-running an LLM.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 from .synonyms import Role
@@ -53,6 +53,12 @@ class NormalizationPlan:
     columns: list[ColumnPlan]
     created_by: Literal["llm", "offline"]
     model: str | None = None
+    # Which path produced the plan (kalos.providers.cascade): "fast",
+    # "fast>quality", "fast>quality>offline", "offline", ... None when the plan
+    # was built directly (offline_plan) rather than through propose_plan.
+    provider_path: str | None = None
+    # Each model attempt: tier, model, outcome and the validation reason code.
+    provider_attempts: list[dict[str, Any]] = field(default_factory=list)
 
     def validate(self) -> None:
         """Raise `ValueError` on an internally inconsistent plan:
@@ -109,6 +115,7 @@ class NormalizationPlan:
                 "columns": [asdict(c) for c in self.columns],
                 "created_by": self.created_by,
                 "model": self.model,
+                "provider_path": self.provider_path,
             },
             sort_keys=True,
         )
@@ -118,7 +125,8 @@ class NormalizationPlan:
         """Rebuild a `NormalizationPlan` from `to_json`'s output."""
         data: dict[str, Any] = json.loads(raw)
         columns = [ColumnPlan(**col) for col in data["columns"]]
-        return cls(columns=columns, created_by=data["created_by"], model=data.get("model"))
+        return cls(columns=columns, created_by=data["created_by"], model=data.get("model"),
+                   provider_path=data.get("provider_path"))
 
 
 __all__ = ["Action", "ColumnPlan", "ColumnProvenance", "NormalizationPlan"]
