@@ -63,6 +63,13 @@ from kalos.portal.migrate import (
 from kalos.portal.migrate import (
     campaigns_table_is_v1_compatible as _campaigns_table_is_compatible,
 )
+from kalos.portal.prediction_history import (
+    record_fold,
+    record_prediction,
+    record_snapshot,
+    sha256_text,
+    snapshot_id_for,
+)
 from kalos.portal.tenancy import validate_tenant_id
 
 log = logging.getLogger("kalos.portal")
@@ -468,7 +475,12 @@ class CampaignStore:
     def _write_analysis(
         conn: sqlite3.Connection, tenant: str, campaign_id: str, blob: str,
         dataset: str | None, campaign_generation: str | None, now: float,
-    ) -> None:
+        *, analysis: Mapping[str, Any] | None = None, kind: str = "publish",
+        round_: int | None = None,
+    ) -> int:
+        """Publish `blob` as the campaign's analysis AND append it to
+        `analysis_snapshots` (schema v8) in the same transaction. Returns the
+        snapshot id."""
         conn.execute(
             "INSERT INTO analyses (campaign_id, tenant, state, dataset, campaign_generation, "
             "updated_at) VALUES (?, ?, ?, ?, ?, ?) "
@@ -476,6 +488,11 @@ class CampaignStore:
             "dataset = excluded.dataset, campaign_generation = excluded.campaign_generation, "
             "updated_at = excluded.updated_at WHERE analyses.tenant = excluded.tenant",
             (campaign_id, tenant, blob, dataset, campaign_generation, now),
+        )
+        return record_snapshot(
+            conn, tenant=tenant, campaign_id=campaign_id, blob=blob, analysis=analysis,
+            kind=kind, round_=round_, campaign_generation=campaign_generation,
+            dataset=dataset, created_at=now,
         )
 
     @staticmethod
@@ -685,6 +702,9 @@ class CampaignStore:
             "base_rows": base_rows,
             "pending": [],
             "round": 0,
+            # Schema v8: identifies this upload in the prediction history. A
+            # re-upload restarts the round count, so (seed_id, round) is a round.
+            "seed_id": uuid.uuid4().hex,
             # Progress trajectory: best-so-far at each round, starting at
             # round 0 (the uploaded base). Each reanalyze appends a point.
             "history": [{"round": 0, "best": _best_measured(base_rows, target), "n_base": len(base_rows)}],
@@ -700,7 +720,8 @@ class CampaignStore:
             if analysis is not None:
                 blob = self._analysis_blob(analysis, dataset or "uploaded dataset", generation, now)
                 if blob is not None:
-                    self._write_analysis(conn, tenant, row.id, blob, dataset, generation, now)
+                    self._write_analysis(conn, tenant, row.id, blob, dataset, generation, now,
+                                         analysis=analysis, kind="upload", round_=0)
             if on_commit is not None:
                 on_commit(conn, generation)
             return generation
@@ -803,19 +824,21 @@ class CampaignStore:
     @staticmethod
     def _published_analysis(
         conn: sqlite3.Connection, tenant: str, campaign_id: str
-    ) -> dict[str, Any] | None:
-        """The campaign's published analysis read inside `conn`'s transaction."""
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """The campaign's published analysis read inside `conn`'s transaction, and
+        the sha256 of its stored blob (None when there is none)."""
         arow = conn.execute(
             "SELECT state FROM analyses WHERE campaign_id = ? AND tenant = ?",
             (campaign_id, tenant),
         ).fetchone()
         if arow is None:
-            return None
+            return None, None
+        digest = sha256_text(str(arow[0]))
         try:
             data = json.loads(arow[0])
         except ValueError:
-            return None
-        return data if isinstance(data, dict) else None
+            return None, digest
+        return (data if isinstance(data, dict) else None), digest
 
     def start(
         self, recipes: list[dict[str, Any]], *, tenant: str, campaign_id: str | None = None
@@ -868,8 +891,12 @@ class CampaignStore:
             from kalos.portal.run_prediction import prediction_at_start, run_view
             from kalos.portal.run_record import provenance_ref
 
-            published = self._published_analysis(conn, tenant, row.id)
+            published, published_sha = self._published_analysis(conn, tenant, row.id)
             analysis_ref = provenance_ref(published)
+            snapshot_id = (
+                snapshot_id_for(conn, tenant=tenant, campaign_id=row.id, analysis_sha256=published_sha)
+                if published_sha is not None else None
+            )
             for recipe in recipes:
                 # Validate the recipe mapping HERE, at the point of the bad
                 # input, so a malformed body 400s cleanly at /api/campaign/start
@@ -911,6 +938,25 @@ class CampaignStore:
                 }
                 state["pending"].append(run)
                 appended.append(run)
+                # Schema v8: the prediction recorded at start, append-only, in this
+                # transaction. Per-proposal intervals are read from the published
+                # proposal itself (the per-run copy is size-capped).
+                index = prediction.get("proposal_index") if engine else None
+                proposals = (published or {}).get("proposals")
+                proposal = (
+                    proposals[index]
+                    if isinstance(index, int) and isinstance(proposals, list)
+                    and 0 <= index < len(proposals) and isinstance(proposals[index], dict)
+                    else None
+                )
+                record_prediction(
+                    conn, tenant=tenant, campaign_id=row.id, run_id=run["id"],
+                    round_=state["round"], seed_id=state.get("seed_id"), recipe=recipe_map,
+                    block=prediction, proposal=proposal, pred_source=run["pred_source"],
+                    analysis_sha256=published_sha if engine else None,
+                    analysis_snapshot_id=snapshot_id if engine else None,
+                    source="start", recorded_at=now,
+                )
             state["updated_at"] = now
             self._cas_write(conn, tenant, row, state, row.generation)
             return [run_view(run) for run in appended]
@@ -1113,9 +1159,11 @@ class CampaignStore:
                 raise CampaignConflict(changed)
             target = state["target"]
             still_pending: list[dict[str, Any]] = []
+            folded_runs: list[dict[str, Any]] = []
             for run in state["pending"]:
                 if run["result"] is not None:
                     state["base_rows"].append({**run["recipe"], target: run["result"]})
+                    folded_runs.append(run)
                 else:
                     still_pending.append(run)
             state["pending"] = still_pending
@@ -1136,11 +1184,22 @@ class CampaignStore:
                 new_generation = self._cas_write(conn, tenant, row, state, generation)
             except CampaignConflict:
                 raise CampaignConflict(changed) from None
+            snapshot_id: int | None = None
             if analysis is not None:
                 label = dataset or f"campaign round {state['round']}"
                 blob = self._analysis_blob(analysis, label, new_generation, now)
                 if blob is not None:
-                    self._write_analysis(conn, tenant, row.id, blob, label, new_generation, now)
+                    snapshot_id = self._write_analysis(
+                        conn, tenant, row.id, blob, label, new_generation, now,
+                        analysis=analysis, kind="reanalyze", round_=state["round"],
+                    )
+            # Schema v8: which value (and run_results version) of each run the fold
+            # wrote into base_rows. The run's id, prediction and band stay in
+            # run_predictions; nothing about the run is lost when it leaves pending.
+            for run in folded_runs:
+                record_fold(conn, tenant=tenant, campaign_id=row.id, run=run,
+                            folded_in_round=state["round"], analysis_snapshot_id=snapshot_id,
+                            folded_at=now)
             if on_commit is not None:
                 on_commit(conn, new_generation)
             return state
@@ -1165,7 +1224,14 @@ class CampaignStore:
             assert row is not None
             if row.archived_at is not None:
                 raise CampaignArchived()
-            self._write_analysis(conn, tenant, row.id, blob, dataset, campaign_generation, now)
+            current = row.state()
+            in_sync = campaign_generation is not None and campaign_generation == row.generation
+            rnd = current.get("round") if (in_sync and current is not None) else None
+            self._write_analysis(
+                conn, tenant, row.id, blob, dataset, campaign_generation, now, analysis=result,
+                kind="publish",
+                round_=rnd if isinstance(rnd, int) and not isinstance(rnd, bool) else None,
+            )
 
     def load_analysis(
         self, *, tenant: str, campaign_id: str | None = None

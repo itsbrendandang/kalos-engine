@@ -4,7 +4,9 @@ Covers a fresh database at v7, the v6 -> v7 upgrade on a populated v6 database
 (every existing row kept, a verified `pre-v7` backup taken), the table
 constraints and the append-only triggers, the v7 -> v6 rollback (both tables
 renamed aside with their rows; a re-upgrade is clean and never reuses a name),
-the plan/status text, the shape check, and the v8 reservation note.
+the plan/status text and the shape check. Since schema v8 the current schema is
+newer than v7: the fixtures roll back with `--to 6` and the upgrade goes on to
+v8 in the same transaction (tests/test_schema_v8.py covers the v8 step).
 """
 from __future__ import annotations
 
@@ -75,11 +77,13 @@ def _make_v6(state: Path) -> tuple[Path, dict[str, str]]:
     )
     store.close()
     db = state / "portal.db"
-    migrate.migrate_down(db)
+    migrate.migrate_down(db, target=6)
     for b in state.glob("portal.db.pre-*"):
         b.unlink()
     conn = sqlite3.connect(str(db))
-    for t in ("campaign_clones_v7_rolledback", "clone_titer_history_v7_rolledback"):
+    for t in ("campaign_clones_v7_rolledback", "clone_titer_history_v7_rolledback",
+              "analysis_snapshots_v8_rolledback", "run_predictions_v8_rolledback",
+              "run_folds_v8_rolledback"):
         conn.execute(f'DROP TABLE "{t}"')
     conn.commit()
     conn.close()
@@ -92,8 +96,8 @@ def _make_v6(state: Path) -> tuple[Path, dict[str, str]]:
 def test_fresh_store_is_created_at_v7(tmp_path):
     CampaignStore(tmp_path).close()
     db = tmp_path / "portal.db"
-    assert migrate.SCHEMA_VERSION == 7
-    assert _q(db, "SELECT MAX(version) FROM schema_migrations") == [(7,)]
+    assert migrate.SCHEMA_VERSION >= 7
+    assert _q(db, "SELECT MAX(version) FROM schema_migrations") == [(migrate.SCHEMA_VERSION,)]
     assert _q(db, "SELECT name FROM schema_migrations WHERE version = 7") == [(migrate.V7_NAME,)]
     assert _names(db, "table") >= _V7_TABLES
     assert _names(db, "trigger") >= _V7_TRIGGERS
@@ -107,7 +111,7 @@ def test_the_v6_fixture_has_no_v7_trace(tmp_path):
     db, _ = _make_v6(tmp_path / "s")
     assert _q(db, "SELECT MAX(version) FROM schema_migrations") == [(6,)]
     assert not (_names(db, "table") & _V7_TABLES)
-    assert not any("v7" in t for t in _names(db, "table"))
+    assert not any("v7" in t or "v8" in t for t in _names(db, "table"))
 
 
 def test_v6_to_v7_keeps_every_row_and_takes_a_verified_backup(tmp_path):
@@ -118,7 +122,7 @@ def test_v6_to_v7_keeps_every_row_and_takes_a_verified_backup(tmp_path):
     assert len(before["gate_decisions"]) == 1
 
     plan = migrate.migrate_up(db, dry_run=True).plan_text
-    assert "schema v6 -> v7" in plan and "pre-v7" in plan
+    assert f"schema v6 -> v{migrate.SCHEMA_VERSION}" in plan and "pre-v7" in plan
     assert "campaign_clones" in plan and "clone_titer_history" in plan
     assert "gate_decisions" not in plan  # only the remaining step is listed
     assert _snapshot(db) == before
@@ -129,9 +133,11 @@ def test_v6_to_v7_keeps_every_row_and_takes_a_verified_backup(tmp_path):
     assert _snapshot(result.backup_path) == before
 
     after = _snapshot(db)
-    assert [r[0] for r in after.pop("schema_migrations")] == [2, 3, 4, 5, 6, 7]
+    assert [r[0] for r in after.pop("schema_migrations")] == list(range(2, migrate.SCHEMA_VERSION + 1))
     before.pop("schema_migrations")
     assert after.pop("campaign_clones") == [] and after.pop("clone_titer_history") == []
+    for t in ("analysis_snapshots", "run_predictions", "run_folds"):  # v8, tests/test_schema_v8.py
+        after.pop(t)
     after.pop("sqlite_sequence", None)
     before.pop("sqlite_sequence", None)
     assert after == before
@@ -153,7 +159,7 @@ def test_plan_text_from_v1_mentions_the_v7_tables(tmp_path):
     conn.commit()
     conn.close()
     plan = migrate.migrate_up(db, dry_run=True).plan_text
-    assert "v2 -> v7" in plan and "campaign_clones and clone_titer_history" in plan
+    assert f"v2 -> v{migrate.SCHEMA_VERSION}" in plan and "campaign_clones and clone_titer_history" in plan
 
 
 # --- constraints and triggers ---------------------------------------------------- #
@@ -235,12 +241,12 @@ def test_down_renames_both_tables_aside_and_re_up_is_clean(tmp_path):
     store.close()
     db = tmp_path / "portal.db"
 
-    dry = migrate.migrate_down(db, dry_run=True).plan_text
+    dry = migrate.migrate_down(db, dry_run=True, target=6).plan_text
     assert "schema v7 -> v6" in dry and "schema v6 -> v5" not in dry
     assert "campaign_clones -> campaign_clones_v7_rolledback (kept, not dropped; 1 row(s))" in dry
     assert "clone_titer_history -> clone_titer_history_v7_rolledback (kept, not dropped; 1 row(s))" in dry
 
-    result = migrate.migrate_down(db)
+    result = migrate.migrate_down(db, target=6)
     assert result.action == "rolled_back" and result.backup_path is not None
     assert _q(db, "SELECT MAX(version) FROM schema_migrations") == [(6,)]
     tables = _names(db, "table")
@@ -264,9 +270,9 @@ def test_down_renames_both_tables_aside_and_re_up_is_clean(tmp_path):
     clone_registry.put_clone(store, tenant="acme", campaign_id=cid, label="CHO-B07", status="backup",
                              fields={}, updated_by="u")
     store.close()
-    dry2 = migrate.migrate_down(db, dry_run=True).plan_text
+    dry2 = migrate.migrate_down(db, dry_run=True, target=6).plan_text
     assert "campaign_clones -> campaign_clones_v7_rolledback_2 (kept, not dropped; 1 row(s))" in dry2
-    migrate.migrate_down(db)
+    migrate.migrate_down(db, target=6)
     assert {"campaign_clones_v7_rolledback_2", "clone_titer_history_v7_rolledback_2"} <= _names(db, "table")
 
 
@@ -278,17 +284,18 @@ def test_down_to_v5_passes_through_v7_and_v6(tmp_path):
     migrate.migrate_down(db, target=5)
     assert _q(db, "SELECT MAX(version) FROM schema_migrations") == [(5,)]
     assert migrate.migrate_up(db).action == "migrated"
-    assert _q(db, "SELECT MAX(version) FROM schema_migrations") == [(7,)]
+    assert _q(db, "SELECT MAX(version) FROM schema_migrations") == [(migrate.SCHEMA_VERSION,)]
 
 
 def test_status_shows_v7_and_pending_from_v6(tmp_path):
     state = tmp_path / "s"
     db, _ = _make_v6(state)
     report, healthy = migrate.status_report(db)
-    assert healthy and "schema version: v6 (this code: v7)" in report and "schema v6 -> v7" in report
+    v = migrate.SCHEMA_VERSION
+    assert healthy and f"schema version: v6 (this code: v{v})" in report and f"schema v6 -> v{v}" in report
     migrate.migrate_up(db)
     report, healthy = migrate.status_report(db)
-    assert healthy and "schema version: v7" in report and "shape check: ok" in report
+    assert healthy and f"schema version: v{v}" in report and "shape check: ok" in report
 
 
 @pytest.mark.parametrize(
@@ -311,11 +318,3 @@ def test_shape_check_catches_a_missing_v7_table_or_trigger(tmp_path, ddl, missin
         CampaignStore(tmp_path)
     report, healthy = migrate.status_report(db)
     assert not healthy and missing in report
-
-
-def test_v8_is_documented_as_reserved_for_crux():
-    line = ("Schema v8 is reserved for the Crux items (the planned result-check and decision-ledger work, tracked in the kalos-engine project); "
-            "do not reuse v8 for anything else.")
-    assert line in (_REPO / "docs" / "MIGRATIONS.md").read_text()
-    source = (_REPO / "kalos" / "portal" / "migrate.py").read_text()
-    assert "v8 is RESERVED for the Crux items" in source or "V8 is RESERVED for the Crux items" in source
