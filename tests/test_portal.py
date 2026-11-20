@@ -4,7 +4,6 @@ import pandas as pd
 import pytest
 
 pytest.importorskip("fastapi")
-from kalos.portal.app import _analyze
 
 
 def _sheet(n=40, seed=0):
@@ -22,8 +21,14 @@ def _sheet(n=40, seed=0):
     })
 
 
-def test_analyze_excludes_outputs_and_reports_honest_cv():
-    out = _analyze(_sheet())
+# The two tests below read one analysis of `_sheet()`; they share it through
+# `shared_analysis` (tests/conftest.py), and the xdist group keeps them on one worker.
+_SHEET = pytest.mark.xdist_group("portal_sheet")
+
+
+@_SHEET
+def test_analyze_excludes_outputs_and_reports_honest_cv(shared_analysis):
+    out = shared_analysis(_sheet())
     assert out["target"] == "lipase_titer"
     # other measured outputs must never become input features (anti-leakage)
     assert "biomass_od600" not in out["features"]
@@ -78,7 +83,8 @@ def test_analyze_excludes_outputs_and_reports_honest_cv():
     assert "scale-up transfer" in rel["unmodeled"]
 
 
-def test_latest_reflects_last_upload(tmp_path, monkeypatch):
+@_SHEET
+def test_latest_reflects_last_upload(tmp_path, monkeypatch, shared_analysis):
     from kalos.portal import app as portal
     from kalos.portal import campaign as campaign_module
     from kalos.portal.auth import READ, Principal
@@ -97,7 +103,7 @@ def test_latest_reflects_last_upload(tmp_path, monkeypatch):
     # before any upload the Overview must know there is no data (not fake it)
     assert portal.latest(princ, store) == {"has_data": False}
 
-    result = portal._analyze(_sheet())
+    result = shared_analysis(_sheet())
     portal._save_latest(result, "runs.csv", tenant="default")
 
     got = portal.latest(princ, store)

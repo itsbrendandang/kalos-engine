@@ -1165,17 +1165,17 @@ def _analyze_body(
     # advance", not "how well-ranked is the whole held-out set" - Spearman can
     # look fine while the model gets exactly the recipes that matter out of
     # order (see `top_k_overlap`'s docstring). Computed on the same repeat-0
-    # pooled OOF everything else in this function reads off. Under minimize the
-    # recipes that matter are the LOWEST k, so both sides are ranked on sign * y.
-    # (cherry-picked from arch-safe-now 3935dfa; F04 / audit S4.)
-    _rank_sign = -1.0 if _minimize else 1.0
-    topk = top_k_overlap(
-        _rank_sign * np.asarray(oof_a, float), _rank_sign * np.asarray(oof_p, float), CV_TOPK_K,
-    )
+    # pooled OOF everything else in this function reads off. The k recipes a
+    # client advances are the BEST ones for the goal: `top_k_overlap` ranks
+    # highest-first, so under goal=minimize both sides are negated (the k lowest).
+    _topk_sign = -1.0 if _minimize else 1.0
+    topk = top_k_overlap(_topk_sign * np.asarray(oof_a, float), _topk_sign * np.asarray(oof_p, float),
+                         CV_TOPK_K)
     cv_topk: dict[str, Any] = {
         "overlap": None if not topk["evaluable"] else round(float(topk["overlap"]), 3),
         "k": topk["k"],
         "n": topk["n"],
+        "direction": "lowest" if _minimize else "highest",
         "evaluable": bool(topk["evaluable"]),
         "reason": topk["reason"],
     }

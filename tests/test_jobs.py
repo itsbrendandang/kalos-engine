@@ -1023,7 +1023,6 @@ def test_stop_keeps_the_runner_lock_while_a_pass_is_still_running(store, monkeyp
     _submit(store)
     runner = JobRunner(store, spawn=lambda j, _t, _d: _ProcesslessWorker([], j), timeout_s=60,
                        poll_s=0.01, pass_wait_s=0.1)
-    runner.start()
     entered, let_go = threading.Event(), threading.Event()
     real_claim = jobs.claim
 
@@ -1033,6 +1032,7 @@ def test_stop_keeps_the_runner_lock_while_a_pass_is_still_running(store, monkeyp
         return real_claim(*args, **kwargs)
 
     monkeypatch.setattr(jobs, "claim", slow_claim)
+    runner.start()  # after the patch: the first tick must not claim with the real claim
     assert entered.wait(10)  # the scheduler thread is inside a pass
     runner.stop(timeout=0.1)
     try:
@@ -1041,6 +1041,8 @@ def test_stop_keeps_the_runner_lock_while_a_pass_is_still_running(store, monkeyp
             job_runner._acquire_runner_lock(store.state_dir)
     finally:
         let_go.set()
+        if runner._thread is not None:
+            runner._thread.join(5)
 
 
 def test_a_refused_submit_writes_no_upload_to_disk(store, monkeypatch):

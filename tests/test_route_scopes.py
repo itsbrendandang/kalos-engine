@@ -71,7 +71,7 @@ def test_manifest_covers_every_openapi_operation(manifest):
     ("PUT", f"{CID}/gates/{{gate}}", ["write"]),
     ("PATCH", CID, ["write"]),
     ("POST", f"{CID}/operating-ranges", ["write"]),
-    ("GET", f"{CID}/operating-ranges", ["read"]),
+    ("GET", f"{CID}/operating-ranges", ["write"]),  # refits the GP (E-S3)
     ("POST", "/api/scale/readout.json", ["write"]),
     ("GET", "/api/campaigns", ["read"]),
     ("POST", "/api/assist/ask", ["read"]),

@@ -186,6 +186,12 @@ def test_proposal_fields_shape_and_arithmetic():
     assert ei["basis"] == "model" and ei["posterior"] == "latent" and ei["incumbent"] == 4.5
     assert math.isclose(ei["value"], float(expected_improvement([5.0], [0.4], 4.5)[0]), rel_tol=1e-3)
     assert math.isclose(r["p_improve"]["value"], norm.cdf(0.5 / 0.4), rel_tol=1e-3)
+    # The "chance to beat" is on the LATENT mean (sd 0.4), not one new measurement
+    # (predictive sd 0.5, which would give the lower norm.cdf(0.5 / 0.5)), and says so.
+    assert not math.isclose(r["p_improve"]["value"], norm.cdf(0.5 / 0.5), rel_tol=1e-3)
+    assert "latent mean" in r["p_improve"]["description"]
+    assert "not the probability that one new measurement" in r["p_improve"]["description"]
+    assert "latent mean" in ei["description"]
     json.dumps(rows, allow_nan=False)
     summary = interval_method_summary(cal, SIGMA_FITTED_NOISE)
     assert all("_q" not in lv for lv in summary["levels"])

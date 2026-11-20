@@ -19,7 +19,13 @@ Two kinds of band, never mixed and always labeled:
 
 `expected_improvement` and `p_improve` are computed on the LATENT posterior
 (the process mean, no observation noise) against the incumbent the proposal
-path uses, the convention of analytic EI. Model-based.
+path uses, the convention of analytic EI. Model-based. `p_improve` (shown by
+the web as the "chance to beat" the best) is therefore P(the model's MEAN at the
+recipe beats the incumbent), NOT P(one new measurement beats it): a single run
+adds assay noise, which pulls that probability toward 0.5 (e.g. a mean 1 latent
+sd above the incumbent gives p_improve 0.84; with observation noise equal to the
+latent sd one run beats it with probability 0.76). Each value carries a
+`description` saying so.
 
 Every band carries the BASIS of its coverage claim (F02, ML audit B1):
 `coverage_basis` is `"held_out_past_runs"` for the conformal bands (calibrated
@@ -57,6 +63,13 @@ METHOD_CONFORMAL = "conformal_normalized"
 CALIBRATED_ON = "grouped_cv_oof"
 METHOD_GP = "gp_posterior"
 GP_NOTE = "model-based, not held-out calibrated"
+P_IMPROVE_DESCRIPTION = (
+    "probability that the model's latent mean (the process mean, no assay noise) at this recipe "
+    "beats the incumbent; not the probability that one new measurement beats it"
+)
+EI_DESCRIPTION = (
+    "expected amount by which the model's latent mean (no assay noise) beats the incumbent"
+)
 QUANTILE_LEVELS = (0.05, 0.25, 0.5, 0.75, 0.95)
 CALIBRATED_ON_SELECTED = "grouped_cv_oof_top_ranked"
 
@@ -371,9 +384,11 @@ def proposal_interval_fields(
             "gp_intervals": gp,
             "quantiles": quant,
             "expected_improvement": {"value": _sig(ei[i]) if np.isfinite(ei[i]) else None,
-                                     "method": "analytic_ei_gp_posterior", **common},
+                                     "method": "analytic_ei_gp_posterior", **common,
+                                     "description": EI_DESCRIPTION},
             "p_improve": {"value": _sig(pi[i]) if np.isfinite(pi[i]) else None,
-                          "method": "gp_posterior_cdf", **common},
+                          "method": "gp_posterior_cdf", **common,
+                          "description": P_IMPROVE_DESCRIPTION},
         })
     return rows
 
@@ -439,7 +454,8 @@ def interval_method_summary(
             "gp_intervals": "observation (latent + observation noise), one new measurement",
             "quantiles": "observation (latent + observation noise), one new measurement",
             "expected_improvement": "latent mean (no observation noise)",
-            "p_improve": "latent mean (no observation noise)",
+            "p_improve": ("latent mean (no observation noise): P(the model's mean beats the incumbent), "
+                          "not P(one new measurement beats it)"),
             "incumbent": ("the value the proposal annotation compares against (best single measurement, or "
                           "best replicate-averaged recipe mean when the replicate-aware surrogate proposed); "
                           "analytic EI is reported for ranking context, the batch itself was chosen by qLogNEI"),

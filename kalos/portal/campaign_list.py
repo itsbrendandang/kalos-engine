@@ -16,7 +16,11 @@ base data (uploaded rows plus folded results), never a prediction. Its direction
 is the campaign setup's goal (`campaign_settings` kind `setup`, `value.goal`):
 `minimize` uses min, anything else (no setup, or no recognized goal) uses max and
 says so in `goal.source = "default"`. Analysis fields are copied as stored; an
-analysis computed before a field existed reads `null` for it.
+analysis computed before a field existed reads `null` for it. `target_unit` is the
+display unit of the card's `target` by the analysis rule (VIZ_SPEC R6,
+`kalos.portal.analysis_parts.units.target_unit_block`): the setup's
+`target_unit` as typed, else parsed from the raw target header, else null. A
+display label only; no value is converted.
 """
 from __future__ import annotations
 
@@ -27,6 +31,7 @@ import math
 import sqlite3
 from typing import Any
 
+from kalos.portal.analysis_parts.units import target_unit_block
 from kalos.portal.campaign import CampaignStore
 from kalos.portal.migrate import CAMPAIGN_ID_PATTERN
 from kalos.portal.tenancy import validate_tenant_id
@@ -131,19 +136,20 @@ def _in(ids: list[str]) -> str:
 
 
 def _settings(conn: sqlite3.Connection, tenant: str, ids: list[str]) -> dict[str, dict[str, Any]]:
-    """`{campaign_id: {"goal": ..., "current_stage": ...}}` from v6 settings."""
+    """`{campaign_id: {"goal", "target_unit", "current_stage"}}` from v6 settings."""
     rows = conn.execute(
         "SELECT campaign_id, kind, CASE WHEN json_valid(value) "  # noqa: S608 - only '?' placeholders are interpolated
-        "THEN json_extract(value, '$.goal', '$.current_stage') END "
+        "THEN json_extract(value, '$.goal', '$.current_stage', '$.target_unit') END "
         f"FROM campaign_settings WHERE tenant = ? AND campaign_id IN ({_in(ids)})",
         (tenant, *ids),
     ).fetchall()
     out: dict[str, dict[str, Any]] = {}
     for cid, kind, extracted in rows:
-        vals = _loads_list(extracted, 2)
+        vals = _loads_list(extracted, 3)
         entry = out.setdefault(cid, {})
         if kind == "setup":
             entry["goal"] = vals[0]
+            entry["target_unit"] = vals[2]
         elif kind == "stages":
             entry["current_stage"] = vals[1]
     return out
@@ -374,6 +380,10 @@ def _item(
         "is_default": cid == default,
         "has_data": readable and n_base > 0,
         "target": target if isinstance(target, str) else None,
+        "target_unit": target_unit_block(
+            target if isinstance(target, str) else None,
+            cfg.get("target_unit") if isinstance(cfg.get("target_unit"), str) else None,
+        ),
         "n_base": n_base if readable else None,
         "round": rnd if isinstance(rnd, int) and not isinstance(rnd, bool) else None,
         "n_awaiting": n_awaiting if isinstance(n_awaiting, int) else None,
