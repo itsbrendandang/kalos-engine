@@ -2,8 +2,10 @@
 
 The clone / covariate roles (docs/CLONES.md) must not move a single number for a
 sheet that has no clone, strain, cell-line or covariate column. This pins the
-full `_analyze` response of five such sheets, recorded on `feat/web-redesign-apis`
-@ 2692e7c BEFORE any strain code existed, and asserts that every key recorded
+full `_analyze` response of five such sheets, recorded on main @ 8066c86 (#164,
+the branch's base, with no strain code), first recorded on `feat/web-redesign-apis`
+@ 2692e7c; re-recorded when main only added descriptive fields (no number
+moved: `cv_topk.direction`, `p_improve`/`expected_improvement.description`), and asserts that every key recorded
 then is byte-identical now. New keys may be added (they are additive); no
 recorded key may change.
 
@@ -153,7 +155,7 @@ def test_no_clone_sheet_output_is_unchanged(name):
 
 if __name__ == "__main__":  # regenerate (on the base commit only)
     payload = {
-        "recorded_on": "feat/web-redesign-apis@2692e7c (before the strain work)",
+        "recorded_on": "main@8066c86 (#164; before the strain work)",
         "environment": _environment(),
         "results": {name: _run(name) for name in sorted(DATASETS)},
     }
