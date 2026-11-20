@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from kalos import __version__ as ENGINE_VERSION
+from kalos.analysis.viz_fields import viz_fields
 from kalos.core.conformal import q_from_residuals
 from kalos.core.drivers import (
     benjamini_hochberg,
@@ -1541,7 +1542,7 @@ def _analyze_body(
         else:
             embedding = _emb
 
-    # Spearman correlation on recipe means
+    # Spearman correlation over the fitted rows (unit "row", pairwise n: E5)
     _corr = _correlation_spearman(X, y, cont_feats)
     correlation: dict | None = None
     if _corr is not None:
@@ -1572,6 +1573,11 @@ def _analyze_body(
         incumbent=incumbent,
     )
     viz_reasons["slices"] = _sl["reason"]
+    _viz = viz_fields(  # E3/E12 (VIZ_SPEC_V2, kalos/analysis/viz_fields.py): additive keys only
+        s, df=df, level_columns=[*kept_cats, *constant_cats, strain_plan.column],
+        response_surface=response_surface, X_fit=X_fit, y_fit=y_fit, cont_feats=cont_feats, kept_cats=kept_cats,
+        cat_dims_map=cat_dims_map or {}, bounds=bounds, drv=drv, incumbent=incumbent, replicate_aware=replicate_aware)
+    viz_reasons.update(_viz.pop("reasons"))
 
     # Per-clone predicted pieces (slices per level, the GP at one reference
     # process per clone, predicted optimum per clone), read off this same GP.
@@ -1903,6 +1909,7 @@ def _analyze_body(
     result["drivers_skipped"] = categorical_skipped([str(c) for c in kept_cats])
     result["correlation_skipped"] = categorical_skipped([str(c) for c in kept_cats])
     result["categorical_effects"] = _cat_effects
+    result.update(_viz)
     if strain.active:
         _roles = {strain.plan.column: "strain"} if strain.plan.column else {}
         _roles.update({c: "covariate" for c in covariates_block(strain.plan, {})["columns"]})

@@ -16,6 +16,7 @@ import logging
 import numpy as np
 from scipy.stats import spearmanr
 
+from kalos.analysis.viz_fields import pairwise_complete_n
 from kalos.portal.analysis_parts.slices import reference_point
 
 logger = logging.getLogger(__name__)
@@ -110,13 +111,14 @@ def _correlation_spearman(
     y: np.ndarray,
     cont_feats: list,
 ) -> dict | None:
-    """Compute descriptive Spearman correlations on recipe means.
+    """Descriptive pairwise Spearman correlations over the fitted ROWS (runs).
 
     Continuous features + target only; nominal categories are excluded.
-    Returns a square matrix with null for undefined cells.
-
-    Recipe means are computed by averaging rows that share the same
-    row-hash group key (from row_hash_groups in analysis.py).
+    Returns a square matrix with null for undefined cells (fewer than 3
+    complete pairs, or a constant column). `unit` is "row": every row of `X`
+    counts once (replicates are NOT averaged into recipe means). `n_matrix`
+    is the pairwise complete-case n behind each cell
+    (`kalos.analysis.viz_fields.pairwise_complete_n`, VIZ_SPEC_V2 E5).
     """
     if len(cont_feats) < 1:
         return {"reason": "no continuous features for correlation"}
@@ -172,11 +174,13 @@ def _correlation_spearman(
                         matrix[j][i] = val
 
         return {
-            "unit": "recipe",
+            # E5: the label matches the computation (raw rows, not recipe means).
+            "unit": "row",
             "n_units": int(X.shape[0]),
             "n_rows": int(X.shape[0]),
             "labels": labels,
             "matrix": matrix,
+            "n_matrix": pairwise_complete_n(features_with_target),
         }
     except Exception:
         logger.exception("viz computation failed")
@@ -226,7 +230,32 @@ def _response_surface_gp(
 
     x_name, x_idx = sweep_cols[0]
     y_name, y_idx = sweep_cols[1]
+    return surface_grid(
+        s, X_fit, y_fit, cont_feats, kept_cats, cat_dims_map, bounds,
+        (x_name, x_idx), (y_name, y_idx), incumbent, replicate_aware,
+    )
 
+
+def surface_grid(
+    s,  # Surrogate, alive for the call
+    X_fit: np.ndarray,
+    y_fit: np.ndarray,
+    cont_feats: list,
+    kept_cats: list,
+    cat_dims_map: dict,
+    bounds: np.ndarray,
+    x_axis: tuple[str, int],
+    y_axis: tuple[str, int],
+    incumbent: float,
+    replicate_aware: bool,
+) -> dict:
+    """The 21x21 GP mean/std grid over one pair of continuous inputs (`x_axis`,
+    `y_axis` = (name, column index)), every other input at the incumbent recipe.
+    Shared by `response_surface` (the top pair) and `response_surfaces[]`
+    (`kalos.analysis.viz_fields`), so every pair has the same grid, rounding and
+    labels."""
+    x_name, x_idx = x_axis
+    y_name, y_idx = y_axis
     try:
         # Build sweep grids from bounds
         x_vals = np.linspace(float(bounds[0, x_idx]), float(bounds[1, x_idx]), 21)

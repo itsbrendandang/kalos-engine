@@ -52,6 +52,8 @@ _WEB_ANALYZE_FIELDS: frozenset[str] = frozenset({
     # Clones / strains (docs/CLONES.md): present on every analysis, empty without a clone.
     "strain_summary", "slices_by_level", "slices_by_level_skipped", "oof_levels",
     "covariates", "drivers_skipped", "correlation_skipped", "categorical_effects",
+    # VIZ_SPEC_V2 E3/E12 (kalos/analysis/viz_fields.py): heat-map fields.
+    "categorical_levels", "response_surfaces",
 })
 
 # Per-proposal fields the redesign reads (R4): each proposal carries its own
@@ -157,6 +159,12 @@ def test_proposals_and_surface_carry_the_redesign_fields(analyze_response: dict)
     surface = analyze_response["response_surface"]
     if surface is not None:
         assert not _WEB_SURFACE_FIELDS - set(surface)
+    for surf in analyze_response["response_surfaces"]:  # E3: same shape per pair
+        assert not _WEB_SURFACE_FIELDS - set(surf) and surf["pair_rank"] >= 1
+    corr = analyze_response["correlation"]
+    if corr is not None:  # E5: the label matches the computation, n per cell
+        assert corr["unit"] == "row"
+        assert len(corr["n_matrix"]) == len(corr["labels"])
     unit = analyze_response["target_unit"]
     assert set(unit) >= {"unit", "source", "header", "note"}
     if analyze_response["slices"] is not None:
