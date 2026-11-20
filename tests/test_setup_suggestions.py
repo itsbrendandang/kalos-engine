@@ -108,12 +108,19 @@ def test_model_suggestions_get_an_engine_confidence_not_the_models():
     assert s["clone_id"]["confidence"] == "high"   # the clone name rule agrees
     assert s["pH"]["confidence"] == "medium"       # no evidence either way
     assert s["pH"]["reason_source"] == "model"
-    wrong = _reply(titer_x10={"role": "setting", "unit": None, "reason": "A process input."})
-    s = _by_col(suggest(_sheet(), target="titer_g_L", cascade=Cascade(Fake("f", wrong), None)))
-    # The data shows the column sorts runs by the result: the engine's evidence
-    # outranks the model, and both are shown.
-    assert s["titer_x10"]["role"] == "derived_from_target" and s["titer_x10"]["reason_source"] == "engine"
-    assert s["titer_x10"]["model_role"] == "setting" and s["titer_x10"]["confidence"] == "high"
+    df = _sheet()
+    df["grade"] = np.where(df["titer_g_L"] > df["titer_g_L"].median(), "A", "B")
+    wrong = json.loads(_reply(titer_x10={"role": "setting", "unit": None, "reason": "A process input."}))
+    wrong["columns"].append({"column": "grade", "role": "setting", "unit": None, "reason": "A process input."})
+    s = _by_col(suggest(df, target="titer_g_L", cascade=Cascade(Fake("f", json.dumps(wrong)), None)))
+    # A text column whose levels sort the runs by the result: the engine's
+    # evidence outranks the model, and both are shown.
+    assert s["grade"]["role"] == "derived_from_target" and s["grade"]["reason_source"] == "engine"
+    assert s["grade"]["model_role"] == "setting" and s["grade"]["confidence"] == "high"
+    # A numeric column that tracks the target is reported, not overruled (a
+    # strong setting looks the same): the model's role stands, at low confidence.
+    assert s["titer_x10"]["role"] == "setting" and s["titer_x10"]["confidence"] == "low"
+    assert s["titer_x10"]["engine_role"] == "derived_from_target"
     wrong = _reply(clone_id={"role": "setting", "unit": None, "reason": "A process input."})
     s = _by_col(suggest(_sheet(), target="titer_g_L", cascade=Cascade(Fake("f", wrong), None)))
     assert s["clone_id"]["role"] == "setting" and s["clone_id"]["confidence"] == "low"  # name rule only
@@ -224,9 +231,10 @@ def test_leak_evidence_separated_levels_and_observed_names():
 
     df = _sheet()
     df["tier"] = np.where(df["titer_g_L"] > df["titer_g_L"].median(), "high", "low")
-    df["medium"] = np.where(df["titer_g_L"] > df["titer_g_L"].median(), "A", "B")  # a factor name: kept
+    df["medium"] = np.where(df["titer_g_L"] > df["titer_g_L"].median(), "A", "B")
     df["contamination"] = "N"
     ev = leak_evidence(df, "titer_g_L")
     assert ev["tier"]["kind"] == "levels" and ev["titer_x10"]["kind"] == "numeric"
     assert ev["contamination"]["kind"] == "name"
-    assert "medium" not in ev and "pH" not in ev and "passage" not in ev
+    assert ev["tier"]["exclude"] is True and ev["medium"]["exclude"] is False  # a factor name: reported, kept
+    assert "pH" not in ev and "passage" not in ev

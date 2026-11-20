@@ -178,17 +178,22 @@ def leak_evidence(df: pd.DataFrame, target: str | None) -> dict[str, dict[str, A
         if xn[mask].notna().mean() >= 0.9:
             rho = xn[mask].rank().corr(y[mask].rank())
             if rho is not None and np.isfinite(rho) and abs(rho) >= 0.95:
-                out[str(col)] = {"kind": "numeric", "spearman": _round(float(rho)), "n": int(mask.sum())}
+                # Reported, never excluded on content (as in data-checks): a
+                # setting with an overwhelming, low-noise effect looks the same.
+                out[str(col)] = {"kind": "numeric", "spearman": _round(float(rho)), "n": int(mask.sum()),
+                                 "exclude": False}
         else:
             levels = x[mask].astype(str)
-            if 2 <= levels.nunique() <= 10 and not BIOPROCESS_PROFILE.group_hint.search(str(col)):
+            if 2 <= levels.nunique() <= 10:
                 # Each level holds its own band of target values, with no
-                # overlap: the column sorts the runs exactly by the result.
+                # overlap: the column sorts the runs exactly by the result. A
+                # factor-like name (medium, strain, batch) is reported, not excluded.
                 spans = sorted((float(g.min()), float(g.max())) for _, g in y[mask].groupby(levels))
                 if all(hi < nxt_lo for (_, hi), (nxt_lo, _) in itertools.pairwise(spans)):
-                    out[str(col)] = {"kind": "levels", "separated_levels": len(spans), "n": int(mask.sum())}
+                    out[str(col)] = {"kind": "levels", "separated_levels": len(spans), "n": int(mask.sum()),
+                                     "exclude": not BIOPROCESS_PROFILE.group_hint.search(str(col))}
         if str(col) not in out and observed is not None and observed.search(str(col)):
-            out[str(col)] = {"kind": "name", "note": "the name reads as judged after the run"}
+            out[str(col)] = {"kind": "name", "note": "the name reads as judged after the run", "exclude": False}
     return out
 
 
@@ -340,10 +345,11 @@ def suggest(df: pd.DataFrame, *, target: str | None, cascade: Cascade | None) ->
         role, reason, source = (m["role"], m["reason"], "model") if m else (e_role, e_reason, "engine")
         if name == target and role != "outcome":
             role, reason, source = "outcome", "This is the target you chose.", "engine"
-        elif (name in leaks and leaks[name].get("kind") != "name" and leaks[name].get("exclude", True)
+        elif (name in leaks and leaks[name].get("exclude", False)
               and role not in ("derived_from_target", "outcome")):
-            # Data evidence (the column sorts the runs by the result) outranks
-            # the model: a leaked column is never suggested as an input.
+            # Data evidence the engine itself would act on (a text column whose
+            # levels sort the runs by the result; `exclude` in the data-checks
+            # evidence) outranks the model: never suggested as an input.
             role, reason, source = "derived_from_target", e_reason, "engine"
         if evidence and role in evidence:
             confidence = "high"
