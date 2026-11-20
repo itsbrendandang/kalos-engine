@@ -3,10 +3,13 @@
   "key": "darwin-arm64-py3.11-torch2.13.0-botorch0.18.1-gpytorch1.15.2-numpy2.4.6-scipy1.17.1-pandas3.0.3-sklearn1.9.0",
   "platform": "macOS-27.2.1-arm64-arm-64bit",
   "python": "3.11.17",
-  "torch_threads": 1
+  "torch_threads": 1,
+  "cpu": "arm",
+  "kernel_pins": {}
  },
  "reasons": [
-  "Initial recording (reorg guard R02) on main 8e33a37: the baseline every reorg move must reproduce byte for byte. Build SHA pinned to 'golden-build' via KALOS_BUILD_SHA."
+  "Initial recording (reorg guard R02) on main 8e33a37: the baseline every reorg move must reproduce byte for byte. Build SHA pinned to 'golden-build' via KALOS_BUILD_SHA.",
+  "Scenario extended: the 8 trust-layer sheets (scripts/trust_golden.py) and the 5 strain no-clone sheets now run through _analyze in the oracle, so the CI same-runner gate covers them (they were macOS-only and skipped on CI). Recorded on main 793f716; no engine change."
  ],
  "cases": {
   "http/01-GET-healthz": "7be3e06e3f23b3e5960b28ad9ee0bd91fb6bb6de9edc18078e04504ff5872fd0",
@@ -85,6 +88,19 @@
   "http/74-GET-api_assist_next_campaign_id_CID": "74aa5ea3891609ac4129e097b7295230b7b07722b32a4cff2f2b077e70d6641d",
   "http/75-POST-api_assist_ask": "88a3b9d8905b416bd1d57ad7d4875ff071c526b3dd47b46bf8e28827961e9c62",
   "http/76-GET-api_assist_sop": "cc81cb247ca4117edee3c1d1c4ca35ef0418ac3707c0ddbf699b301ec09f25b6",
-  "http/77-POST-api_assist_sop_draft": "e7e21d67b00cb7d7f4e9642180dd613c0ad2210d96394fb6bcf141fc0bd48030"
+  "http/77-POST-api_assist_sop_draft": "e7e21d67b00cb7d7f4e9642180dd613c0ad2210d96394fb6bcf141fc0bd48030",
+  "analysis/trust/two_feature": "d6a2e9eb463da37421d58ad31c428f104b389c55e03991a512229811895a12eb",
+  "analysis/trust/bioprocess_subset": "1ff3631121bf5ef38edbf9b194b62c68f2561c0cd01efde71930beca337fe661",
+  "analysis/trust/batch_text": "f500213885ff9d8827b3ee1ef2bcb65af729ca34640cef404b09d758188f123f",
+  "analysis/trust/jitter_reps": "80109d2711d6b0062464705eeb8e800132c84702f1179b648e8dbea055c3e7fe",
+  "analysis/trust/pure_noise": "03eb4414f730500df3285c6f3b2b111c4376b48d86512cacd95845af2fa616dd",
+  "analysis/trust/mixed_medium": "54fe5c73c4ce3135401ab0c1639ff006ffa6bd1532c5e133e9c8f91b57ff9351",
+  "analysis/trust/minimize": "3199f1413a9924d82c8b48ee7b6b7f221740b3fa7cb5ae4165ee8b564262e559",
+  "analysis/trust/campaign_rounds": "4c22fb3a1624b23beed5030623638fb09852b6f172352af50e28a4577abeecde",
+  "analysis/strain_no_clone/bioprocess_subset": "1ff3631121bf5ef38edbf9b194b62c68f2561c0cd01efde71930beca337fe661",
+  "analysis/strain_no_clone/continuous": "d6a2e9eb463da37421d58ad31c428f104b389c55e03991a512229811895a12eb",
+  "analysis/strain_no_clone/mixed_medium": "54fe5c73c4ce3135401ab0c1639ff006ffa6bd1532c5e133e9c8f91b57ff9351",
+  "analysis/strain_no_clone/replicated": "e0f93bf01ad11654cbc54e41aa0be4b83ba3906b67f2b28f81438f8bf25c5504",
+  "analysis/strain_no_clone/setup_constrained": "57db497b5b7c5f8fd572dc91c3eb03393c63480ff15ac46a96a0cd40faf4de96"
  }
 }

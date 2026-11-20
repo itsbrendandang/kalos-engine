@@ -13,7 +13,10 @@ and returns one record per case:
 - `http/<NN>-<method>-<path>`: status, headers (minus volatile ones) and body for
   every other route the scenario exercises (campaign CRUD, setup, stages, gates,
   clones, exports, history, operating ranges, jobs (queued then cancelled; no
-  worker), the legacy single-campaign routes, the assistant (offline), probes).
+  worker), the legacy single-campaign routes, the assistant (offline), probes);
+- `analysis/trust/<sheet>` and `analysis/strain_no_clone/<sheet>`: the 8 trust-layer
+  sheets (scripts/trust_golden.py) and the 5 strain no-clone sheets
+  (tests/test_strain_golden_no_clone.py) through `_analyze` directly.
 
 Records are canonical JSON: key order is the response's own (so a reordering
 is a diff), floats round-trip exactly, and only values that differ between two
@@ -304,6 +307,7 @@ def run_scenario() -> dict[str, Any]:
     _legacy(rec)
     _jobs(rec, cids["minimize"])
     _assist(rec, cids["bioprocess_subset"])
+    _direct_analyses(rec)
     return rec.records
 
 
@@ -433,6 +437,40 @@ def _assist(rec: _Recorder, cid: str) -> None:
     run_ids = sorted({r["run_id"] for r in runs.get("history", runs.get("results", [])) if "run_id" in r})[:1]
     source = {"run_ids": run_ids} if run_ids else {"proposal_index": [0]}
     rec.call("POST", "/api/assist/sop/draft", json={"campaign_id": cid, "source": source, "template": "batch_recipe"})
+
+
+def _load_by_path(name: str, path: Path) -> Any:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _direct_analyses(rec: _Recorder) -> None:
+    """The sheets of the two older same-machine goldens, run through `_analyze`
+    directly, so CI checks them too (base vs head on one runner): the trust-layer
+    sheets (scripts/trust_golden.py, 8) and the strain no-clone sheets
+    (tests/test_strain_golden_no_clone.py, 5). Their own fixtures stay as they
+    are (recorded on macOS, skipped elsewhere); these records make the same
+    sheets part of the CI gate. Each tree uses its OWN sheet definitions."""
+    trust = ROOT / "scripts" / "trust_golden.py"
+    strain = ROOT / "tests" / "test_strain_golden_no_clone.py"
+    if trust.exists():
+        mod = _load_by_path("kalos_golden_trust_sheets", trust)
+        for name, result in mod.compute().items():
+            rec.records[f"analysis/trust/{name}"] = scrub(result)
+    else:
+        rec.records["analysis/trust/absent"] = {"absent": str(trust.relative_to(ROOT))}
+    if strain.exists():
+        mod = _load_by_path("kalos_golden_strain_sheets", strain)
+        for name in sorted(mod.DATASETS):
+            rec.records[f"analysis/strain_no_clone/{name}"] = scrub(mod._run(name))
+    else:
+        rec.records["analysis/strain_no_clone/absent"] = {"absent": str(strain.relative_to(ROOT))}
 
 
 def iter_cases(records: dict[str, Any]) -> Iterator[tuple[str, str]]:
