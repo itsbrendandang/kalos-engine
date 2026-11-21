@@ -75,6 +75,7 @@ from kalos.portal.config import (
 )
 from kalos.portal.exports_api import router as _exports_router
 from kalos.portal.gates_api import router as _gates_router
+from kalos.portal.history_api import router as _history_router
 from kalos.portal.jobs_api import JobUploadAuthPrecheck, JobUploadSizeLimit
 from kalos.portal.jobs_api import router as _jobs_router
 from kalos.portal.jwt_auth import log_config_error_once
@@ -920,6 +921,7 @@ app.include_router(_assist_router)  # /api/assist/* (kalos.assist, docs/ASSISTAN
 app.include_router(_assist_sop_router)  # /api/assist/sop* (kalos.assist.sop)
 app.include_router(_gates_router)  # /api/campaigns/{id}/stages|gates (kalos.portal.gates_api)
 app.include_router(_clones_router)  # /api/campaigns/{id}/clones* (kalos.portal.clones_api)
+app.include_router(_history_router)  # track record + prediction/analysis history (kalos.portal.history_api)
 
 
 _CAMPAIGN_BODY_FIELDS = frozenset(
