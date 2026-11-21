@@ -930,6 +930,26 @@
         ],
         "title": "_StartBody",
         "type": "object"
+      },
+      "_SuggestBody": {
+        "additionalProperties": false,
+        "properties": {
+          "target": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          }
+        },
+        "title": "_SuggestBody",
+        "type": "object"
       }
     }
   },
@@ -3352,6 +3372,83 @@
         "summary": "Log Run Result"
       }
     },
+    "/api/campaigns/{campaign_id}/search": {
+      "get": {
+        "description": "Ranked records of one campaign (runs, sheet rows, columns, notes, the\nassistant index) for `q`: by meaning with the local embedding model, by\nshared words otherwise (`retriever`, `fallback_reason`). Records only;\nnothing is generated. Works with `KALOS_LLM_PROVIDER=none` (keyword).",
+        "operationId": "campaign_search_api_campaigns__campaign_id__search_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 500,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "k",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 25,
+              "minimum": 1,
+              "title": "K",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Campaign Search"
+      }
+    },
     "/api/campaigns/{campaign_id}/setup": {
       "get": {
         "description": "The campaign's setup (defaults when none was saved), per-bound\nextrapolation flags against the latest analysis, and `settings_in_sync`.",
@@ -3466,6 +3563,77 @@
           }
         },
         "summary": "Put Setup"
+      }
+    },
+    "/api/campaigns/{campaign_id}/setup/suggestions": {
+      "post": {
+        "description": "Suggested roles and units for each column of the campaign's uploaded\nsheet, each with a reason and an engine-set confidence. Suggestions only:\nnothing is written (read scope), and nothing here reaches the model fit.\nWorks with no model configured (the engine's own suggestions,\n`provider_path: offline`).",
+        "operationId": "setup_suggestions_api_campaigns__campaign_id__setup_suggestions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/_SuggestBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Setup Suggestions"
       }
     },
     "/api/campaigns/{campaign_id}/stages": {

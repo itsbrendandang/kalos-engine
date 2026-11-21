@@ -488,6 +488,19 @@
   },
   {
     "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/search",
+    "module": "kalos.assist.routes",
+    "endpoint": "campaign_search",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
     "path": "/api/campaigns/{campaign_id}/setup",
     "module": "kalos.portal.setup_api",
     "endpoint": "get_setup",
@@ -506,6 +519,19 @@
     "endpoint": "put_setup",
     "scopes": [
       "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/setup/suggestions",
+    "module": "kalos.assist.routes",
+    "endpoint": "setup_suggestions",
+    "scopes": [
+      "read"
     ],
     "auth": "required",
     "in_schema": true,
