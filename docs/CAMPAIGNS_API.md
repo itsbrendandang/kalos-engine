@@ -306,7 +306,10 @@ On upload, the same problems are reported by the sheet check: a x10/x1000 result
 `outliers` (with `detail.flagged[].suspected_value`), and neighbouring rows with exactly
 the same precise result but different settings by `result_duplicate_entry`.
 
-The history is not yet exposed over HTTP (the audit and read API is a separate change).
+Every result version is listed over HTTP by `GET /api/campaigns/{id}/results/history`
+and `GET /api/campaigns/{id}/runs/{run_id}/history` (see "Prediction history and track
+record"). Verdicts are not versioned: the run keeps only `entry_check`, the verdict for its
+latest value, and neither history route returns verdicts.
 
 ### Runs and results
 
