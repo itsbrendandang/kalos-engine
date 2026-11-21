@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
+import numpy as np
 import pandas as pd
 
 Orientation = Literal["standard", "transposed", "ambiguous"]
@@ -63,7 +64,17 @@ _BIOPROCESS_KEYWORDS: tuple[str, ...] = (
 # A first column of parameter LABELS (the true transposed case) does not look
 # like this - parameter names differ from each other in words, not counters.
 _ID_LIKE_RE = re.compile(r"^[a-z]{0,12}[\s_\-#]*\d{1,6}$")
+# Composite run ids: two or more letter+counter groups ("S1N1", "S2N17",
+# "B2R07", "P3-C12"). Screening funnels name clones this way (campaign, then
+# clone). `_ID_LIKE_RE` alone missed them, so a first column of such ids was
+# not recognised as an id column and a header row of them gave no signal.
+_COMPOSITE_ID_RE = re.compile(r"^[a-z]+\d+[a-z_\-]*\d+$")
 _ID_FRACTION = 0.7
+# A header row whose cells (after the first) are run ids is the other face of a
+# transposed sheet: runs are columns. Strong enough to outweigh the wide-shape
+# penalty, which is exactly the shape of a transposed sheet with many runs.
+_HEADER_RUN_ID_SCORE = 6.0
+_HEADER_RUN_ID_MIN_COLUMNS = 3
 # Fraction of sampled first-column values that must match the id shape before
 # the column is ruled a run-identifier. 0.7 tolerates a few stray labels
 # (headers, blanks, one-off notes) while a genuinely transposed sheet's
@@ -179,18 +190,18 @@ def _score_signals(df: pd.DataFrame) -> dict[str, float]:
         signals["standard_header_hints"] = -float(standard_indicators * 2)
 
     # 5. numeric density by row vs. by column (excluding the first
-    #    column/row respectively, which may be labels/headers).
+    #    column/row respectively, which may be labels/headers). Density is
+    #    over NON-BLANK cells: a sparse funnel row (a value only for the
+    #    clones that reached that scale) is still a numeric row.
     numeric_rows = 0
     if df.shape[1] > 1:
         for idx in range(min(len(df), _SHAPE_SAMPLE)):
-            row_data = df.iloc[idx, 1:]
-            if pd.to_numeric(row_data, errors="coerce").notna().sum() > len(row_data) * _NUMERIC_DENSITY_THRESHOLD:
+            if _numeric_share_of_filled(df.iloc[idx, 1:]) > _NUMERIC_DENSITY_THRESHOLD:
                 numeric_rows += 1
     numeric_cols = 0
     if len(df) > 1:
         for col_idx in range(1, min(df.shape[1], _SHAPE_SAMPLE)):
-            col_data = df.iloc[1:, col_idx]
-            if pd.to_numeric(col_data, errors="coerce").notna().sum() > len(col_data) * _NUMERIC_DENSITY_THRESHOLD:
+            if _numeric_share_of_filled(df.iloc[1:, col_idx]) > _NUMERIC_DENSITY_THRESHOLD:
                 numeric_cols += 1
     if numeric_rows > numeric_cols and df.shape[1] < len(df):
         signals["numeric_density"] = 2.0
@@ -206,7 +217,69 @@ def _score_signals(df: pd.DataFrame) -> dict[str, float]:
     elif len(df) > df.shape[1] * 1.5:
         signals["shape_ratio"] = 2.0
 
+    # 7. a header row of run ids ("exp1", "Batch-3", "S1N1"): runs are
+    #    columns. When it fires, the wide-shape penalty is dropped - a
+    #    transposed sheet with many runs is wide by construction.
+    #    Guarded by magnitudes: in a transposed sheet each ROW is one
+    #    measurement (values of a similar size), while each run column mixes
+    #    measurements of very different sizes. A standard sheet with generic
+    #    id-like headers (x1, x2, ...) has it the other way round.
+    header_ids = _header_id_count(df)
+    if (
+        header_ids >= _HEADER_RUN_ID_MIN_COLUMNS
+        and header_ids >= _ID_FRACTION * (df.shape[1] - 1)
+        and _rows_look_like_variables(df)
+    ):
+        signals["header_run_ids"] = _HEADER_RUN_ID_SCORE
+        if signals.get("shape_ratio", 0.0) < 0:
+            del signals["shape_ratio"]
+
     return signals
+
+
+def _is_run_id(value: str) -> bool:
+    """A lowercased, trimmed cell shaped like a run id: prefix + counter
+    (`_ID_LIKE_RE`) or a composite id (`_COMPOSITE_ID_RE`)."""
+    return bool(_ID_LIKE_RE.match(value) or _COMPOSITE_ID_RE.match(value))
+
+
+def _header_id_count(df: pd.DataFrame) -> int:
+    """How many headers after the first are run ids. pandas' placeholders for
+    a missing header (`Unnamed: 3`) are not ids."""
+    headers = [str(c).strip().lower() for c in df.columns[1:]]
+    return sum(1 for h in headers if h and not h.startswith("unnamed:") and _is_run_id(h))
+
+
+def _rows_look_like_variables(df: pd.DataFrame) -> bool:
+    """True when the median spread of log10|value| within a row is smaller
+    than within a column (numeric cells only, rows/columns with >= 2 numeric
+    cells, first column excluded, at most 200 x 200 cells sampled). False
+    when either spread cannot be computed."""
+    body = df.iloc[:200, 1:201].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        logs = np.log10(np.abs(body))
+    logs[~np.isfinite(logs)] = np.nan
+
+    def median_spread(axis: int) -> float:
+        counts = np.isfinite(logs).sum(axis=axis)
+        if not (counts >= 2).any():
+            return float("nan")
+        filled = logs[counts >= 2, :] if axis == 1 else logs[:, counts >= 2]
+        means = np.nanmean(filled, axis=axis, keepdims=True)
+        spread = np.sqrt(np.nanmean((filled - means) ** 2, axis=axis))
+        return float(np.median(spread))
+
+    within_row, within_col = median_spread(1), median_spread(0)
+    return bool(np.isfinite(within_row) and np.isfinite(within_col) and within_row < within_col)
+
+
+def _numeric_share_of_filled(values: pd.Series) -> float:
+    """Share of the non-blank cells that parse as numbers (0.0 when every cell
+    is blank: no data is not numeric data)."""
+    filled = [v for v in values.tolist() if not _is_blank(v)]
+    if not filled:
+        return 0.0
+    return float(pd.to_numeric(pd.Series(filled, dtype=object), errors="coerce").notna().mean())
 
 
 # A first-column header that names the runs ("run_id", "batch_no", "sample"):
@@ -307,7 +380,8 @@ def _first_column_id_rate(df: pd.DataFrame) -> float:
     """Fraction of non-blank first-column values shaped like a run identifier.
 
     The id shape (`_ID_LIKE_RE`): optional short alphabetic prefix, optional
-    separator, then a counter - "batch-1", "run 0007", "bq0031", "12". Values
+    separator, then a counter - "batch-1", "run 0007", "bq0031", "12" - or a
+    composite id (`_COMPOSITE_ID_RE`: "s1n1", "b2r07"). Values
     are lowercased and whitespace-trimmed first. Blank cells are excluded from
     the denominator (a sparse id column is still an id column). Returns 0.0 on
     an empty column so the gate simply never fires.
@@ -316,7 +390,7 @@ def _first_column_id_rate(df: pd.DataFrame) -> float:
     nonblank = values[(values != "") & (values != "nan")]
     if len(nonblank) == 0:
         return 0.0
-    matches = sum(bool(_ID_LIKE_RE.match(v)) for v in nonblank)
+    matches = sum(_is_run_id(v) for v in nonblank)
     return matches / len(nonblank)
 
 
