@@ -53,8 +53,12 @@ It is early software, run self-hosted. It has not been validated in a live lab.
 - Grounded assistant: next-step guide, cited answers over the tenant's own data,
   SOP drafts.
 - Planted-fault honesty suite (`docs/PLANTED_FAULTS.md`); its fast tier gates CI.
+- Prediction history: each run's prediction and band recorded at start, every
+  published analysis and every fold are kept append-only, and a per-campaign
+  track record scores recorded predictions against measured results
+  (`docs/CAMPAIGNS_API.md`, "Prediction history and track record").
 - EdDSA JWT authentication for kalos-web users, static tokens for service
-  accounts, tenant-scoped storage (SQLite, schema v7).
+  accounts, tenant-scoped storage (SQLite, schema v8).
 - Python API only, not over HTTP: a floor on a second outcome
   (`_analyze(constraint=...)`), and protein-sequence embeddings in
   `kalos.features` (a hashed k-mer embedder, tested in CI; ESM-2 and ESMC via
