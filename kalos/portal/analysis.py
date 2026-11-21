@@ -54,6 +54,7 @@ from kalos.portal.analysis_parts.columns import (
     _dedupe_columns,
     _numeric_cols,
     _resolve_columns,
+    derived_output_columns,
 )
 from kalos.portal.analysis_parts.cv_grouping import (
     MIN_GROUPS_FOR_CV,
@@ -70,6 +71,7 @@ from kalos.portal.analysis_parts.diagnostics import (
     _data_drops_block,
     _data_findings,
     _with_data_findings,
+    derived_output_findings,
 )
 from kalos.portal.analysis_parts.identifiers import (
     identifier_pattern,
@@ -462,6 +464,17 @@ def _analyze_body(
     if batch_cols:
         cont_feats = [c for c in cont_feats if c not in batch_cols]
         cat_feats = [c for c in cat_feats if c not in batch_cols]
+    # F06: columns that are really outputs (declared in roles.outputs, observed
+    # after the run by name, or computed from the target on their content) are
+    # never fitted or proposed; each is reported with why
+    # (`derived_output_columns`). An explicitly declared feature is never removed.
+    derived_outputs = derived_output_columns(
+        df, str(target), [c for c in [*cont_feats, *cat_feats] if str(c) not in _strain_cols],
+        roles, profile,
+    )
+    if derived_outputs:
+        cont_feats = [c for c in cont_feats if str(c) not in derived_outputs]
+        cat_feats = [c for c in cat_feats if str(c) not in derived_outputs]
     auto_cats = (
         [c for c in cat_feats if str(c) != strain_plan.column] if roles is None else []
     )
@@ -1684,6 +1697,7 @@ def _analyze_body(
             declared_ids={str(c) for c in roles.ids} if roles is not None else set(),
             declared_features={str(c) for c in roles.features} if roles is not None else set(),
             cv_group_columns={str(c) for c in batch_cols},
+            derived_outputs=set(derived_outputs),
         )
     )
 
@@ -1853,7 +1867,7 @@ def _analyze_body(
                     by_column, n_rows_dropped, n_censored_rows, zero_filled,
                     auto_cats=[str(c) for c in auto_cats if c in kept_cats],
                     header=header_info,
-                ) + list(strain_plan.findings),
+                ) + list(strain_plan.findings) + derived_output_findings(derived_outputs),
             )
         ),
         # Features whose search range was narrowed because some observed cells

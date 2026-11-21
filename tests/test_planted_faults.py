@@ -380,7 +380,9 @@ def test_full_tier_smoke_matches_recorded_baseline(suite: Path) -> None:
     CLI (`python -m kalos.bench.faults all --tier full`), about 30 minutes."""
     from kalos.bench.faults.runner import run_suite
 
-    recorded = json.loads((PKG / "results" / "scorecard_full.json").read_text(encoding="utf-8"))
+    # The latest recorded full scorecard (feat/data-checks); the earlier ones are
+    # kept unchanged as scorecard_full.json and scorecard_full_baseline.json.
+    recorded = json.loads((PKG / "results" / "scorecard_full_data_checks.json").read_text(encoding="utf-8"))
     want = {f["id"]: f["outcome"] for f in recorded["faults"]}
     pick = {"pure_noise_target_s1", "too_few_rows_8", "constant_target", "result_x1000"}
     numbers = case_numbers()

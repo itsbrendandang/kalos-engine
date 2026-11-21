@@ -24,6 +24,7 @@ from .checks import (
     check_constant_columns,
     check_constant_within_group,
     check_controls_present,
+    check_duplicate_ids,
     check_duplicate_rows,
     check_informative_missingness,
     check_missingness,
@@ -31,6 +32,8 @@ from .checks import (
     check_physical_bounds,
     check_provenance_metadata,
     check_replicate_adequacy,
+    check_result_duplicates,
+    check_target_leak,
     check_units_consistency,
 )
 from .report import (
@@ -57,6 +60,7 @@ __all__ = [
     "check_constant_columns",
     "check_constant_within_group",
     "check_controls_present",
+    "check_duplicate_ids",
     "check_duplicate_rows",
     "check_informative_missingness",
     "check_missingness",
@@ -64,6 +68,8 @@ __all__ = [
     "check_physical_bounds",
     "check_provenance_metadata",
     "check_replicate_adequacy",
+    "check_result_duplicates",
+    "check_target_leak",
     "check_units_consistency",
     "infer_dimension",
     "report_dict",

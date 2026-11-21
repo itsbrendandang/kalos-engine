@@ -218,10 +218,11 @@ More in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
   `clears_floor: null`).
 - **Planted faults.** 36 synthetic faults (unit mix-ups, typos, a transposed
   sheet, leaked target columns, batch effects, bad result entries, scale
-  extrapolation) planted blind into clean sheets. On `main` the engine caught
-  25/36 (69%, Wilson 95% 0.53-0.82), noticed 3 more and missed 8 (22%,
-  0.12-0.38). 6 of 8 clean sheets raised a false alarm (75%, 0.41-0.93), mostly
-  the target outlier check on a titer with many zeros. One seed per fault on
+  extrapolation) planted blind into clean sheets. With the data checks
+  (`feat/data-checks`) the engine caught 34/36 (94%, Wilson 95% 0.82-0.98) and
+  missed 2 (a batch effect with no batch column, and a declared blind spot); 2 of 8
+  clean cases raised a false alarm (25%, 0.07-0.59), down from 25/36 caught and
+  6/8 false alarms before. One seed per fault on
   synthetic data: a regression gate and a to-do list, not a catch rate for real
   data. How to run it and the full table:
   [`docs/PLANTED_FAULTS.md`](docs/PLANTED_FAULTS.md).

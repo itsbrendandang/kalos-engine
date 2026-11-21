@@ -6,7 +6,7 @@ from __future__ import annotations
 import numpy as np
 
 from kalos.domains import ColumnRoles
-from kalos.validation.bounds import DIMENSION_BOUNDS, infer_dimension
+from kalos.validation.bounds import column_bounds, infer_dimension
 
 
 def _absent_is_zero_columns(cont_feats: list, roles: ColumnRoles | None) -> set[str]:
@@ -47,17 +47,16 @@ def _physical_range(
     the client their data has impossible values in it.
 
     A column whose header maps to no known dimension is returned unchanged
-    (`infer_dimension` is deliberately silent rather than guessing), as is a
+    (`column_bounds` is deliberately silent rather than guessing), as is a
     column with no physically valid values at all - clamping the latter would
     invent a range from nothing, which is a worse lie than reporting the real
     one alongside an error-severity finding.
     """
     lo_obs, hi_obs = float(col.min()), float(col.max())
     lo_obs, hi_obs = _with_absent(lo_obs, hi_obs, absent)
-    dim = infer_dimension(name)
-    if dim is None:
+    b = column_bounds(name)  # the validation gate's bounds: header unit, else name
+    if b is None:
         return lo_obs, hi_obs, 0
-    b = DIMENSION_BOUNDS[dim]
     valid = col[(col >= b.hard_lo) & (col <= b.hard_hi)]
     n_excluded = int(col.size - valid.size)
     if n_excluded == 0 or valid.size == 0:

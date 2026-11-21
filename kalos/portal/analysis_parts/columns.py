@@ -17,6 +17,7 @@ from kalos.portal.cells import (
     is_null_label,
 )
 from kalos.portal.uploads import numeric_columns
+from kalos.validation.checks import target_leak_evidence
 
 
 def _numeric_cols(df: pd.DataFrame) -> list:
@@ -83,6 +84,7 @@ def _resolve_columns(
         # feature otherwise).
         declared_names = [
             *roles.features, *roles.categoricals, *roles.ids, *roles.sparse, *roles.covariates,
+            *roles.outputs,
         ]
         if roles.strain:
             declared_names.append(roles.strain)
@@ -119,6 +121,7 @@ def _resolve_columns(
             cont_feats = [
                 c for c in num
                 if c != target and c not in cat_set and c not in ids
+                and c not in set(roles.outputs)
                 and not is_identifier_name(c, profile.id_hint)
                 and not profile.outcome_hint.search(str(c))
             ]
@@ -215,3 +218,49 @@ def _auto_categorical(df: pd.DataFrame, num: list, target: str, profile: DomainP
         if len(labels) >= 3 and 2 <= n_levels <= AUTO_CATEGORICAL_MAX_LEVELS and enough_repeats:
             found.append(c)
     return found
+
+
+def derived_output_columns(
+    df: pd.DataFrame, target: str, candidates: list, roles: ColumnRoles | None,
+    profile: DomainProfile,
+) -> dict[str, dict]:
+    """F06: which candidate input columns are really outputs, `{column: why}`.
+
+    - `declared`: listed in `roles.outputs` by the user.
+    - `observed`: the name says it is observed during or after a run
+      (`profile.observed_hint`: contamination, QC pass/fail, a tier).
+    - `target_leak`: on its content, a near-deterministic function of the
+      target (`kalos.validation.checks.target_leak_evidence`): a grade or tier
+      cut from the result, or the result in other units. A column whose name
+      reads like a process factor (`profile.group_hint`) is reported by the
+      validation finding but kept.
+
+    A column the user declared a feature or categorical is never excluded here
+    (an explicit declaration wins); the validation finding still reports a leak.
+    """
+    explicit = set(roles.features) | set(roles.categoricals) if roles is not None else set()
+    outputs = set(roles.outputs) if roles is not None else set()
+    names = [str(c) for c in candidates]
+    out: dict[str, dict] = {}
+    for name in names:
+        if name in outputs:
+            out[name] = {"reason": "declared"}
+        elif name in explicit:
+            continue
+        elif profile.observed_hint is not None and profile.observed_hint.search(name):
+            out[name] = {"reason": "observed"}
+    pending = [n for n in names if n not in out and n not in explicit]
+    if pending:
+        leak = target_leak_evidence(df[[*pending, target]], target, factor_hint=profile.group_hint)
+        for name, ev in leak.items():
+            if ev.get("exclude"):
+                out[name] = {"reason": "target_leak", **ev}
+    return out
+
+
+DERIVED_OUTPUT_TEXT = {
+    "declared": "declared in roles.outputs",
+    "observed": "its name says it is observed during or after a run (an outcome, not a setting)",
+    "target_leak": "its values follow the result almost exactly, so it looks computed from it",
+}
+

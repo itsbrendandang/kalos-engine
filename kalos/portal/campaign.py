@@ -986,7 +986,12 @@ class CampaignStore:
         on success.
 
         Returns the run with `result_version`, `previous_result`, `result_reason`,
-        `result_actor` and `result_recorded_at` for THIS submission.
+        `result_actor` and `result_recorded_at` for THIS submission, plus the
+        result-entry checks (`kalos.portal.result_referee`): `verdict` (`valid`, or
+        `result_physically_impossible` / `result_magnitude_jump` /
+        `result_duplicate_entry` with the reason and the suspected correct value)
+        and `held` (always False: the checks warn, they never block or hold). The
+        same verdict is stored on the run as `entry_check`.
         """
         if not math.isfinite(value):
             raise CampaignError(f"result value must be a finite number; got {value!r}")
@@ -1014,9 +1019,16 @@ class CampaignStore:
                         (tenant, row.id, run_id, version, value, prior,
                          reason_text or None, _clip(actor), _clip(auth_method), now),
                     )
+                    # Result-entry checks (kalos.portal.result_referee): warn-only,
+                    # blind to the prediction; the verdict is stored on the run and
+                    # returned, and the value is recorded exactly as entered.
+                    from kalos.portal.result_referee import judge_run
+
+                    entry_check = judge_run(value, run, state)
                     run["result"] = value
                     run["measured_at"] = now
                     run["result_version"] = version
+                    run["entry_check"] = entry_check
                     state["updated_at"] = now
                     self._cas_write(conn, tenant, row, state, row.generation)
                     if audit:
@@ -1034,6 +1046,8 @@ class CampaignStore:
 
                     return {
                         **run_view(run),
+                        "verdict": entry_check,
+                        "held": False,
                         "previous_result": prior,
                         "result_reason": reason_text or None,
                         "result_actor": _clip(actor),

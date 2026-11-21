@@ -50,6 +50,10 @@ class DomainProfile:
     target_pref: Pattern[str]
     id_hint: Pattern[str]
     group_hint: Pattern[str]
+    # F06: names of things observed during or after a run, never set before it
+    # (contamination, a QC pass/fail). Excluded from the inputs like an outcome,
+    # but never offered as a target. None: no such vocabulary.
+    observed_hint: Pattern[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +68,8 @@ class ColumnRoles:
     `sparse` names continuous feature columns where a BLANK cell means "absent"
     (a component not added, so 0). Only these, and concentration-type columns by
     name, take a blank as 0; every other blank feature cell drops its run.
+    `outputs` names other measured outputs and columns derived from the result
+    (F06): they are never inputs and never proposed.
     """
 
     target: str
@@ -82,6 +88,9 @@ class ColumnRoles:
     strain_policy: str | None = None
     strain_level: str | None = None
     covariates: tuple[str, ...] = ()
+    # F06: measured outputs and columns derived from the result (a QC grade, a
+    # yield tier, contamination): never fitted as inputs, never proposed.
+    outputs: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict) -> ColumnRoles:
@@ -130,6 +139,14 @@ class ColumnRoles:
             raise ValueError("roles.strain cannot be the target")
         if target in covariates:
             raise ValueError("roles.target cannot be a covariate")
+        outputs = as_tuple(data.get("outputs"))
+        if target in outputs:
+            raise ValueError("roles.outputs lists other measured or derived columns, not the target")
+        clash = sorted(set(outputs) & {*features, *as_tuple(data.get("categoricals")), *covariates})
+        if clash:
+            raise ValueError(
+                f"roles.outputs cannot also be a feature, categorical or covariate: {clash}"
+            )
         return cls(
             target=target,
             features=features,
@@ -141,6 +158,7 @@ class ColumnRoles:
             strain_policy=(policy if policy is not None else ("fixed" if strain else None)),
             strain_level=None if level is None else str(level).strip(),
             covariates=covariates,
+            outputs=outputs,
         )
 
 

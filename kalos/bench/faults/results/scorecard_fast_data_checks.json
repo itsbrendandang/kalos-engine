@@ -1,0 +1,747 @@
+{
+ "suite": "kalos planted-fault honesty suite",
+ "label": "synthetic planted faults",
+ "protocol_version": "1",
+ "suite_seed": 20261119,
+ "tier": "fast",
+ "commit": "e864b3efbdc158e3b76f88058a1d49c48cf82e68",
+ "branch": "feat/data-checks",
+ "generated_at": "2026-11-20T09:50:59Z",
+ "versions": {
+  "python": "3.14.7",
+  "numpy": "2.5.1",
+  "pandas": "3.0.3",
+  "scipy": "1.18.0",
+  "torch": "2.13.0",
+  "botorch": "0.18.1",
+  "gpytorch": "1.15.2"
+ },
+ "totals": {
+  "faults_scored": 23,
+  "caught": 21,
+  "noticed": 0,
+  "missed": 2,
+  "clean_scored": 6,
+  "clean_false_alarm": 0,
+  "skipped": 1,
+  "crashed": 0
+ },
+ "rates": {
+  "caught": {
+   "k": 21,
+   "n": 23,
+   "rate": 0.913,
+   "wilson95": [
+    0.732,
+    0.976
+   ]
+  },
+  "caught_or_noticed": {
+   "k": 21,
+   "n": 23,
+   "rate": 0.913,
+   "wilson95": [
+    0.732,
+    0.976
+   ]
+  },
+  "caught_detectable": {
+   "k": 21,
+   "n": 22,
+   "rate": 0.955,
+   "wilson95": [
+    0.782,
+    0.992
+   ]
+  },
+  "clean_false_alarm": {
+   "k": 0,
+   "n": 6,
+   "rate": 0.0,
+   "wilson95": [
+    0.0,
+    0.39
+   ]
+  }
+ },
+ "by_family": {
+  "sheet": {
+   "caught": 17,
+   "noticed": 0,
+   "missed": 2
+  },
+  "result": {
+   "caught": 4,
+   "noticed": 0,
+   "missed": 0
+  }
+ },
+ "false_alarms_by_detector": {},
+ "faults": [
+  {
+   "case": "case-11",
+   "id": "result_copy_paste",
+   "kind": "fault",
+   "family": "result",
+   "title": "Same value pasted into two runs of one round",
+   "surface": "result",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.45,
+   "outcome": "caught",
+   "caught_by": [
+    "result_entry:result_duplicate_entry (warning) [planned code]"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "held for review as a copy-paste duplicate",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/campaign.py (set_result accepts any finite value)",
+   "owner_plan": "Crux #1 result referee (result_duplicate_entry; F11)",
+   "summary": {
+    "n_base": 155,
+    "n_fold": 160
+   }
+  },
+  {
+   "case": "case-12",
+   "id": "result_negative",
+   "kind": "fault",
+   "family": "result",
+   "title": "Negative titer entered",
+   "surface": "result",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.37,
+   "outcome": "caught",
+   "caught_by": [
+    "result_entry:result_physically_impossible (warning) [planned code]",
+    "validation:physical_bounds [titer_g_L] (error)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "refused at entry, or a physical_bounds error on the folded row",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/campaign.py (set_result accepts any finite value)",
+   "owner_plan": "Crux #1 result referee (result_physically_impossible; F11)",
+   "summary": {
+    "n_base": 155,
+    "n_fold": 160
+   }
+  },
+  {
+   "case": "case-02",
+   "id": "result_x10",
+   "kind": "fault",
+   "family": "result",
+   "title": "Result entered x10 (decimal slip)",
+   "surface": "result",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.34,
+   "outcome": "caught",
+   "caught_by": [
+    "result_entry:result_magnitude_jump (warning) [planned code]",
+    "validation:outliers [titer_g_L] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "held at entry (referee) or flagged on the folded row at re-analysis",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/campaign.py (set_result accepts any finite value)",
+   "owner_plan": "Crux #1 result referee (result_magnitude_jump; F11)",
+   "summary": {
+    "n_base": 155,
+    "n_fold": 160
+   }
+  },
+  {
+   "case": "case-25",
+   "id": "result_x1000",
+   "kind": "fault",
+   "family": "result",
+   "title": "Result entered x1000 (mg/L typed as g/L)",
+   "surface": "result",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.46,
+   "outcome": "caught",
+   "caught_by": [
+    "result_entry:result_magnitude_jump (warning) [planned code]",
+    "validation:outliers [titer_g_L] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "held at entry (referee) or flagged on the folded row at re-analysis",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/campaign.py (set_result accepts any finite value)",
+   "owner_plan": "Crux #1 result referee (result_magnitude_jump; F11)",
+   "summary": {
+    "n_base": 155,
+    "n_fold": 160
+   }
+  },
+  {
+   "case": "case-07",
+   "id": "constant_target",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Constant target",
+   "surface": "sheet",
+   "status": "refused",
+   "error": null,
+   "seconds": 0.03,
+   "outcome": "caught",
+   "caught_by": [
+    "refusal:target_constant (error)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "refusal target_constant",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis_parts/refusals.py (_refuse_unusable_target)",
+   "owner_plan": "existing refusal (no plan item)",
+   "summary": null
+  },
+  {
+   "case": "case-10",
+   "id": "duplicate_run_id",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Two different runs share one run id",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.7,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:duplicate_ids [run_id] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "a finding on run_id names the two rows (duplicate identifier)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (no duplicate-id check)",
+   "owner_plan": "unplanned (DOMAIN_AUDIT LOW: duplicate run ids are not flagged)",
+   "summary": null
+  },
+  {
+   "case": "case-01",
+   "id": "duplicated_rows_exact",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Eight rows pasted twice (identical, run id included)",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.95,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:duplicate_rows (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "duplicate_rows warns and names the duplicated rows",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_duplicate_rows)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": null
+  },
+  {
+   "case": "case-33",
+   "id": "duplicated_rows_new_id",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Eight rows pasted again under new run ids",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.58,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:duplicate_rows (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "duplicate_rows warns (identical on every column except the run id)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_duplicate_rows ignores nothing but outcome columns)",
+   "owner_plan": "unplanned (exclude identifier columns from the duplicate comparison)",
+   "summary": null
+  },
+  {
+   "case": "case-08",
+   "id": "fahrenheit_rows_bare",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Fahrenheit rows in a Celsius column (bare numbers)",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.78,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:physical_bounds [temperature_C] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "physical_bounds or units_consistency flags temperature_C on the planted rows",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_physical_bounds)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": null
+  },
+  {
+   "case": "case-21",
+   "id": "fahrenheit_rows_labeled",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Fahrenheit rows in a Celsius column (labelled 'F')",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.66,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:units_consistency [temperature_C] (info)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "units_consistency recognises the F token on temperature_C (and converts it)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_units_consistency)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": null
+  },
+  {
+   "case": "case-32",
+   "id": "impossible_value",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Dissolved oxygen of 140 % in one row",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.62,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:physical_bounds [DO_pct] (error)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "physical_bounds error on DO_pct naming the row",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_physical_bounds)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": null
+  },
+  {
+   "case": "case-34",
+   "id": "mixed_units_labeled",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Mixed units in one column (g/L and mg/L labels)",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.8,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:units_consistency [glucose_gL] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "units_consistency flags glucose_gL (mixed or unconvertible unit tokens)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_units_consistency)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": null
+  },
+  {
+   "case": "case-38",
+   "id": "mixed_units_unlabeled",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "A block of target rows entered in mg/L as bare numbers",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.78,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:outliers [titer_g_L] (warning)",
+    "validation:physical_bounds [titer_g_L] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "the x1000 block is flagged on titer_g_L (units or outliers), naming planted rows",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_outliers / check_units_consistency)",
+   "owner_plan": "unplanned for sheets (Crux #1 covers result entries only)",
+   "summary": null
+  },
+  {
+   "case": "case-31",
+   "id": "swapped_columns",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "pH and temperature swapped in six rows",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.93,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:physical_bounds [pH] (error)",
+    "validation:physical_bounds [temperature_C] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "physical_bounds flags pH (or temperature_C) on the planted rows",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_physical_bounds)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": null
+  },
+  {
+   "case": "case-29",
+   "id": "swapped_levels",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Medium labels rotated in a block of 30 runs",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.64,
+   "outcome": "missed",
+   "caught_by": [],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "no sheet-only check can see a consistent relabelling; expected miss, kept as a measured blind spot (would need an as-run record or a bridging control)",
+   "detectable_from_input": false,
+   "owner_module": "none today (as-run record / bridging controls)",
+   "owner_plan": "Crux #1 recipe_deviation (with as-run recipes, F11); DOMAIN H4 bridging controls (unplanned)",
+   "summary": null
+  },
+  {
+   "case": "case-09",
+   "id": "too_few_rows_5",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Five rows",
+   "surface": "sheet",
+   "status": "refused",
+   "error": null,
+   "seconds": 0.0,
+   "outcome": "caught",
+   "caught_by": [
+    "refusal:too_few_rows (error)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "refusal too_few_rows",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis_parts/refusals.py (_too_few_rows)",
+   "owner_plan": "existing refusal (no plan item)",
+   "summary": null
+  },
+  {
+   "case": "case-28",
+   "id": "too_few_rows_8",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Eight rows, eleven inputs",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.41,
+   "outcome": "missed",
+   "caught_by": [],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "refusal, or a reliability verdict of not_judged (too few rows to judge trust)",
+   "detectable_from_input": true,
+   "owner_module": "kalos/portal/analysis.py (reliability verdict)",
+   "owner_plan": "F04 (not_judged below about 12 rows; ML_AUDIT N3)",
+   "summary": null
+  },
+  {
+   "case": "case-16",
+   "id": "transposed_sheet",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Transposed sheet (runs as columns), with a run-id row",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 1.02,
+   "outcome": "caught",
+   "caught_by": [
+    "orientation:transposed (info)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "orientation pre-pass detects 'transposed' and re-orients",
+   "detectable_from_input": true,
+   "owner_module": "kalos/normalize/orientation.py (detect_orientation)",
+   "owner_plan": "existing pre-pass (no plan item)",
+   "summary": null
+  },
+  {
+   "case": "case-18",
+   "id": "transposed_sheet_no_id",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "Transposed sheet with no run-id row (scale-up sheet)",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.24,
+   "outcome": "caught",
+   "caught_by": [
+    "orientation:transposed (info)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "orientation pre-pass detects 'transposed' and re-orients",
+   "detectable_from_input": true,
+   "owner_module": "kalos/normalize/orientation.py (detect_orientation)",
+   "owner_plan": "existing pre-pass (no plan item)",
+   "summary": null
+  },
+  {
+   "case": "case-24",
+   "id": "typo_x1000_feature",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "x1000 typo in one agitation cell",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.52,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:outliers [agitation_rpm] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "outliers (or bounds) flags agitation_rpm naming the planted row",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_outliers)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": null
+  },
+  {
+   "case": "case-06",
+   "id": "typo_x1000_target",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "x1000 typo in one target cell",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.75,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:outliers [titer_g_L] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "outliers (or bounds) flags titer_g_L naming the planted row",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_outliers)",
+   "owner_plan": "existing check; Crux #1 referee for result entries",
+   "summary": null
+  },
+  {
+   "case": "case-05",
+   "id": "typo_x10_feature",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "x10 typo in two glucose cells",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.52,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:outliers [glucose_gL] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "outliers (or bounds) flags glucose_gL naming the planted rows",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_outliers)",
+   "owner_plan": "existing check (no plan item)",
+   "summary": null
+  },
+  {
+   "case": "case-22",
+   "id": "typo_x10_target",
+   "kind": "fault",
+   "family": "sheet",
+   "title": "x10 typo in two target cells",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.61,
+   "outcome": "caught",
+   "caught_by": [
+    "validation:outliers [titer_g_L] (warning)"
+   ],
+   "noticed_by": [],
+   "harm": [],
+   "row_list_truncated": false,
+   "expected": "outliers (or bounds) flags titer_g_L naming the planted rows",
+   "detectable_from_input": true,
+   "owner_module": "kalos/validation/checks.py (check_outliers)",
+   "owner_plan": "existing check; Crux #1 referee for result entries",
+   "summary": null
+  }
+ ],
+ "clean": [
+  {
+   "case": "case-23",
+   "id": "clean_bioprocess160",
+   "kind": "clean",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.62,
+   "false_alarm": false,
+   "detectors_fired": [],
+   "refusals": [],
+   "standing_warnings": [
+    "validation:controls_present",
+    "validation:provenance_metadata"
+   ],
+   "expected": "no refusal and no catch detector fires (examples/synthetic_bioprocess, all 160 rows)",
+   "summary": null
+  },
+  {
+   "case": "case-26",
+   "id": "clean_bioprocess30",
+   "kind": "clean",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.59,
+   "false_alarm": false,
+   "detectors_fired": [],
+   "refusals": [],
+   "standing_warnings": [
+    "validation:controls_present",
+    "validation:provenance_metadata"
+   ],
+   "expected": "no refusal and no catch detector fires (30-row seeded subsample)",
+   "summary": null
+  },
+  {
+   "case": "case-43",
+   "id": "clean_bioprocess60",
+   "kind": "clean",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.55,
+   "false_alarm": false,
+   "detectors_fired": [],
+   "refusals": [],
+   "standing_warnings": [
+    "validation:controls_present",
+    "validation:provenance_metadata"
+   ],
+   "expected": "no refusal and no catch detector fires (60-row seeded subsample)",
+   "summary": null
+  },
+  {
+   "case": "case-20",
+   "id": "clean_results_plain",
+   "kind": "clean",
+   "surface": "result",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.43,
+   "false_alarm": false,
+   "detectors_fired": [],
+   "refusals": [],
+   "standing_warnings": [
+    "validation:controls_present",
+    "validation:provenance_metadata"
+   ],
+   "expected": "five true held-out results: none refused, none flagged on their fold rows",
+   "summary": {
+    "n_base": 155,
+    "n_fold": 160
+   }
+  },
+  {
+   "case": "case-04",
+   "id": "clean_results_surprise",
+   "kind": "clean",
+   "surface": "result",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.34,
+   "false_alarm": false,
+   "detectors_fired": [],
+   "refusals": [],
+   "standing_warnings": [
+    "validation:controls_present",
+    "validation:provenance_metadata"
+   ],
+   "expected": "a surprising but plausible new best (1.10 x the best measured): not refused, not flagged",
+   "summary": {
+    "n_base": 155,
+    "n_fold": 160
+   }
+  },
+  {
+   "case": "case-13",
+   "id": "clean_scaleup90",
+   "kind": "clean",
+   "surface": "sheet",
+   "status": "ok",
+   "error": null,
+   "seconds": 0.44,
+   "false_alarm": false,
+   "detectors_fired": [],
+   "refusals": [],
+   "standing_warnings": [
+    "validation:controls_present",
+    "validation:provenance_metadata"
+   ],
+   "expected": "no refusal and no catch detector fires (examples/synthetic_scaleup as an upload)",
+   "summary": null
+  }
+ ],
+ "skipped": [
+  {
+   "case": "case-36",
+   "id": "clean_kaggle150",
+   "reason": "base kaggle150 unavailable"
+  }
+ ]
+}

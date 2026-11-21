@@ -115,14 +115,19 @@ def test_transposed_normalizes_to_standard_shape():
     report = detect_orientation(_transposed_frame())
     normalized = report.normalized_frame
     assert normalized is not None
-    # 6 runs (exp1..exp6) become rows; 4 parameters become columns.
+    # 6 runs (exp1..exp6) become rows; 4 parameters become columns, and the run
+    # labels from the header row are kept (BRE-115), in `run` since the first
+    # header ("parameter") does not name runs.
     assert len(normalized) == 6
     assert set(normalized.columns) == {
+        "run",
         "temperature",
         "ph_setpoint",
         "induction_duration",
         "titer_output",
     }
+    assert normalized["run"].tolist() == [f"exp{i}" for i in range(1, 7)]
+    assert any("kept" in n for n in report.notes)
 
 
 def test_transposed_values_survive_round_trip():
@@ -153,16 +158,42 @@ def test_transposed_disambiguates_duplicate_parameter_names():
     assert "temperature setpoint__1" in normalized.columns
 
 
-def test_transposed_filters_non_numeric_label_rows():
+def test_transposed_keeps_non_numeric_rows_as_text_columns():
+    # BRE-115: a text row (a medium, a notes row) is kept as a text column with
+    # its cells as written - never dropped, never coerced to NaN. The column
+    # checks downstream decide what it is (a categorical factor, or notes).
     df = _transposed_frame()
-    # Insert a non-numeric annotation row (e.g. a units/notes row) - it must
-    # be dropped, not coerced to NaN and kept.
     df.loc[len(df)] = ["notes", "ok", "ok", "flagged", "ok", "ok", "ok"]
+    df.loc[len(df)] = ["medium_base", "CD-CHO", "ProCHO", "CD-CHO", "ProCHO", "CD-CHO", "ProCHO"]
     report = detect_orientation(df)
     assert report.orientation == "transposed"
     normalized = report.normalized_frame
     assert normalized is not None
-    assert "notes" not in normalized.columns
+    assert normalized["notes"].tolist() == ["ok", "ok", "flagged", "ok", "ok", "ok"]
+    assert normalized["medium_base"].tolist()[:2] == ["CD-CHO", "ProCHO"]
+    assert normalized["titer_output"].dtype.kind == "f"
+    assert any("2 non-numeric row(s) kept as text" in n for n in report.notes)
+
+
+def test_transposed_keeps_run_ids_from_a_run_id_header():
+    df = _transposed_frame().rename(columns={"parameter": "run_id"})
+    df.columns = ["run_id", *[f"R{i:03d}" for i in range(1, 7)]]
+    report = detect_orientation(df)
+    assert report.orientation == "transposed"
+    normalized = report.normalized_frame
+    assert normalized is not None
+    assert normalized.columns[0] == "run_id"
+    assert normalized["run_id"].tolist() == [f"R{i:03d}" for i in range(1, 7)]
+
+
+def test_transposed_skips_only_wholly_empty_rows():
+    df = _transposed_frame()
+    df.loc[len(df)] = [None] * df.shape[1]
+    report = detect_orientation(df)
+    normalized = report.normalized_frame
+    assert normalized is not None
+    assert normalized.shape[1] == 5  # run + 4 parameters
+    assert any("empty row" in n for n in report.notes)
 
 
 # --- detect_orientation: ambiguous --------------------------------------------- #
@@ -219,8 +250,9 @@ def test_apply_orientation_prepass_normalizes_transposed_frame():
     out = _apply_orientation_prepass(df)
     assert out is not df
     assert out.attrs["kalos_orientation"]["orientation"] == "transposed"
+    assert out.attrs["kalos_orientation"]["notes"]
     assert len(out) == 6
-    assert len(out.columns) == 4
+    assert len(out.columns) == 5  # the 4 parameters and the run labels
 
 
 def test_apply_orientation_prepass_leaves_ambiguous_frame_untouched():
@@ -235,7 +267,7 @@ def test_parse_upload_transposed_csv_is_normalized_before_return():
     df = _parse_upload(text.encode("utf-8"))
     assert df.attrs["kalos_orientation"]["orientation"] == "transposed"
     assert len(df) == 6
-    assert set(df.columns) == {"temperature", "ph_setpoint", "induction_duration", "titer_output"}
+    assert set(df.columns) == {"run", "temperature", "ph_setpoint", "induction_duration", "titer_output"}
 
 
 def test_parse_upload_standard_csv_is_byte_identical_in_values():

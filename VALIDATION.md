@@ -218,6 +218,17 @@ When the batch structure is not on the sheet at all, no grouping can see it: rec
 the batch, plate, lot or date column, or run the campaign through the fold (rounds are
 carried automatically).
 
+## Data checks acceptance (feat/data-checks, planted-fault suite, full tier)
+
+Same pre-registered protocol v1, catalogue and truth; full tier with the Kaggle base:
+caught 25/36 -> **34/36** (Wilson 95% 0.82-0.98), missed 8 -> 2, clean cases with a
+false alarm 6/8 -> **2/8** (0.07-0.59). The outlier check no longer flags the clean
+example sheet (60 of 160 rows before); the remaining clean alarms are the 30-row
+trust refusal and the scale readout's by-design refusal of a target at the largest
+measured scale. Before/after tables, what moved, and the calibration and power of the
+new outlier rule: `docs/PLANTED_FAULTS.md`, "Current scorecard (feat/data-checks)";
+full table `kalos/bench/faults/results/scorecard_full_data_checks.md`.
+
 ## Planted-fault acceptance (feat/planted-faults suite, full tier)
 
 Run against this branch on a scratch merge (`scratch/trust-faults`, not for merge):

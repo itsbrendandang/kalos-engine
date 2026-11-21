@@ -37,6 +37,14 @@ BIOPROCESS_PROFILE = DomainProfile(
     # when it is declared in roles, or when each of its levels is confounded with
     # a single recipe (see `kalos.portal.analysis_parts.columns._auto_group_column`).
     group_hint=re.compile(r"medium|strain|recipe|batch|campaign|group|lot", re.I),
+    # F06: observed during or after a run, never a setting. Kept narrow on
+    # purpose (a "grade" can be a reagent grade, a setting): a renamed result
+    # label is caught on its content instead (validation `target_leak`).
+    observed_hint=re.compile(
+        r"contaminat|steril(e|ity)|(?<![a-z])qc(?![a-z])|pass.?fail|(?<![a-z])(in|out.?of)[ _-]?spec(?![a-z])"
+        r"|(?<![a-z])oos(?![a-z])|(?<![a-z])tier(?![a-z])|outcome|verdict|failure",
+        re.I,
+    ),
 )
 
 __all__ = ["BIOPROCESS_PROFILE"]

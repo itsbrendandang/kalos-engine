@@ -88,6 +88,7 @@ def column_provenance(
     declared_ids: set[str] | None = None,
     declared_features: set[str] | None = None,
     cv_group_columns: set[str] | None = None,
+    derived_outputs: set[str] | None = None,
 ) -> list[ColumnProvenance]:
     """Build a per-column provenance report mirroring `_analyze`'s selection.
 
@@ -110,6 +111,9 @@ def column_provenance(
         column is non-numeric (and not a categorical the engine used) it is
         reported as `dropped_non_numeric` - an honest "you likely meant to mark
         this categorical" - rather than the misleading `dropped_sparse`.
+      - `derived_outputs`: columns kept out of the inputs as outputs (F06:
+        declared in `roles.outputs`, observed after the run by name, or computed
+        from the target on their content); reported as `dropped_output`.
       - `cv_group_columns`: batch, lot, plate, block, date, week or round
         columns (F05) that are the run's circumstances, not settings: they are
         not fitted or proposed and serve as cross-validation group candidates
@@ -127,6 +131,7 @@ def column_provenance(
     declared_id_set = declared_ids or set()
     declared_feat_set = declared_features or set()
     cv_group_set = cv_group_columns or set()
+    derived_set = derived_outputs or set()
     report: list[ColumnProvenance] = []
     for col in df.columns:
         name = str(col)
@@ -138,6 +143,8 @@ def column_provenance(
             status = "kept_feature"
         elif name in cv_group_set:
             status = "dropped_cv_group"
+        elif name in derived_set:
+            status = "dropped_output"
         elif name in declared_id_set:
             # the caller explicitly excluded this column; its drop is an
             # instruction, not a data-quality inference.

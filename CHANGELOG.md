@@ -11,6 +11,18 @@ Newest first.
 - `up` from v7 copies each published analysis and each in-flight run's recorded prediction (with its own timestamp) into the new tables; runs v7 already folded have no prediction to copy and are listed as `rounds_without_record`. `down` renames the tables aside. Tested on a copy of a real v7 database (`tests/fixtures/portal_v7.db`).
 - The campaign state gains `seed_id` (one per upload; a re-upload restarts the round count).
 
+### Changed - data checks: quieter outliers, result-entry checks, impossible values, duplicates, leakage, scale extrapolation
+
+Acceptance: the pre-registered planted-fault suite (`kalos/bench/faults`, protocol v1, unchanged), full tier, recorded in `kalos/bench/faults/results/scorecard_full_data_checks.{json,md}` (baselines kept); `docs/PLANTED_FAULTS.md` has the before/after.
+
+- **Outliers (BRE-118).** No longer flags 60 of 160 rows of the clean example sheet. Outcomes and right-skewed positive columns: a value is flagged only when detached from the rest by a factor that shrinks with the column size (10x / 5x / 3x / 2x at < 25 / < 50 / < 100 / >= 100 positive values, calibrated on clean subsamples), compared with its neighbour and the next value (so a second slip cannot mask the first); zeros are a floor, exact repeats are designed levels, a ladder's own step sets a floor. Other columns: robust z > 5. Each flagged slip carries its suspected x10/x100/x1000 value.
+- **Result-entry checks (Crux #1, warn-only).** `set_result` returns `verdict` (`result_physically_impossible`, `result_magnitude_jump`, `result_duplicate_entry` or `valid`, with reason and suspected value) and `held: false`; the run stores it as `entry_check`. Blind to the prediction. Nothing is held. On upload: the outlier finding and the new `result_duplicate_entry` sheet check.
+- **Impossible values (BRE-117).** Bounds come from the unit the header states (`kalos.validation.bounds.column_bounds`), the name is the fallback; the DO regex now matches `DO_pct`. Typical pH band 3-9 (was 4-9).
+- **Duplicates (BRE-116).** New `duplicate_ids`; rows identical except for their run id are a `duplicate_rows` warning.
+- **Transposed sheets (BRE-115).** Every parameter row is kept (text rows as text columns) and the run ids are kept; `orientation.notes`.
+- **Column roles (F06).** `roles.outputs`; observed-outcome names (`contamination`, QC, pass/fail, tier) and level columns computed from the target (`target_leak`, found on content) are never fitted or proposed (`dropped_output`, `derived_output` finding).
+- **Scale extrapolation (F10).** The readout checks the target's P/V, tip speed, gas velocity, vvm and kLa proxy against the measured runs: outside warns, more than 2x outside on P/V, vvm or kLa refuses; every readout states `extrapolation`.
+
 ### Changed - selection-aware proposal intervals (F15, ML audit B1 fix 2; interval numbers change)
 
 - `proposals[].intervals` are calibrated on the held-out runs each fold model ranked highest (top 30%, both CV repeats) with the proposal sd floored at the 90th percentile of held-out sds (`method: conformal_selection_aware`, `coverage_basis: held_out_top_ranked_runs`). Measured at proposals on fresh simulation seeds: 90% band 0.60-0.83 -> 0.92-0.99, 95% band 0.72-0.92 -> 0.96-0.99, at 2.5-3.2x the median width; in-box coverage 0.98-1.00 (conservative). Per-level fallback to the plain band with `selection_aware_unavailable` when too few runs are selected. VALIDATION.md has the table.

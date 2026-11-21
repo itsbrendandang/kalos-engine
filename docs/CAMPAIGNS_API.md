@@ -186,6 +186,8 @@ A result is never overwritten in place.
 | `result_reason` | The reason as stored (trimmed), or `null`. |
 | `result_actor` | The actor the row records. |
 | `result_recorded_at` | The server time, Unix seconds. This is when the engine recorded the value. |
+| `verdict` | The result-entry checks for this value (below). Also stored on the run as `entry_check`. |
+| `held` | Always `false` in this release: the checks warn, they never hold or block a result. |
 
 The `reason` field of a run is still the proposal's reason (why the run was
 proposed). The correction reason is `result_reason`.
@@ -282,6 +284,29 @@ analysis):
   most 200 summaries (never blobs), at most 200 result versions per run.
   `after_id`, `before_id` and `snapshot_id` are at most 2^63 - 1 (SQLite's
   integer range); a larger value is `400 invalid_body`, never a 500.
+
+#### Result-entry checks (warn-only)
+
+Every recorded value is checked before the next re-analysis learns from it
+(`kalos/portal/result_referee.py`). The checks never see the engine's prediction for
+the run, so a surprising but real result is never flagged for disagreeing with the
+model. The value is always recorded and folded exactly as entered; a correction is a
+new submission with a `reason`.
+
+`verdict` is `{verdict, severity, reason, suspected_value, what_would_fix_it, checks, mode: "report", held: false}`.
+`verdict.verdict` is `valid` or the first of these that applies:
+
+| Code | When | `suspected_value` |
+|---|---|---|
+| `result_physically_impossible` | Outside the physically possible range for the target's kind (a negative concentration, a percentage above 100). | The value without its minus sign, for a negative concentration; else `null`. |
+| `result_magnitude_jump` | The value stands apart from every result measured in this campaign (the base rows), by the factor the sheet outlier check uses: 10x with fewer than 25 measured producers, 5x below 50, 3x below 100, 2x from 100 on. | The value a x10, x100 or x1000 slip would have come from, when one puts it back inside the measured range; else `null`. |
+| `result_duplicate_entry` | Exactly the value already recorded for another run of this round, when the value has 3 or more significant digits, is not 0 and is not a reading the campaign often records. | `null`: only the lab record has this run's own value. |
+
+On upload, the same problems are reported by the sheet check: a x10/x1000 result by
+`outliers` (with `detail.flagged[].suspected_value`), and neighbouring rows with exactly
+the same precise result but different settings by `result_duplicate_entry`.
+
+The history is not yet exposed over HTTP (the audit and read API is a separate change).
 
 ### Runs and results
 

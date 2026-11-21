@@ -140,6 +140,29 @@ def _data_findings(
     return out
 
 
+def derived_output_findings(derived: dict[str, dict]) -> list[Finding]:
+    """F06: one finding per column kept out of the inputs because it is an
+    output (`columns.derived_output_columns`), saying why and how to override."""
+    from kalos.portal.analysis_parts.columns import DERIVED_OUTPUT_TEXT
+
+    out: list[Finding] = []
+    for column, why in derived.items():
+        reason = str(why.get("reason"))
+        declared = reason == "declared"
+        out.append(Finding(
+            check="derived_output", severity="info" if declared else "warning", column=column,
+            message=(
+                f"Column {column!r} was not used as an input and is never proposed: "
+                f"{DERIVED_OUTPUT_TEXT.get(reason, reason)}."
+                + ("" if declared else
+                   " If it is a setting chosen before the run, declare it in roles.features "
+                   "(or roles.categoricals for text).")
+            ),
+            detail={k: v for k, v in why.items() if k != "exclude"},
+        ))
+    return out
+
+
 def _with_data_findings(report: ValidationReport, extra: list[Finding]) -> ValidationReport:
     """The validation report with the data-accounting findings appended. `status`
     is re-derived by `build_report`, so a warning here makes the report say so."""
