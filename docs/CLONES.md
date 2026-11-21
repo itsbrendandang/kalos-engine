@@ -242,8 +242,8 @@ Code: `kalos/portal/clone_registry.py` (storage), `kalos/portal/clones_api.py`
 (routes). Tests: `tests/test_clones_api.py`, `tests/test_schema_v7.py`. The
 registry's single `status: lead` clone is the default fixed level
 (`setup_settings.setup_for_analysis` passes it to the analysis as `strain_lead`;
-not part of the setup hash). Schema v8 is reserved for the Crux items
-(`CRUX_PORT_PLAN.md`).
+not part of the setup hash). Schema v8 is the prediction history
+(docs/MIGRATIONS.md); the other Crux items take v9 or later.
 
 A campaign can keep a small registry of the production clones (or strains) it
 runs: a status and a few text labels per clone. Kalos stores, shows and filters

@@ -5,12 +5,22 @@ The model sees the question, the retrieved chunks (each labelled `[S1]`,
 end every sentence with the labels it used. Then, before anyone sees the
 reply, `check_answer`:
 
-1. drops every sentence with no valid label (no source, no sentence);
-2. drops every sentence with a number that none of its cited texts contains;
-3. rejects the whole answer when any sentence uses a banned word, or a claim
+1. drops every sentence with no valid label (no source, no sentence), and
+   every sentence that cites a label that does not exist
+   (`nonexistent_citation`);
+2. drops every sentence with a number that none of its cited texts contains
+   (`mismatched_number`);
+3. drops every sentence naming a column-like identifier (`titer_g_L`) that is
+   not in the campaign's columns or its cited texts (`unknown_column`), or a
+   run id that its cited texts do not contain (`nonexistent_citation`);
+4. rejects the whole answer when any sentence uses a banned word, or a claim
    word (will, guarantees, proves, causes, optimal, ...) that its cited texts
    do not use;
-4. abstains when no sentence is left.
+5. abstains when no sentence is left.
+
+The model is chosen by the cascade (`kalos.providers.cascade`, task
+`answer`: the quality model). A reply that is rejected or empty is never
+shown; the guide step is (`provider_path` ends in `offline`).
 
 Abstaining means: `abstained: true`, the guide step as the answer, no
 sources. The same happens when nothing relevant was retrieved; the model is
@@ -26,8 +36,15 @@ from typing import Any
 
 from kalos.assist.guide import guide_text
 from kalos.assist.index import Hit, strip_terms, tokens
-from kalos.assist.llm import ChatModel
+from kalos.assist.llm import ChatModel, ModelUnavailable
 from kalos.assist.words import banned_in, unsupported_claims
+from kalos.providers.cascade import (
+    Cascade,
+    CascadeResult,
+    ValidationFailed,
+    single_model_cascade,
+)
+from kalos.providers.grounding import identifiers_in, run_ids_in
 
 MAX_QUESTION_CHARS = 2000
 MAX_QUOTE_CHARS = 300
@@ -152,30 +169,62 @@ class Checked:
     sources: list[dict[str, Any]]
     rejected: list[str]  # reasons the whole answer was refused
     dropped: int  # sentences removed
+    # Why each removed sentence was removed: reason code -> count.
+    drop_reasons: dict[str, int] | None = None
+
+
+def _known_identifiers(labelled: list[Labelled]) -> set[str]:
+    """Column-like names the engine gave the model: every lab-written string of
+    the retrieved chunks (column names among them) and every identifier in the
+    retrieved texts."""
+    known: set[str] = set()
+    for item in labelled:
+        known.update(item.hit.chunk.user_terms)
+        known.update(identifiers_in(item.hit.chunk.text))
+    return known
 
 
 def check_answer(reply: str, labelled: list[Labelled], guide: dict[str, Any]) -> Checked:
     """Apply the rules in the module docstring to a model reply."""
     table = {item.label: item.hit for item in labelled}
     guide_source = " ".join([guide.get("step", ""), guide.get("why", ""), guide.get("why_it_matters", "")])
+    known_identifiers = _known_identifiers(labelled) | identifiers_in(guide_source)
     kept: list[str] = []
     sources: dict[tuple[str, str, str | None], dict[str, Any]] = {}
     rejected: list[str] = []
     dropped = 0
+    reasons: dict[str, int] = {}
+
+    def drop(reason: str) -> None:
+        nonlocal dropped
+        dropped += 1
+        reasons[reason] = reasons.get(reason, 0) + 1
+
     for sentence in split_sentences(reply):
-        labels = [lab for lab in _LABEL.findall(sentence) if lab == "G" or lab in table]
+        all_labels = _LABEL.findall(sentence)
+        labels = [lab for lab in all_labels if lab == "G" or lab in table]
         bare = _LABEL.sub("", sentence)
         bare = re.sub(r"\[[^\]]*\]", "", bare)  # unknown labels go too
         bare = re.sub(r"\s+([.!?,;:])", r"\1", bare).strip()
+        if len(labels) != len(all_labels):
+            drop("nonexistent_citation")  # cites a source the model was not given
+            continue
         if not labels or not bare:
-            dropped += 1
+            drop("nonexistent_citation" if bare else "empty")
             continue
         if set(labels) == {"G"} and not _restates(bare, guide_source):
-            dropped += 1  # cites only the guide but says something else
+            drop("unsupported_claim")  # cites only the guide but says something else
             continue
         cited = [table[lab].chunk.text for lab in labels if lab != "G"]
         if "G" in labels:
             cited.append(guide_source)
+        cited_text = "\n".join(cited)
+        if run_ids_in(bare) - run_ids_in(cited_text):
+            drop("nonexistent_citation")  # a run id its sources do not hold
+            continue
+        if identifiers_in(bare) - known_identifiers:
+            drop("unknown_column")  # names a column the sheet does not have
+            continue
         banned = banned_in(bare)
         if banned:
             rejected.append(f"banned word: {', '.join(sorted(set(banned)))}")
@@ -192,7 +241,7 @@ def check_answer(reply: str, labelled: list[Labelled], guide: dict[str, Any]) ->
             continue
         allowed_numbers = set().union(*(_numbers(t) for t in cited)) if cited else set()
         if _value_numbers(bare) - allowed_numbers:
-            dropped += 1
+            drop("mismatched_number")
             continue
         kept.append(bare)
         for lab in labels:
@@ -205,23 +254,54 @@ def check_answer(reply: str, labelled: list[Labelled], guide: dict[str, Any]) ->
                     "kind": chunk.kind, "id": chunk.source_id,
                     "quote": _quote(chunk.text, bare), "campaign_id": chunk.campaign_id,
                 }
-    return Checked(" ".join(kept), list(sources.values()), rejected, dropped)
+    return Checked(" ".join(kept), list(sources.values()), rejected, dropped, reasons)
 
 
-def abstain(guide: dict[str, Any]) -> dict[str, Any]:
-    return {"answer": guide_text(guide), "sources": [], "abstained": True, "next": guide}
+def abstain(guide: dict[str, Any], *, provider: dict[str, Any] | None = None) -> dict[str, Any]:
+    out: dict[str, Any] = {"answer": guide_text(guide), "sources": [], "abstained": True, "next": guide}
+    out.update(provider or {"provider_path": "offline", "offline_fallback": True, "model": None,
+                            "attempts": []})
+    return out
 
 
-def ask(question: str, hits: list[Hit], guide: dict[str, Any], model: ChatModel) -> dict[str, Any]:
-    """The `/api/assist/ask` body. Raises `ModelUnavailable` from the model."""
+def answer_validator(labelled: list[Labelled], guide: dict[str, Any]) -> Any:
+    """The cascade check for an answer: `check_answer`, and a refusal
+    (`ValidationFailed`) when the whole answer is rejected or nothing is left."""
+
+    def validate(reply: str) -> Checked:
+        checked = check_answer(reply, labelled, guide)
+        if checked.rejected:
+            raise ValidationFailed("unsupported_claim", "a sentence used a banned or unsupported word")
+        if not checked.answer:
+            reasons = checked.drop_reasons or {}
+            top = max(reasons, key=lambda r: reasons[r]) if reasons else "empty"
+            raise ValidationFailed(top, "no sentence passed the checks")
+        return checked
+
+    return validate
+
+
+def ask(question: str, hits: list[Hit], guide: dict[str, Any], model: ChatModel | Cascade) -> dict[str, Any]:
+    """The `/api/assist/ask` body. Raises `ModelUnavailable` when no model
+    answered at all. `provider_path` says which model produced the answer, or
+    that the guide step was shown instead (`...>offline`)."""
     if not hits:
         return abstain(guide)
+    cascade = model if isinstance(model, Cascade) else single_model_cascade(model)
+    assert cascade is not None
     prompt, labelled = build_prompt(question[:MAX_QUESTION_CHARS], hits, guide)
-    reply = model.complete(SYSTEM_PROMPT, prompt)
-    checked = check_answer(reply, labelled, guide)
-    if checked.rejected or not checked.answer:
-        return abstain(guide)
-    return {"answer": checked.answer, "sources": checked.sources, "abstained": False, "next": guide}
+    result: CascadeResult[Checked | None] = cascade.run(
+        "answer", SYSTEM_PROMPT, prompt, answer_validator(labelled, guide), lambda: None,
+    )
+    if result.value is None and cascade.all_unavailable(result):
+        raise ModelUnavailable("no model answered")
+    report = result.report()
+    if result.value is None:
+        return abstain(guide, provider=report)
+    checked = result.value
+    return {"answer": checked.answer, "sources": checked.sources, "abstained": False, "next": guide,
+            **report, "checks": {"dropped_sentences": checked.dropped,
+                                 "drop_reasons": checked.drop_reasons or {}}}
 
 
 __all__ = [

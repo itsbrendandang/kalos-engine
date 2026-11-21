@@ -4,6 +4,13 @@ Newest first.
 
 ## Unreleased
 
+### Added - prediction history and the prospective track record (schema v8, BRE-32)
+
+- A fold no longer loses a run's recorded prediction, band or run id, and an analysis is no longer overwritten without a trace. Schema v8 adds three append-only tables (UPDATE/DELETE triggers, like `gate_decisions`): `analysis_snapshots` (every published analysis, byte for byte, with its sha256 and round), `run_predictions` (each run's prediction recorded at start: mean, sd, 90%/95% intervals with method and coverage basis, the global conformal band, engine version, round, analysis sha256 and snapshot id) and `run_folds` (the value and `run_results` version each fold wrote into the model). Result versions and corrections stay in `run_results` (v5).
+- New read routes (`read` scope, tenant-scoped, paginated): `GET /api/campaigns/{id}/track-record` (per round: predictions recorded at start vs measured, inside/outside the recorded 90% or 95% band, coverage so far with a Wilson 95% interval, `judged` from 10 runs, error), `.../track-record/runs`, `.../runs/{run_id}/history`, `.../analyses` and `.../analyses/{snapshot_id}`. A run is scored only when its prediction was recorded before its first result.
+- `up` from v7 copies each published analysis and each in-flight run's recorded prediction (with its own timestamp) into the new tables; runs v7 already folded have no prediction to copy and are listed as `rounds_without_record`. `down` renames the tables aside. Tested on a copy of a real v7 database (`tests/fixtures/portal_v7.db`).
+- The campaign state gains `seed_id` (one per upload; a re-upload restarts the round count).
+
 ### Changed - data checks: quieter outliers, result-entry checks, impossible values, duplicates, leakage, scale extrapolation
 
 Acceptance: the pre-registered planted-fault suite (`kalos/bench/faults`, protocol v1, unchanged), full tier, recorded in `kalos/bench/faults/results/scorecard_full_data_checks.{json,md}` (baselines kept); `docs/PLANTED_FAULTS.md` has the before/after.
