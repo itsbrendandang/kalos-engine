@@ -274,3 +274,31 @@ def test_a_refresh_with_nothing_changed_writes_nothing(store):
     store.set_result(run_id, 2.0, tenant="acme", campaign_id=cid)
     index.refresh(campaign_ids=[cid])
     assert index.path.read_bytes() != before[0]
+
+
+def test_bm25_scores_a_match_positive_on_a_tiny_corpus(monkeypatch):
+    """Regression: with `rank_bm25` installed (the `assist` extra), its Okapi idf was
+    <= 0 for a term in half the documents or more, so a one- or two-document corpus
+    scored every match <= 0 and the search returned nothing. CI never installs that
+    extra, so a stand-in module with the same idf is planted to prove it is not used."""
+    import math
+    import sys
+    import types
+
+    from kalos.assist.index import _bm25_scores
+
+    class _OkapiIdf:  # rank_bm25.BM25Okapi's idf for a term in every document
+        def __init__(self, corpus):
+            self.n = len(corpus)
+
+        def get_scores(self, query):
+            return np.full(self.n, math.log(0.5 / (self.n + 0.5)))
+
+    monkeypatch.setitem(sys.modules, "rank_bm25", types.SimpleNamespace(BM25Okapi=_OkapiIdf))
+    one = [["record", "a", "result", "for", "every", "started", "run"]]
+    assert _bm25_scores(one, ["record", "result"])[0] > 0
+    two = [*one, ["record", "the", "result", "of", "a", "run"]]
+    assert (_bm25_scores(two, ["record", "result"]) > 0).all()
+    three = [*one, ["upload", "a", "sheet"], ["start", "a", "round"]]
+    s = _bm25_scores(three, ["record", "result"])
+    assert s[0] > 0 and s[1] == 0 and s[2] == 0
