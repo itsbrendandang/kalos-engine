@@ -58,6 +58,11 @@ below), which the first legacy upload creates. A campaign made with
 | POST | `/api/campaigns/{id}/runs` | write | Start runs from a proposed batch. Same body and bounds as `/api/campaign/start`. Returns `{"started": [...]}`. |
 | POST | `/api/campaigns/{id}/runs/{run_id}/result` | write | Body: `{"value": number, "reason"?: str}`. Records a measured outcome and returns the run. A correction needs `reason` (see "Recording results"). |
 | POST | `/api/campaigns/{id}/reanalyze` | write | Fold measured runs, re-run the engine and publish the new analysis. Returns `{"analysis": ..., "campaign": <summary>}`, where `campaign` is this campaign's summary with `stage` and `next_action`. |
+| GET | `/api/campaigns/{id}/track-record?coverage=0.9&band=proposal&limit=20&offset=0` | read | Per round, newest first: the predictions recorded at start vs the results measured, inside/outside the band recorded at start, coverage so far (Wilson 95%), error. See "Prediction history and track record". |
+| GET | `/api/campaigns/{id}/track-record/runs?coverage=0.9&band=proposal&round=&limit=100&after_id=` | read | The same, one row per run, oldest first, keyset `after_id`. |
+| GET | `/api/campaigns/{id}/runs/{run_id}/history` | read | One run: its prediction recorded at start, every result version (corrections with reasons) and its fold. |
+| GET | `/api/campaigns/{id}/analyses?limit=50&before_id=` | read | Every analysis the campaign published (summaries with sha256, round, kind), newest first. |
+| GET | `/api/campaigns/{id}/analyses/{snapshot_id}` | read | One stored analysis, parsed from its stored text (`snapshot.analysis_sha256` is the sha256 of that text). |
 
 ### Stage
 
@@ -185,7 +190,98 @@ A result is never overwritten in place.
 The `reason` field of a run is still the proposal's reason (why the run was
 proposed). The correction reason is `result_reason`.
 
-The history is not yet exposed over HTTP (the audit and read API is a separate change).
+Every version is listed by `GET /api/campaigns/{id}/results/history` and, per run
+with its prediction and fold, by `GET /api/campaigns/{id}/runs/{run_id}/history`.
+
+### Prediction history and track record
+
+Schema v8 (docs/MIGRATIONS.md, "Schema v8") keeps, append-only, every published
+analysis (`analysis_snapshots`), each run's prediction recorded when it was
+started (`run_predictions`) and which result version each fold used
+(`run_folds`). A fold no longer loses a run's prediction, band or id. Code:
+`kalos/portal/history_api.py` (routes), `kalos/portal/track_record.py` (scoring),
+`kalos/portal/prediction_history.py` (storage).
+
+Scoring rules (`rules` in every response; nothing is re-derived from the current
+analysis):
+
+- A run is scored only when the engine recorded a prediction for it (its recipe
+  was a published proposal) and that prediction's `recorded_at` is earlier than
+  the run's first recorded result. Otherwise the run is listed with `excluded`:
+  `awaiting`, `no_engine_prediction`, `result_before_prediction`,
+  `result_time_unknown` or `no_band_at_coverage` (`excluded_reasons` explains each).
+- Inside/outside uses the band recorded at start at `coverage` (0.9 or 0.95; any
+  other value is `400 unsupported_coverage`): `band=proposal` (default) is the
+  per-proposal interval (`intervals[]` of the proposal: method and
+  `coverage_basis` are returned with it), `band=global` the global conformal band
+  (`conformal_q`), used only when its recorded coverage equals `coverage`.
+- Every interval and band returned (`prediction.intervals[]`,
+  `prediction.global_band`, `band`) carries `caveat`: `{code, message,
+  recorded: true}`, the caveat the engine served with that band when the run
+  started, copied verbatim; or `{code: "caveat_not_recorded", message,
+  recorded: false}` when none was stored (a run copied from a v7 state whose
+  analysis is not linked). A client shows it next to the band; it never says a
+  proposal's range "is calibrated".
+- Measured is the run's latest result version (`run_results`); `n_corrected`
+  counts runs with more than one version.
+- Error is measured minus the prediction recorded at start (`mean`, `mean_abs`,
+  `rmse`), over runs with a prediction recorded before their result.
+- Coverage is counts first: `n`, `inside`, `outside`, `observed`, `nominal` and
+  `wilson_95` (Wilson score interval), plus `by_method` and `by_coverage_basis`
+  (`{name: {n, inside}}`): one figure can pool bands built different ways
+  (selection-aware and plain conformal), so the split is shown. `coverage_so_far` accumulates the rounds in
+  order. Below 10 scored runs it is `judged: false` with the reason; from 10 on,
+  `nominal_inside_interval` says whether the nominal coverage lies inside the
+  Wilson interval. `basis: "prospective"`: never pooled with cross-validation.
+
+`GET .../track-record` response (abridged):
+
+```json
+{
+  "campaign_id": "cmp_...", "basis": "prospective", "coverage": 0.9, "band": "proposal",
+  "current_round": 3,
+  "rounds": [
+    {"round": 2, "dataset_epoch": 1, "current_dataset": true, "n_started": 3,
+     "n_engine_predictions": 3, "n_measured": 2, "n_corrected": 0, "n_folded": 0,
+     "coverage": {"n": 2, "inside": 1, "outside": 1, "observed": 0.5, "nominal": 0.9,
+                  "wilson_95": [0.0945, 0.9055],
+                  "by_method": {"conformal_selection_aware": {"n": 2, "inside": 1}},
+                  "by_coverage_basis": {"held_out_top_ranked_runs": {"n": 2, "inside": 1}},
+                  "basis": "prospective"},
+     "coverage_so_far": {"n": 7, "inside": 5, "...": "...", "judged": false,
+                         "reason": "needs 10 scored runs to judge; has 7",
+                         "nominal_inside_interval": null},
+     "error": {"n": 2, "mean": -0.31, "mean_abs": 0.42, "rmse": 0.45,
+               "basis": "measured_minus_recorded_prediction"},
+     "error_so_far": {"...": "..."}, "excluded": {"awaiting": 1}}
+  ],
+  "page": {"limit": 20, "offset": 0, "total_rounds": 3, "has_more": false, "next_offset": null},
+  "pooled": {"coverage": {"...": "..."}, "error": {"...": "..."}},
+  "rounds_without_record": {"rounds": [0], "count": 1, "reason": "no prediction was recorded ..."},
+  "rules": {"...": "..."}, "excluded_reasons": {"...": "..."}
+}
+```
+
+- A round is `(dataset_epoch, round)`: a re-upload replaces the base dataset and
+  restarts the round count, so its rounds get the next `dataset_epoch`;
+  `current_dataset` marks the rounds of the campaign's current upload.
+- `rounds_without_record` lists rounds of the current dataset that were folded
+  with no recorded prediction (before v8). They are not scored and not guessed.
+- `.../track-record/runs` items: `run_id`, `round`, `recipe`, `status`
+  (`awaiting`, `measured`, `folded`, `discarded` by a re-upload), `prediction`
+  (as recorded: `pred`, `std`, `intervals[]` and `global_band`, each with
+  `method`, `coverage_basis` and `caveat`, `model_version`,
+  `analysis_sha256`, `analysis_snapshot_id`, `recorded_at`, `source`), `band`
+  (the one scored), `measured` (`value`, `version`, `n_versions`,
+  `first_recorded_at`, `corrected`), `folded_in_round`, `scored`, `inside`,
+  `error`, `excluded`.
+- Runs started before v8 that were still in flight at the upgrade carry the
+  prediction the v7 engine recorded at start (`source: "migrated_v7_state"`,
+  with that block's own time).
+- Bounded: rounds page at most 100, runs page at most 500, analyses page at
+  most 200 summaries (never blobs), at most 200 result versions per run.
+  `after_id`, `before_id` and `snapshot_id` are at most 2^63 - 1 (SQLite's
+  integer range); a larger value is `400 invalid_body`, never a 500.
 
 ### Runs and results
 
@@ -658,7 +754,7 @@ Full contract: docs/CLONES.md. Code: `kalos/portal/analysis_parts/strain_*.py`,
 All five: tenant from the principal (another tenant's campaign is the same 404),
 scope checked first, default JSON body cap, writes audited without field values.
 Schema v7 adds `campaign_clones` and `clone_titer_history` (docs/MIGRATIONS.md);
-v8 is reserved for the Crux items.
+v8 adds the prediction history (above).
 
 ## Not in this slice
 
