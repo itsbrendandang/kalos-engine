@@ -160,13 +160,17 @@ def leak_evidence(df: pd.DataFrame, target: str | None) -> dict[str, dict[str, A
 
     from kalos.domains.bioprocess import BIOPROCESS_PROFILE
 
+    observed = getattr(BIOPROCESS_PROFILE, "observed_hint", None) or _OBSERVED_HINT
     checker = getattr(importlib.import_module("kalos.validation.checks"), "target_leak_evidence", None)
     if callable(checker):
+        # The data-checks check judges content only; the name rule below applies
+        # on both paths, so a column named like a QC verdict is still reported.
         found = checker(df, target, factor_hint=BIOPROCESS_PROFILE.group_hint)
-        return {str(k): dict(v) for k, v in (found or {}).items()}
+        out = {str(k): dict(v) for k, v in (found or {}).items()}
+        _add_observed_names(df, target, out, observed)
+        return out
     y = _numeric(df[target])
-    out: dict[str, dict[str, Any]] = {}
-    observed = getattr(BIOPROCESS_PROFILE, "observed_hint", None) or _OBSERVED_HINT
+    out = {}
     for col in df.columns:
         if col == target:
             continue
@@ -192,9 +196,20 @@ def leak_evidence(df: pd.DataFrame, target: str | None) -> dict[str, dict[str, A
                 if all(hi < nxt_lo for (_, hi), (nxt_lo, _) in itertools.pairwise(spans)):
                     out[str(col)] = {"kind": "levels", "separated_levels": len(spans), "n": int(mask.sum()),
                                      "exclude": not BIOPROCESS_PROFILE.group_hint.search(str(col))}
-        if str(col) not in out and observed is not None and observed.search(str(col)):
-            out[str(col)] = {"kind": "name", "note": "the name reads as judged after the run", "exclude": False}
+    _add_observed_names(df, target, out, observed)
     return out
+
+
+def _add_observed_names(df: pd.DataFrame, target: str, out: dict[str, dict[str, Any]],
+                        observed: re.Pattern[str] | None) -> None:
+    """Name evidence: a column whose name reads as judged during or after the run
+    (contamination, QC pass/fail, a tier), when content gave no evidence."""
+    if observed is None:
+        return
+    for col in df.columns:
+        name = str(col)
+        if col != target and name not in out and observed.search(name):
+            out[name] = {"kind": "name", "note": "the name reads as judged after the run", "exclude": False}
 
 
 def column_summaries(df: pd.DataFrame) -> tuple[list[dict[str, Any]], list[str]]:
