@@ -14,9 +14,8 @@ What goes in (each chunk keeps its source kind and id, so an answer can cite it)
 
 Retrieval is local only. With `sentence-transformers` installed AND its model
 already on disk (`KALOS_ASSIST_EMBED_MODEL`, loaded with local_files_only, never
-downloaded), chunks are ranked by embedding similarity; otherwise by BM25
-(`rank_bm25` when installed, else the same Okapi formula built in), so it
-always works offline.
+downloaded), chunks are ranked by embedding similarity; otherwise by the
+built-in Okapi BM25 (`_bm25_scores`), so it always works offline.
 
 Stored under `<state dir>/assist/<tenant key>/index.json` (+ `vectors.npz`).
 The index is grouped (one group per campaign, one for docs, one for skills),
@@ -193,15 +192,17 @@ def load_embedder() -> Embedder | None:
 
 
 def _bm25_scores(corpus: list[list[str]], query: list[str]) -> np.ndarray:
-    """Okapi BM25 scores of `query` against each tokenised document."""
+    """Okapi BM25 scores of `query` against each tokenised document.
+
+    Always this formula, never `rank_bm25.BM25Okapi`: its idf
+    `log((n - df + 0.5) / (df + 0.5))` is zero or negative for any term in at
+    least half the documents, so on a small corpus (one doc, two docs, a fresh
+    campaign) every match scored <= 0 and the search returned nothing. The
+    `+ 1.0` inside the log keeps idf positive (the Lucene variant). One formula
+    also means the code CI tests is the code that ships.
+    """
     if not corpus:
         return np.zeros(0)
-    try:
-        from rank_bm25 import BM25Okapi  # the `assist` extra
-
-        return np.asarray(BM25Okapi(corpus).get_scores(query), dtype=float)
-    except ImportError:
-        pass
     k1, b = 1.5, 0.75
     n = len(corpus)
     avgdl = sum(len(d) for d in corpus) / n or 1.0
