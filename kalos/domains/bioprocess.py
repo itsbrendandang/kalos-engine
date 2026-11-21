@@ -14,7 +14,15 @@ from .profile import DomainProfile
 BIOPROCESS_PROFILE = DomainProfile(
     name="bioprocess",
     outcome_hint=re.compile(
-        r"titer|titre|yield|conc|purity|lipase|biomass|od\d|product|response|output|score|kda|activity",
+        # `product(?!ion)`: "production" names a process PHASE (pH_production,
+        # temperature_production_C are setpoints of the production phase), not
+        # a product measurement. Plain `product` silently dropped a real
+        # 11-level pH setpoint as an output (real-backtest bug). Name rules are
+        # also never silent now: every column they exclude is reported
+        # (`derived_output`, reason `outcome_name`), and a setting-looking name
+        # (pH, temperature, setpoint) is never read as an output
+        # (`kalos.portal.analysis_parts.columns.is_outcome_name`).
+        r"titer|titre|yield|conc|purity|lipase|biomass|od\d|product(?!ion)|response|output|score|kda|activity",
         re.I,
     ),
     target_pref=re.compile(r"titer|titre|lipase|yield", re.I),

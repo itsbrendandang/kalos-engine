@@ -4,6 +4,8 @@ rule and duplicate-header handling.
 """
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 
 from kalos.core.splits import row_hash_groups
@@ -17,7 +19,25 @@ from kalos.portal.cells import (
     is_null_label,
 )
 from kalos.portal.uploads import numeric_columns
+from kalos.validation.bounds import infer_dimension
 from kalos.validation.checks import target_leak_evidence
+
+# A name that reads as a SETTING is never read as an output by the outcome-name
+# rule: a pH or temperature column ("pH_production", "temp_product_phase"), or
+# anything called a setpoint. Measured outputs are not named that way.
+_SETTING_NAME = re.compile(r"set.?point|(?<![a-z])sp(?![a-z])|(?<![a-z])target.?(ph|temp)", re.I)
+
+
+def is_outcome_name(name: str, profile: DomainProfile) -> bool:
+    """True when the column NAME alone reads as a measured output
+    (`profile.outcome_hint`) and not as a setting (`_SETTING_NAME`, or a pH /
+    temperature column by `kalos.validation.bounds.infer_dimension`). Every
+    column this excludes from the inputs is reported with the reason
+    (`name_inferred_outputs`, finding `derived_output`, reason `outcome_name`)."""
+    text = str(name)
+    if not profile.outcome_hint.search(text):
+        return False
+    return not (_SETTING_NAME.search(text) or infer_dimension(text) in ("ph", "temperature_c"))
 
 
 def _numeric_cols(df: pd.DataFrame) -> list:
@@ -123,7 +143,7 @@ def _resolve_columns(
                 if c != target and c not in cat_set and c not in ids
                 and c not in set(roles.outputs)
                 and not is_identifier_name(c, profile.id_hint)
-                and not profile.outcome_hint.search(str(c))
+                and not is_outcome_name(str(c), profile)
             ]
         gcol = roles.groups if (roles.groups and roles.groups in df.columns) else None
         # normalize both feature lists to sheet-column order
@@ -134,7 +154,7 @@ def _resolve_columns(
         return target, cont_feats, cat_feats, gcol, declared
 
     # inference mode (default profile = bioprocess): unchanged legacy behavior
-    outcomes = [c for c in num if profile.outcome_hint.search(str(c))]
+    outcomes = [c for c in num if is_outcome_name(str(c), profile)]
     if target is None or target not in df.columns:
         target = next(
             (c for c in outcomes if profile.target_pref.search(str(c))),
@@ -144,7 +164,7 @@ def _resolve_columns(
         c for c in num
         if c != target
         and not is_identifier_name(c, profile.id_hint)
-        and not profile.outcome_hint.search(str(c))
+        and not is_outcome_name(str(c), profile)
     ]
     cat_feats = _auto_categorical(df, num, target, profile)
     gcol = _auto_group_column(df, profile, [*cont_feats, *cat_feats])
@@ -204,7 +224,7 @@ def _auto_categorical(df: pd.DataFrame, num: list, target: str, profile: DomainP
         if c in num_set or c == target:
             continue
         name = str(c)
-        if is_identifier_name(name, profile.id_hint) or profile.outcome_hint.search(name):
+        if is_identifier_name(name, profile.id_hint) or is_outcome_name(name, profile):
             continue
         series = df[c]
         if isinstance(series, pd.DataFrame):  # duplicate header; analysis dedupes later
@@ -260,7 +280,40 @@ def derived_output_columns(
 
 DERIVED_OUTPUT_TEXT = {
     "declared": "declared in roles.outputs",
+    "outcome_name": "its name reads like a measured output (a titer, yield, concentration, product or score)",
     "observed": "its name says it is observed during or after a run (an outcome, not a setting)",
     "target_leak": "its values follow the result almost exactly, so it looks computed from it",
 }
+
+
+def name_inferred_outputs(
+    df: pd.DataFrame, target: str, profile: DomainProfile, roles: ColumnRoles | None,
+    already: set[str],
+) -> dict[str, dict]:
+    """Columns kept out of the inputs ONLY because their name reads as an
+    output (`is_outcome_name`), so each is reported, never dropped silently.
+
+    `looks_like_setting` is True for a numeric column with 2-12 distinct
+    values each used in at least two runs: the shape of a designed setpoint,
+    which a measured output rarely has. Such a column is reported as a warning
+    (check the role), every other one as info. Not reported when the user
+    declared the features explicitly (an unlisted column is their choice).
+    """
+    if roles is not None and roles.features:
+        return {}
+    explicit = set(roles.categoricals) if roles is not None else set()
+    out: dict[str, dict] = {}
+    for col in df.columns:
+        name = str(col)
+        if name == str(target) or name in already or name in explicit:
+            continue
+        if not is_outcome_name(name, profile) or is_identifier_name(name, profile.id_hint):
+            continue
+        values = pd.to_numeric(df[col], errors="coerce").dropna()
+        counts = values.value_counts()
+        setting_like = bool(
+            len(values) >= 4 and 2 <= len(counts) <= 12 and int(counts.min()) >= 2
+        )
+        out[name] = {"reason": "outcome_name", "looks_like_setting": setting_like}
+    return out
 

@@ -55,6 +55,8 @@ from kalos.portal.analysis_parts.columns import (
     _numeric_cols,
     _resolve_columns,
     derived_output_columns,
+    is_outcome_name,
+    name_inferred_outputs,
 )
 from kalos.portal.analysis_parts.cv_grouping import (
     MIN_GROUPS_FOR_CV,
@@ -402,7 +404,7 @@ def _analyze_body(
                 context={"target": str(requested_target)},
             )
         available = [
-            str(c) for c in _numeric_cols(df) if profile.outcome_hint.search(str(c))
+            str(c) for c in _numeric_cols(df) if is_outcome_name(str(c), profile)
         ] or [str(c) for c in _numeric_cols(df)]
         raise UploadRejected(
             f"The requested target column {clip_name(requested_target)!r} is not in this sheet. "
@@ -475,6 +477,14 @@ def _analyze_body(
     if derived_outputs:
         cont_feats = [c for c in cont_feats if str(c) not in derived_outputs]
         cat_feats = [c for c in cat_feats if str(c) not in derived_outputs]
+    # Columns the outcome-NAME rule kept out of the inputs are reported too, so a
+    # name heuristic never drops an input silently (real-backtest bug:
+    # `pH_production`, a real setpoint, vanished as an "output").
+    derived_outputs.update(name_inferred_outputs(
+        df, str(target), profile, roles,
+        already={*derived_outputs, *(str(c) for c in [*cont_feats, *cat_feats])}
+        | {str(c) for c in batch_cols} | _strain_cols,
+    ))
     auto_cats = (
         [c for c in cat_feats if str(c) != strain_plan.column] if roles is None else []
     )
@@ -493,7 +503,7 @@ def _analyze_body(
         cont_feats = [c for c in cont_feats if str(c) != _constraint_col_name]
         cat_feats = [c for c in cat_feats if str(c) != _constraint_col_name]
     if roles is None:
-        outcomes = [c for c in num if profile.outcome_hint.search(str(c))]
+        outcomes = [c for c in num if is_outcome_name(str(c), profile)]
         candidate_targets = outcomes or [target]
     else:
         candidate_targets = [target]
@@ -1691,13 +1701,14 @@ def _analyze_body(
             numeric_cols=[str(c) for c in num],
             is_identifier=lambda name: is_identifier_name(name, profile.id_hint),
             outcome_hint=profile.outcome_hint,
+            is_outcome=lambda name: is_outcome_name(name, profile),
             constant_on_fitted_rows=[str(c) for c in constant_on_fitted]
             + [str(c) for c in constant_cats],
             declared={str(c) for c in declared},
             declared_ids={str(c) for c in roles.ids} if roles is not None else set(),
             declared_features={str(c) for c in roles.features} if roles is not None else set(),
             cv_group_columns={str(c) for c in batch_cols},
-            derived_outputs=set(derived_outputs),
+            derived_outputs={k: str(v.get("reason")) for k, v in derived_outputs.items()},
         )
     )
 
