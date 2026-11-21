@@ -60,11 +60,13 @@ UNKNOWN_REASON = "no engine prediction was recorded for this run"
 # Columns of `run_predictions` filled from a `prediction_at_start` block.
 PREDICTION_FIELDS: tuple[str, ...] = (
     "available", "unavailable_reason", "pred", "std",
-    "lo_90", "hi_90", "method_90", "basis_90",
-    "lo_95", "hi_95", "method_95", "basis_95",
-    "band_lo", "band_hi", "band_coverage", "band_method",
+    "lo_90", "hi_90", "method_90", "basis_90", "caveat_code_90", "caveat_90",
+    "lo_95", "hi_95", "method_95", "basis_95", "caveat_code_95", "caveat_95",
+    "band_lo", "band_hi", "band_coverage", "band_method", "band_basis",
+    "band_caveat_code", "band_caveat",
     "model_version", "provenance_sha256", "analysis_generation", "proposal_index",
 )
+MAX_CAVEAT_CHARS = 2048
 
 
 def sha256_text(text: str) -> str:
@@ -94,8 +96,17 @@ def level_key(coverage: float) -> str | None:
     return None
 
 
+def _caveat(value: Any) -> tuple[str | None, str | None]:
+    """(code, message) of a caveat block as the engine served it, else (None, None)."""
+    if not isinstance(value, Mapping):
+        return None, None
+    msg = value.get("message")
+    return _str(value.get("code"), 64), (msg[:MAX_CAVEAT_CHARS] if isinstance(msg, str) and msg else None)
+
+
 def prediction_columns(
     block: Any, proposal: Mapping[str, Any] | None = None,
+    analysis: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The flat `run_predictions` columns for a run's `prediction_at_start` block.
 
@@ -103,7 +114,11 @@ def prediction_columns(
     proposal) when given, else from the block's own size-capped copy
     (`kalos.portal.run_prediction.COPIED_PROPOSAL_KEYS`). Only AVAILABLE
     intervals with finite ends are stored; a level the engine refused stays NULL.
-    Nothing is computed: every number is copied from what the engine published.
+    Each stored interval keeps the caveat the engine served with it (`caveat`:
+    code + message, copied verbatim). The global band keeps the published
+    analysis's `conformal_caveat` (code, message, coverage_basis) when
+    `analysis` is given. Nothing is computed: every number and every word is
+    copied from what the engine published.
     """
     out: dict[str, Any] = dict.fromkeys(PREDICTION_FIELDS)
     out["available"] = 0
@@ -131,12 +146,17 @@ def prediction_columns(
         out[f"lo_{key}"], out[f"hi_{key}"] = lo, hi
         out[f"method_{key}"] = _str(entry.get("method"), 64)
         out[f"basis_{key}"] = _str(entry.get("coverage_basis"), 64)
+        out[f"caveat_code_{key}"], out[f"caveat_{key}"] = _caveat(entry.get("caveat"))
     band = block.get("interval")
     if isinstance(band, Mapping):
         lo, hi, cov = _num(band.get("lo")), _num(band.get("hi")), _num(band.get("coverage"))
         if lo is not None and hi is not None and cov is not None:
             out.update(band_lo=lo, band_hi=hi, band_coverage=cov,
                        band_method=_str(band.get("method"), 64))
+            cc = (analysis or {}).get("conformal_caveat") if isinstance(analysis, Mapping) else None
+            if isinstance(cc, Mapping):
+                out["band_basis"] = _str(cc.get("coverage_basis"), 64)
+                out["band_caveat_code"], out["band_caveat"] = _caveat(cc)
     prov = block.get("analysis_provenance")
     if isinstance(prov, Mapping):
         out["model_version"] = _str(prov.get("engine_version"), 64)
@@ -214,11 +234,12 @@ def record_prediction(
     round_: int | None, seed_id: str | None, recipe: Mapping[str, Any], block: Any,
     proposal: Mapping[str, Any] | None, pred_source: str, analysis_sha256: str | None,
     analysis_snapshot_id: int | None, source: str, recorded_at: float,
+    analysis: Mapping[str, Any] | None = None,
 ) -> None:
     """Append the prediction recorded for one started run."""
     if source not in PREDICTION_SOURCES:
         raise ValueError(f"unknown prediction source {source!r}")
-    cols = prediction_columns(block, proposal)
+    cols = prediction_columns(block, proposal, analysis)
     try:
         recipe_json = json.dumps(dict(recipe), sort_keys=True, allow_nan=False)
     except (TypeError, ValueError):
@@ -266,9 +287,10 @@ SNAPSHOT_SUMMARY_COLUMNS = (
 _TRACK_COLUMNS = (
     "id", "run_id", "round", "seed_id", "source", "pred_source", "available",
     "unavailable_reason", "pred", "std", "lo_90", "hi_90", "method_90", "basis_90",
-    "lo_95", "hi_95", "method_95", "basis_95", "band_lo", "band_hi", "band_coverage",
-    "band_method", "model_version", "provenance_sha256", "analysis_sha256",
-    "analysis_snapshot_id", "recorded_at",
+    "caveat_code_90", "caveat_90", "lo_95", "hi_95", "method_95", "basis_95",
+    "caveat_code_95", "caveat_95", "band_lo", "band_hi", "band_coverage",
+    "band_method", "band_basis", "band_caveat_code", "band_caveat", "model_version",
+    "provenance_sha256", "analysis_sha256", "analysis_snapshot_id", "recorded_at",
 )
 # The latest result version, the first result time and the version count come
 # from `run_results`; the fold (if any) from `run_folds`. Every subquery names

@@ -61,6 +61,10 @@ RULES = {
     "measured": "the run's latest recorded result version; corrections are counted",
     "error_formula": "measured minus the prediction recorded at start",
     "coverage_interval": "Wilson score interval, 95%",
+    "pooling": "a coverage figure pools every scored band at the requested coverage; by_method and "
+               "by_coverage_basis show how many came from each kind of band",
+    "caveat": "every band is returned with the caveat the engine served with it when the run "
+              "started (code caveat_not_recorded when none was stored)",
     "judged_from_n": MIN_JUDGED_N,
 }
 
@@ -76,6 +80,25 @@ def wilson_interval(k: int, n: int, z: float = WILSON_Z) -> tuple[float, float] 
     return max(0.0, centre - half), min(1.0, centre + half)
 
 
+# Served when no caveat was stored with a band (a run copied from a v7 state
+# whose analysis was not linked, or an analysis published before caveats
+# existed). No coverage figure: only what is true of every engine band.
+CAVEAT_NOT_RECORDED: dict[str, Any] = {
+    "code": "caveat_not_recorded",
+    "message": ("No caveat was recorded with this band when the run started. The band was sized on "
+                "held-out past runs; coverage at newly proposed recipes can be lower."),
+    "recorded": False,
+}
+
+
+def caveat_of(code: Any, message: Any) -> dict[str, Any]:
+    """The caveat stored with a band (verbatim, `recorded: true`), else
+    `CAVEAT_NOT_RECORDED`."""
+    if isinstance(message, str) and message:
+        return {"code": code, "message": message, "recorded": True}
+    return dict(CAVEAT_NOT_RECORDED)
+
+
 def _r(x: float | None, nd: int = 6) -> float | None:
     return None if x is None else round(float(x), nd)
 
@@ -87,7 +110,8 @@ def band_for(row: Mapping[str, Any], coverage: float, band: str) -> dict[str, An
         if (isinstance(bc, (int, float)) and abs(float(bc) - coverage) < 1e-9
                 and row.get("band_lo") is not None and row.get("band_hi") is not None):
             return {"lo": row["band_lo"], "hi": row["band_hi"], "coverage": float(bc),
-                    "method": row.get("band_method"), "coverage_basis": "held_out_past_runs",
+                    "method": row.get("band_method"), "coverage_basis": row.get("band_basis"),
+                    "caveat": caveat_of(row.get("band_caveat_code"), row.get("band_caveat")),
                     "recorded_at": row.get("recorded_at")}
         return None
     key = level_key(coverage)
@@ -95,6 +119,7 @@ def band_for(row: Mapping[str, Any], coverage: float, band: str) -> dict[str, An
         return None
     return {"lo": row[f"lo_{key}"], "hi": row[f"hi_{key}"], "coverage": coverage,
             "method": row.get(f"method_{key}"), "coverage_basis": row.get(f"basis_{key}"),
+            "caveat": caveat_of(row.get(f"caveat_code_{key}"), row.get(f"caveat_{key}")),
             "recorded_at": row.get("recorded_at")}
 
 
@@ -144,13 +169,29 @@ def score_run(
     return out
 
 
-def _coverage(k: int, n: int, nominal: float) -> dict[str, Any]:
+def _split(scored: Sequence[Mapping[str, Any]], field: str) -> dict[str, dict[str, int]]:
+    """Scored runs counted by the band's `method` or `coverage_basis`: one
+    coverage figure can pool bands built different ways, so the split is shown."""
+    out: dict[str, dict[str, int]] = {}
+    for s in scored:
+        name = str((s.get("band") or {}).get(field) or "unknown")
+        cell = out.setdefault(name, {"n": 0, "inside": 0})
+        cell["n"] += 1
+        cell["inside"] += 1 if s.get("inside") else 0
+    return dict(sorted(out.items()))
+
+
+def _coverage(scored: Sequence[Mapping[str, Any]], nominal: float) -> dict[str, Any]:
+    n = len(scored)
+    k = sum(1 for s in scored if s.get("inside"))
     ci = wilson_interval(k, n)
     return {
         "n": n, "inside": k, "outside": n - k,
         "observed": _r(k / n, 4) if n else None,
         "nominal": nominal,
         "wilson_95": [_r(ci[0], 4), _r(ci[1], 4)] if ci else None,
+        "by_method": _split(scored, "method"),
+        "by_coverage_basis": _split(scored, "coverage_basis"),
         "basis": BASIS,
     }
 
@@ -199,15 +240,13 @@ def build_track_record(
         first_seen[key] = min(first_seen.get(key, math.inf), float(row.get("recorded_at") or 0))
     order = sorted(groups, key=lambda k: first_seen[k])
     rounds: list[dict[str, Any]] = []
-    cum_k = cum_n = 0
+    cum_scored: list[dict[str, Any]] = []
     cum_err: list[float] = []
     for key in order:
         items = groups[key]
         scored = [s for _, s in items if s["scored"]]
-        k = sum(1 for s in scored if s["inside"])
         errs = [float(s["error"]) for _, s in items if s["has_error"]]
-        cum_k += k
-        cum_n += len(scored)
+        cum_scored += scored
         cum_err += errs
         excluded: dict[str, int] = {}
         for _, s in items:
@@ -223,8 +262,8 @@ def build_track_record(
             "n_measured": sum(1 for _, s in items if s["measured"] is not None),
             "n_corrected": sum(1 for _, s in items if s["corrected"]),
             "n_folded": sum(1 for _, s in items if s["status"] == "folded"),
-            "coverage": _coverage(k, len(scored), coverage),
-            "coverage_so_far": _judged(_coverage(cum_k, cum_n, coverage)),
+            "coverage": _coverage(scored, coverage),
+            "coverage_so_far": _judged(_coverage(cum_scored, coverage)),
             "error": _errors(errs),
             "error_so_far": _errors(cum_err),
             "excluded": excluded,
@@ -235,7 +274,7 @@ def build_track_record(
         "coverage": coverage,
         "band": band,
         "rounds": rounds,
-        "pooled": {"coverage": _judged(_coverage(cum_k, cum_n, coverage)),
+        "pooled": {"coverage": _judged(_coverage(cum_scored, coverage)),
                    "error": _errors(cum_err)},
         "rules": RULES,
         "excluded_reasons": EXCLUDED_REASONS,

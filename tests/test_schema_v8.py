@@ -207,27 +207,90 @@ def test_v7_copy_backfill_copies_what_v7_still_held_and_invents_nothing(v7_copy)
         iv95 = next(i for i in block["intervals"] if i["coverage"] == 0.95)
         assert (lo90, hi90, lo95) == (iv90["lo"], iv90["hi"], iv95["lo"])
         assert sid == _q(db, "SELECT id FROM analysis_snapshots WHERE tenant = ?", (tenant,))[0][0]
+        # the caveats the engine served, copied verbatim (rule: every band keeps its caveat)
+        cav = _q(db, "SELECT caveat_code_90, caveat_90, caveat_code_95, caveat_95, band_basis, "
+                     "band_caveat_code, band_caveat FROM run_predictions WHERE tenant = ? AND run_id = ?",
+                 (tenant, run_id))[0]
+        (published,) = _q(db, "SELECT state FROM analyses WHERE tenant = ?", (tenant,))[0]
+        cc = json.loads(published)["conformal_caveat"]
+        ok95 = iv95.get("available") is not False  # a refused level is not stored, nor its caveat
+        assert cav == (iv90["caveat"]["code"], iv90["caveat"]["message"],
+                       iv95["caveat"]["code"] if ok95 else None, iv95["caveat"]["message"] if ok95 else None,
+                       cc["coverage_basis"], cc["code"], cc["message"])
     # Runs v7 already folded lost their predictions: nothing is invented for them.
     folded_ids = {r[0] for r in _q(db, "SELECT DISTINCT run_id FROM run_results")} - {r[1] for r in rows}
     assert len(folded_ids) == 9  # acme 3 + 3, globex 3
     assert _q(db, "SELECT COUNT(*) FROM run_folds") == [(0,)]
 
 
-def test_backfill_columns_match_the_start_path():
-    """The migration and `CampaignStore.start` use the same pure extraction."""
-    block = {"available": True, "pred": 2.0, "std": 0.1, "proposal_index": 0,
-             "interval": {"lo": 1.0, "hi": 3.0, "coverage": 0.9, "method": "conformal_global"},
-             "analysis_provenance": {"engine_version": "0.1.0", "provenance_sha256": "p" * 64},
-             "intervals": [{"coverage": 0.9, "available": True, "lo": 1.5, "hi": 2.5,
-                            "method": "conformal_selection_aware", "coverage_basis": "x"},
-                           {"coverage": 0.95, "available": False, "lo": None, "hi": None}]}
-    cols = prediction_columns(block)
+_CAVEAT_90 = {"code": "coverage_lower_at_proposals", "message": "as served (90)", "coverage_at_proposals_estimate": None}
+_BLOCKS = [
+    {"available": True, "pred": 2.0, "std": 0.1, "proposal_index": 0,
+     "interval": {"lo": 1.0, "hi": 3.0, "coverage": 0.9, "method": "conformal_global"},
+     "analysis_provenance": {"engine_version": "0.1.0", "provenance_sha256": "p" * 64},
+     "analysis_generation": "g" * 32,
+     "intervals": [{"coverage": 0.9, "available": True, "lo": 1.5, "hi": 2.5, "caveat": _CAVEAT_90,
+                    "method": "conformal_selection_aware", "coverage_basis": "x"},
+                   {"coverage": 0.95, "available": False, "lo": None, "hi": None}]},
+    {"available": True, "pred": 2.0, "intervals_omitted": "too large"},
+    {"available": False, "reason": "not a proposal"},
+    {"available": True, "pred": float("nan")},
+    None,
+]
+_ANALYSIS = {"conformal_caveat": {"code": "coverage_not_guaranteed", "coverage_basis": "held_out_past_runs",
+                                  "message": "as served (global)"}}
+
+
+def test_live_extraction_and_the_frozen_migration_copy_agree():
+    """`CampaignStore.start` (prediction_history) and the frozen v7 -> v8 copy in
+    migrate.py extract the same columns today."""
+    for block in _BLOCKS:
+        for analysis in (None, _ANALYSIS):
+            assert migrate._v8_prediction_columns(block, None, analysis) == prediction_columns(block, None, analysis)
+    proposal = {"intervals": [{"coverage": 0.95, "available": True, "lo": 0.5, "hi": 3.5, "method": "m",
+                               "coverage_basis": "b", "caveat": {"code": "c", "message": "as served (95)"}}]}
+    assert migrate._v8_prediction_columns(_BLOCKS[0], proposal, None) == prediction_columns(_BLOCKS[0], proposal)
+    assert set(migrate._V8_PRED_COLUMNS) == set(prediction_columns(None))
+
+
+def test_extraction_copies_values_and_caveats_verbatim():
+    cols = prediction_columns(_BLOCKS[0], None, _ANALYSIS)
     assert (cols["lo_90"], cols["hi_90"], cols["method_90"], cols["basis_90"]) == (1.5, 2.5, "conformal_selection_aware", "x")
-    assert cols["lo_95"] is None and cols["hi_95"] is None  # a refused level stays NULL
+    assert (cols["caveat_code_90"], cols["caveat_90"]) == ("coverage_lower_at_proposals", "as served (90)")
+    assert cols["lo_95"] is None and cols["hi_95"] is None and cols["caveat_95"] is None  # refused level
     assert (cols["band_lo"], cols["band_coverage"], cols["model_version"]) == (1.0, 0.9, "0.1.0")
+    assert (cols["band_basis"], cols["band_caveat_code"], cols["band_caveat"]) == (
+        "held_out_past_runs", "coverage_not_guaranteed", "as served (global)")
+    assert prediction_columns(_BLOCKS[0])["band_caveat"] is None  # no analysis given: nothing invented
     assert prediction_columns(None)["available"] == 0 and prediction_columns(None)["unavailable_reason"]
     off = prediction_columns({"available": False, "reason": "not a proposal"})
     assert off == {**off, "available": 0, "unavailable_reason": "not a proposal", "pred": None}
+
+
+def test_the_migration_does_not_import_campaign_code():
+    """R03: storage must not import kalos.portal.prediction_history (campaigns)."""
+    source = (_REPO / "kalos" / "portal" / "migrate.py").read_text()
+    assert "prediction_history" not in source.replace("prediction_history.py", "")
+
+
+def test_a_migrated_run_without_prediction_at_start_is_copied_as_unavailable(v7_copy):
+    conn = sqlite3.connect(str(v7_copy))
+    (cid, text) = conn.execute("SELECT id, state FROM campaigns WHERE tenant = 'globex'").fetchone()
+    state = json.loads(text)
+    legacy = state["pending"][0]
+    legacy.pop("prediction_at_start")  # a run started before predictions at start existed
+    no_time = state["pending"][1]
+    no_time["prediction_at_start"].pop("recorded_at")
+    conn.execute("UPDATE campaigns SET state = ? WHERE id = ?", (json.dumps(state), cid))
+    conn.commit()
+    conn.close()
+    migrate.migrate_up(v7_copy)
+    row = _q(v7_copy, "SELECT available, unavailable_reason, pred, lo_90, recorded_at, source "
+                      "FROM run_predictions WHERE run_id = ?", (legacy["id"],))[0]
+    assert row[:4] == (0, migrate._V8_PRE_R5_REASON, None, None)
+    assert row[4] == legacy["created_at"] and row[5] == "migrated_v7_state"
+    (recorded,) = _q(v7_copy, "SELECT recorded_at FROM run_predictions WHERE run_id = ?", (no_time["id"],))[0]
+    assert recorded == no_time["created_at"]  # the run's start time, not the migration time
 
 
 def test_the_engine_keeps_history_on_the_migrated_v7_database(v7_copy):

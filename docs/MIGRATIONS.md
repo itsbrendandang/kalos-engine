@@ -126,20 +126,23 @@ track record").
 - `analysis_snapshots(id, tenant, campaign_id, round, kind, campaign_generation,
   analysis_sha256, provenance_sha256, input_sha256, engine_version, dataset,
   n_rows, n_proposals, analysis_bytes, analysis, created_at)`: every published
-  analysis, stored byte for byte with its sha256. `kind IN ('upload',
+  analysis, its text stored byte for byte with its sha256. `kind IN ('upload',
   'reanalyze', 'publish', 'migrated_v7')`. Written in the transaction that
   publishes the analysis (`CampaignStore._write_analysis`), so a rolled-back
   publish leaves no snapshot. Index `analysis_snapshots_campaign_idx (tenant,
   campaign_id, id)`.
 - `run_predictions(id, tenant, campaign_id, run_id, round, seed_id, source,
   pred_source, recipe, available, unavailable_reason, pred, std, lo_90, hi_90,
-  method_90, basis_90, lo_95, hi_95, method_95, basis_95, band_lo, band_hi,
-  band_coverage, band_method, model_version, provenance_sha256,
+  method_90, basis_90, caveat_code_90, caveat_90, lo_95, hi_95, method_95,
+  basis_95, caveat_code_95, caveat_95, band_lo, band_hi, band_coverage,
+  band_method, band_basis, band_caveat_code, band_caveat, model_version, provenance_sha256,
   analysis_generation, proposal_index, analysis_sha256, analysis_snapshot_id,
   recorded_at)`: one row per started run (`UNIQUE (tenant, campaign_id,
   run_id)`), written in the transaction that starts it. The mean and sd, the
-  per-proposal 90% and 95% intervals with their method and coverage basis, the
-  global conformal band, the engine version, the round, the upload it belongs
+  per-proposal 90% and 95% intervals with their method, coverage basis and the
+  caveat the engine served with each (code + message, copied verbatim), the
+  global conformal band with its coverage basis and caveat (the analysis's
+  `conformal_caveat`), the engine version, the round, the upload it belongs
   to (`seed_id`, a random id each upload writes into the campaign state; a
   re-upload restarts the round count) and the sha256 and snapshot id of the
   analysis it was read from. CHECKs: an `available` row has a mean; an
@@ -163,12 +166,20 @@ still holds. Rows are read; none is changed:
   'migrated_v7'`), with the round of the in-flight runs that record they were
   started from it (else round NULL);
 - each in-flight run (`pending`) becomes one `run_predictions` row (`source =
-  'migrated_v7_state'`) carrying the block v7 recorded at start and that block's
-  own `recorded_at`, never the migration time. A run started before predictions
-  were recorded gets `available = 0` with the reason;
+  'migrated_v7_state'`) carrying the block v7 recorded at start. Its
+  `recorded_at` is the block's own `recorded_at`, else the run's `created_at`
+  (the block is written when the run starts); only a run with neither gets the
+  migration time, which is later than any result it already has, so it is never
+  scored. A run started before predictions were recorded gets `available = 0`
+  with the reason. Caveats come from the block's interval copy, or from the
+  analysis the run records it was started from;
 - runs v7 already folded lost their predictions: nothing is invented for them.
   The track record lists those rounds under `rounds_without_record`;
 - a campaign state that is not valid JSON is skipped with a warning.
+
+The copy uses its own frozen extraction and INSERT statements inside
+`migrate.py` (not the live write path in `prediction_history.py`), so later
+changes to the live code never change what this step does.
 
 `down` (v8 -> v7) takes a `pre-down-<ts>` backup, drops the six triggers and two
 indexes, and renames the tables to `<name>_v8_rolledback` with every row kept. A

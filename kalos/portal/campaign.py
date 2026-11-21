@@ -955,7 +955,7 @@ class CampaignStore:
                     block=prediction, proposal=proposal, pred_source=run["pred_source"],
                     analysis_sha256=published_sha if engine else None,
                     analysis_snapshot_id=snapshot_id if engine else None,
-                    source="start", recorded_at=now,
+                    source="start", recorded_at=now, analysis=published if engine else None,
                 )
             state["updated_at"] = now
             self._cas_write(conn, tenant, row, state, row.generation)

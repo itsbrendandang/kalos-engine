@@ -68,6 +68,7 @@ box where the engine itself is stopped.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -427,7 +428,8 @@ _V7_DDL: tuple[str, ...] = (
 # - `run_predictions`: one row per started run (UNIQUE per tenant, campaign and
 #   run id), written in the transaction that starts it: the engine's mean/sd, the
 #   per-proposal 90% and 95% intervals (method + coverage basis per level), the
-#   global conformal band, the model (engine) version, the round, the upload
+#   global conformal band, the caveat the engine served with each interval and
+#   with the band (code + message, verbatim), the model (engine) version, the round, the upload
 #   (`seed_id`) and the analysis it was read from (sha256 + snapshot id). A run
 #   the engine never predicted has `available = 0` and a reason (CHECK).
 # - `run_folds`: one row per folded run: the round, the value written into
@@ -502,14 +504,21 @@ _V8_DDL: tuple[str, ...] = (
         hi_90 REAL,
         method_90 TEXT,
         basis_90 TEXT,
+        caveat_code_90 TEXT,
+        caveat_90 TEXT,
         lo_95 REAL,
         hi_95 REAL,
         method_95 TEXT,
         basis_95 TEXT,
+        caveat_code_95 TEXT,
+        caveat_95 TEXT,
         band_lo REAL,
         band_hi REAL,
         band_coverage REAL,
         band_method TEXT,
+        band_basis TEXT,
+        band_caveat_code TEXT,
+        band_caveat TEXT,
         model_version TEXT,
         provenance_sha256 TEXT,
         analysis_generation TEXT,
@@ -1164,6 +1173,131 @@ def _apply_v7_in_txn(conn: sqlite3.Connection) -> None:
     _record_version(conn, V7, V7_NAME)
 
 
+# --- the v7 -> v8 copy (frozen) ------------------------------------------------ #
+# The copy uses its OWN frozen extraction and INSERT statements, not the live
+# write path in kalos/portal/prediction_history.py: a later change to that module
+# can never change what this migration does, and the storage layer does not
+# import campaign code (docs/ARCHITECTURE.md, R03). tests/test_schema_v8.py
+# checks that both extract the same columns today.
+_V8_PRE_R5_REASON = (
+    "the run was started before the engine recorded predictions at start; no prediction "
+    "was recorded for it"
+)
+_V8_UNKNOWN_REASON = "no engine prediction was recorded for this run"
+_V8_LEVELS = (("90", 0.9), ("95", 0.95))
+_V8_PRED_COLUMNS = (
+    "available", "unavailable_reason", "pred", "std",
+    "lo_90", "hi_90", "method_90", "basis_90", "caveat_code_90", "caveat_90",
+    "lo_95", "hi_95", "method_95", "basis_95", "caveat_code_95", "caveat_95",
+    "band_lo", "band_hi", "band_coverage", "band_method", "band_basis",
+    "band_caveat_code", "band_caveat",
+    "model_version", "provenance_sha256", "analysis_generation", "proposal_index",
+)
+_V8_INSERT_SNAPSHOT = (
+    "INSERT INTO analysis_snapshots (tenant, campaign_id, round, kind, campaign_generation, "
+    "analysis_sha256, provenance_sha256, input_sha256, engine_version, dataset, n_rows, "
+    "n_proposals, analysis_bytes, analysis, created_at) "
+    "VALUES (?, ?, ?, 'migrated_v7', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
+_V8_INSERT_PREDICTION = (
+    "INSERT INTO run_predictions ("
+    "tenant, campaign_id, run_id, round, seed_id, source, pred_source, "
+    "recipe, available, unavailable_reason, pred, std, lo_90, hi_90, "
+    "method_90, basis_90, caveat_code_90, caveat_90, lo_95, hi_95, "
+    "method_95, basis_95, caveat_code_95, caveat_95, band_lo, band_hi, "
+    "band_coverage, band_method, band_basis, band_caveat_code, "
+    "band_caveat, model_version, provenance_sha256, analysis_generation, "
+    "proposal_index, analysis_sha256, analysis_snapshot_id, recorded_at) "
+    "VALUES ("
+    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+    ")"
+)
+
+
+def _v8_num(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    v = float(value)
+    return v if v == v and v not in (float("inf"), float("-inf")) else None
+
+
+def _v8_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _v8_str(value: Any, limit: int = 128) -> str | None:
+    return value[:limit] if isinstance(value, str) and value else None
+
+
+def _v8_map(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _v8_caveat(value: Any) -> tuple[str | None, str | None]:
+    if not isinstance(value, dict):
+        return None, None
+    msg = value.get("message")
+    return _v8_str(value.get("code"), 64), (msg[:2048] if isinstance(msg, str) and msg else None)
+
+
+def _v8_prediction_columns(
+    block: Any, proposal: dict[str, Any] | None, analysis: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Frozen: the run_predictions columns for a v7 `prediction_at_start` block."""
+    out: dict[str, Any] = dict.fromkeys(_V8_PRED_COLUMNS)
+    out["available"] = 0
+    if not isinstance(block, dict):
+        out["unavailable_reason"] = _V8_PRE_R5_REASON
+        return out
+    pred = _v8_num(block.get("pred"))
+    if not block.get("available") or pred is None:
+        reason = block.get("reason")
+        out["unavailable_reason"] = reason[:512] if isinstance(reason, str) and reason else _V8_UNKNOWN_REASON
+        return out
+    out.update(available=1, pred=pred, std=_v8_num(block.get("std")),
+               proposal_index=_v8_int(block.get("proposal_index")),
+               analysis_generation=_v8_str(block.get("analysis_generation")))
+    intervals = (proposal if isinstance(proposal, dict) else block).get("intervals")
+    for entry in intervals if isinstance(intervals, list) else []:
+        if not isinstance(entry, dict) or entry.get("available") is False:
+            continue
+        cov = _v8_num(entry.get("coverage"))
+        key = next((k for k, lv in _V8_LEVELS if cov is not None and abs(cov - lv) < 1e-9), None)
+        lo, hi = _v8_num(entry.get("lo")), _v8_num(entry.get("hi"))
+        if key is None or lo is None or hi is None or out[f"lo_{key}"] is not None:
+            continue
+        out[f"lo_{key}"], out[f"hi_{key}"] = lo, hi
+        out[f"method_{key}"] = _v8_str(entry.get("method"), 64)
+        out[f"basis_{key}"] = _v8_str(entry.get("coverage_basis"), 64)
+        out[f"caveat_code_{key}"], out[f"caveat_{key}"] = _v8_caveat(entry.get("caveat"))
+    band = block.get("interval")
+    if isinstance(band, dict):
+        lo, hi, cov = _v8_num(band.get("lo")), _v8_num(band.get("hi")), _v8_num(band.get("coverage"))
+        if lo is not None and hi is not None and cov is not None:
+            out.update(band_lo=lo, band_hi=hi, band_coverage=cov,
+                       band_method=_v8_str(band.get("method"), 64))
+            cc = _v8_map(analysis).get("conformal_caveat")
+            if isinstance(cc, dict):
+                out["band_basis"] = _v8_str(cc.get("coverage_basis"), 64)
+                out["band_caveat_code"], out["band_caveat"] = _v8_caveat(cc)
+    prov = block.get("analysis_provenance")
+    if isinstance(prov, dict):
+        out["model_version"] = _v8_str(prov.get("engine_version"), 64)
+        out["provenance_sha256"] = _v8_str(prov.get("provenance_sha256"), 64)
+    return out
+
+
+def _v8_recipe_json(recipe: Any) -> str:
+    try:
+        text = json.dumps(recipe if isinstance(recipe, dict) else {}, sort_keys=True, allow_nan=False)
+    except (TypeError, ValueError):
+        return json.dumps({"omitted": "recipe is not JSON-safe; not stored in the history"})
+    if len(text) > 16_384:
+        return json.dumps({"omitted": "recipe too large to store in the history"})
+    return text
+
+
 def _apply_v8_in_txn(conn: sqlite3.Connection) -> list[str]:
     """v7 -> v8, inside the caller's BEGIN IMMEDIATE: create the three append-only
     prediction-history tables, then COPY into them what v7 still holds (read only;
@@ -1174,19 +1308,18 @@ def _apply_v8_in_txn(conn: sqlite3.Connection) -> list[str]:
       they were started from it (else round NULL: v7 did not record it);
     - each in-flight run (`pending` in the campaign state) becomes one
       `run_predictions` row, `source = 'migrated_v7_state'`, carrying the
-      prediction block the v7 engine recorded at start and ITS `recorded_at`
-      (never the migration time). A run started before predictions were recorded
-      gets `available = 0` with the reason.
+      prediction block the v7 engine recorded at start. Its `recorded_at` is the
+      block's own `recorded_at`; else the run's `created_at` (the block is written
+      when the run is started); only a run with neither gets the migration time,
+      which is later than any result it already has, so it is never scored. A run
+      started before predictions were recorded gets `available = 0` with the
+      reason. Intervals and the global band keep the caveats the engine served
+      (from the block's copy, or from the analysis the run records it was started
+      from).
 
     Runs folded before v8 lost their prediction in v7: nothing is invented for
     them. A campaign state that is not valid JSON is skipped with a warning.
     Returns the warnings."""
-    from kalos.portal.prediction_history import (
-        record_prediction,
-        record_snapshot,
-        sha256_text,
-    )
-
     for ddl in _V8_DDL:
         conn.execute(ddl)
     warnings: list[str] = []
@@ -1218,40 +1351,55 @@ def _apply_v8_in_txn(conn: sqlite3.Connection) -> list[str]:
     # The analyses rows first (oldest first), so their snapshot ids exist when the
     # runs started from them are copied. The round an analysis describes is known
     # only when an in-flight run records that it was started from it.
-    snap_of: dict[tuple[str, str], tuple[int, str, Any]] = {}
+    snap_of: dict[tuple[str, str], tuple[int, str, Any, dict[str, Any] | None]] = {}
     for key in sorted(analyses, key=lambda k: (float(analyses[k][3]), k)):
         blob, dataset, a_gen, updated_at = analyses[key]
         if not isinstance(blob, str):
             continue
         rounds = {r.get("round") for r in pending_of(key) if a_gen is not None and block_gen(r) == a_gen}
         rnd = next(iter(rounds)) if len(rounds) == 1 else None
-        sid = record_snapshot(
-            conn, tenant=key[0], campaign_id=key[1], blob=blob, analysis=None, kind="migrated_v7",
-            round_=rnd if isinstance(rnd, int) and not isinstance(rnd, bool) else None,
-            campaign_generation=a_gen, dataset=dataset, created_at=float(updated_at),
-        )
-        snap_of[key] = (sid, sha256_text(blob), a_gen)
+        parsed_a = _parse_state(blob)
+        a = _v8_map(parsed_a)
+        prov, run_rec = _v8_map(a.get("proposal_provenance")), _v8_map(a.get("run"))
+        props = a.get("proposals")
+        n_rows = _v8_int(run_rec.get("n_rows"))
+        digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+        cur = conn.execute(_V8_INSERT_SNAPSHOT, (
+            key[0], key[1], rnd if _v8_int(rnd) is not None else None, a_gen, digest,
+            _v8_str(prov.get("provenance_sha256"), 64),
+            _v8_str(prov.get("input_sha256") or run_rec.get("input_sha256"), 64),
+            _v8_str(prov.get("engine_version") or a.get("engine_version"), 64),
+            dataset[:256] if isinstance(dataset, str) else None,
+            n_rows if n_rows is not None else _v8_int(a.get("n")),
+            len(props) if isinstance(props, list) else None,
+            len(blob.encode("utf-8")), blob, float(updated_at),
+        ))
+        snap_of[key] = (int(cur.lastrowid or 0), digest, a_gen, parsed_a)
     for key in states:
         for run in pending_of(key):
             block = run.get("prediction_at_start")
-            recorded = block.get("recorded_at") if isinstance(block, dict) else None
-            if isinstance(recorded, bool) or not isinstance(recorded, (int, float)):
-                created = run.get("created_at")
-                recorded = created if isinstance(created, (int, float)) and not isinstance(created, bool) else now
+            recorded = _v8_num(block.get("recorded_at")) if isinstance(block, dict) else None
+            if recorded is None:
+                recorded = _v8_num(run.get("created_at"))
+            if recorded is None:
+                recorded = now
             snap = snap_of.get(key)
             linked = snap is not None and snap[2] is not None and block_gen(run) == snap[2]
+            analysis = snap[3] if linked and snap is not None else None
+            proposal = None
+            idx = _v8_int(block.get("proposal_index")) if isinstance(block, dict) else None
+            props = _v8_map(analysis).get("proposals")
+            if idx is not None and isinstance(props, list) and 0 <= idx < len(props) and isinstance(props[idx], dict):
+                proposal = props[idx]
+            cols = _v8_prediction_columns(block, proposal, analysis)
             rnd = run.get("round")
-            recipe = run.get("recipe")
-            record_prediction(
-                conn, tenant=key[0], campaign_id=key[1], run_id=run["id"],
-                round_=rnd if isinstance(rnd, int) and not isinstance(rnd, bool) else None,
-                seed_id=None, recipe=recipe if isinstance(recipe, dict) else {},
-                block=block, proposal=None,
-                pred_source="engine" if run.get("pred_source") == "engine" else "caller",
-                analysis_sha256=snap[1] if linked and snap is not None else None,
-                analysis_snapshot_id=snap[0] if linked and snap is not None else None,
-                source="migrated_v7_state", recorded_at=float(recorded),
-            )
+            conn.execute(_V8_INSERT_PREDICTION, (
+                key[0], key[1], run["id"], rnd if _v8_int(rnd) is not None else None, None,
+                "migrated_v7_state", "engine" if run.get("pred_source") == "engine" else "caller",
+                _v8_recipe_json(run.get("recipe")), *(cols[c] for c in _V8_PRED_COLUMNS),
+                snap[1] if linked and snap is not None else None,
+                snap[0] if linked and snap is not None else None, recorded,
+            ))
     _record_version(conn, V8, V8_NAME)
     return warnings
 

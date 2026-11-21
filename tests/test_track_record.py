@@ -31,7 +31,8 @@ from kalos.portal import campaign as campaign_module
 from kalos.portal import migrate
 from kalos.portal.app import app
 from kalos.portal.campaign import CampaignStore, get_campaign_store
-from kalos.portal.track_record import MIN_JUDGED_N, wilson_interval
+from kalos.portal.history_api import MAX_ROW_ID
+from kalos.portal.track_record import CAVEAT_NOT_RECORDED, MIN_JUDGED_N, wilson_interval
 
 
 def _sha(t: str) -> str:
@@ -106,12 +107,18 @@ def _analysis(tag: str, proposals: list[tuple[float, float, float, float, float]
             "recipe": {"Methanol": m, "pH": ph}, "pred": pred, "std": 0.1, "mode": "exploit",
             "intervals": [
                 {"coverage": 0.9, "method": "conformal_normalized", "coverage_basis": "held_out_past_runs",
+                 "caveat": {"code": "coverage_lower_at_proposals", "message": f"{tag} caveat at 90",
+                            "coverage_at_proposals_estimate": None},
                  "available": True, "lo": round(pred - w90, 4), "hi": round(pred + w90, 4)},
                 {"coverage": 0.95, "method": "conformal_normalized", "coverage_basis": "held_out_past_runs",
+                 "caveat": {"code": "coverage_lower_at_proposals", "message": f"{tag} caveat at 95",
+                            "coverage_at_proposals_estimate": None},
                  "available": True, "lo": round(pred - w95, 4), "hi": round(pred + w95, 4)},
             ],
         })
     return {"target": "lipase_titer", "tag": tag, "conformal_q": q, "conformal_coverage": 0.9,
+            "conformal_caveat": {"code": "coverage_not_guaranteed", "coverage_basis": "held_out_past_runs",
+                                 "message": f"{tag} global band caveat", "caveat_code": "x"},
             "proposals": props,
             "proposal_provenance": {"provenance_sha256": _sha(tag), "input_sha256": _sha("in" + tag),
                                     "config_sha256": _sha("c"), "engine_version": "0.1.0", "seed": 1,
@@ -248,7 +255,8 @@ def test_the_per_run_view_and_history_carry_corrections_and_reasons(env):
     assert corrected["recipe"] == {"Methanol": 3.0, "pH": 5.5}
     assert corrected["prediction"]["intervals"][0] == {
         "coverage": 0.9, "lo": 4.5, "hi": 5.5, "method": "conformal_normalized",
-        "coverage_basis": "held_out_past_runs"}
+        "coverage_basis": "held_out_past_runs",
+        "caveat": {"code": "coverage_lower_at_proposals", "message": "a0 caveat at 90", "recorded": True}}
     edited = by[ids["r0"][3]]
     assert edited["scored"] is False and edited["excluded"] == "no_engine_prediction"
     assert edited["prediction"]["available"] is False and edited["prediction"]["pred"] is None
@@ -456,6 +464,9 @@ def test_three_rounds_with_the_real_engine_over_http(env):
             iv = next((x for x in pair["proposal"]["intervals"] if x["coverage"] == 0.9 and x["available"]), None)
             if iv is not None:  # the band recorded at start is the one the proposal carried
                 assert (item["band"]["lo"], item["band"]["hi"]) == (iv["lo"], iv["hi"])
+                served = item["band"]["caveat"]  # verbatim, as the engine served it
+                assert (served["code"], served["message"], served["recorded"]) == (
+                    iv["caveat"]["code"], iv["caveat"]["message"], True)
                 assert item["inside"] == (iv["lo"] <= item["measured"]["value"] <= iv["hi"])
                 compared += 1
             assert item["prediction"]["pred"] == pair["proposal"]["pred"]
@@ -467,3 +478,132 @@ def test_three_rounds_with_the_real_engine_over_http(env):
     scored = [i for i in items if i["scored"]]
     pooled = body["pooled"]["coverage"]
     assert pooled["n"] == len(scored) and pooled["inside"] == sum(i["inside"] for i in scored)
+
+
+# --- review fixes: caveats, pooled methods, judged boundary, bounds ------------------ #
+
+
+def _all_bands(item: dict) -> list[dict]:
+    pred = item["prediction"]
+    return [*pred["intervals"], *([pred["global_band"]] if pred["global_band"] else []),
+            *([item["band"]] if item.get("band") else [])]
+
+
+@pytest.mark.parametrize("band", ["proposal", "global"])
+def test_every_returned_interval_and_band_carries_the_caveat_served_at_start(env, band):
+    tc, store = env
+    cid, ids = _three_rounds(store)
+    items = tc.get(f"/api/campaigns/{cid}/track-record/runs", params={"band": band},
+                   headers=H("a-read")).json()["items"]
+    tags = {**dict.fromkeys(ids["r0"], "a0"), **dict.fromkeys(ids["r1"], "a1"), **dict.fromkeys(ids["r2"], "a2")}
+    n_bands = 0
+    for item in items:
+        for b in _all_bands(item):
+            n_bands += 1
+            assert b["caveat"]["recorded"] is True and b["caveat"]["code"]
+            assert b["caveat"]["message"].startswith(tags[item["run_id"]])  # verbatim, from ITS analysis
+            assert "calibrated" not in b["caveat"]["message"].lower()
+        for iv in item["prediction"]["intervals"]:
+            assert iv["caveat"]["message"] == f"{tags[item['run_id']]} caveat at {int(iv['coverage'] * 100)}"
+        if item["prediction"]["global_band"]:
+            gb = item["prediction"]["global_band"]
+            assert gb["coverage_basis"] == "held_out_past_runs"
+            assert gb["caveat"]["message"] == f"{tags[item['run_id']]} global band caveat"
+    assert n_bands >= 7 * 3
+    for rid in ids["r0"][:3] + ids["r1"]:
+        hist = tc.get(f"/api/campaigns/{cid}/runs/{rid}/history", headers=H("a-read")).json()
+        bands = [*hist["prediction"]["intervals"], hist["prediction"]["global_band"]]
+        assert bands and all(b["caveat"]["recorded"] and b["caveat"]["message"] for b in bands)
+
+
+def _plant(store: CampaignStore, cid: str, n: int, *, inside: int, caveat: bool = True,
+           first: int = 0, method: str = "conformal_normalized", basis: str = "held_out_past_runs",
+           with_result: bool = True, fold: bool = False) -> list[str]:
+    """`n` runs with a prediction recorded at t=100+i and a result at t=200+i."""
+    run_ids = []
+    with store._txn(write=True) as conn:
+        for i in range(first, first + n):
+            rid = f"{i:032x}"
+            run_ids.append(rid)
+            conn.execute(
+                "INSERT INTO run_predictions (tenant, campaign_id, run_id, round, source, pred_source, "
+                "recipe, available, pred, lo_90, hi_90, method_90, basis_90, caveat_code_90, caveat_90, "
+                "recorded_at) VALUES ('acme', ?, ?, 0, 'start', 'engine', '{}', 1, 3.0, 2.0, 4.0, ?, ?, ?, ?, ?)",
+                (cid, rid, method, basis, "c" if caveat else None, "served" if caveat else None, 100.0 + i))
+            if with_result:
+                conn.execute("INSERT INTO run_results (tenant, campaign_id, run_id, version, value, recorded_at) "
+                             "VALUES ('acme', ?, ?, 1, ?, ?)", (cid, rid, 3.5 if i - first < inside else 9.0, 200.0 + i))
+            if fold:
+                conn.execute("INSERT INTO run_folds (tenant, campaign_id, run_id, folded_in_round, value, "
+                             "folded_at) VALUES ('acme', ?, ?, 1, 3.5, 300.0)", (cid, rid))
+    return run_ids
+
+
+def _empty_campaign(store: CampaignStore) -> str:
+    cid = store.create_campaign(tenant="acme", name="planted")["id"]
+    store.seed(_sheet(), "lipase_titer", ["Methanol", "pH"], tenant="acme", campaign_id=cid)
+    return cid
+
+
+def test_a_band_stored_without_a_caveat_is_served_with_caveat_not_recorded(env):
+    tc, store = env
+    cid = _empty_campaign(store)
+    _plant(store, cid, 1, inside=1, caveat=False)
+    item = tc.get(f"/api/campaigns/{cid}/track-record/runs", headers=H("a-read")).json()["items"][0]
+    assert item["band"]["caveat"] == CAVEAT_NOT_RECORDED
+    assert item["prediction"]["intervals"][0]["caveat"]["code"] == "caveat_not_recorded"
+    assert not any(ch.isdigit() for ch in CAVEAT_NOT_RECORDED["message"])  # no coverage figures
+
+
+@pytest.mark.parametrize(("n", "inside", "judged", "nominal_inside"), [
+    (MIN_JUDGED_N - 1, MIN_JUDGED_N - 1, False, None),
+    (MIN_JUDGED_N, MIN_JUDGED_N, True, True),     # 10/10: Wilson [0.7225, 1] holds 0.9
+    (MIN_JUDGED_N, 5, True, False),                # 5/10: [0.2366, 0.7634] does not
+])
+def test_coverage_is_judged_from_ten_scored_runs(env, n, inside, judged, nominal_inside):
+    tc, store = env
+    cid = _empty_campaign(store)
+    _plant(store, cid, n, inside=inside)
+    pooled = tc.get(f"/api/campaigns/{cid}/track-record", headers=H("a-read")).json()["pooled"]["coverage"]
+    assert (pooled["n"], pooled["inside"], pooled["judged"]) == (n, inside, judged)
+    assert pooled["nominal_inside_interval"] is nominal_inside
+    assert (pooled["reason"] is None) == judged
+
+
+def test_a_folded_run_without_result_history_is_result_time_unknown(env):
+    tc, store = env
+    cid = _empty_campaign(store)
+    (rid,) = _plant(store, cid, 1, inside=1, with_result=False, fold=True)
+    item = tc.get(f"/api/campaigns/{cid}/track-record/runs", headers=H("a-read")).json()["items"][0]
+    assert item["run_id"] == rid and item["status"] == "folded"
+    assert item["excluded"] == "result_time_unknown" and item["scored"] is False and item["error"] is None
+    (r0,) = tc.get(f"/api/campaigns/{cid}/track-record", headers=H("a-read")).json()["rounds"]
+    assert r0["excluded"] == {"result_time_unknown": 1} and r0["coverage"]["n"] == 0
+
+
+def test_coverage_shows_how_many_bands_of_each_method_it_pools(env):
+    tc, store = env
+    cid = _empty_campaign(store)
+    _plant(store, cid, 3, inside=2, method="conformal_selection_aware", basis="held_out_top_ranked_runs")
+    _plant(store, cid, 2, inside=1, first=3)
+    cov = tc.get(f"/api/campaigns/{cid}/track-record", headers=H("a-read")).json()["rounds"][0]["coverage"]
+    assert (cov["n"], cov["inside"]) == (5, 3)
+    assert cov["by_method"] == {"conformal_normalized": {"n": 2, "inside": 1},
+                                "conformal_selection_aware": {"n": 3, "inside": 2}}
+    assert cov["by_coverage_basis"] == {"held_out_past_runs": {"n": 2, "inside": 1},
+                                        "held_out_top_ranked_runs": {"n": 3, "inside": 2}}
+
+
+def test_ids_beyond_sqlite_integers_are_refused_not_500(env):
+    tc, store = env
+    cid, _ = _three_rounds(store)
+    for url, params in ((f"/api/campaigns/{cid}/track-record/runs", {"after_id": MAX_ROW_ID + 1}),
+                        (f"/api/campaigns/{cid}/analyses", {"before_id": MAX_ROW_ID + 1}),
+                        (f"/api/campaigns/{cid}/analyses/{MAX_ROW_ID + 1}", {})):
+        r = tc.get(url, params=params, headers=H("a-read"))
+        assert (r.status_code, r.json()["code"]) == (400, "invalid_body"), url
+    assert tc.get(f"/api/campaigns/{cid}/track-record/runs", params={"after_id": MAX_ROW_ID},
+                  headers=H("a-read")).json()["items"] == []
+    assert tc.get(f"/api/campaigns/{cid}/analyses", params={"before_id": MAX_ROW_ID},
+                  headers=H("a-read")).status_code == 200
+    assert tc.get(f"/api/campaigns/{cid}/analyses/{MAX_ROW_ID}", headers=H("a-read")).status_code == 404

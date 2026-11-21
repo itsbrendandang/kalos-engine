@@ -62,7 +62,7 @@ below), which the first legacy upload creates. A campaign made with
 | GET | `/api/campaigns/{id}/track-record/runs?coverage=0.9&band=proposal&round=&limit=100&after_id=` | read | The same, one row per run, oldest first, keyset `after_id`. |
 | GET | `/api/campaigns/{id}/runs/{run_id}/history` | read | One run: its prediction recorded at start, every result version (corrections with reasons) and its fold. |
 | GET | `/api/campaigns/{id}/analyses?limit=50&before_id=` | read | Every analysis the campaign published (summaries with sha256, round, kind), newest first. |
-| GET | `/api/campaigns/{id}/analyses/{snapshot_id}` | read | One stored analysis, as published. |
+| GET | `/api/campaigns/{id}/analyses/{snapshot_id}` | read | One stored analysis, parsed from its stored text (`snapshot.analysis_sha256` is the sha256 of that text). |
 
 ### Stage
 
@@ -215,12 +215,21 @@ analysis):
   per-proposal interval (`intervals[]` of the proposal: method and
   `coverage_basis` are returned with it), `band=global` the global conformal band
   (`conformal_q`), used only when its recorded coverage equals `coverage`.
+- Every interval and band returned (`prediction.intervals[]`,
+  `prediction.global_band`, `band`) carries `caveat`: `{code, message,
+  recorded: true}`, the caveat the engine served with that band when the run
+  started, copied verbatim; or `{code: "caveat_not_recorded", message,
+  recorded: false}` when none was stored (a run copied from a v7 state whose
+  analysis is not linked). A client shows it next to the band; it never says a
+  proposal's range "is calibrated".
 - Measured is the run's latest result version (`run_results`); `n_corrected`
   counts runs with more than one version.
 - Error is measured minus the prediction recorded at start (`mean`, `mean_abs`,
   `rmse`), over runs with a prediction recorded before their result.
 - Coverage is counts first: `n`, `inside`, `outside`, `observed`, `nominal` and
-  `wilson_95` (Wilson score interval). `coverage_so_far` accumulates the rounds in
+  `wilson_95` (Wilson score interval), plus `by_method` and `by_coverage_basis`
+  (`{name: {n, inside}}`): one figure can pool bands built different ways
+  (selection-aware and plain conformal), so the split is shown. `coverage_so_far` accumulates the rounds in
   order. Below 10 scored runs it is `judged: false` with the reason; from 10 on,
   `nominal_inside_interval` says whether the nominal coverage lies inside the
   Wilson interval. `basis: "prospective"`: never pooled with cross-validation.
@@ -235,7 +244,10 @@ analysis):
     {"round": 2, "dataset_epoch": 1, "current_dataset": true, "n_started": 3,
      "n_engine_predictions": 3, "n_measured": 2, "n_corrected": 0, "n_folded": 0,
      "coverage": {"n": 2, "inside": 1, "outside": 1, "observed": 0.5, "nominal": 0.9,
-                  "wilson_95": [0.0945, 0.9055], "basis": "prospective"},
+                  "wilson_95": [0.0945, 0.9055],
+                  "by_method": {"conformal_selection_aware": {"n": 2, "inside": 1}},
+                  "by_coverage_basis": {"held_out_top_ranked_runs": {"n": 2, "inside": 1}},
+                  "basis": "prospective"},
      "coverage_so_far": {"n": 7, "inside": 5, "...": "...", "judged": false,
                          "reason": "needs 10 scored runs to judge; has 7",
                          "nominal_inside_interval": null},
@@ -257,7 +269,8 @@ analysis):
   with no recorded prediction (before v8). They are not scored and not guessed.
 - `.../track-record/runs` items: `run_id`, `round`, `recipe`, `status`
   (`awaiting`, `measured`, `folded`, `discarded` by a re-upload), `prediction`
-  (as recorded: `pred`, `std`, `intervals[]`, `global_band`, `model_version`,
+  (as recorded: `pred`, `std`, `intervals[]` and `global_band`, each with
+  `method`, `coverage_basis` and `caveat`, `model_version`,
   `analysis_sha256`, `analysis_snapshot_id`, `recorded_at`, `source`), `band`
   (the one scored), `measured` (`value`, `version`, `n_versions`,
   `first_recorded_at`, `corrected`), `folded_in_round`, `scored`, `inside`,
@@ -267,6 +280,8 @@ analysis):
   with that block's own time).
 - Bounded: rounds page at most 100, runs page at most 500, analyses page at
   most 200 summaries (never blobs), at most 200 result versions per run.
+  `after_id`, `before_id` and `snapshot_id` are at most 2^63 - 1 (SQLite's
+  integer range); a larger value is `400 invalid_body`, never a 500.
 
 ### Runs and results
 

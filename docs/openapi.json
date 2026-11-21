@@ -2043,6 +2043,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maximum": 9223372036854775807,
                   "minimum": 1,
                   "type": "integer"
                 },
@@ -2095,7 +2096,7 @@
     },
     "/api/campaigns/{campaign_id}/analyses/{snapshot_id}": {
       "get": {
-        "description": "One stored analysis, as published, with its summary and sha256.",
+        "description": "One stored analysis, parsed from the stored text, with its summary and the\nsha256 of that text.",
         "operationId": "analysis_snapshot_api_campaigns__campaign_id__analyses__snapshot_id__get",
         "parameters": [
           {
@@ -2112,6 +2113,8 @@
             "name": "snapshot_id",
             "required": true,
             "schema": {
+              "maximum": 9223372036854775807,
+              "minimum": 1,
               "title": "Snapshot Id",
               "type": "integer"
             }
@@ -3970,6 +3973,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maximum": 9223372036854775807,
                   "minimum": 0,
                   "type": "integer"
                 },

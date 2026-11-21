@@ -18,8 +18,9 @@ BRE-32). Read-only routes, `read` scope:
   reasons, capped at `MAX_RESULT_VERSIONS`) and the fold.
 - ``GET /api/campaigns/{id}/analyses``: summaries of every analysis the campaign
   published (newest first, keyset `before_id`); never the blobs.
-- ``GET /api/campaigns/{id}/analyses/{snapshot_id}``: one stored analysis, byte
-  for byte as published, with its sha256.
+- ``GET /api/campaigns/{id}/analyses/{snapshot_id}``: one stored analysis (the
+  stored text is kept byte for byte; it is served parsed as JSON, and
+  `snapshot.analysis_sha256` is the sha256 of the stored text).
 
 Same security rules as `kalos.portal.campaigns_api`: the scope is checked before
 the id is looked at; the tenant is always `principal.tenant`; malformed, missing
@@ -34,7 +35,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from fastapi.responses import JSONResponse
 
 from kalos.portal.auth import READ, Principal, require_scope
@@ -56,6 +57,7 @@ from kalos.portal.track_record import (
     RULES,
     band_for,
     build_track_record,
+    caveat_of,
     rounds_without_record,
     score_run,
 )
@@ -71,6 +73,7 @@ SNAPSHOTS_MAX_LIMIT = 200
 MAX_RESULT_VERSIONS = 200
 MAX_UNRECORDED_ROUNDS_LISTED = 200
 MAX_OFFSET = 100_000
+MAX_ROW_ID = 2**63 - 1  # SQLite INTEGER; a larger id would overflow the bound parameter
 
 NOT_RECORDED_REASON = (
     "no prediction was recorded for this round's runs: they were folded before the engine kept "
@@ -100,11 +103,13 @@ def _prediction_view(row: dict[str, Any]) -> dict[str, Any]:
     for lv in LEVELS:
         b = band_for(row, lv, "proposal")
         if b is not None:
-            intervals.append({k: b[k] for k in ("coverage", "lo", "hi", "method", "coverage_basis")})
+            intervals.append({k: b[k] for k in ("coverage", "lo", "hi", "method", "coverage_basis",
+                                                "caveat")})
     global_band = None
     if row.get("band_lo") is not None:
         global_band = {"lo": row["band_lo"], "hi": row["band_hi"], "coverage": row["band_coverage"],
-                       "method": row.get("band_method")}
+                       "method": row.get("band_method"), "coverage_basis": row.get("band_basis"),
+                       "caveat": caveat_of(row.get("band_caveat_code"), row.get("band_caveat"))}
     return {
         "available": bool(row.get("available")),
         "unavailable_reason": row.get("unavailable_reason"),
@@ -213,7 +218,7 @@ def track_record_runs(
     band: Literal["proposal", "global"] = Query(default="proposal"),
     round: int | None = Query(default=None, ge=0, le=1_000_000),  # noqa: A002 - the API's field name
     limit: int = Query(default=RUNS_DEFAULT_LIMIT, ge=1, le=RUNS_MAX_LIMIT),
-    after_id: int | None = Query(default=None, ge=0),
+    after_id: int | None = Query(default=None, ge=0, le=MAX_ROW_ID),
     principal: Principal = Depends(require_scope(READ)),
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
@@ -314,7 +319,7 @@ def run_history(
 def analysis_history(
     campaign_id: str,
     limit: int = Query(default=SNAPSHOTS_DEFAULT_LIMIT, ge=1, le=SNAPSHOTS_MAX_LIMIT),
-    before_id: int | None = Query(default=None, ge=1),
+    before_id: int | None = Query(default=None, ge=1, le=MAX_ROW_ID),
     principal: Principal = Depends(require_scope(READ)),
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
@@ -342,11 +347,12 @@ def analysis_history(
 @router.get("/api/campaigns/{campaign_id}/analyses/{snapshot_id}")
 def analysis_snapshot(
     campaign_id: str,
-    snapshot_id: int,
+    snapshot_id: int = Path(ge=1, le=MAX_ROW_ID),
     principal: Principal = Depends(require_scope(READ)),
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
-    """One stored analysis, as published, with its summary and sha256."""
+    """One stored analysis, parsed from the stored text, with its summary and the
+    sha256 of that text."""
     if not _valid_campaign_id(campaign_id):
         return campaign_not_found_response()
     tenant = principal.tenant
