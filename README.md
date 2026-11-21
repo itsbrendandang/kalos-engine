@@ -119,6 +119,7 @@ and is enough for the `kalos.kit` helpers.
 | `KALOS_CORS_ORIGINS` | localhost | Browser origins allowed to call the engine |
 | `KALOS_ANON_SALT` | dev salt | Salt for anonymized identifiers; required off loopback |
 | `KALOS_LLM_PROVIDER` | `ollama` on desktop, else `none` | Model for the assistant and header normalization |
+| `KALOS_LLM_FAST_MODEL` / `KALOS_LLM_QUALITY_MODEL` | `phi4-mini` / `qwen2.5:7b` | The two local models (see [Language models](#language-models)) |
 | `KALOS_TORCH_THREADS` | `min(4, cpus)` | Torch threads per analysis (`0` = do not pin) |
 | `KALOS_JOBS_ENABLED` | on | `0` turns off background jobs |
 | `KALOS_DATASETS_DIR` | `~/kalos/datasets` | Local copy of the public datasets for the planted-fault suite's optional Kaggle cases |
@@ -142,7 +143,7 @@ test keeps it equal to the code). `{id}` is a campaign id.
 | Operating ranges | `GET`/`POST .../{id}/operating-ranges` (both refit the model) | write | `kalos/portal/operating_ranges.py` |
 | Clones | `GET .../{id}/clones`, `GET .../{id}/clones/summary`, `PUT .../{id}/clones/{label}`, `GET`/`POST .../{id}/clones/{label}/titer-history` | read / write | [`docs/CLONES.md`](docs/CLONES.md) |
 | Scale-up | `POST /api/scale/readout` (HTML), `POST /api/scale/readout.json` | write | [`docs/SCALE_READOUT.md`](docs/SCALE_READOUT.md) |
-| Assistant | `/api/assist/next`, `/ask`, `/index/*`, `/sop/*` | read / write | [`docs/ASSISTANT.md`](docs/ASSISTANT.md) |
+| Assistant | `/api/assist/next`, `/ask`, `/index/*`, `/sop/*`, `GET .../{id}/search` (semantic search), `POST .../{id}/setup/suggestions` | read / write | [`docs/ASSISTANT.md`](docs/ASSISTANT.md) |
 | Legacy: one sheet per tenant | `POST /api/run`, `GET /api/latest` | write / read | [`docs/UPLOADS.md`](docs/UPLOADS.md) |
 | Legacy: default campaign | `GET /api/campaign`, `POST /api/campaign/start`, `/result`, `/reanalyze` | read / write | [`docs/CAMPAIGN_LOOP.md`](docs/CAMPAIGN_LOOP.md) |
 | Demo | `GET /api/single`, `GET /api/multi` (synthetic; not served when `KALOS_ENV=production`) | read | |

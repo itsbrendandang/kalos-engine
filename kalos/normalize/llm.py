@@ -43,8 +43,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Iterable
-from dataclasses import replace
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pandas as pd
@@ -95,7 +95,16 @@ For each column in the payload, propose:
   - raw_name: the header exactly as given.
   - canonical_name: a snake_case name for the column, or null if the column \
 should be dropped (identity or free-text).
-  - role: one of "target", "feature", "group", "identity", "freetext", "metadata".
+  - role: one of "target", "feature", "group", "identity", "freetext", "metadata":
+      target   = the ONE main measured result to optimize (titer, yield, product). \
+Exactly one column is the target.
+      feature  = a process input set before the run (pH, temperature, feed, medium).
+      group    = a batch, lot, plate, campaign or replicate label.
+      identity = identifies a run, sample, well or person.
+      freetext = free-text notes.
+      metadata = anything measured or computed AFTER the run other than the \
+target (another measured result, a grade, a tier, pass/fail, contamination), \
+and dates. Never use feature for these.
   - unit_token: the unit the values carry (e.g. "C", "g/L", "mL/h"), or null if \
 the column is unit-less or you are not confident of the unit.
   - is_identity: true if this column, despite surviving the deterministic \
@@ -403,11 +412,19 @@ def _live_plan_anthropic(
         text = next(block.text for block in response.content if block.type == "text")
         parsed = LLMPlan.model_validate_json(text)
 
-    llm_columns = _columns_from_llm_items(parsed.columns)
-    all_raw_names = [str(c) for c in df.columns]
-    merged = _merge_dropped_identity(llm_columns, dropped_identity, all_raw_names)
-    plan = NormalizationPlan(columns=merged, created_by="llm", model=config.model)
-    plan.validate()
+    # The same engine-data checks the Ollama cascade applies (plan_validator):
+    # a failure raises ValidationFailed and propose_plan falls back offline.
+    plan = plan_validator(df, payload, dropped_identity)(
+        json.dumps({"columns": [
+            {k: getattr(item, k, None) for k in
+             ("raw_name", "canonical_name", "role", "unit_token", "is_identity", "note")}
+            for item in parsed.columns
+        ]})
+    )
+    plan.model = config.model
+    plan.provider_path = "quality"
+    plan.provider_attempts = [{"tier": "quality", "provider": "anthropic", "model": config.model,
+                               "outcome": "ok", "reason": None, "detail": None}]
     return plan
 
 
@@ -506,47 +523,122 @@ def _ollama_generate(base_url: str, model: str, prompt: str, timeout: float = _O
     return text if isinstance(text, str) else None
 
 
+@dataclass
+class _GenerateTier:
+    """One Ollama model behind `/api/generate` (JSON mode), as a cascade tier."""
+
+    model: str
+    url: str
+    provider: str = "ollama"
+    local: bool = True
+
+    def complete(self, system: str, prompt: str) -> str:
+        text = _ollama_generate(self.url, self.model, f"{system}\n\n{prompt}")
+        if text is None:
+            raise ConnectionError("ollama /api/generate request failed")
+        return text
+
+
+def plan_validator(
+    df: pd.DataFrame, payload: dict, dropped_identity: list[str],
+) -> Callable[[str], NormalizationPlan]:
+    """The checks a model's column plan must pass before it is used:
+
+    - one JSON object of the `LLMPlan` shape (`invalid_json`, `schema`);
+    - every `raw_name` is a column the model was shown, each exactly once, and
+      none is missing (`unknown_column`, `schema`);
+    - the role is one of the plan roles (`schema`);
+    - a note states no number the payload did not contain (`mismatched_number`);
+    - the merged plan passes `NormalizationPlan.validate` and names exactly
+      one target (`schema`: no target or two targets). The evaluation
+      (benchmarks/llm) found a small model calling every column, the result
+      included, a feature; a plan with no target is refused, not used.
+    """
+    from kalos.providers.cascade import ValidationFailed
+    from kalos.providers.grounding import (
+        check_columns,
+        check_numbers,
+        numbers_from,
+        parse_json_object,
+    )
+
+    headers = [str(c["header"]) for c in payload["columns"]]
+    allowed_numbers = numbers_from(
+        v for c in payload["columns"] for v in [c.get("header"), *(c.get("sample") or [])]
+        if not isinstance(c.get("sample"), str)
+    ) | numbers_from(headers)
+    roles = {"target", "feature", "group", "identity", "freetext", "metadata"}
+
+    def validate(text: str) -> NormalizationPlan:
+        raw_obj = parse_json_object(text)
+        LLMPlan = _llm_plan_model()
+        try:
+            parsed = LLMPlan.model_validate(raw_obj)
+        except Exception as exc:  # noqa: BLE001 - pydantic.ValidationError
+            raise ValidationFailed("schema", "the plan does not have the expected fields") from exc
+        names = [item.raw_name for item in parsed.columns]
+        check_columns(names, headers)
+        if len(set(names)) != len(names) or set(names) != set(headers):
+            raise ValidationFailed("schema", "the plan must cover every column exactly once")
+        if any(item.role not in roles for item in parsed.columns):
+            raise ValidationFailed("schema", "a role is not one of the plan roles")
+        for item in parsed.columns:
+            check_numbers(item.note or "", allowed_numbers, what="a column note")
+        llm_columns = _columns_from_llm_items(parsed.columns)
+        merged = _merge_dropped_identity(llm_columns, dropped_identity, [str(c) for c in df.columns])
+        plan = NormalizationPlan(columns=merged, created_by="llm", model=None)
+        try:
+            plan.validate()
+        except ValueError as exc:
+            raise ValidationFailed("schema", "the plan is inconsistent (e.g. two targets)") from exc
+        if sum(1 for c in plan.columns if c.role == "target") != 1:
+            raise ValidationFailed("schema", "the plan must name exactly one target")
+        return plan
+
+    return validate
+
+
 def _live_plan_ollama(
     df: pd.DataFrame,
     config: NormalizeConfig,
     payload: dict,
     dropped_identity: list[str],
 ) -> NormalizationPlan:
-    """The live LLM call, via a self-hosted Ollama server.
+    """The live LLM call, via a self-hosted Ollama server, through the model
+    cascade (`kalos.providers.cascade`): the fast model first, the quality
+    model when the fast plan fails `plan_validator`, the offline plan when
+    both fail. The returned plan's `provider_path` says which.
 
-    Health-check -> `POST /api/generate` -> regex-extract JSON -> validate
-    against the EXACT SAME `LLMPlan` schema `_live_plan_anthropic` uses (see
-    `_llm_plan_model`), so a malformed or off-schema local-model response
-    fails exactly like a malformed Anthropic response would.
+    Health-check -> `POST /api/generate` (JSON mode) -> validate against the
+    EXACT SAME `LLMPlan` schema `_live_plan_anthropic` uses, plus the
+    engine-data checks in `plan_validator`.
 
-    Raises on any failure (unreachable server, bad status, unparsable or
-    schema-invalid JSON) rather than returning `None` - `propose_plan` is
-    the one place that catches and falls back to `offline_plan`, matching
-    the Anthropic provider's contract exactly: this function's job is only
-    to produce a valid plan or raise, never to decide the fallback itself.
+    Raises when the server is unreachable (`propose_plan` falls back offline
+    and records why).
     """
+    from kalos.providers.cascade import Cascade, escalation_enabled, fast_model
+
     if not _check_ollama_server(config.ollama_url):
         raise ConnectionError(f"ollama server unreachable at {config.ollama_url!r}")
 
     payload_json = json.dumps(payload, sort_keys=True)
-    prompt = f"{_SYSTEM_PROMPT}\n\n{_OLLAMA_JSON_INSTRUCTION}\n\nInput payload:\n{payload_json}"
-
-    text = _ollama_generate(config.ollama_url, config.ollama_model, prompt)
-    if text is None:
-        raise ConnectionError("ollama /api/generate request failed")
-
-    raw_obj = _extract_json_object(text)
-    if raw_obj is None:
-        raise ValueError("could not extract a JSON object from the ollama response")
-
-    LLMPlan = _llm_plan_model()
-    parsed = LLMPlan.model_validate(raw_obj)  # raises pydantic.ValidationError on schema mismatch
-
-    llm_columns = _columns_from_llm_items(parsed.columns)
-    all_raw_names = [str(c) for c in df.columns]
-    merged = _merge_dropped_identity(llm_columns, dropped_identity, all_raw_names)
-    plan = NormalizationPlan(columns=merged, created_by="llm", model=config.ollama_model)
-    plan.validate()
+    system = f"{_SYSTEM_PROMPT}\n\n{_OLLAMA_JSON_INSTRUCTION}"
+    prompt = f"Input payload:\n{payload_json}"
+    cascade = Cascade(
+        fast=_GenerateTier(fast_model(), config.ollama_url),
+        quality=_GenerateTier(config.ollama_model, config.ollama_url),
+        escalate=escalation_enabled(),
+    )
+    validate = plan_validator(df, payload, dropped_identity)
+    result = cascade.run(
+        "header_mapping", system, prompt, validate,
+        lambda: offline_plan(df, max_sample=config.max_sample),
+    )
+    plan = result.value
+    if not result.offline:
+        plan.model = result.model  # the tier that produced it
+    plan.provider_path = result.provider_path
+    plan.provider_attempts = result.report()["attempts"]
     return plan
 
 
@@ -584,19 +676,34 @@ def propose_plan(
     payload, dropped_identity = build_payload(df, anonymizer=anonymizer, max_sample=config.max_sample)
 
     if not config.enabled_live:
-        return offline_plan(df, anonymizer=anonymizer, max_sample=config.max_sample)
+        plan = offline_plan(df, anonymizer=anonymizer, max_sample=config.max_sample)
+        plan.provider_path = "offline"
+        return plan
 
     try:
         if config.provider == "ollama":
             return _live_plan_ollama(df, config, payload, dropped_identity)
         return _live_plan_anthropic(df, config, payload, dropped_identity, anonymizer)
     except Exception as err:  # noqa: BLE001 - must never hard-fail the caller
+        from kalos.providers.cascade import ValidationFailed
+
         log.warning(
             "normalize: live plan failed (%s, provider=%s); falling back to offline",
             type(err).__name__,
             config.provider,
         )
-        return offline_plan(df, anonymizer=anonymizer, max_sample=config.max_sample)
+        plan = offline_plan(df, anonymizer=anonymizer, max_sample=config.max_sample)
+        tier = "fast>quality" if config.provider == "ollama" else "quality"
+        plan.provider_path = f"{tier}>offline"
+        invalid = isinstance(err, ValidationFailed)
+        plan.provider_attempts = [{
+            "tier": tier, "provider": config.provider,
+            "model": config.ollama_model if config.provider == "ollama" else config.model,
+            "outcome": "invalid" if invalid else "unavailable",
+            "reason": err.reason if isinstance(err, ValidationFailed) else "unavailable",
+            "detail": None,
+        }]
+        return plan
 
 
 __all__ = ["offline_plan", "propose_plan"]

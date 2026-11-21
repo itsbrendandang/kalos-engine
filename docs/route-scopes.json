@@ -327,6 +327,14 @@
   },
   {
     "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/search",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
     "path": "/api/campaigns/{campaign_id}/setup",
     "scopes": [
       "read"
@@ -338,6 +346,14 @@
     "path": "/api/campaigns/{campaign_id}/setup",
     "scopes": [
       "write"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/setup/suggestions",
+    "scopes": [
+      "read"
     ],
     "auth": "required"
   },
