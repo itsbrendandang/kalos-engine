@@ -4,7 +4,7 @@ These rules are non-negotiable. If a task conflicts with one, stop and ask; do n
 
 ## 1. More real (honesty)
 - Every number shown to a user is computed from the user's data by code in this repo. Nothing is invented, imputed, or filled with defaults.
-- Measured data always outranks predicted data. Predictions carry an interval labelled with its coverage (90% or 95%) and the caveat text; never call proposal intervals "calibrated".
+- Measured data always outranks predicted data. Predictions carry an interval labelled with its coverage (90% or 95%), its method and the caveat text; never call proposal intervals "calibrated".
 - Refusals are first-class: when the data cannot support an answer, return `not_judged` or a refusal with a reason and the action that would fix it. Never return a weaker answer silently.
 - Never impute. Unusable rows and cells are reported with their location and reason.
 - Synthetic data is only ever a labelled benchmark or test generator. It never enters a user's model as if it were measured.
@@ -21,13 +21,14 @@ These rules are non-negotiable. If a task conflicts with one, stop and ask; do n
 
 ## 3. Data
 - Never commit customer, partner or third-party data (including Bioqore, Cytena, LeadGene and Amii data) unless its rights are confirmed in writing in docs/DATA_RIGHTS.md. External data is loaded through KALOS_EXTERNAL_DATA or a path argument, and results that use it are labelled with its rights status.
-- Never commit secrets, .env files, keys or tokens. Report secrets by file:line and type only; never print their values.
+- Never commit secrets, .env files, keys or tokens, and keep them out of logs, errors, exports and LLM prompts. Inspect `git diff --cached` before committing; never stage `.env*`, `*.pem`, `*.key`, `credentials*`, tenant maps or private JWKS files. A leaked secret is an incident: rotate it first. Report secrets by file:line and type only; never print their values.
 
 ## 4. Security and tenancy
 - Every route has a scope in docs/route-scopes.json (read/write/admin). There are no public writes.
 - The tenant always comes from the verified token, never from the request body or query.
 - Auth is EdDSA JWT verified against the JWKS. No HS256 shared secrets and no auth bypass flags in committed code.
 - Responses are bounded (pagination, size caps, depth limits).
+- No SQL or shell commands built from caller input, and never disable TLS verification.
 
 ## 5. Storage
 - Migrations: back up first, run in one transaction, number them linearly, document them in docs/MIGRATIONS.md, and test them on a copy of a real database.
@@ -50,3 +51,21 @@ These rules are non-negotiable. If a task conflicts with one, stop and ask; do n
 - Never skip, delete or xfail a test, loosen a threshold, or re-record a golden fixture without stating it and its reason in the PR.
 - Post progress on the Linear issue at start, at major commits, when blocked and when done, with the branch and hash. No secrets or data in Linear.
 - Ported code carries an attribution entry in NOTICE.
+
+## 9. Agent context
+- What: a Bayesian-optimization and trust engine for bioprocess campaigns (FastAPI + BoTorch).
+- Layers: core (ML) is imported by analysis, analysis by campaigns; storage holds the SQL; api sits on top; assist and jobs are services. Never import upward. Cite these layer names rather than today's `kalos/portal/...` paths, which the reorg moves.
+- Run: deploy/RUNBOOK.md. Check: `scripts/check.sh` (ruff + mypy; `--full` also runs the test suite). Tests: `KALOS_TORCH_THREADS=1 uv run pytest -n 8 -m "not serial"`, then `uv run pytest -m serial` (determinism tests, never under xdist).
+- API contract: docs/CAMPAIGNS_API.md ("Rules that apply to every route"), the error envelope in docs/HARDENING.md, docs/route-scopes.json and docs/openapi.json (drift test: tests/contract/test_openapi_drift.py).
+- Trust-layer changes: put the `python scripts/trust_golden.py diff` output in the commit message.
+
+<!-- Hard limits, Scope and Communication below are shared with kalos-web/AGENTS.md section 6; change both. -->
+## 10. Team rules
+### Hard limits (unless explicitly asked in this conversation)
+- No git commit or push, no amend or rebase of published commits, no `--no-verify`, never commit to main directly, no `rm -rf` on shared paths.
+### Scope
+- Only what was asked. Surface refactor ideas separately. No speculative abstractions, no defensive code for impossible states, and no compatibility shims beyond those a planned reorg move specifies.
+### Code
+- Type hints on public signatures; pathlib for paths; pydantic models with `extra="forbid"` at boundaries; dependencies pinned in pyproject.toml and uv.lock. Comment the why, never the what.
+### Communication
+- When unsure between options, ask. State uncertainty; don't fake confidence.
