@@ -27,12 +27,11 @@ def served_oof(
     index_out: list[int] | None = None, fold_out: list[int] | None = None,
 ):
     """Drop-in for `kalos.core.evaluation._oof` whose fold models match the served one."""
+    import kalos.portal.analysis as an
     from kalos.core.replicates import aggregate_replicates, noise_report
     from kalos.core.splits import make_splits, row_hash_groups
     from kalos.core.surrogate import Surrogate, proposal_restarts
     from kalos.portal.analysis_parts.policy import ANALYZE_SEED
-
-    import kalos.portal.analysis as an
 
     requested = int(getattr(an, "PROPOSAL_FIT_RESTARTS", 3))
     X = np.asarray(X, float)
@@ -150,7 +149,11 @@ def run_order_candidates(orig):
     and consecutive runs are alike beyond chance (lag-1 test at ORDER_ALPHA), the
     run-order segments become one more grouping candidate (held out together), so a
     model whose skill came from neighbours in time is caught by the lowest-score rule."""
-    from kalos.portal.analysis_parts.cv_grouping import MIN_GROUPS_FOR_CV, _n_groups, _union
+    from kalos.portal.analysis_parts.cv_grouping import (
+        MIN_GROUPS_FOR_CV,
+        _n_groups,
+        _union,
+    )
 
     def wrapped(frame, *, exclude, round_index, clusters):
         out = orig(frame, exclude=exclude, round_index=round_index, clusters=clusters)

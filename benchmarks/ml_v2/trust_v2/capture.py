@@ -22,7 +22,6 @@ import dataclasses
 import gzip
 import os
 import pickle
-import sys
 import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed

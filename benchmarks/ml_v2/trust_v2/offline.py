@@ -174,7 +174,7 @@ def evaluate(recs, cal: Callable, levels=LEVELS) -> dict[str, Any]:
                 ins = ((y >= mu - h) & (y <= mu + h))[ok]
                 row = {"suite": rec["suite"], "task": rec["task"], "seed": rec["seed"], "round": c["round"],
                        "lv": lv, "hits": int(ins.sum()), "tot": int(ok.sum()),
-                       "widths": list((2 * h[ok] / scale)), "kind": cc["kind"]}
+                       "widths": list(2 * h[ok] / scale), "kind": cc["kind"]}
                 if hp is not None:
                     hh = half_width(cc, hp["sd"])
                     okh = np.isfinite(hh) & np.isfinite(hp["mu"])
