@@ -1,0 +1,16 @@
+[
+ {"spec": "kalos.bench.ml_v2.arms.acq:make_arm", "config": {"name": "acq_ref_ctl"}},
+ {"spec": "kalos.bench.ml_v2.arms.acq:make_arm", "config": {"name": "acq_seq", "sequential": true}},
+ {"spec": "kalos.bench.ml_v2.arms.acq:make_arm", "config": {"name": "acq_big", "restarts": 20, "raw": 1024}},
+ {"spec": "kalos.bench.ml_v2.arms.acq:make_arm", "config": {"name": "acq_seq_big", "sequential": true, "restarts": 20, "raw": 1024}},
+ {"spec": "kalos.bench.ml_v2.arms.acq:make_arm", "config": {"name": "acq_small", "restarts": 4, "raw": 128, "maxiter": 50}},
+ {"spec": "kalos.bench.ml_v2.arms.acq:make_arm", "config": {"name": "acq_ucb1", "acq": "ucb", "beta": 1.0}},
+ {"spec": "kalos.bench.ml_v2.arms.acq:make_arm", "config": {"name": "acq_ucb4", "acq": "ucb", "beta": 4.0}},
+ {"spec": "kalos.bench.ml_v2.arms.acq:make_arm", "config": {"name": "acq_ucb9", "acq": "ucb", "beta": 9.0}},
+ {"spec": "kalos.bench.ml_v2.arms.acq:make_arm", "config": {"name": "acq_ts", "acq": "ts", "ts_n": 4096}},
+ {"spec": "kalos.bench.ml_v2.arms.acq:make_arm", "config": {"name": "acq_mix41", "mix": [[4, "nei", null], [1, "ucb", 4.0]]}},
+ {"spec": "kalos.bench.ml_v2.arms.acq:make_arm", "config": {"name": "acq_mix32", "mix": [[3, "nei", null], [2, "ucb", 4.0]]}},
+ {"spec": "kalos.bench.ml_v2.arms.acq:make_arm", "config": {"name": "acq_out10", "mix": [[4, "nei", null], [1, "out", 0.1]]}},
+ {"spec": "kalos.bench.ml_v2.arms.acq:make_arm", "config": {"name": "acq_tr2", "mix": [[3, "nei", null], [2, "tr", 0.4]]}},
+ {"spec": "kalos.bench.ml_v2.arms.acq:make_arm", "config": {"name": "acq_nipv_untrusted", "untrusted": [[3, "nei", null], [2, "nipv", null]]}}
+]

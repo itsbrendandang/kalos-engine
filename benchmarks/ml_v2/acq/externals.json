@@ -1,0 +1,4 @@
+[
+ {"spec": "kalos.bench.ml_v2.arms.external:make_ax", "config": {}},
+ {"spec": "kalos.bench.ml_v2.arms.external:make_gp_ucb", "config": {}}
+]
