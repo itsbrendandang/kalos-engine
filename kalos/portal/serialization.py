@@ -1,6 +1,7 @@
 """Kalos portal — JSON-safe serialization helpers."""
 from __future__ import annotations
 
+import datetime as _dt
 from typing import Any, cast
 
 import numpy as np
@@ -22,4 +23,9 @@ def _json_safe_records(df: pd.DataFrame) -> list[dict[str, Any]]:
         for key, val in row.items():
             if isinstance(val, float) and not np.isfinite(val):
                 row[key] = None
+            elif isinstance(val, (_dt.date, _dt.time, pd.Timedelta, np.datetime64)):
+                # A date or time cell (an Excel date column) is stored as ISO text,
+                # as written, never dropped: JSON cannot hold the object, and a
+                # failed encode used to leave the campaign with no rows at all.
+                row[key] = val.isoformat() if hasattr(val, "isoformat") else str(val)
     return records
