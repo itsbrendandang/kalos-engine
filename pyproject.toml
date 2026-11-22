@@ -36,7 +36,7 @@ portal = ["fastapi>=0.143.0", "uvicorn[standard]>=0.29", "python-multipart>=0.0.
 # as a transitive dependency of `anthropic` and is not listed separately.
 # The torch-free deterministic core (units/synonyms/plan/apply) and the
 # offline fallback in llm.py need none of this.
-normalize = ["anthropic>=1.5.0"]
+normalize = ["anthropic>=2.10.0"]
 # The grounded assistant (kalos/assist, docs/ASSISTANT.md). BM25 retrieval and
 # the .docx export of SOP drafts. Works fully offline; the model that writes
 # answers is reached over HTTP (Ollama, local) or the `normalize` extra's SDK.
@@ -58,7 +58,7 @@ assist-embed = ["sentence-transformers>=3"]
 # it in `dev` keeps that path genuinely covered instead of silently skipped.
 dev = [
   "pytest>=9.1.1", "pytest-xdist>=3.6", "pytest-split>=0.9", "ruff>=0.6", "mypy>=1.11", "pandas-stubs", "scipy-stubs",
-  "httpx>=0.27,<1", "anthropic>=1.5.0",
+  "httpx>=0.27,<1", "anthropic>=2.10.0",
 ]
 
 [tool.setuptools.packages.find]
