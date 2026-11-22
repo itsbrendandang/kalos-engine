@@ -15,7 +15,6 @@ from fastapi.testclient import TestClient
 
 from kalos.assist.index import AssistIndex
 from kalos.assist.llm import ModelUnavailable, get_chat_model
-from kalos.portal import app as portal_module
 from kalos.portal import campaign as campaign_module
 from kalos.portal.app import app
 from kalos.portal.campaign import CampaignStore, get_campaign_store
@@ -102,7 +101,6 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("KALOS_AUTH_TOKENS", json.dumps(TOKENS))
     monkeypatch.delenv("KALOS_AUTH_TOKENS_FILE", raising=False)
     store = CampaignStore(tmp_path / "state")
-    monkeypatch.setattr(portal_module, "_STATE_DIR", tmp_path)
     monkeypatch.setattr(campaign_module, "_STORE", store)
     fake = FakeModel()
     app.dependency_overrides[get_campaign_store] = lambda: store

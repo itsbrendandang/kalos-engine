@@ -373,8 +373,6 @@ def test_a_headerless_sheet_is_refused_with_its_detected_columns():
 def client(tmp_path, monkeypatch):
     store = CampaignStore(tmp_path)
     monkeypatch.setenv("KALOS_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(portal_module, "_STATE_DIR", tmp_path)
-    monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
     monkeypatch.setattr(campaign_module, "_STORE", store)
     portal_module.app.dependency_overrides[get_campaign_store] = lambda: store
     try:

@@ -40,8 +40,6 @@ def _df(n: int = 10, seed: int = 0) -> pd.DataFrame:
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     s = CampaignStore(tmp_path)
-    monkeypatch.setattr(portal, "_STATE_DIR", tmp_path)
-    monkeypatch.setattr(portal, "_LATEST_DIR", tmp_path / "latest")
     monkeypatch.setattr(campaign_module, "_STORE", s)
     app.dependency_overrides[get_campaign_store] = lambda: s
     try:

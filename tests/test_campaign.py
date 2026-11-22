@@ -46,13 +46,6 @@ def store(tmp_path, monkeypatch):
 
 @pytest.fixture
 def client(store, tmp_path, monkeypatch):
-    # `_STATE_DIR`/`_LATEST_PATH` in kalos.portal.app are fixed at import
-    # time, so setting KALOS_STATE_DIR alone would not stop `reanalyze`'s
-    # `_save_latest` from writing to the real ~/.kalos/latest_analysis.json.
-    # Patch the module's globals directly instead, mirroring
-    # tests/test_m2_portal.py::test_existing_run_and_latest_endpoints_still_work.
-    monkeypatch.setattr(portal_module, "_STATE_DIR", tmp_path)
-    monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
     # The upload path calls `get_campaign_store()` directly rather than through
     # DI, and that singleton is cached for the whole process — so overriding the
     # dependency alone leaves `/api/run` seeding whichever store was built

@@ -26,7 +26,6 @@ import os
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -85,7 +84,6 @@ from kalos.portal.limits import (
     route_path,
     upload_read_timeout_s,
 )
-from kalos.portal.migrate import legacy_latest_filename
 from kalos.portal.pipeline import compute_upload_analysis, publish_upload_analysis
 from kalos.portal.scale_routes import router as _scale_router
 from kalos.portal.setup_api import router as _setup_router
@@ -417,24 +415,8 @@ def _objectives(X: np.ndarray) -> np.ndarray:
 # source of truth, written in the same transaction as the campaign it describes
 # (`CampaignStore.seed`/`commit_fold`). The former in-memory map and the
 # per-tenant `latest/*.json` files are gone; the files of an existing install
-# are imported once by the migration and left on disk untouched.
-_STATE_DIR = Path(os.environ.get("KALOS_STATE_DIR", Path.home() / ".kalos"))
-_LATEST_DIR = _STATE_DIR / "latest"
-
-
-def _latest_path(tenant: str) -> Path:
-    """The LEGACY (schema v1) per-tenant cache file. Nothing writes these any
-    more; kept because the v1 -> v2 migration imports them and `migrate down`
-    writes them back, and both must agree on the name.
-
-    The filename is an INJECTIVE encoding of the tenant id - the lowercase hex of
-    its UTF-8 bytes - so two distinct tenants can never share a file. The id is
-    validated (defense in depth: auth already rejects malformed ids at config
-    load), and the output alphabet is `[0-9a-f]`, so it can never traverse the
-    path.
-    """
-    validate_tenant_id(tenant)
-    return _LATEST_DIR / legacy_latest_filename(tenant)
+# are imported once by the migration (kalos/portal/migrate.py) and left on disk
+# untouched.
 
 
 def _load_latest(tenant: str, *, store: CampaignStore | None = None) -> dict | None:

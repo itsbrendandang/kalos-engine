@@ -29,7 +29,6 @@ from kalos.assist import sop
 from kalos.assist.llm import ModelUnavailable, get_chat_model
 from kalos.assist.sop_routes import router
 from kalos.assist.words import BANNED, banned_in, claims_in
-from kalos.portal import app as portal_module
 from kalos.portal import campaign as campaign_module
 from kalos.portal.app import app
 from kalos.portal.campaign import CampaignStore, get_campaign_store
@@ -106,8 +105,6 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("KALOS_AUTH_TOKENS", json.dumps(TOKENS))
     monkeypatch.delenv("KALOS_AUTH_TOKENS_FILE", raising=False)
     monkeypatch.setenv("KALOS_LLM_PROVIDER", "none")
-    monkeypatch.setattr(portal_module, "_STATE_DIR", tmp_path)
-    monkeypatch.setattr(portal_module, "_LATEST_DIR", tmp_path / "latest")
     monkeypatch.setattr(campaign_module, "_STORE", store)
     # FastAPI 0.16x includes routers lazily (`app.routes` holds the included
     # router, not its routes), so look through them; re-including the router

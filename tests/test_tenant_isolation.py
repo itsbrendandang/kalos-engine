@@ -57,9 +57,6 @@ def test_reseeding_one_tenant_does_not_touch_another(tmp_path):
 def test_latest_is_isolated_per_tenant(tmp_path, monkeypatch):
     from kalos.portal import app as portal
     from kalos.portal import campaign as campaign_module
-
-    monkeypatch.setattr(portal, "_STATE_DIR", tmp_path)
-    monkeypatch.setattr(portal, "_LATEST_DIR", tmp_path / "latest")
     # Since schema v2 the analysis lives in portal.db (the tenant's default
     # campaign), so pin the store the helpers resolve to this test's tmp dir.
     monkeypatch.setattr(campaign_module, "_STORE", CampaignStore(tmp_path))
