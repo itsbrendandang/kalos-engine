@@ -120,7 +120,7 @@ jobs:
           --durations=25
       - name: Upload this shard's test durations
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: durations-shard-${{ matrix.shard }}
           path: ci-durations.json
@@ -180,7 +180,7 @@ jobs:
           jq -s 'add | with_entries(.key |= sub("@[A-Za-z0-9_]+$"; "")) | to_entries | sort_by(.key) | from_entries' \
             shards/*/ci-durations.json > .test_durations
           jq -r '"\(length) tests, \((([.[]] | add) / 60) | floor) min of test time in total"' .test_durations
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: test-durations
           path: .test_durations
