@@ -141,6 +141,27 @@ jobs:
       - name: pytest (serial, no xdist)
         run: uv run --no-sync python -m pytest -q -m "serial" --durations=10
 
+  tests-assist:
+    name: pytest (assistant, with the assist extra)
+    # The shards install ml, portal, bench and dev only. The assistant ships with the
+    # `assist` extra, whose absence once hid a search bug (#202), so its tests also
+    # run with it installed.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - *setup-uv
+      - name: Create a venv and install the locked versions (+ assist; CPU torch)
+        run: |
+          uv venv --python "$PYTHON_VERSION" .venv
+          uv export --frozen --extra ml --extra portal --extra bench --extra dev --extra assist \
+            --no-emit-project --no-hashes -o "$RUNNER_TEMP/constraints.txt"
+          uv pip install -e ".[ml,portal,bench,dev,assist]" -c "$RUNNER_TEMP/constraints.txt"
+      - name: pytest (assistant and LLM tests)
+        run: >
+          uv run --no-sync python -m pytest -q -n auto
+          tests/test_assist*.py tests/test_llm*.py tests/test_setup_suggestions.py
+
   durations:
     name: merge test durations
     needs: tests

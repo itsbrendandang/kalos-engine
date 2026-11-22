@@ -1,0 +1,17 @@
+# Weekly update PRs. ML pins (torch, botorch, gpytorch) are held: the GP numbers depend
+# on the build, and they change together with kalos/versions.py (tests/test_torch_pin.py).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: torch
+      - dependency-name: botorch
+      - dependency-name: gpytorch

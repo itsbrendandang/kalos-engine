@@ -1,0 +1,20 @@
+name: Feature request
+description: A new capability or a change to existing behaviour.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What a scientist or engineer cannot do today, and why it matters.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should happen instead. Numbers shown to a user must come from their data (AGENTS.md rule 1).
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

@@ -1,0 +1,16 @@
+# Optional local hooks: `pre-commit install`. CI runs the same ruff check.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.22  # keep equal to ruff in uv.lock
+    hooks:
+      - id: ruff-check
+        files: ^(kalos|tests|examples)/
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml

@@ -1,0 +1,7 @@
+Kalos engine
+Copyright 2026 Brendan Dang and the Kalos contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party datasets used by the benchmarks are not distributed with this product;
+their sources and terms are listed in docs/DATA_RIGHTS.md.
