@@ -149,11 +149,16 @@ def derived_output_findings(derived: dict[str, dict]) -> list[Finding]:
     for column, why in derived.items():
         reason = str(why.get("reason"))
         declared = reason == "declared"
+        # A name-rule exclusion is a warning only when the column looks like a
+        # designed setpoint (few repeated levels); otherwise it is reported as info.
+        quiet = declared or (reason == "outcome_name" and not why.get("looks_like_setting"))
         out.append(Finding(
-            check="derived_output", severity="info" if declared else "warning", column=column,
+            check="derived_output", severity="info" if quiet else "warning", column=column,
             message=(
                 f"Column {column!r} was not used as an input and is never proposed: "
                 f"{DERIVED_OUTPUT_TEXT.get(reason, reason)}."
+                + (" Its values look like designed setpoints (a few levels, each repeated), so "
+                   "check this role." if why.get("looks_like_setting") else "")
                 + ("" if declared else
                    " If it is a setting chosen before the run, declare it in roles.features "
                    "(or roles.categoricals for text).")
