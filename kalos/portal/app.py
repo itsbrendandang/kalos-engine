@@ -763,11 +763,14 @@ def _run_uploaded_sync(
     publish_kwargs: dict[str, Any] = (
         {} if expected_generation is _NO_GUARD else {"expected_generation": expected_generation}
     )
-    publish_upload_analysis(
+    generation = publish_upload_analysis(
         store if store is not None else get_campaign_store(), result, filename,
         tenant=tenant, campaign_id=campaign_id, df=df, **publish_kwargs,
     )
-    return result
+    # Whether the run sheet's rows were saved to the campaign. False only when
+    # seeding failed and the analysis was published unstamped (logged): the
+    # response says so instead of implying the samples were stored.
+    return {**result, "rows_stored": generation is not None}
 
 
 @app.post("/api/run")

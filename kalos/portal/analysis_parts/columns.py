@@ -15,6 +15,7 @@ from kalos.portal.cells import (
     CENSORED,
     NON_NUMERIC,
     NUMERIC,
+    cell_labels,
     classify_cells,
     is_null_label,
 )
@@ -191,7 +192,7 @@ def _auto_group_column(df: pd.DataFrame, profile: DomainProfile, features: list)
         feats = [f for f in names if f != str(c)]
         if not feats:
             continue
-        labels = df[c].fillna("").astype(str).str.strip()
+        labels = cell_labels(df[c])
         levels = [v for v in labels.unique().tolist() if not is_null_label(v)]
         if len(levels) < 2:
             continue

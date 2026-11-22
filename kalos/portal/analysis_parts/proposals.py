@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from kalos.domains import DesignSpace
+from kalos.portal.cells import cell_labels
 
 
 def _annotate(
@@ -172,7 +173,7 @@ def _encode_pending(
     for c in kept_cats:
         codes = np.full(len(frame), np.nan)
         if c in frame.columns:
-            labels = frame[c].fillna("").astype(str).str.strip()
+            labels = cell_labels(frame[c])
             codes = labels.map(code_maps[c]).to_numpy(dtype=float)
         usable &= np.isfinite(codes)
         cols.append(codes)

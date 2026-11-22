@@ -142,8 +142,10 @@ from kalos.portal.cells import (
     REASON_CENSORED,
     REASON_MISSING,
     REASON_NON_NUMERIC,
+    cell_labels,
     classify_cells,
     is_null_label,
+    to_numbers,
 )
 from kalos.portal.setup_settings import plan_setup
 from kalos.portal.uploads import (
@@ -521,7 +523,7 @@ def _analyze_body(
     # full-column variance filter.
     varying = []
     for c in cont_feats:
-        col = pd.to_numeric(df[c], errors="coerce")
+        col = to_numbers(df[c])
         if col.std(skipna=True) and col.std() > 1e-9:
             varying.append(c)
     cont_feats = varying
@@ -541,10 +543,10 @@ def _analyze_body(
     for c in df.columns:
         row_blank &= classify_cells(df[c]).to_numpy(object) == BLANK
     active = ~row_blank
-    y_all = pd.to_numeric(df[target], errors="coerce").to_numpy(float)
+    y_all = to_numbers(df[target]).to_numpy(float)
     keep = tgt_kinds == NUMERIC                      # rows with a usable target
     feat_kind = {c: classify_cells(df[c]).to_numpy(object) for c in cont_feats}
-    Xc_all = df[cont_feats].apply(pd.to_numeric, errors="coerce") if cont_feats else pd.DataFrame(index=df.index)
+    Xc_all = df[cont_feats].apply(to_numbers) if cont_feats else pd.DataFrame(index=df.index)
 
     # Categorical levels come from the target-present rows. A blank or null-token
     # label is not a proposable level (it means "unknown"), so it cannot define one.
@@ -552,7 +554,7 @@ def _analyze_body(
     constant_cats: list = []
     cat_dims_map: dict = {}
     for c in cat_feats:
-        labels = df.loc[keep, c].fillna("").astype(str).str.strip()
+        labels = cell_labels(df.loc[keep, c])
         levels = tuple(sorted({v for v in labels.tolist() if not is_null_label(v)}))
         if len(levels) < 2:
             constant_cats.append(c)
@@ -560,7 +562,7 @@ def _analyze_body(
         kept_cats.append(c)
         cat_dims_map[c] = levels
     cat_ok = {
-        c: df[c].fillna("").astype(str).str.strip().isin(cat_dims_map[c]).to_numpy()
+        c: cell_labels(df[c]).isin(cat_dims_map[c]).to_numpy()
         for c in kept_cats
     }
 
@@ -702,7 +704,7 @@ def _analyze_body(
     code_maps = {c: {lvl: i for i, lvl in enumerate(cat_dims_map[c])} for c in kept_cats}
     if kept_cats:
         cat_cols = [
-            df.loc[keep_index, c].fillna("").astype(str).str.strip().map(code_maps[c]).to_numpy(float)
+            cell_labels(df.loc[keep_index, c]).map(code_maps[c]).to_numpy(float)
             for c in kept_cats
         ]
         X = np.column_stack([cont_arr, *cat_cols]) if cont_feats else np.column_stack(cat_cols)
@@ -766,7 +768,7 @@ def _analyze_body(
                 "reason": f"constraint column {constraint_col!r} not found in the uploaded sheet",
             }
         else:
-            cy_all = pd.to_numeric(df.loc[keep_index, constraint_col], errors="coerce")
+            cy_all = to_numbers(df.loc[keep_index, constraint_col])
             c_mask = cy_all.notna().to_numpy()
             n_rows_with_value = int(c_mask.sum())
             if n_rows_with_value < CONSTRAINT_MIN_ROWS:
@@ -810,7 +812,7 @@ def _analyze_body(
     # variance; using a recipe key as the CV group would let a lot straddle folds.
     recipe_gf = Xc_raw.copy()
     for c in kept_cats:
-        recipe_gf[c] = df.loc[keep_index, c].fillna("").astype(str)
+        recipe_gf[c] = cell_labels(df.loc[keep_index, c])
     recipe_key = row_hash_groups(recipe_gf)
 
     # F05: replicates recorded as run (settings jittered) are one group, not
@@ -1684,7 +1686,7 @@ def _analyze_body(
             logo_report=logo_report,
         )
     _cat_effects = categorical_effects(
-        y, {str(c): df.loc[keep_index, c].fillna("").astype(str).str.strip().tolist()
+        y, {str(c): cell_labels(df.loc[keep_index, c]).tolist()
             for c in kept_cats},
         list(recipe_key), fdr_q=DRIVER_FDR_Q,
     ) if kept_cats else None
