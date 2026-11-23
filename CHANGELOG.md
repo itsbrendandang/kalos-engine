@@ -4,13 +4,6 @@ Newest first.
 
 ## Unreleased
 
-### Added - global paid model switch
-
-- `KALOS_NO_PAID_CALLS=1` (also `true`, `yes`, `on`) now blocks Anthropic
-  assistant calls and keeps Anthropic normalization offline without an API call.
-  Anthropic status reports unavailable. Remote OpenAI calls use the same shared
-  flag check. Local servers and Ollama are unchanged.
-
 ### Added - prediction history and the prospective track record (schema v8, BRE-32)
 
 - A fold no longer loses a run's recorded prediction, band or run id, and an analysis is no longer overwritten without a trace. Schema v8 adds three append-only tables (UPDATE/DELETE triggers, like `gate_decisions`): `analysis_snapshots` (every published analysis, byte for byte, with its sha256 and round), `run_predictions` (each run's prediction recorded at start: mean, sd, 90%/95% intervals with method and coverage basis, the global conformal band, engine version, round, analysis sha256 and snapshot id) and `run_folds` (the value and `run_results` version each fold wrote into the model). Result versions and corrections stay in `run_results` (v5).
