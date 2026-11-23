@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from kalos.envconfig import env_enum
+from kalos.paid import no_paid_calls
+from kalos.providers.ollama_provider import DEFAULT_MODEL as _DEFAULT_OLLAMA_MODEL
 
 _MODEL_ENV_VAR = "KALOS_NORMALIZE_MODEL"
 _MAX_SAMPLE_ENV_VAR = "KALOS_NORMALIZE_MAX_SAMPLE"
@@ -45,11 +47,6 @@ Provider = Literal["anthropic", "ollama", "none"]
 _PROVIDERS: tuple[Provider, ...] = ("anthropic", "ollama", "none")
 _DEFAULT_PROVIDER: Provider = "anthropic"
 _DEFAULT_OLLAMA_URL = "http://localhost:11434"
-# The Ollama path runs the model cascade (kalos.providers.cascade): the fast
-# model first, the quality model when the fast reply fails its checks. This is
-# the QUALITY model's default (Apache-2.0); the measured comparison is in
-# benchmarks/llm/RESULTS.md. `KALOS_OLLAMA_MODEL` still overrides it.
-_DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
 
 
 @dataclass(frozen=True)
@@ -62,7 +59,7 @@ class NormalizeConfig:
         misconfigured/unreachable server is caught by the live call's own
         health-check + try/except, not here).
       - `provider == "anthropic"`: `credentials_available()` at load time,
-        unchanged from before `provider` existed.
+        unless `KALOS_NO_PAID_CALLS` disables hosted calls.
     The Anthropic API key itself is never stored on this object - only the
     boolean presence check.
     """
@@ -89,7 +86,8 @@ def credentials_available() -> bool:
 
 def provider_setting() -> Provider:
     """`KALOS_LLM_PROVIDER` as a `Provider`; unknown values raise `ConfigError`."""
-    return env_enum(_PROVIDER_ENV_VAR, _PROVIDERS, _DEFAULT_PROVIDER)  # type: ignore[return-value]
+    value = env_enum(_PROVIDER_ENV_VAR, (*_PROVIDERS, "openai"), _DEFAULT_PROVIDER)
+    return "none" if value == "openai" else value  # type: ignore[return-value]
 
 
 def load_config() -> NormalizeConfig:
@@ -108,7 +106,7 @@ def load_config() -> NormalizeConfig:
     - `ollama_url` / `ollama_model`: `KALOS_OLLAMA_URL` (default
       `"http://localhost:11434"`) / the cascade's quality model
       (`KALOS_LLM_QUALITY_MODEL`, else `KALOS_OLLAMA_MODEL`, else
-      `"qwen2.5:7b"`) - only consulted when `provider == "ollama"`. The fast
+      `"qwen2.5:7b-instruct"`) - only consulted when `provider == "ollama"`. The fast
       model is `KALOS_LLM_FAST_MODEL` (`kalos.providers.cascade`).
     - `enabled_live`: see `NormalizeConfig`'s docstring for the per-provider
       rule. The Anthropic key value itself is never read into this object.
@@ -134,7 +132,7 @@ def load_config() -> NormalizeConfig:
     elif provider == "ollama":
         enabled_live = True
     else:
-        enabled_live = credentials_available()
+        enabled_live = credentials_available() and not no_paid_calls()
 
     return NormalizeConfig(
         model=model,

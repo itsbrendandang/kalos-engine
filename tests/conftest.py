@@ -137,6 +137,7 @@ def pytest_configure(config: pytest.Config) -> None:
     global _SESSION_STATE
     _SESSION_STATE = tempfile.mkdtemp(prefix="kalos-session-state-")
     os.environ["KALOS_STATE_DIR"] = _SESSION_STATE
+    os.environ["KALOS_NO_PAID_CALLS"] = "1"
     _preimport_warning_modules_in_xdist_controller(config)
 
 
@@ -231,6 +232,7 @@ def _torch_thread_count_does_not_leak():
 
 @pytest.fixture(autouse=True)
 def _isolated_kalos_state(tmp_path_factory, monkeypatch, _real_state_dir_guard):
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", "1")
     state = tmp_path_factory.mktemp("kalos-state")
     monkeypatch.setenv("KALOS_STATE_DIR", str(state))
     try:

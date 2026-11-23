@@ -119,7 +119,7 @@ and is enough for the `kalos.kit` helpers.
 | `KALOS_CORS_ORIGINS` | localhost | Browser origins allowed to call the engine |
 | `KALOS_ANON_SALT` | dev salt | Salt for anonymized identifiers; required off loopback |
 | `KALOS_LLM_PROVIDER` | `ollama` on desktop, else `none` | Model for the assistant and header normalization |
-| `KALOS_LLM_FAST_MODEL` / `KALOS_LLM_QUALITY_MODEL` | `phi4-mini` / `qwen2.5:7b` | The two local models (see [Language models](#language-models)) |
+| `KALOS_LLM_FAST_MODEL` / `KALOS_LLM_QUALITY_MODEL` | `phi4-mini` / `qwen2.5:7b-instruct` | The two local models (see [Language models](#language-models)) |
 | `KALOS_TORCH_THREADS` | `min(4, cpus)` | Torch threads per analysis (`0` = do not pin) |
 | `KALOS_JOBS_ENABLED` | on | `0` turns off background jobs |
 | `KALOS_DATASETS_DIR` | `~/kalos/datasets` | Local copy of the public datasets for the planted-fault suite's optional Kaggle cases |
@@ -286,6 +286,30 @@ artifact; commit it when the shards drift apart.
 Contributions: one focused pull request per change, conventional commit
 messages, synthetic data only, and no result described as validated unless it was
 measured on independent data.
+
+## Language models
+
+### Run a local Qwen model
+
+Install [Ollama](https://ollama.com), start it, then run:
+
+```sh
+ollama pull qwen2.5:7b-instruct
+export KALOS_LLM_PROVIDER=ollama
+python -m kalos.providers.check
+```
+
+This works for both the assistant and normalization. To use another model,
+pull it first and set `KALOS_OLLAMA_MODEL`, for example `qwen3:8b`.
+The check prints the server address, model, reachability and whether the model
+is pulled. Assistant status checks the server only when requested.
+
+For LM Studio or llama.cpp, start its OpenAI-compatible server and set
+`KALOS_LLM_PROVIDER=openai`, `KALOS_OPENAI_BASE_URL=http://localhost:8080/v1`
+(use your server's port), and `KALOS_OPENAI_MODEL` to its model id. This path
+supports assistant chat; normalization stays offline. A remote URL sends your
+prompts to that host. See [assistant settings](docs/ASSISTANT.md).
+
 
 ## License
 

@@ -207,6 +207,7 @@ def test_propose_plan_live_mocked(monkeypatch):
     canned = SimpleNamespace(columns=_canned_llm_columns(df))
     fake_messages = _FakeMessages(response=SimpleNamespace(parsed_output=canned))
     monkeypatch.setattr(anthropic, "Anthropic", lambda **kwargs: _FakeClient(fake_messages))
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", "0")
 
     config = load_config()
     plan = propose_plan(df, config=config)
@@ -248,6 +249,7 @@ def test_propose_plan_falls_back_on_api_error(monkeypatch):
     )
     fake_messages = _FakeMessages(error=error)
     monkeypatch.setattr(anthropic, "Anthropic", lambda **kwargs: _FakeClient(fake_messages))
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", "0")
 
     plan = propose_plan(df)  # must not raise
     assert plan.created_by == "offline"

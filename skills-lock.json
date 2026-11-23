@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "skills": {
+    "kalos-assist-review": {
+      "source": "itsbrendandang/kalos-engine",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/kalos-assist-review/SKILL.md",
+      "computedHash": "950b09c8b9c4474bbc610573c4f173aaa2c085f0b02cac714e4b10b15b74c392",
+      "installMode": "copy",
+      "attribution": "Original Kalos contributors; Apache-2.0. Layout inspired by itsbrendandang/agent-test; no third-party skill text copied."
+    }
+  }
+}

@@ -125,7 +125,7 @@ def test_escalation_off_and_one_model_never_retries_the_same_model():
 def test_defaults_are_mit_or_apache_models_not_llama(monkeypatch):
     """The defaults moved away from llama3.1 (Llama community licence) to
     MIT / Apache-2.0 models; the licence table in docs/ASSISTANT.md says so."""
-    licences = {"phi4-mini": "MIT", "qwen2.5:7b": "Apache-2.0", "qwen2.5:14b": "Apache-2.0",
+    licences = {"phi4-mini": "MIT", "qwen2.5:7b-instruct": "Apache-2.0", "qwen2.5:14b": "Apache-2.0",
                 "qwen2.5:3b": "Qwen research licence"}
     assert licences[DEFAULT_FAST_MODEL] in {"MIT", "Apache-2.0"}
     assert licences[DEFAULT_QUALITY_MODEL] in {"MIT", "Apache-2.0"}

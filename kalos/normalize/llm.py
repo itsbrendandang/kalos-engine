@@ -50,6 +50,8 @@ from typing import Any
 import pandas as pd
 
 from kalos.data.anonymizer import Anonymizer
+from kalos.paid import no_paid_calls, refuse_paid
+from kalos.providers.text import strip_thinking
 
 from .config import NormalizeConfig, load_config
 from .payload import build_payload
@@ -375,6 +377,7 @@ def _live_plan_anthropic(
     `anthropic` and `pydantic` - never imported at module scope so the
     package stays import-light and this function is the only place either
     dependency is required for this provider."""
+    refuse_paid("Anthropic normalization")
     import anthropic
 
     LLMPlan = _llm_plan_model()
@@ -395,6 +398,7 @@ def _live_plan_anthropic(
 
     parsed: Any
     if hasattr(client.messages, "parse"):
+        refuse_paid("Anthropic normalization")
         response = client.messages.parse(output_format=LLMPlan, **kwargs)
         # `parsed_output` is None when the model returned no parseable object.
         # Raise rather than propagate a None into the plan walk below: the
@@ -405,6 +409,7 @@ def _live_plan_anthropic(
         parsed = response.parsed_output
     else:
         schema = LLMPlan.model_json_schema()
+        refuse_paid("Anthropic normalization")
         response = client.messages.create(
             output_config={"format": {"type": "json_schema", "schema": schema}},
             **kwargs,
@@ -474,7 +479,7 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     local models wrap JSON in prose/markdown fences more often than a hosted
     API's structured-output mode, so the widest brace-delimited match is
     parsed rather than trusting the whole response to be pure JSON."""
-    match = _JSON_OBJECT_RE.search(text)
+    match = _JSON_OBJECT_RE.search(strip_thinking(text))
     if not match:
         return None
     try:
@@ -675,7 +680,7 @@ def propose_plan(
     config = config or load_config()
     payload, dropped_identity = build_payload(df, anonymizer=anonymizer, max_sample=config.max_sample)
 
-    if not config.enabled_live:
+    if not config.enabled_live or (config.provider == "anthropic" and no_paid_calls()):
         plan = offline_plan(df, anonymizer=anonymizer, max_sample=config.max_sample)
         plan.provider_path = "offline"
         return plan

@@ -9,6 +9,7 @@ module must stay importable without it installed.
 """
 from __future__ import annotations
 
+from kalos.paid import no_paid_calls
 from kalos.providers.base import ProviderStatus
 
 _API_KEY_ENV_VAR = "ANTHROPIC_API_KEY"
@@ -34,15 +35,18 @@ class AnthropicProvider:
     def available(self) -> bool:
         from kalos.normalize import credentials_available
 
-        return credentials_available()
+        return credentials_available() and not no_paid_calls()
 
     def status(self) -> ProviderStatus:
+        from kalos.normalize import credentials_available
+
         ok = self.available()
         return ProviderStatus(
             name=self.name,
             available=ok,
             required_env=(_API_KEY_ENV_VAR,),
-            missing_env=() if ok else (_API_KEY_ENV_VAR,),
+            missing_env=() if credentials_available() else (_API_KEY_ENV_VAR,),
+            disabled_by=("KALOS_NO_PAID_CALLS",) if no_paid_calls() else (),
             capability=_CAPABILITY,
             fallback=_FALLBACK,
         )

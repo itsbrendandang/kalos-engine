@@ -339,6 +339,7 @@ def _analyze_body(
         # second import site. Skipped by a preflight, which returns before any
         # of these names is used.
         from kalos.core.evaluation import (
+            cv_partitions,
             group_mean_baseline_spearman,
             group_mean_margin,
             grouped_cv_report,
@@ -934,6 +935,7 @@ def _analyze_body(
         ),
         n_exact_recipes=len(set(np.asarray(recipe_key).tolist())),
         n_clusters=len(set(rep_clusters.tolist())),
+        folds=lambda g: cv_partitions(X, y, g, n_splits=5, n_repeats=CV_N_REPEATS),
     )
     rho = rep["spearman"]
     # Repeat-0-only: the point estimate and the OOF pools below stay anchored to

@@ -82,6 +82,18 @@ def validation_mode_setting() -> str:
     return env_enum(VALIDATION_MODE_VAR, VALIDATION_MODES, "warn")
 
 
+STRICT_CV_CANDIDATES_VAR = "KALOS_CV_STRICT_CANDIDATES"
+_STRICT_ON = ("1", "true", "yes", "on")
+_STRICT_OFF = ("0", "false", "no", "off")
+
+
+def strict_cv_candidates_setting() -> bool:
+    """`KALOS_CV_STRICT_CANDIDATES`: on (default) or off (`0`/`false`/`no`/`off`).
+    Off restores the old rule where any cross-validated candidate grouping could
+    set the reliability score. Unknown values raise `ConfigError`."""
+    return env_enum(STRICT_CV_CANDIDATES_VAR, _STRICT_ON + _STRICT_OFF, "1") in _STRICT_ON
+
+
 def audit_retention_days() -> int | None:
     """`KALOS_AUDIT_RETENTION_DAYS`: the opt-in archive window for audit rows.
 
@@ -107,6 +119,7 @@ def check_env_settings() -> None:
 
     deployment_env()
     validation_mode_setting()
+    strict_cv_candidates_setting()
     audit_retention_days()
     provider_setting()
 
