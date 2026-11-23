@@ -10,10 +10,14 @@ class PaidCallsOff(RuntimeError):
 
 def refuse_paid(what: str) -> None:
     """Refuse a paid step when KALOS_NO_PAID_CALLS is true; unset stays allowed."""
-    if no_paid_calls():
+    if os.environ.get("KALOS_NO_PAID_CALLS", "").strip().lower() in {"1", "true", "yes", "on"}:
         raise PaidCallsOff(f"{what}: refused. Paid calls are off (KALOS_NO_PAID_CALLS).")
 
 
 def no_paid_calls() -> bool:
     """Whether hosted model calls are disabled by operator configuration."""
-    return os.environ.get("KALOS_NO_PAID_CALLS", "").strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        refuse_paid("hosted model")
+    except PaidCallsOff:
+        return True
+    return False
