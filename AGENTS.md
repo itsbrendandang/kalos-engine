@@ -76,7 +76,9 @@ These rules are non-negotiable. If a task conflicts with one, stop and ask; do n
   the HTTP contract guarded by tests/test_web_contract.py. Change it deliberately
   and note contract changes in the PR for the web lane.
 - Give agents narrow tasks and separate file ownership. Re-read shared files before
-  editing: kalos/portal/app.py, pyproject.toml, uv.lock, AGENTS.md and CHANGELOG.md.
+  editing: kalos/portal/app.py, pyproject.toml, uv.lock and AGENTS.md.
+- Add change notes as new files in changes/, following changes/README.md.
+  Do not edit CHANGELOG.md for a PR; the release script collects the notes.
 - Set KALOS_NO_PAID_CALLS=1 for agent work. Never unset it or turn it off outside a
   test. Tests may turn it off only with network-free fakes. Never make paid calls
   in tests. Local loopback Ollama is not a paid provider.
