@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
-from kalos.paid import PaidCallsOff, refuse_paid
+from kalos.paid import PaidCallsOff, no_paid_calls, refuse_paid
 from kalos.providers.base import ProviderStatus
 from kalos.providers.text import strip_thinking
 
@@ -95,7 +95,10 @@ def _open(request: urllib.request.Request, timeout: float) -> bytes:
 
 
 def is_loopback_url(url: str) -> bool:
-    host = (urlparse(url).hostname or "").lower()
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
     return host in _LOOPBACK
 
 
@@ -121,7 +124,7 @@ class OpenAICompatibleProvider:
     name = "openai"
 
     def available(self) -> bool:
-        return selected()
+        return selected() and (not no_paid_calls() or self.local())
 
     def local(self) -> bool:
         return is_loopback_url(openai_url())
@@ -132,6 +135,7 @@ class OpenAICompatibleProvider:
             available=self.available(),
             required_env=(),
             missing_env=(),
+            disabled_by=("KALOS_NO_PAID_CALLS",) if no_paid_calls() and not self.local() else (),
             capability=_CAPABILITY,
             fallback=_FALLBACK,
         )

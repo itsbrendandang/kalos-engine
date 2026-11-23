@@ -156,6 +156,14 @@ again on the next review, which can make new paid calls.
 
 ## Run a local Qwen model
 
+Set `KALOS_NO_PAID_CALLS=true` to prevent billable model calls. Anthropic
+assistant chat refuses with a message naming the flag, and its status reports
+`available: false`. Anthropic normalization uses the offline plan without
+contacting the API. Remote OpenAI-compatible chat and probes are also blocked.
+Loopback OpenAI servers and Ollama are unaffected (including remote Ollama URLs).
+The flag is read on each call; unset or any value other than `1`, `true`, `yes`
+or `on` leaves paid calls enabled. Values ignore case and surrounding spaces.
+
 Install [Ollama](https://ollama.com) and start its server. Then:
 
 ```sh

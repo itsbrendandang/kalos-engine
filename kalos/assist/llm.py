@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from kalos.envconfig import env_enum
-from kalos.paid import PaidCallsOff, refuse_paid
+from kalos.paid import PaidCallsOff, no_paid_calls, refuse_paid
 
 if TYPE_CHECKING:
     from kalos.providers.cascade import Cascade
@@ -162,8 +162,11 @@ def model_info(*, probe: bool = False) -> dict[str, object]:
         return {"provider": "openai", "model": openai_model(), "local": openai_is_loopback_url(openai_url()),
                 **(OpenAICompatibleProvider().probe() if probe else {})}
     if provider == "anthropic":
+        from kalos.normalize import credentials_available
+
         model = os.environ.get(_ANTHROPIC_MODEL_ENV) or _DEFAULT_ANTHROPIC_MODEL
-        return {"provider": "anthropic", "model": model, "local": False}
+        return {"provider": "anthropic", "model": model, "local": False,
+                "available": credentials_available() and not no_paid_calls()}
     return {"provider": "none", "model": None, "local": True}
 
 

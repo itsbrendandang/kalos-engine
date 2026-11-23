@@ -50,7 +50,7 @@ from typing import Any
 import pandas as pd
 
 from kalos.data.anonymizer import Anonymizer
-from kalos.paid import refuse_paid
+from kalos.paid import no_paid_calls, refuse_paid
 from kalos.providers.text import strip_thinking
 
 from .config import NormalizeConfig, load_config
@@ -680,7 +680,7 @@ def propose_plan(
     config = config or load_config()
     payload, dropped_identity = build_payload(df, anonymizer=anonymizer, max_sample=config.max_sample)
 
-    if not config.enabled_live:
+    if not config.enabled_live or (config.provider == "anthropic" and no_paid_calls()):
         plan = offline_plan(df, anonymizer=anonymizer, max_sample=config.max_sample)
         plan.provider_path = "offline"
         return plan

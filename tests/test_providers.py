@@ -24,6 +24,7 @@ _ALL_ENV_VARS = (
     "KALOS_OPENAI_MODEL",
     "KALOS_OPENAI_API_KEY",
     "KALOS_OPENAI_TIMEOUT_S",
+    "KALOS_NO_PAID_CALLS",
 )
 
 
@@ -118,8 +119,40 @@ def test_provider_status_is_json_dumps_able():
     assert {entry["name"] for entry in data} == {"anthropic", "bionemo", "ollama", "openai"}
     for entry in data:
         assert set(entry) == {
-            "name", "available", "required_env", "missing_env", "capability", "fallback",
+            "name", "available", "required_env", "missing_env", "capability", "fallback", "disabled_by",
         }
+
+
+@pytest.mark.parametrize("provider", all_providers(), ids=lambda provider: provider.name)
+@pytest.mark.parametrize("flag", ["true", "false"])
+def test_disabled_provider_is_unavailable(monkeypatch, provider, flag):
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", flag)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", "https://example.com/v1")
+    monkeypatch.setenv("KALOS_OPENAI_ALLOW_REMOTE", "true")
+    status = provider.status()
+    assert not status.disabled_by or not status.available
+    assert not status.disabled_by or not provider.available()
+
+
+def test_provider_status_rejects_available_when_disabled():
+    from kalos.providers.base import ProviderStatus
+
+    with pytest.raises(ValueError, match="policy-disabled provider cannot be available"):
+        ProviderStatus("test", True, (), (), "capability", "fallback", ("POLICY_SWITCH",))
+
+
+@pytest.mark.parametrize("flag", ["false", "true"])
+def test_provider_status_with_malformed_openai_url(monkeypatch, flag):
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", "http://[::1")
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", flag)
+    payload = provider_status()
+    assert {entry["name"] for entry in payload} == {"anthropic", "bionemo", "ollama", "openai"}
+    status = next(entry for entry in payload if entry["name"] == "openai")
+    assert status["available"] is (flag == "false")
+    assert status["disabled_by"] == (("KALOS_NO_PAID_CALLS",) if flag == "true" else ())
 
 
 # --- no import-time caching: a key set AFTER import is picked up ------------- #
