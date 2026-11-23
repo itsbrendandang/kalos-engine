@@ -867,57 +867,64 @@ def _analyze_body(
         cv_job = cv_thread.submit(cv_call)
         cv_thread.shutdown(wait=False)
 
-    # Replicate structure + assay noise floor (the "SNR lever", BENCHMARK.md).
-    # Media DoE sheets are frequently heavily replicated because the ASSAY is
-    # noisy, not the process. Scoring/optimizing single measurements rewards
-    # lucky noise spikes - which is why undirected search can out-score BO on
-    # such data. When replicates are present we instead fit the PROPOSAL
-    # surrogate on the reproducible (replicate-averaged) titer and hand the GP
-    # the measured assay noise floor as fixed per-recipe observation variance
-    # (sigma^2 / n_reps, the variance of each recipe mean), so it stops chasing
-    # spikes. This is the configuration the benchmark shows actually beats random
-    # on the real data. Diagnostics (grouped-CV reliability, drivers) stay on the
-    # raw rows - they are already replicate-grouped for leakage and describe the
-    # as-measured signal; only the proposed batch switches to the reproducible
-    # objective.
-    nr = noise_report(X, y, groups=recipe_key)
-    # Is the homoscedastic assumption behind that noise floor actually true? A
-    # diagnostic only: nothing is transformed here, because silently changing the
-    # target's scale would change every number the engine reports.
-    het = heteroscedasticity_report(X, y, groups=recipe_key)
-    best_single = float(y.min() if _minimize else y.max())
-    best_reproducible: float | None = None
-    replicate_aware = False
-    incumbent = best_single
-    # The rows the PROPOSAL surrogate is fit on. They stay the raw rows unless the
-    # replicate-aware swap below happens, and they are what the shape report has
-    # to be handed - see the `gp_shape_report` call for why that matters.
-    X_fit, y_fit = X, y
-    if nr["n_replicated"] >= 1:
-        Xf, yf, _yvar_g, n_reps_g = aggregate_replicates(X, y, groups=recipe_key)
-        best_reproducible = float(yf.min() if _minimize else yf.max())
-        sigma2 = nr["noise_var"]
-        # Only swap in the reproducible objective when there are enough distinct
-        # recipes to fit a meaningful GP and a real, positive noise floor to feed;
-        # otherwise fall through to the unchanged raw fit (still reported honestly).
-        if nr["n_recipes"] >= 6 and np.isfinite(sigma2) and sigma2 > 0:
-            replicate_aware = True
-            per_point_var = float(sigma2) / np.maximum(n_reps_g, 1).astype(float)
+    try:
+        # Replicate structure + assay noise floor (the "SNR lever", BENCHMARK.md).
+        # Media DoE sheets are frequently heavily replicated because the ASSAY is
+        # noisy, not the process. Scoring/optimizing single measurements rewards
+        # lucky noise spikes - which is why undirected search can out-score BO on
+        # such data. When replicates are present we instead fit the PROPOSAL
+        # surrogate on the reproducible (replicate-averaged) titer and hand the GP
+        # the measured assay noise floor as fixed per-recipe observation variance
+        # (sigma^2 / n_reps, the variance of each recipe mean), so it stops chasing
+        # spikes. This is the configuration the benchmark shows actually beats random
+        # on the real data. Diagnostics (grouped-CV reliability, drivers) stay on the
+        # raw rows - they are already replicate-grouped for leakage and describe the
+        # as-measured signal; only the proposed batch switches to the reproducible
+        # objective.
+        nr = noise_report(X, y, groups=recipe_key)
+        # Is the homoscedastic assumption behind that noise floor actually true? A
+        # diagnostic only: nothing is transformed here, because silently changing the
+        # target's scale would change every number the engine reports.
+        het = heteroscedasticity_report(X, y, groups=recipe_key)
+        best_single = float(y.min() if _minimize else y.max())
+        best_reproducible: float | None = None
+        replicate_aware = False
+        incumbent = best_single
+        # The rows the PROPOSAL surrogate is fit on. They stay the raw rows unless the
+        # replicate-aware swap below happens, and they are what the shape report has
+        # to be handed - see the `gp_shape_report` call for why that matters.
+        X_fit, y_fit = X, y
+        if nr["n_replicated"] >= 1:
+            Xf, yf, _yvar_g, n_reps_g = aggregate_replicates(X, y, groups=recipe_key)
+            best_reproducible = float(yf.min() if _minimize else yf.max())
+            sigma2 = nr["noise_var"]
+            # Only swap in the reproducible objective when there are enough distinct
+            # recipes to fit a meaningful GP and a real, positive noise floor to feed;
+            # otherwise fall through to the unchanged raw fit (still reported honestly).
+            if nr["n_recipes"] >= 6 and np.isfinite(sigma2) and sigma2 > 0:
+                replicate_aware = True
+                per_point_var = float(sigma2) / np.maximum(n_reps_g, 1).astype(float)
+                s = Surrogate().fit(
+                    Xf, yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
+                    check_conditioning=True,
+                    restarts=proposal_restarts(len(yf), Xf.shape[1], PROPOSAL_FIT_RESTARTS),
+                    restart_seed=ANALYZE_SEED,
+                )
+                incumbent = best_reproducible
+                X_fit, y_fit = Xf, yf
+
+        if not replicate_aware:
             s = Surrogate().fit(
-                Xf, yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
-                check_conditioning=True,
-                restarts=proposal_restarts(len(yf), Xf.shape[1], PROPOSAL_FIT_RESTARTS),
+                X, y, bounds=bounds, cat_dims=cat_dims, check_conditioning=True,
+                restarts=proposal_restarts(len(y), X.shape[1], PROPOSAL_FIT_RESTARTS),
                 restart_seed=ANALYZE_SEED,
             )
-            incumbent = best_reproducible
-            X_fit, y_fit = Xf, yf
-
-    if not replicate_aware:
-        s = Surrogate().fit(
-            X, y, bounds=bounds, cat_dims=cat_dims, check_conditioning=True,
-            restarts=proposal_restarts(len(y), X.shape[1], PROPOSAL_FIT_RESTARTS),
-            restart_seed=ANALYZE_SEED,
-        )
+    except BaseException:
+        # Hold the analysis slot until this analysis's folds are done, so a failed
+        # proposal fit does not leave CV work running outside the admission limit.
+        if cv_job is not None:
+            cv_job.exception()
+        raise
 
     rep = cv_job.result() if cv_job is not None else cv_call()
     # F05: every batch/lot/plate/date/round/scale grouping is cross-validated

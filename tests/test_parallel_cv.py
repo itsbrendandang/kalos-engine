@@ -118,3 +118,28 @@ def test_daemon_process_fits_folds_here(monkeypatch):
     monkeypatch.setattr(mp, "current_process", lambda: Daemon())
     monkeypatch.setattr(evaluation, "_fold_pool", lambda: pytest.fail("pool started in a daemon"))
     assert _report(monkeypatch, 3)["oof_pred"] == serial["oof_pred"]
+
+
+def test_failed_proposal_fit_waits_for_cv(monkeypatch):
+    import threading
+    import time
+
+    from kalos.core import surrogate
+    from kalos.portal.analysis import _analyze
+
+    done = threading.Event()
+
+    def slow_cv(*_a, **_k):
+        time.sleep(0.5)
+        done.set()
+        raise RuntimeError("cv stopped")
+
+    def broken_fit(*_a, **_k):
+        raise RuntimeError("proposal fit failed")
+
+    monkeypatch.setenv("KALOS_CV_WORKERS", "3")
+    monkeypatch.setattr(evaluation, "grouped_cv_report", slow_cv)
+    monkeypatch.setattr(surrogate.Surrogate, "fit", broken_fit)
+    with pytest.raises(RuntimeError, match="proposal fit failed"):
+        _analyze(_sheet())
+    assert done.is_set()
