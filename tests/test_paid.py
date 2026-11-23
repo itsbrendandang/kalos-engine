@@ -42,7 +42,7 @@ def test_paid_switch_assistant(monkeypatch, anthropic_client, flag):
     assert no_paid_calls() is blocked
     assert model_info()["available"] is not blocked
     assert AnthropicProvider().status().available is not blocked
-    assert AnthropicProvider().status().missing_env == ()
+    assert AnthropicProvider().status().missing_env == (("KALOS_NO_PAID_CALLS",) if blocked else ())
     if blocked:
         with pytest.raises(ModelUnavailable, match="Anthropic calls are disabled by KALOS_NO_PAID_CALLS"):
             AnthropicChat(model="test").complete("system", "prompt")
