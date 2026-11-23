@@ -29,6 +29,40 @@ def grouped_folds(groups: Sequence, n_splits: int = 5) -> Iterator[tuple[np.ndar
     yield from make_splits(np.zeros((n, 1)), np.zeros(n), groups, n_splits=n_splits)
 
 
+def _effective_repeats(groups, n_splits: int, n_repeats: int) -> int:
+    # Mirror make_splits' own "not enough groups" reduction so this degeneracy
+    # check agrees with what make_splits will actually do, rather than carrying
+    # a second copy of its threshold that could drift out of sync.
+    g_str = np.asarray(pd.Series(groups).astype(str).values) if len(groups) else groups
+    n_groups_total = len(np.unique(g_str)) if len(g_str) else 0
+    effective_splits = min(int(n_splits), n_groups_total) if n_groups_total else int(n_splits)
+    degenerate = n_groups_total > 0 and effective_splits >= n_groups_total
+    return 1 if degenerate else max(1, int(n_repeats))
+
+
+def _repeat_seed(random_state: int, r: int) -> int:
+    # A distinct deterministic seed per repeat: simple integer offset from the
+    # caller's random_state, not cryptographic separation - all that matters is
+    # each repeat draws a different shuffled GroupKFold partition, reproducibly.
+    return (int(random_state) + r) & 0x7FFFFFFF
+
+
+def cv_partitions(
+    X, y, groups, n_splits: int = 5, n_repeats: int = 1, random_state: int = 0,
+) -> list[list[tuple[np.ndarray, np.ndarray]]]:
+    """The fold partitions `grouped_cv_report` fits with the same arguments, one
+    list of (train, test) index pairs per repeat, without fitting anything."""
+    groups = np.asarray(groups)
+    out = []
+    for r in range(_effective_repeats(groups, n_splits, n_repeats)):
+        if r == 0:
+            out.append(make_splits(X, y, groups, n_splits=n_splits))
+        else:
+            out.append(make_splits(X, y, groups, n_splits=n_splits, shuffle=True,
+                                   random_state=_repeat_seed(random_state, r)))
+    return out
+
+
 def _oof(
     X, y, groups, n_splits, bounds, cat_dims=None, shuffle: bool = False, random_state: int = 42,
     index_out: list[int] | None = None, fold_out: list[int] | None = None,
@@ -170,14 +204,7 @@ def grouped_cv_report(
         groups = row_hash_groups(pd.DataFrame(X_arr))
     groups = np.asarray(groups)
 
-    # Mirror make_splits' own "not enough groups" reduction so this degeneracy
-    # check agrees with what make_splits will actually do, rather than carrying
-    # a second copy of its threshold that could drift out of sync.
-    g_str = np.asarray(pd.Series(groups).astype(str).values) if len(groups) else groups
-    n_groups_total = len(np.unique(g_str)) if len(g_str) else 0
-    effective_splits = min(int(n_splits), n_groups_total) if n_groups_total else int(n_splits)
-    degenerate = n_groups_total > 0 and effective_splits >= n_groups_total
-    n_repeats_eff = 1 if degenerate else max(1, int(n_repeats))
+    n_repeats_eff = _effective_repeats(groups, n_splits, n_repeats)
 
     preds: list[np.ndarray] = []
     sds: list[np.ndarray] = []
@@ -198,11 +225,7 @@ def grouped_cv_report(
             )
             n_folds0 = n_folds
         else:
-            # A distinct deterministic seed per repeat: simple integer offset
-            # from the caller's random_state, not cryptographic separation -
-            # all that matters is each repeat draws a different shuffled
-            # GroupKFold partition, reproducibly.
-            seed_r = (int(random_state) + r) & 0x7FFFFFFF
+            seed_r = _repeat_seed(random_state, r)
             fold_r = []
             pred, sd, actual, grp, _n_folds = _oof(
                 X_arr, y, groups, n_splits, bounds, cat_dims=cat_dims,

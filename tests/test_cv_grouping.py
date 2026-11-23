@@ -115,8 +115,8 @@ def test_round_index_aligns_to_the_fitted_rows():
     assert round_index_from_attrs(None, idx, pd.Index([0])) is None
 
 
-def _fake_rep(rho: float, n: int = 20) -> dict:
-    return {"spearman": rho, "ci95": (rho - 0.2, rho + 0.2), "n_groups": n}
+def _fake_rep(rho: float, n: int = 20, n_oof: int = 24) -> dict:
+    return {"spearman": rho, "ci95": (rho - 0.2, rho + 0.2), "n_groups": n, "n_oof": n_oof}
 
 
 def test_the_lowest_evaluable_score_binds():
@@ -157,6 +157,106 @@ def test_too_few_groups_is_said_and_a_same_partition_is_not_rerun():
     codes = [w["code"] for w in block["warnings"]]
     assert "too_few_cv_groups" in codes and "near_duplicate_recipes_grouped" in codes
     assert block["candidates"][1]["same_partition_as"] == "replicate_clusters"
+
+
+def _young_campaign(n_base: int, later: tuple[int, ...]):
+    # Upload rows are round 0; each later round adds a couple of runs that rank
+    # against the trend, so a round-0 fold fitted to them predicts round 0 badly.
+    from kalos.core.evaluation import grouped_cv_report
+
+    n = n_base + sum(later)
+    rng = np.random.default_rng(0)
+    X = rng.uniform(size=(n, 2))
+    y = X @ np.array([2.0, -1.0]) + 0.05 * rng.normal(size=n)
+    y[n_base:] = y[n_base:].mean() - (y[n_base:] - y[n_base:].mean())
+    rounds = [0] * n_base + [r + 1 for r, k in enumerate(later) for _ in range(k)]
+    clusters = np.arange(n)
+    calls: list[int] = []
+
+    def run_cv(g):
+        calls.append(len(set(np.asarray(g).tolist())))
+        return grouped_cv_report(X, y, groups=g, n_splits=5, n_boot=200)
+
+    prim = run_cv(clusters)
+    cands = structure_candidates(pd.DataFrame(X, columns=["a", "b"]), exclude=[], round_index=rounds,
+                                 clusters=clusters)
+    assert [c["basis"] for c in cands] == ["campaign_round"]
+    return prim, clusters, cands, run_cv, n, calls
+
+
+@pytest.mark.parametrize("n_base,later", [(30, (2, 1)), (30, (2, 2)), (160, (2, 1)), (160, (2, 2))])
+def test_a_round_too_big_to_train_without_does_not_set_the_score(n_base, later):
+    # QA: 162 -> 163 rows (rounds 160/2/1) moved rho 0.65 -> -0.50; at 160/2/2 every
+    # run is held out and a 3-group interval exists, but round 0 is still predicted
+    # from 4 rows.
+    prim, clusters, cands, run_cv, n, calls = _young_campaign(n_base, later)
+    assert prim["n_oof"] == n and prim["spearman"] > 0.5
+    calls.clear()
+    block, rep, _g, basis = leak_free_cv(prim, clusters, "replicate_clusters", None, cands, run_cv,
+                                         n_exact_recipes=n, n_clusters=n, strict_candidates=True)
+    assert basis == "replicate_clusters" and rep is prim
+    rnd = block["candidates"][1]
+    assert rnd["evaluable"] is False and rnd["used"] is False and rnd["spearman"] is None
+    assert f"leaves {sum(later)} runs to train on" in rnd["reason"]
+    assert any(w["code"] == "structure_not_checkable" and w["column"] == "round" for w in block["warnings"])
+    assert calls == []  # not cross-validated at all
+
+    # The old rule (flag off): the round-0 fold fitted to the few new runs sets the score.
+    _block, old_rep, _g, old_basis = leak_free_cv(prim, clusters, "replicate_clusters", None, cands, run_cv,
+                                                  n_exact_recipes=n, n_clusters=n, strict_candidates=False)
+    assert old_basis == "campaign_round" and old_rep["spearman"] < prim["spearman"] - 0.3
+
+
+@pytest.mark.parametrize("n_base,later", [(12, (6, 6)), (20, (5, 5, 5))])
+def test_a_round_grouping_with_enough_runs_outside_round_0_still_binds(n_base, later):
+    # 20/5/5/5: round 0 outweighs the rest but its fold still trains on 15 runs.
+    prim, clusters, cands, run_cv, n, _calls = _young_campaign(n_base, later)
+    block, rep, _g, basis = leak_free_cv(prim, clusters, "replicate_clusters", None, cands, run_cv,
+                                         n_exact_recipes=n, n_clusters=n, strict_candidates=True)
+    rnd = block["candidates"][1]
+    assert rnd["evaluable"] is True and rnd["reason"] is None
+    assert basis == "campaign_round" and rep["spearman"] < prim["spearman"]
+
+
+def test_a_candidate_whose_cv_skipped_a_fold_does_not_bind():
+    # 6 runs in lots of 3/2/1: no lot outweighs the rest, but holding out the
+    # first lot leaves 3 training runs, so _oof skips that fold and only 3 runs
+    # get a held-out prediction.
+    prim = _fake_rep(0.6, n=6, n_oof=6)
+    cands = [{"basis": "column", "column": "lot", "groups": np.array([0, 0, 0, 1, 1, 2]), "n_levels": 3,
+              "merged_with_replicates": True}]
+    partial = {"spearman": -0.5, "ci95": (float("nan"), float("nan")), "n_groups": 2, "n_oof": 3}
+    block, rep, _g, basis = leak_free_cv(prim, np.arange(6), "replicate_clusters", None, cands, lambda g: partial,
+                                         n_exact_recipes=6, n_clusters=6, strict_candidates=True)
+    assert basis == "replicate_clusters" and rep is prim
+    assert "only 3 of 6 runs were held out" in block["candidates"][1]["reason"]
+
+
+def test_a_full_coverage_candidate_without_an_interval_does_not_bind():
+    # Every resample degenerate (no variation to rank) leaves no interval even with 3+ groups.
+    prim = _fake_rep(0.6)
+    cands = [{"basis": "column", "column": "lot", "groups": np.repeat(np.arange(3), 8), "n_levels": 3,
+              "merged_with_replicates": True}]
+    no_ci = {"spearman": -0.3, "ci95": (float("nan"), float("nan")), "n_groups": 3, "n_oof": 24}
+    block, rep, _g, basis = leak_free_cv(prim, np.arange(24), "replicate_clusters", None, cands, lambda g: no_ci,
+                                         n_exact_recipes=24, n_clusters=24, strict_candidates=True)
+    assert basis == "replicate_clusters" and rep is prim
+    assert block["candidates"][1]["reason"].startswith("no 95% interval")
+
+
+@pytest.mark.parametrize("raw,expected", [(None, True), ("", True), ("1", True), ("On", True), ("off", False),
+                                          ("0", False), ("False", False)])
+def test_strict_candidates_runtime_switch(monkeypatch, raw, expected):
+    from kalos.portal.analysis_parts.cv_grouping import (
+        STRICT_CANDIDATES_ENV,
+        strict_candidates_default,
+    )
+
+    if raw is None:
+        monkeypatch.delenv(STRICT_CANDIDATES_ENV, raising=False)
+    else:
+        monkeypatch.setenv(STRICT_CANDIDATES_ENV, raw)
+    assert strict_candidates_default() is expected
 
 
 def test_campaign_fold_carries_the_round_index():
@@ -233,3 +333,38 @@ def test_plan_fold_attaches_rounds_through_two_folds(tmp_path):
         expected = [0] * 4 + ([1, 1] if k == 2 else []) + [k, k]
         assert df.attrs["kalos_round_index"] == expected
         store.commit_fold(gen, tenant="t")
+
+
+def test_strict_candidates_typo_is_refused(monkeypatch):
+    from kalos.envconfig import ConfigError
+    from kalos.portal.analysis_parts.cv_grouping import (
+        STRICT_CANDIDATES_ENV,
+        strict_candidates_default,
+    )
+    from kalos.portal.config import check_env_settings
+
+    monkeypatch.setenv(STRICT_CANDIDATES_ENV, "flase")
+    with pytest.raises(ConfigError, match=STRICT_CANDIDATES_ENV):
+        strict_candidates_default()
+    with pytest.raises(ConfigError, match=STRICT_CANDIDATES_ENV):
+        check_env_settings()
+
+
+def test_a_shuffled_repeat_that_pairs_round_0_with_another_round_does_not_set_the_score():
+    # 160 + six rounds of 2: the unshuffled partition holds out round 0 alone and
+    # trains on 12, but the shuffled repeat (seed 1) holds out round 0 with one
+    # more round and trains on 10.
+    from kalos.core.evaluation import cv_partitions
+
+    prim, clusters, cands, run_cv, n, calls = _young_campaign(160, (2,) * 6)
+    g = np.asarray(cands[0]["groups"])
+    parts = cv_partitions(np.zeros((n, 1)), np.zeros(n), g, n_splits=5, n_repeats=2)
+    assert min(len(tr) for tr, _te in parts[0]) == 12
+    assert min(len(tr) for tr, _te in parts[1]) == 10
+    calls.clear()
+    block, rep, _g, basis = leak_free_cv(prim, clusters, "replicate_clusters", None, cands, run_cv,
+                                         n_exact_recipes=n, n_clusters=n, strict_candidates=True)
+    rnd = block["candidates"][1]
+    assert basis == "replicate_clusters" and rep is prim
+    assert rnd["evaluable"] is False and "leaves 10 runs to train on" in rnd["reason"]
+    assert calls == []

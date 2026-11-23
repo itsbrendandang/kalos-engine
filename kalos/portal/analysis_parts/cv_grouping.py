@@ -38,13 +38,17 @@ Torch-free; scipy's hierarchical clustering only.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
+from warnings import catch_warnings, simplefilter
 
 import numpy as np
 import pandas as pd
 
+from kalos.portal.analysis_parts.policy import CV_N_REPEATS
+from kalos.portal.analysis_parts.trust_gate import MIN_ROWS_TO_JUDGE
 from kalos.portal.cells import is_null_label
+from kalos.portal.config import STRICT_CV_CANDIDATES_VAR, strict_cv_candidates_setting
 
 # Same number as kalos.core.optimize.NEAR_DUPLICATE_TOL (kept torch-free here;
 # tests/test_cv_grouping.py asserts they agree).
@@ -264,6 +268,69 @@ def candidate_report(basis: str, column: str | None, groups: Any, rep: Mapping[s
     return entry
 
 
+STRICT_CANDIDATES_ENV = STRICT_CV_CANDIDATES_VAR
+Folds = Iterable[Sequence[tuple[np.ndarray, np.ndarray]]]
+
+
+def strict_candidates_default() -> bool:
+    """On unless KALOS_CV_STRICT_CANDIDATES is 0/false/no/off (restores the old rule)."""
+    return strict_cv_candidates_setting()
+
+
+def default_folds(groups: Any) -> Folds:
+    """The partitions the analysis cross-validates a continuous target on."""
+    from kalos.core.evaluation import (
+        cv_partitions,  # deferred: evaluation pulls in torch
+    )
+
+    n = len(groups)
+    return cv_partitions(np.zeros((n, 1)), np.zeros(n), groups, n_splits=5, n_repeats=CV_N_REPEATS)
+
+
+def _training_gap(groups: Any, column: str | None, partitions: Folds) -> str | None:
+    """Why a fold of this candidate's CV trains on too little, or None.
+
+    In a young campaign (upload round 0 plus a couple of runs per round) the fold
+    holding out round 0 is fitted to a handful of runs and predicts most of the
+    sheet, so that one fold sets the candidate's Spearman. A fold passes when it
+    trains on at least MIN_ROWS_TO_JUDGE runs (the fewest the trust gate judges a
+    model on) or on at least as many runs as it holds out. Every partition is
+    checked: a shuffled repeat can pair round 0 with another round."""
+    g = np.asarray(groups).astype(str)
+    for folds in partitions:
+        for tr, te in folds:
+            if len(tr) >= MIN_ROWS_TO_JUDGE or len(tr) >= len(te):
+                continue
+            held = ", ".join(repr(v) for v in sorted(set(g[te].tolist())))
+            return (
+                f"holding out {column!r} {held} ({len(te)} runs) leaves {len(tr)} runs to train on; "
+                f"a fold needs {MIN_ROWS_TO_JUDGE} training runs, or as many as it holds out"
+            )
+    return None
+
+
+def _coverage_gap(rep: Mapping[str, Any], n_runs: int) -> str | None:
+    """Why a candidate's held-out score is not a full held-out score, or None."""
+    n_oof = int(rep.get("n_oof", 0))
+    lo, hi = rep["ci95"]
+    if n_oof < n_runs:
+        return f"only {n_oof} of {n_runs} runs were held out; a fold left too few runs to train on and was skipped"
+    if lo != lo or hi != hi:
+        return "no 95% interval: every bootstrap resample of its held-out runs had no variation to rank"
+    return None
+
+
+def _not_checkable(column: str | None, gap: str) -> dict[str, Any]:
+    return {
+        "code": "structure_not_checkable",
+        "column": column,
+        "message": (
+            f"Holding out each {column!r} group does not give an honest held-out score yet ({gap}), "
+            "so it does not drive the reliability verdict."
+        ),
+    }
+
+
 def leak_free_cv(
     primary_rep: dict[str, Any],
     primary_groups: Any,
@@ -274,6 +341,8 @@ def leak_free_cv(
     *,
     n_exact_recipes: int,
     n_clusters: int,
+    strict_candidates: bool | None = None,
+    folds: Callable[[Any], Folds] = default_folds,
 ) -> tuple[dict[str, Any], dict[str, Any], Any, str]:
     """Cross-validate every candidate grouping and pick the binding one.
 
@@ -281,7 +350,15 @@ def leak_free_cv(
     block, binding report, binding groups, binding basis)`. The binding grouping
     is the evaluable one with the LOWEST held-out Spearman (the primary when
     none is evaluable). Candidates identical to the primary partition are not
-    re-run."""
+    re-run.
+
+    `strict_candidates` (default: `strict_candidates_default()`, on): a
+    candidate counts as evaluable only when every fold `folds(groups)` gives
+    (the partitions `run_cv` fits) trains on enough runs (`_training_gap`),
+    every run was held out once, and its 95% interval exists.
+    Off restores the old rule, where such a candidate could bind on a score
+    from a model fitted to a handful of rows."""
+    strict = strict_candidates_default() if strict_candidates is None else strict_candidates
     entries: list[tuple[str, str | None, Any, dict[str, Any] | None, dict[str, Any]]] = []
     prim_entry = candidate_report(primary_basis, primary_column, primary_groups, primary_rep)
     entries.append((primary_basis, primary_column, primary_groups, primary_rep, prim_entry))
@@ -308,9 +385,27 @@ def leak_free_cv(
                 ),
             })
             continue
+        if strict:
+            with catch_warnings():
+                simplefilter("ignore")  # run_cv repeats make_splits' own warnings
+                gap = _training_gap(g, c["column"], folds(g))
+        else:
+            gap = None
+        if gap is not None:
+            e = candidate_report(c["basis"], c["column"], g, None, n_levels=c["n_levels"],
+                                 merged=c["merged_with_replicates"])
+            e["reason"] = gap
+            entries.append((c["basis"], c["column"], g, None, e))
+            warnings.append(_not_checkable(c["column"], gap))
+            continue
         r = run_cv(g)
         e = candidate_report(c["basis"], c["column"], g, r, n_levels=c["n_levels"],
                              merged=c["merged_with_replicates"])
+        if strict and e["evaluable"]:
+            gap = _coverage_gap(r, len(g))
+            if gap is not None:
+                e.update(evaluable=False, reason=gap)
+                warnings.append(_not_checkable(c["column"], gap))
         entries.append((c["basis"], c["column"], g, r, e))
     evaluable = [t for t in entries if t[4]["evaluable"]]
     binding = min(evaluable, key=lambda t: float(t[3]["spearman"])) if evaluable else entries[0]  # type: ignore[index]
