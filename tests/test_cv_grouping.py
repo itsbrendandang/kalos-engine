@@ -115,8 +115,8 @@ def test_round_index_aligns_to_the_fitted_rows():
     assert round_index_from_attrs(None, idx, pd.Index([0])) is None
 
 
-def _fake_rep(rho: float, n: int = 20) -> dict:
-    return {"spearman": rho, "ci95": (rho - 0.2, rho + 0.2), "n_groups": n}
+def _fake_rep(rho: float, n: int = 20, n_oof: int = 24) -> dict:
+    return {"spearman": rho, "ci95": (rho - 0.2, rho + 0.2), "n_groups": n, "n_oof": n_oof}
 
 
 def test_the_lowest_evaluable_score_binds():
@@ -157,6 +157,53 @@ def test_too_few_groups_is_said_and_a_same_partition_is_not_rerun():
     codes = [w["code"] for w in block["warnings"]]
     assert "too_few_cv_groups" in codes and "near_duplicate_recipes_grouped" in codes
     assert block["candidates"][1]["same_partition_as"] == "replicate_clusters"
+
+
+def test_a_candidate_whose_cv_skipped_a_fold_does_not_bind():
+    # A young campaign: 30 upload rows (round 0), 2 rows in round 1, 1 in round 2.
+    # Holding out round 0 leaves 3 training rows, so that fold is skipped and the
+    # round candidate's score is a rank over 3 held-out rows with no interval.
+    from kalos.core.evaluation import grouped_cv_report
+
+    rng = np.random.default_rng(0)
+    X = rng.uniform(size=(33, 2))
+    y = X @ np.array([2.0, -1.0]) + 0.05 * rng.normal(size=33)
+    y[30:] = y[30:].mean() - (y[30:] - y[30:].mean())  # the 3 new rows rank against the trend
+    rounds = np.array([0] * 30 + [1] * 2 + [2])
+    clusters = np.arange(33)
+
+    def run_cv(g):
+        return grouped_cv_report(X, y, groups=g, n_splits=5, n_boot=200)
+
+    prim = run_cv(clusters)
+    assert prim["n_oof"] == 33 and prim["spearman"] > 0.5
+    cands = structure_candidates(pd.DataFrame(X, columns=["a", "b"]), exclude=[], round_index=rounds.tolist(),
+                                 clusters=clusters)
+    assert [c["basis"] for c in cands] == ["campaign_round"]
+
+    block, rep, _g, basis = leak_free_cv(prim, clusters, "replicate_clusters", None, cands, run_cv,
+                                         n_exact_recipes=33, n_clusters=33)
+    assert basis == "replicate_clusters" and rep is prim
+    rnd = block["candidates"][1]
+    assert rnd["evaluable"] is False and rnd["used"] is False
+    assert "only 3 of 33 runs were held out" in rnd["reason"]
+    assert any(w["code"] == "structure_not_checkable" and w["column"] == "round" for w in block["warnings"])
+
+    # The old rule, kept behind the flag: the 3-row negative score overrides the primary.
+    _block, old_rep, _g, old_basis = leak_free_cv(prim, clusters, "replicate_clusters", None, cands, run_cv,
+                                                  n_exact_recipes=33, n_clusters=33, require_full_coverage=False)
+    assert old_basis == "campaign_round" and old_rep["n_oof"] == 3 and old_rep["spearman"] < 0
+
+
+def test_a_full_coverage_candidate_without_an_interval_does_not_bind():
+    prim = _fake_rep(0.6)
+    cands = [{"basis": "column", "column": "lot", "groups": np.repeat(np.arange(3), 8), "n_levels": 3,
+              "merged_with_replicates": True}]
+    no_ci = {"spearman": -0.3, "ci95": (float("nan"), float("nan")), "n_groups": 2, "n_oof": 24}
+    block, rep, _g, basis = leak_free_cv(prim, np.arange(24), "replicate_clusters", None, cands, lambda g: no_ci,
+                                         n_exact_recipes=24, n_clusters=24)
+    assert basis == "replicate_clusters" and rep is prim
+    assert "too few for an interval" in block["candidates"][1]["reason"]
 
 
 def test_campaign_fold_carries_the_round_index():

@@ -264,6 +264,17 @@ def candidate_report(basis: str, column: str | None, groups: Any, rep: Mapping[s
     return entry
 
 
+def _coverage_gap(rep: Mapping[str, Any], n_runs: int) -> str | None:
+    """Why a candidate's held-out score is not a full held-out score, or None."""
+    n_oof = int(rep.get("n_oof", 0))
+    lo, hi = rep["ci95"]
+    if n_oof < n_runs:
+        return f"only {n_oof} of {n_runs} runs were held out; a fold too large to train without was skipped"
+    if lo != lo or hi != hi:
+        return f"the held-out runs span only {int(rep['n_groups'])} group(s), too few for an interval"
+    return None
+
+
 def leak_free_cv(
     primary_rep: dict[str, Any],
     primary_groups: Any,
@@ -274,6 +285,7 @@ def leak_free_cv(
     *,
     n_exact_recipes: int,
     n_clusters: int,
+    require_full_coverage: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any], Any, str]:
     """Cross-validate every candidate grouping and pick the binding one.
 
@@ -281,7 +293,12 @@ def leak_free_cv(
     block, binding report, binding groups, binding basis)`. The binding grouping
     is the evaluable one with the LOWEST held-out Spearman (the primary when
     none is evaluable). Candidates identical to the primary partition are not
-    re-run."""
+    re-run.
+
+    `require_full_coverage` (default on): a candidate counts as evaluable only
+    when every one of its runs was held out once and its 95% interval exists.
+    Off restores the old rule, where a candidate whose CV skipped a fold could
+    bind on a rank over a few rows."""
     entries: list[tuple[str, str | None, Any, dict[str, Any] | None, dict[str, Any]]] = []
     prim_entry = candidate_report(primary_basis, primary_column, primary_groups, primary_rep)
     entries.append((primary_basis, primary_column, primary_groups, primary_rep, prim_entry))
@@ -311,6 +328,22 @@ def leak_free_cv(
         r = run_cv(g)
         e = candidate_report(c["basis"], c["column"], g, r, n_levels=c["n_levels"],
                              merged=c["merged_with_replicates"])
+        if require_full_coverage and e["evaluable"]:
+            gap = _coverage_gap(r, len(g))
+            if gap is not None:
+                # A fold too big to train without (round 0 of a young campaign) is
+                # skipped, so the score is a rank over a handful of rows - at 3
+                # rows only +/-0.5 and +/-1 exist - and would bind as the lowest.
+                e.update(evaluable=False, reason=gap)
+                warnings.append({
+                    "code": "structure_not_checkable",
+                    "column": c["column"],
+                    "message": (
+                        f"Holding out each {c['column']!r} group does not give an honest held-out score yet "
+                        f"({gap}), so it does not drive the reliability verdict. More runs in the "
+                        f"smaller {c['column']!r} groups are needed."
+                    ),
+                })
         entries.append((c["basis"], c["column"], g, r, e))
     evaluable = [t for t in entries if t[4]["evaluable"]]
     binding = min(evaluable, key=lambda t: float(t[3]["spearman"])) if evaluable else entries[0]  # type: ignore[index]
