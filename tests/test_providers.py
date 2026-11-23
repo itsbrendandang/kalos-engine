@@ -151,8 +151,36 @@ def test_provider_status_with_malformed_openai_url(monkeypatch, flag):
     payload = provider_status()
     assert {entry["name"] for entry in payload} == {"anthropic", "bionemo", "ollama", "openai"}
     status = next(entry for entry in payload if entry["name"] == "openai")
-    assert status["available"] is (flag == "false")
-    assert status["disabled_by"] == (("KALOS_NO_PAID_CALLS",) if flag == "true" else ())
+    assert status["available"] is False
+    assert status["disabled_by"] == (("KALOS_NO_PAID_CALLS",) if flag == "true"
+                                     else ("KALOS_OPENAI_ALLOW_REMOTE",))
+
+
+@pytest.mark.parametrize("url,allow,reason", [
+    ("https://example.com/v1", None, ("KALOS_OPENAI_ALLOW_REMOTE",)),
+    ("https://example.com/v1", "false", ("KALOS_OPENAI_ALLOW_REMOTE",)),
+    ("https://example.com/v1", "true", ()),
+    ("http://localhost:8080/v1", None, ()),
+])
+def test_openai_remote_opt_in_status(monkeypatch, url, allow, reason):
+    from kalos.providers.openai_compatible_provider import OpenAICompatibleProvider
+
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", url)
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", "false")
+    if allow is None:
+        monkeypatch.delenv("KALOS_OPENAI_ALLOW_REMOTE", raising=False)
+    else:
+        monkeypatch.setenv("KALOS_OPENAI_ALLOW_REMOTE", allow)
+    provider = OpenAICompatibleProvider()
+    assert provider.available() is (not bool(reason))
+    status = provider.status()
+    assert status.available is (not bool(reason))
+    assert status.disabled_by == reason
+    assert status.missing_env == ()
+    entry = next(entry for entry in provider_status() if entry["name"] == "openai")
+    assert entry["available"] is status.available
+    assert entry["disabled_by"] == reason
 
 
 # --- no import-time caching: a key set AFTER import is picked up ------------- #

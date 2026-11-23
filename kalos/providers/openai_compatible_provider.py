@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
-from kalos.paid import PaidCallsOff, no_paid_calls, refuse_paid
+from kalos.paid import no_paid_calls
 from kalos.providers.base import ProviderStatus
 from kalos.providers.text import strip_thinking
 
@@ -108,14 +108,18 @@ def selected() -> bool:
     return raw == "openai"
 
 
-def _remote_allowed(url: str) -> bool:
+def _disabled_by(url: str) -> tuple[str, ...]:
     if is_loopback_url(url):
-        return True
-    try:
-        refuse_paid("remote OpenAI-compatible server")
-    except PaidCallsOff:
-        return False
-    return os.environ.get("KALOS_OPENAI_ALLOW_REMOTE", "").strip().lower() in {"1", "true", "yes", "on"}
+        return ()
+    if no_paid_calls():
+        return ("KALOS_NO_PAID_CALLS",)
+    if os.environ.get("KALOS_OPENAI_ALLOW_REMOTE", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return ("KALOS_OPENAI_ALLOW_REMOTE",)
+    return ()
+
+
+def _remote_allowed(url: str) -> bool:
+    return not _disabled_by(url)
 
 
 class OpenAICompatibleProvider:
@@ -124,7 +128,7 @@ class OpenAICompatibleProvider:
     name = "openai"
 
     def available(self) -> bool:
-        return selected() and (not no_paid_calls() or self.local())
+        return selected() and _remote_allowed(openai_url())
 
     def local(self) -> bool:
         return is_loopback_url(openai_url())
@@ -135,7 +139,7 @@ class OpenAICompatibleProvider:
             available=self.available(),
             required_env=(),
             missing_env=(),
-            disabled_by=("KALOS_NO_PAID_CALLS",) if no_paid_calls() and not self.local() else (),
+            disabled_by=_disabled_by(openai_url()),
             capability=_CAPABILITY,
             fallback=_FALLBACK,
         )
