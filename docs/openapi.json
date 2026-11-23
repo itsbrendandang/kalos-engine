@@ -986,7 +986,7 @@
   "paths": {
     "/api/assist/ask": {
       "post": {
-        "description": "A sourced answer from the tenant's own data and the docs, or the guide\nstep when nothing relevant is found or the reply fails the checks.",
+        "description": "A sourced answer from the tenant's own data, the docs and any literature\npack (quoted, never a number), or the guide step when nothing relevant is\nfound or the reply fails the checks.",
         "operationId": "assist_ask_api_assist_ask_post",
         "parameters": [
           {
@@ -1086,7 +1086,7 @@
     },
     "/api/assist/index/status": {
       "get": {
-        "description": "`{provider, model, local, chunks, built_at, building, retriever}`. The\nindex is built on the first call if it does not exist yet.",
+        "description": "`{provider, model, local, chunks, built_at, building, retriever,\nliterature}`. The index is built on the first call if it does not exist yet.",
         "operationId": "assist_index_status_api_assist_index_status_get",
         "parameters": [
           {

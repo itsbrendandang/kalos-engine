@@ -139,8 +139,9 @@ def assist_ask(
     store: CampaignStore = Depends(get_campaign_store),
     model: ChatModel | None = Depends(get_chat_model),
 ) -> JSONResponse:
-    """A sourced answer from the tenant's own data and the docs, or the guide
-    step when nothing relevant is found or the reply fails the checks."""
+    """A sourced answer from the tenant's own data, the docs and any literature
+    pack (quoted, never a number), or the guide step when nothing relevant is
+    found or the reply fails the checks."""
     if assist_disabled() or model is None:
         return assist_disabled_response()
     wait = ratelimit.check(principal.tenant, principal.subject)
@@ -263,8 +264,8 @@ def assist_index_status(
     principal: Principal = Depends(require_scope(READ)),
     store: CampaignStore = Depends(get_campaign_store),
 ) -> JSONResponse:
-    """`{provider, model, local, chunks, built_at, building, retriever}`. The
-    index is built on the first call if it does not exist yet."""
+    """`{provider, model, local, chunks, built_at, building, retriever,
+    literature}`. The index is built on the first call if it does not exist yet."""
     return JSONResponse(_status(store, principal.tenant, build=True, probe=probe))
 
 

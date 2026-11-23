@@ -274,7 +274,9 @@ def test_index_status_and_rebuild(env, monkeypatch):
     tc, store, _fake = env
     _seed(store, "acme", A_SECRET)
     status = tc.get("/api/assist/index/status", headers=H("a-read")).json()
-    assert set(status) == {"provider", "model", "local", "chunks", "built_at", "building", "retriever", "fast_model", "quality_model", "escalation"}
+    assert set(status) == {"provider", "model", "local", "chunks", "built_at", "building", "retriever",
+                           "fast_model", "quality_model", "escalation",  # the two cascade tiers
+                           "literature"}  # paper packs: items indexed and files refused
     assert probes == []
     checked = tc.get("/api/assist/index/status?probe=true", headers=H("a-read")).json()
     assert checked["reachable"] is True and checked["model_present"] is False
@@ -525,3 +527,36 @@ def test_a_guide_only_sentence_cannot_add_permission_words(word):
     guide = {"step": "Record 2 results for round 1", "why": "1 of 3 started runs have a result.",
              "why_it_matters": "Every result you enter sharpens the next suggestions."}
     assert check_answer(f"Record 2 results for round 1, {word} [G].", [], guide).answer == ""
+
+
+# --- literature (KALOS_ASSIST_LITERATURE_DIR) ------------------------------------------------------------------- #
+
+
+
+def test_ask_cites_a_paper_with_its_citation_and_drops_its_numbers(env, tmp_path, monkeypatch):
+    tc, store, fake = env
+    lit = tmp_path / "lit"
+    lit.mkdir()
+    (lit / "pack.json").write_text(json.dumps({"format": "kalos-literature/1", "items": [{
+        "id": "lit-001", "citation": "Smith J. Glutamine feeds in CHO fed-batch. 2020",
+        "location": "Smith2020 pages 2-3",
+        "excerpt": "Lower glutamine feeds reduced ammonia. Titer rose by 30% at day 14."}]}))
+    monkeypatch.setenv("KALOS_ASSIST_LITERATURE_DIR", str(lit))
+    cid = _seed(store, "acme", A_SECRET)
+
+    def reply(prompt: str) -> str:
+        s = fake.label_of(prompt, "glutamine feeds reduced ammonia")
+        return (f"Smith 2020 reports that lower glutamine feeds reduced ammonia [{s}]. "
+                f"In that paper titer rose by 30% [{s}].")
+
+    fake.reply = reply
+    r = tc.post("/api/assist/ask", json={"question": "What do papers say about glutamine feeds and ammonia?",
+                                         "campaign_id": cid}, headers=H("a-read"))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["answer"] == "Smith 2020 reports that lower glutamine feeds reduced ammonia."
+    assert body["checks"]["drop_reasons"] == {"literature_number": 1}
+    assert body["sources"][0]["kind"] == "literature" and body["sources"][0]["citation"].startswith("Smith J.")
+    assert fake.prompts[-1].startswith("Sources marked (literature")
+    status = tc.get("/api/assist/index/status", headers=H("a-read")).json()
+    assert status["literature"] == {"items": 1, "refused": []}

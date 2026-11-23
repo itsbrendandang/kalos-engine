@@ -17,9 +17,10 @@ It can answer questions about things Kalos has recorded for your tenant:
 - each round: the recipes that were started and the results you recorded;
 - the model checks, the inputs that went with the target, and the proposed recipes (predicted values are always called predicted);
 - the last sheet Kalos could not analyse, and why;
-- these docs (`docs/*.md`), and skill files (`SKILL.md`) when the engine has them.
+- these docs (`docs/*.md`), and skill files (`SKILL.md`) when the engine has them;
+- excerpts from papers, when the engine has been given a literature pack ([Paper excerpts](#paper-excerpts)). It quotes them; it never takes a number from them.
 
-It cannot answer anything else. It does not know about other labs, the literature, or your instruments.
+It cannot answer anything else. It does not know about other labs, papers it was not given, or your instruments.
 
 ## What it will not do
 
@@ -104,6 +105,7 @@ With `anthropic` both tiers are the same remote model, and the same checks apply
 | `KALOS_ASSIST_EMBED_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | local embedding model, used only if already on disk |
 | `KALOS_ASSIST_DOCS_DIR` | the repo's `docs/` | docs to include in the index |
 | `KALOS_ASSIST_SKILLS_DIR` | unset | an extra folder of `<slug>/SKILL.md` files to include |
+| `KALOS_ASSIST_LITERATURE_DIR` | unset | a folder of literature packs (`*.json`) to include; see [Paper excerpts](#paper-excerpts) |
 | `KALOS_ASSIST_INDEX_ON_WRITE` | `1` | `0` stops the index refresh after uploads and results |
 
 If the model does not answer, Ask returns 503 with code `assist_provider_unavailable`. Nothing else is affected.
@@ -200,6 +202,28 @@ To answer a question, the assistant first finds the pieces of your data that mat
 
 Install: `uv sync --extra assist` (BM25 and the .docx export). The `assist-embed` extra is optional.
 
+## Paper excerpts
+
+Set `KALOS_ASSIST_LITERATURE_DIR` to a folder of literature packs and Ask can quote papers next to your own records. A pack is a JSON file:
+
+```json
+{"format": "kalos-literature/1", "producer": "research-agent", "exported_at": "2026-11-22T12:00:00Z",
+ "items": [{"id": "lit-3f2a9c01d4e7", "citation": "Smith J. Glutamine feeds in CHO perfusion. 2020",
+            "title": "Glutamine feeds in CHO perfusion", "doi": "10.1/x", "location": "Smith2020 pages 2-3",
+            "excerpt": "Lower glutamine feeds reduced ammonia. ..."}]}
+```
+
+A pack holds only text read from papers, with their citations: no model answer, summary or result. Any tool can write one; the research-agent tool (a separate project) writes one from the papers its runs read with `ra kalos export-literature <folder>`.
+
+- **A paper is not your data.** An answer sentence that cites a paper may contain no number except the paper's publication year; one that does is removed (`checks.drop_reasons.literature_number`). Every number Kalos shows is still computed from your data.
+- **A paper supports no claim word.** Like a tenant skill file, paper text can be quoted but never makes *causes*, *will*, *increases* and the other claim words acceptable.
+- Only when a paper was retrieved does the prompt gain a short note: name the paper by author and year, never state a paper's number, never say a paper's result holds for this campaign. Prompts without a paper are unchanged.
+- A source from a paper has `kind: "literature"` and a `citation` (citation and page location) beside the usual fields.
+- Your own records rank first: a paper must match the question clearly better to come before them, as docs do.
+- Checked when indexed: the format, field names (no unknown fields), lengths (excerpt at most 4000 characters, at most 5000 items per file, files at most 20 MB, at most 20 files). A file that fails is left out whole and listed in the index status under `literature.refused` with the reason.
+- The folder is read by the engine for **every tenant**. Put in it only papers every tenant may see. With `anthropic`, retrieved excerpts are sent to Anthropic like any other source.
+- Intent routing (`kalos/assist/tasks.py`) still lists "literature" as out of scope; Ask does not use it.
+
 ## Semantic search
 
 `GET /api/campaigns/{id}/search?q=...&k=10` (read scope) ranks one campaign's own records for a query: each started run (recipe, measured result, the reason given when it was started), each row of the uploaded sheet, each column and what Kalos did with it, the reason recorded with each corrected result, and the assistant index chunks for the campaign (sheet, findings, rounds, model checks, proposals). Nothing is generated: every hit is a record quoted from the campaign, so there is nothing to validate but the order.
@@ -253,8 +277,8 @@ All routes use the caller's tenant. Read scope unless marked.
 | Route | What it returns |
 |---|---|
 | `GET /api/assist/next?campaign_id=` | `{state, step, why, why_it_matters, action_route, blockers[{code, text, why}], campaign_id}` |
-| `POST /api/assist/ask` `{question, campaign_id?}` | `{answer, sources[{kind, id, quote, campaign_id}], abstained, next, provider_path, offline_fallback, model, attempts, checks?}` |
-| `GET /api/assist/index/status` | `{provider, model, local, fast_model?, quality_model?, escalation?, chunks, built_at, building, retriever}` |
+| `POST /api/assist/ask` `{question, campaign_id?}` | `{answer, sources[{kind, id, quote, campaign_id, citation?}], abstained, next, provider_path, offline_fallback, model, attempts, checks?}` (`citation` on `literature` sources only) |
+| `GET /api/assist/index/status` | `{provider, model, local, fast_model?, quality_model?, escalation?, chunks, built_at, building, retriever, literature{items, refused[{file, reason}]}}` |
 | `POST /api/assist/index/rebuild` (write) | the status. Writes an audit row. |
 | `POST /api/campaigns/{id}/setup/suggestions` `{target?}` | `{campaign_id, status, applied: false, notice, target, role_vocabulary, suggestions[{column, role, roles_key, unit, unit_source, reason, reason_source, confidence, evidence, engine_role, requires_confirmation}], roles_draft, confidence_basis, provider_path, offline_fallback, model, attempts}` |
 | `GET /api/campaigns/{id}/search?q=&k=` | `{campaign_id, retriever, model, fallback_reason, n_documents, hits[{kind, id, title, text, score}]}` |
