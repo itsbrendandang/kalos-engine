@@ -9,13 +9,13 @@ import contextlib
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 
-from kalos.core.evaluation import cv_uses_pool
-
 
 class BackgroundCV:
     def __init__(self, call: Callable[[], dict]):
         self._call = call
         self._job: Future | None = None
+        from kalos.core.evaluation import cv_uses_pool  # torch: not at import time
+
         if cv_uses_pool():
             runner = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kalos-cv")
             self._job = runner.submit(call)
