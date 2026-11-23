@@ -1,5 +1,5 @@
 ### Changed - cross-validation fits run in parallel, alongside the proposal fit
 
-- Grouped-CV fold fits run in a pool of worker processes (`KALOS_CV_WORKERS`, default one per CPU; `1` fits them in the engine process). The analysis starts them before the proposal surrogate is fit, so the two overlap.
-- Every fold fit runs on one torch thread with the torch RNG reset per fold, so the CV numbers are the same for any worker count and any `KALOS_TORCH_THREADS`. They can differ slightly from earlier releases, which fit folds on the engine's thread budget (on the example sheet, held-out predictions by up to 0.02 and the CV Spearman by 0.003).
-- On `examples/synthetic_bioprocess` (8 CPUs), two-repeat grouped CV takes 38 s instead of 88 s, and a full analysis 185-294 s instead of 361-384 s (two runs each), with the same numbers.
+- Grouped-CV fold fits run in a pool of worker processes (`KALOS_CV_WORKERS`, default the CPUs divided by `KALOS_TORCH_THREADS`; `1` fits them in the engine process). The analysis starts them before the proposal surrogate is fit, so the two overlap; a benchmark's daemon worker runs them after the proposal fit, in its own process.
+- Each worker fits on the engine's torch thread count from the engine's torch RNG state, so the outputs are byte-identical to fitting the folds one after another: `scripts/trust_golden.py` output matches main on all 8 sheets at 1 and 4 torch threads.
+- On `examples/synthetic_bioprocess` (8 CPUs, one run each), a full analysis took 65 s instead of 68 s at 1 torch thread and 155 s instead of 166 s at 4; the 8 trust-golden sheets took 40 s instead of 43 s.
