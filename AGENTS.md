@@ -72,6 +72,9 @@ These rules are non-negotiable. If a task conflicts with one, stop and ask; do n
 - When unsure between options, ask. State uncertainty; don't fake confidence.
 
 ## 11. Assistant review and work lanes
+- Skills live in .agents/skills/, with mirrors in .claude/skills/. Read
+  .agents/skills/kalos-assist-review/SKILL.md for review work. Follow
+  .agents/skills/README.md to keep mirrors and skills-lock.json in sync.
 - Backend lane: this repo. UI lane: the separate kalos-web repo. Coordinate through
   the HTTP contract guarded by tests/test_web_contract.py. Change it deliberately
   and note contract changes in the PR for the web lane.
