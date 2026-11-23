@@ -98,8 +98,12 @@ def _fit_folds(tasks: list[tuple]) -> list[tuple[np.ndarray, np.ndarray]]:
     """Every fold's (mean, sd), in fold order: in the worker pool when there is
     more than one worker, else in this process. The analysis fits its proposal
     surrogate while the pool runs, so with a pool no fit runs in this process. A
-    pool that breaks (a worker killed) is dropped and the folds rerun here."""
-    if tasks and cv_workers() > 1:
+    pool that breaks (a worker killed) is dropped and the folds rerun here. A
+    daemon process (a benchmark's pool worker) cannot start workers, so it fits
+    the folds here."""
+    import multiprocessing as mp
+
+    if tasks and cv_workers() > 1 and not mp.current_process().daemon:
         try:
             return list(_fold_pool().map(_fit_fold_in_worker, tasks))
         except BrokenProcessPool:

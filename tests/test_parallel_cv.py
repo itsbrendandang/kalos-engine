@@ -106,3 +106,15 @@ def test_fold_labels_name_each_fold(monkeypatch):
         expected.extend([k] * len(te))
     assert rep["oof_repeats"][0]["fold"] == expected
     assert len(set(expected)) == rep["n_folds"] > 1
+
+
+def test_daemon_process_fits_folds_here(monkeypatch):
+    import multiprocessing as mp
+
+    class Daemon:
+        daemon = True
+
+    serial = _report(monkeypatch, 1)
+    monkeypatch.setattr(mp, "current_process", lambda: Daemon())
+    monkeypatch.setattr(evaluation, "_fold_pool", lambda: pytest.fail("pool started in a daemon"))
+    assert _report(monkeypatch, 3)["oof_pred"] == serial["oof_pred"]
