@@ -11,7 +11,6 @@ import gc
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import numpy as np
@@ -45,6 +44,7 @@ from kalos.portal.analysis_parts.anonymize import (
     anonymize_sheet_rejection,
     sheet_alias,
 )
+from kalos.portal.analysis_parts.background_cv import cv_alongside
 from kalos.portal.analysis_parts.categorical_effects import (
     categorical_effects,
 )
@@ -339,7 +339,6 @@ def _analyze_body(
         # second import site. Skipped by a preflight, which returns before any
         # of these names is used.
         from kalos.core.evaluation import (
-            cv_workers,
             group_mean_baseline_spearman,
             group_mean_margin,
             grouped_cv_report,
@@ -858,16 +857,8 @@ def _analyze_body(
         grouped_cv_report,
         X, y, groups=groups, n_splits=5, bounds=bounds, cat_dims=cat_dims, n_repeats=CV_N_REPEATS,
     )
-    # The CV folds fit in worker processes (`cv_workers`), so they start first and
-    # the proposal surrogate is fit here while they run. With one worker the CV
-    # runs in this thread after the proposal fit, as before.
-    cv_job = None
-    if cv_workers() > 1:
-        cv_thread = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kalos-cv")
-        cv_job = cv_thread.submit(cv_call)
-        cv_thread.shutdown(wait=False)
-
-    try:
+    # The CV folds start first and the proposal surrogate is fit while they run.
+    with cv_alongside(cv_call) as cv:
         # Replicate structure + assay noise floor (the "SNR lever", BENCHMARK.md).
         # Media DoE sheets are frequently heavily replicated because the ASSAY is
         # noisy, not the process. Scoring/optimizing single measurements rewards
@@ -919,14 +910,8 @@ def _analyze_body(
                 restarts=proposal_restarts(len(y), X.shape[1], PROPOSAL_FIT_RESTARTS),
                 restart_seed=ANALYZE_SEED,
             )
-    except BaseException:
-        # Hold the analysis slot until this analysis's folds are done, so a failed
-        # proposal fit does not leave CV work running outside the admission limit.
-        if cv_job is not None:
-            cv_job.exception()
-        raise
 
-    rep = cv_job.result() if cv_job is not None else cv_call()
+    rep = cv.result()
     # F05: every batch/lot/plate/date/round/scale grouping is cross-validated
     # too, and the LOWEST held-out score drives everything below (trust,
     # conformal, calibration). Run after the primary CV so a sheet with no such

@@ -143,3 +143,21 @@ def test_failed_proposal_fit_waits_for_cv(monkeypatch):
     with pytest.raises(RuntimeError, match="proposal fit failed"):
         _analyze(_sheet())
     assert done.is_set()
+
+
+def test_daemon_analysis_runs_cv_after_the_proposal_fit(monkeypatch):
+    import multiprocessing as mp
+    import threading
+
+    from kalos.portal.analysis_parts.background_cv import cv_alongside
+
+    class Daemon:
+        daemon = True
+
+    ran_in: list[str] = []
+    monkeypatch.setenv("KALOS_CV_WORKERS", "3")
+    monkeypatch.setattr(mp, "current_process", lambda: Daemon())
+    with cv_alongside(lambda: ran_in.append(threading.current_thread().name) or {}) as cv:
+        assert ran_in == []
+    cv.result()
+    assert ran_in == [threading.current_thread().name]
