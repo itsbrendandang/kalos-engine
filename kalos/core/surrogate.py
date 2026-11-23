@@ -404,7 +404,6 @@ class Surrogate:
 
     def __init__(self) -> None:
         self.model: SingleTaskGP | MixedSingleTaskGP | None = None
-        self._y: np.ndarray | None = None
         self._X: torch.Tensor | None = None
         # Integer indices of categorical columns in X (None/empty = all continuous).
         # Recorded so the acquisition path knows which dims to enumerate.
@@ -507,7 +506,6 @@ class Surrogate:
             if diag["condition_warning"]:
                 log.warning("GP kernel matrix is ill-conditioned (cond %.1e)", diag["condition_number"])
         self.fit_diagnostics = diag
-        self._y = ya
         # Keep the raw (untransformed) training inputs so the noisy-EI acquisition
         # can use them as X_baseline; the model applies its input transform to them
         # internally at acquisition time.
@@ -540,8 +538,3 @@ class Surrogate:
             mean = post.mean.squeeze(-1).cpu().numpy()
             std = post.variance.clamp_min(1e-12).sqrt().squeeze(-1).cpu().numpy()
         return mean, std
-
-    @property
-    def best_f(self) -> float:
-        assert self._y is not None
-        return float(self._y.max())
