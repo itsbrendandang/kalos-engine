@@ -207,8 +207,10 @@ def test_a_round_too_big_to_train_without_does_not_set_the_score(n_base, later):
     assert old_basis == "campaign_round" and old_rep["spearman"] < prim["spearman"] - 0.3
 
 
-def test_a_round_grouping_with_enough_runs_outside_round_0_still_binds():
-    prim, clusters, cands, run_cv, n, _calls = _young_campaign(12, (6, 6))
+@pytest.mark.parametrize("n_base,later", [(12, (6, 6)), (20, (5, 5, 5))])
+def test_a_round_grouping_with_enough_runs_outside_round_0_still_binds(n_base, later):
+    # 20/5/5/5: round 0 outweighs the rest but its fold still trains on 15 runs.
+    prim, clusters, cands, run_cv, n, _calls = _young_campaign(n_base, later)
     block, rep, _g, basis = leak_free_cv(prim, clusters, "replicate_clusters", None, cands, run_cv,
                                          n_exact_recipes=n, n_clusters=n, strict_candidates=True)
     rnd = block["candidates"][1]
