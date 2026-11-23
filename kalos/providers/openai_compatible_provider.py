@@ -121,7 +121,7 @@ class OpenAICompatibleProvider:
     name = "openai"
 
     def available(self) -> bool:
-        return selected()
+        return selected() and (self.local() or not no_paid_calls())
 
     def local(self) -> bool:
         return is_loopback_url(openai_url())

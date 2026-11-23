@@ -38,6 +38,10 @@ class ProviderStatus:
     fallback: str
     disabled_by: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        if self.disabled_by and self.available:
+            raise ValueError("a policy-disabled provider cannot be available")
+
 
 class Provider(Protocol):
     """An external-provider slot: a name and a credential check.

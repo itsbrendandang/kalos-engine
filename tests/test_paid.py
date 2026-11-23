@@ -88,9 +88,17 @@ def test_openai_status_reports_paid_policy(monkeypatch, url, disabled):
 
     monkeypatch.setenv("KALOS_NO_PAID_CALLS", "true")
     monkeypatch.setenv("KALOS_OPENAI_BASE_URL", url)
-    status = OpenAICompatibleProvider().status()
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("KALOS_OPENAI_ALLOW_REMOTE", "true")
+    provider = OpenAICompatibleProvider()
+    status = provider.status()
+    assert provider.available() is (not bool(disabled))
+    assert status.available is (not bool(disabled))
     assert status.missing_env == ()
     assert status.disabled_by == disabled
+    info = model_info()
+    if "available" in info:
+        assert info["available"] is (not bool(disabled))
 
 
 def test_anthropic_status_without_key(monkeypatch):

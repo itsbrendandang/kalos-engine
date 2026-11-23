@@ -123,6 +123,26 @@ def test_provider_status_is_json_dumps_able():
         }
 
 
+@pytest.mark.parametrize("provider", all_providers(), ids=lambda provider: provider.name)
+@pytest.mark.parametrize("flag", ["true", "false"])
+def test_disabled_provider_is_unavailable(monkeypatch, provider, flag):
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", flag)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", "https://example.com/v1")
+    monkeypatch.setenv("KALOS_OPENAI_ALLOW_REMOTE", "true")
+    status = provider.status()
+    assert not status.disabled_by or not status.available
+    assert not status.disabled_by or not provider.available()
+
+
+def test_provider_status_rejects_available_when_disabled():
+    from kalos.providers.base import ProviderStatus
+
+    with pytest.raises(ValueError, match="policy-disabled provider cannot be available"):
+        ProviderStatus("test", True, (), (), "capability", "fallback", ("POLICY_SWITCH",))
+
+
 # --- no import-time caching: a key set AFTER import is picked up ------------- #
 
 def test_key_set_after_import_is_picked_up(monkeypatch):
