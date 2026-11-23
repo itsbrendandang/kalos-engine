@@ -285,6 +285,16 @@ def test_revise_refuses_a_number_change(env):
     _refused(tc, d["draft_id"], lambda t: t.replace("| 4.2 | Measured |", "| 4.2 | Predicted |").replace("| 3.1 | Predicted |", "| 3.1 | Measured |") + "")
 
 
+def test_digits_inside_record_ids_are_not_numbers_the_draft_held():
+    """CI flake: run id `2f30d1c7...` let a revision add "Hold for 30 minutes"."""
+    old = "Recipe A: `run:2f30d1c727e54c73af31191040a91619`\n| A | Methanol | 2.5 | Setting |\n"
+    draft = sop.Draft(draft_id="sop_x", version=1, title="t", template="custom", campaign_id="cmp_x",
+                      created_at="", created_by="", sha256="", model=None, source_ids=[], markdown=old)
+    assert any("number" in r for r in sop.check_revision(draft, old + "Hold for 30 minutes.\n"))
+    assert sop._numbers(old) == {"2.5"}
+    assert sop._numbers("sheet:" + "ab" * 32 + " proposal:0.1 on 2026-11-23") == {"0.1", "2026", "11", "23"}
+
+
 def test_revise_refuses_a_missing_or_changed_header(env):
     tc, store = env
     cid, _ = _seed(store)

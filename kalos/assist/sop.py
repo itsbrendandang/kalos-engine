@@ -48,6 +48,14 @@ TEMPLATES: tuple[Template, ...] = ("batch_recipe", "media_prep", "custom")
 DRAFT_ID_RE = re.compile(r"sop_[0-9a-f]{32}")
 PLACEHOLDER_RE = re.compile(r"\[\[TO FILL: ([a-z][a-z0-9_]*)\]\]")
 NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+# Record ids (`run:<hex>`, `sheet:<sha256>`, any long hex token) hold digits that
+# are not numbers: "run:2f30d1c7..." must not let a revision add "30".
+_HEX_ID_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{16,}\b")
+
+
+def _numbers(text: str) -> set[str]:
+    """The numbers in `text`, ignoring the digits inside record ids."""
+    return set(NUMBER_RE.findall(_HEX_ID_RE.sub(" ", text)))
 HEADER_PREFIX = "> Draft prepared with Kalos from campaign records on "
 HEADER_SUFFIX = ". Not reviewed. Not an approved procedure."
 MAX_FILL_CHARS = 500
@@ -761,7 +769,7 @@ def check_revision(previous: Draft, revised: str) -> list[str]:
     new_rows = Counter(ln for ln in new.splitlines() if ln.startswith("|"))
     if any(new_rows[row] < n for row, n in old_rows.items()):
         reasons.append("a table row was changed or removed")
-    new_numbers = set(NUMBER_RE.findall(new)) - set(NUMBER_RE.findall(old))
+    new_numbers = _numbers(new) - _numbers(old)
     if new_numbers:
         reasons.append(f"{len(new_numbers)} number(s) appear that the previous version did not hold")
     old_tokens, new_tokens = Counter(PLACEHOLDER_RE.findall(old)), Counter(PLACEHOLDER_RE.findall(new))
