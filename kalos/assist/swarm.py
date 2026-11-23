@@ -19,7 +19,7 @@ from kalos.assist.chat import (
     split_sentences,
 )
 from kalos.assist.index import Hit
-from kalos.assist.llm import AnthropicChat, ChatModel, OllamaChat
+from kalos.assist.llm import AnthropicChat, ChatModel, OllamaChat, OpenAICompatChat
 from kalos.assist.paths import tenant_dir
 
 MAX_CACHED_REPLIES = 128
@@ -49,6 +49,8 @@ def group_model(role: Role, base: ChatModel) -> ChatModel:
     name = os.environ.get(f"KALOS_ASSIST_MODEL_{role.key.upper()}", "").strip()
     if name and isinstance(base, OllamaChat):
         return OllamaChat(model=name, url=base.url)
+    if name and isinstance(base, OpenAICompatChat):
+        return OpenAICompatChat(model=name, url=base.url)
     if name and isinstance(base, AnthropicChat):
         return AnthropicChat(model=name)
     return base

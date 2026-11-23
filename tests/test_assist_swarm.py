@@ -1,6 +1,8 @@
 """Round review uses fake models only; no network."""
 from __future__ import annotations
 
+import json
+
 import pytest
 from test_assist_routes import H, env  # noqa: F401
 
@@ -87,13 +89,14 @@ def test_group_override(monkeypatch):
     assert group_model(ROLES[1], AnthropicChat("normal")).model == "normal"
 
 
-@pytest.mark.parametrize("provider", ["ollama", "anthropic"])
+@pytest.mark.parametrize("provider", ["ollama", "openai", "anthropic"])
 @pytest.mark.parametrize("override", ["", "critic-test"])
 def test_role_model_with_cascade(monkeypatch, provider, override):
     monkeypatch.setenv("KALOS_LLM_PROVIDER", provider)
     monkeypatch.setenv("KALOS_LLM_FAST_MODEL", "fast-test")
     monkeypatch.setenv("KALOS_LLM_QUALITY_MODEL", "quality-test")
     monkeypatch.setenv("KALOS_ASSIST_ANTHROPIC_MODEL", "anthropic-test")
+    monkeypatch.setenv("KALOS_OPENAI_MODEL", "openai-test")
     monkeypatch.setenv("KALOS_ASSIST_MODEL_CRITIC", override)
     base = get_chat_model()
     assert base is not None
@@ -101,12 +104,39 @@ def test_role_model_with_cascade(monkeypatch, provider, override):
     cascade = cascade_for(selected)
     assert cascade is not None
     assert cascade.tiers_for("answer") == [("quality", selected)]
-    expected = "quality-test" if provider == "ollama" else "anthropic-test"
+    expected = {"ollama": "quality-test", "openai": "openai-test", "anthropic": "anthropic-test"}[provider]
     assert selected.model == (override or expected)
     if isinstance(selected, OllamaChat):
         assert cascade.fast.model == "fast-test"
     else:
         assert cascade.fast is selected
+
+
+@pytest.mark.parametrize("role", ROLES[1:])
+@pytest.mark.parametrize("host", ["localhost", "192.0.2.1"])
+def test_openai_role_override_and_paid_guard(monkeypatch, role, host):
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", f"http://{host}:8080/v1")
+    monkeypatch.setenv("KALOS_OPENAI_MODEL", "qwen-base")
+    monkeypatch.setenv("KALOS_OPENAI_ALLOW_REMOTE", "true")
+    monkeypatch.setenv(f"KALOS_ASSIST_MODEL_{role.key.upper()}", f"qwen-{role.key}")
+    calls = []
+
+    def respond(request, timeout):
+        calls.append(json.loads(request.data))
+        return b'{"choices":[{"message":{"content":"answer"}}]}'
+
+    monkeypatch.setattr("kalos.providers.openai_compatible_provider._open", respond)
+    base = get_chat_model()
+    selected = group_model(role, base)
+    assert selected.url == base.url
+    if host != "localhost":
+        with pytest.raises(ModelUnavailable, match="KALOS_NO_PAID_CALLS"):
+            selected.complete("system", "prompt")
+        assert calls == []
+        monkeypatch.setenv("KALOS_NO_PAID_CALLS", "0")
+    assert selected.complete("system", "prompt") == "answer"
+    assert calls[0]["model"] == f"qwen-{role.key}"
 
 
 def test_routes(env, monkeypatch):  # noqa: F811 - imported pytest fixture

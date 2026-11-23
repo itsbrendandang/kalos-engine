@@ -1090,6 +1090,16 @@
         "operationId": "assist_index_status_api_assist_index_status_get",
         "parameters": [
           {
+            "in": "query",
+            "name": "probe",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Probe",
+              "type": "boolean"
+            }
+          },
+          {
             "in": "header",
             "name": "authorization",
             "required": false,
