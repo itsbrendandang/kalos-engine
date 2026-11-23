@@ -183,6 +183,23 @@ def test_openai_remote_opt_in_status(monkeypatch, url, allow, reason):
     assert entry["disabled_by"] == reason
 
 
+@pytest.mark.parametrize("provider", ["none", "ollama", "anthropic", "openai"])
+@pytest.mark.parametrize("paid_off", ["false", "true"])
+def test_openai_opt_in_reason_only_when_selected(monkeypatch, provider, paid_off):
+    from kalos.providers.openai_compatible_provider import OpenAICompatibleProvider
+
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", provider)
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", "https://example.com/v1")
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", paid_off)
+    monkeypatch.delenv("KALOS_OPENAI_ALLOW_REMOTE", raising=False)
+    status = OpenAICompatibleProvider().status()
+    assert status.available is False
+    if paid_off == "true":
+        assert status.disabled_by == ("KALOS_NO_PAID_CALLS",)
+    else:
+        assert status.disabled_by == (("KALOS_OPENAI_ALLOW_REMOTE",) if provider == "openai" else ())
+
+
 # --- no import-time caching: a key set AFTER import is picked up ------------- #
 
 def test_key_set_after_import_is_picked_up(monkeypatch):

@@ -139,7 +139,10 @@ class OpenAICompatibleProvider:
             available=self.available(),
             required_env=(),
             missing_env=(),
-            disabled_by=_disabled_by(openai_url()),
+            disabled_by=tuple(
+                reason for reason in _disabled_by(openai_url())
+                if reason != "KALOS_OPENAI_ALLOW_REMOTE" or selected()
+            ),
             capability=_CAPABILITY,
             fallback=_FALLBACK,
         )
