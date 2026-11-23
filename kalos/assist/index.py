@@ -11,6 +11,11 @@ What goes in (each chunk keeps its source kind and id, so an answer can cite it)
     and the latest refusal. id = the section key.
   - `doc`: docs/*.md split by heading. id = `docs/<file>.md`.
   - `skill`: SKILL.md files, when a skills folder exists. id = the slug.
+  - `literature`: verbatim paper excerpts with their citations, from the
+    `kalos-literature/1` packs in KALOS_ASSIST_LITERATURE_DIR (written, for
+    example, by research-agent's `ra kalos export-literature`). id = the item
+    id. Third-party text: quotable, never support for a claim word, and an
+    answer sentence citing it may hold no number (kalos/assist/chat.py).
 
 Retrieval is local only. With `sentence-transformers` installed AND its model
 already on disk (`KALOS_ASSIST_EMBED_MODEL`, loaded with local_files_only, never
@@ -18,7 +23,8 @@ downloaded), chunks are ranked by embedding similarity; otherwise by the
 built-in Okapi BM25 (`_bm25_scores`), so it always works offline.
 
 Stored under `<state dir>/assist/<tenant key>/index.json` (+ `vectors.npz`).
-The index is grouped (one group per campaign, one for docs, one for skills),
+The index is grouped (one group per campaign, one each for docs, skills and
+literature),
 each with a fingerprint; `refresh` rebuilds only groups whose fingerprint
 changed, which is how uploads and recorded results update it incrementally.
 The index is derived data: deleting it loses nothing.
@@ -67,7 +73,7 @@ class Chunk:
     """One retrievable piece of text and where it came from."""
 
     chunk_id: str  # stable: hash of kind, source id and text
-    kind: str  # sheet | finding | round | analysis | doc | skill
+    kind: str  # sheet | finding | round | analysis | doc | skill | literature
     source_id: str  # the id a source reference carries (see module docstring)
     campaign_id: str | None
     title: str
@@ -580,6 +586,114 @@ def skill_chunks(files: list[Path]) -> list[Chunk]:
     return out
 
 
+LITERATURE_FORMAT = "kalos-literature/1"
+MAX_LITERATURE_FILES = 20
+MAX_LITERATURE_FILE_BYTES = 20 * 1024 * 1024
+MAX_LITERATURE_ITEMS = 5000
+_YEAR = re.compile(r"(?<!\d)(1[89]\d\d|20\d\d)(?!\d)")
+
+
+def literature_dir() -> Path | None:
+    raw = os.environ.get("KALOS_ASSIST_LITERATURE_DIR")
+    path = Path(raw) if raw else None
+    return path if path is not None and path.is_dir() else None
+
+
+def _literature_files() -> list[Path]:
+    d = literature_dir()
+    return sorted(p for p in d.glob("*.json") if p.is_file() and not p.is_symlink()) if d else []
+
+
+def _literature_models() -> tuple[Any, Any]:
+    from typing import Annotated, Literal
+
+    from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+    Short = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+
+    class Item(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_.:-]{1,80}$")]
+        citation: Short
+        title: Short | None = None
+        doi: Short | None = None
+        location: Annotated[str, StringConstraints(max_length=200)] = ""
+        excerpt: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)]
+
+    class Pack(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        format: Literal["kalos-literature/1"]
+        exported_at: Short | None = None
+        producer: Short | None = None
+        note: Annotated[str, StringConstraints(max_length=2000)] | None = None
+        items: list[Item] = Field(max_length=MAX_LITERATURE_ITEMS)
+
+    return Pack, Item
+
+
+def _pieces(text: str, limit: int = MAX_CHUNK_CHARS) -> list[str]:
+    """`text` cut at sentence ends into pieces of at most `limit` characters."""
+    out: list[str] = []
+    piece = ""
+    for sentence in re.split(r"(?<=[.!?])\s+", text.strip()):
+        while len(sentence) > limit:
+            if piece:
+                out.append(piece.strip())
+                piece = ""
+            out.append(sentence[:limit])
+            sentence = sentence[limit:]
+        if piece and len(piece) + len(sentence) + 1 > limit:
+            out.append(piece.strip())
+            piece = ""
+        piece += sentence + " "
+    if piece.strip():
+        out.append(piece.strip())
+    return out
+
+
+def literature_chunks(files: list[Path]) -> tuple[list[Chunk], list[dict[str, str]]]:
+    """Chunks from `kalos-literature/1` packs, and the files refused with why.
+    A refused file is left out whole: nothing in it is half-read."""
+    from dataclasses import replace
+
+    from pydantic import ValidationError
+
+    pack_model, _ = _literature_models()
+    chunks: list[Chunk] = []
+    refused: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for i, path in enumerate(files):
+        if i >= MAX_LITERATURE_FILES:
+            refused.append({"file": path.name, "reason": f"more than {MAX_LITERATURE_FILES} files"})
+            continue
+        if path.stat().st_size > MAX_LITERATURE_FILE_BYTES:
+            refused.append({"file": path.name, "reason": "file larger than 20 MB"})
+            continue
+        try:
+            pack = pack_model.model_validate_json(path.read_bytes())
+        except ValidationError as exc:
+            first = exc.errors()[0]
+            where = ".".join(str(p) for p in first.get("loc", ()))
+            refused.append({"file": path.name, "reason": f"not a {LITERATURE_FORMAT} pack ({where}: "
+                                                         f"{first.get('type')})"})
+            continue
+        for item in pack.items:
+            if item.id in seen:
+                continue
+            seen.add(item.id)
+            title = item.citation + (f" - {item.location}" if item.location else "")
+            for body in _pieces(item.excerpt):
+                chunks.append(replace(_chunk("literature", item.id, None, title[:300], body),
+                                      trusted_text=False))
+    return chunks, refused
+
+
+def literature_years(chunk: Chunk) -> set[str]:
+    """Publication years in a literature chunk's citation: a sentence may name
+    them ("Smith 2020 reports ...") although it may state no other number."""
+    return set(_YEAR.findall(chunk.title)) if chunk.kind == "literature" else set()
+
+
 # --- the index ------------------------------------------------------------------- #
 
 
@@ -676,6 +790,8 @@ class AssistIndex:
         docs, skills = _doc_files(), _skill_files()
         groups["docs"] = (_files_fingerprint(docs), lambda: doc_chunks(docs))
         groups["skills"] = (_files_fingerprint(skills), lambda: skill_chunks(skills))
+        lit = _literature_files()
+        groups["literature"] = (_files_fingerprint(lit), lambda: literature_chunks(lit))
         return groups
 
     def refresh(self, *, campaign_ids: Iterable[str] | None = None, force: bool = False) -> dict[str, Any]:
@@ -701,8 +817,11 @@ class AssistIndex:
                     if old is not None and old.get("fingerprint") == fp and not force:
                         new_groups[key] = old
                         continue
-                    chunks = loader()
+                    loaded = loader()
+                    chunks, refused = loaded if isinstance(loaded, tuple) else (loaded, None)
                     new_groups[key] = {"fingerprint": fp, "chunks": [asdict(c) for c in chunks]}
+                    if refused:
+                        new_groups[key]["refused"] = refused
                     changed += 1
                 live = {c["chunk_id"] for g in new_groups.values() for c in g["chunks"]}
                 retriever = "bm25"
@@ -744,8 +863,13 @@ class AssistIndex:
     # -- reading
     def _status_of(self, data: dict[str, Any]) -> dict[str, Any]:
         groups = data.get("groups") or {}
+        lit = groups.get("literature") or {}
         return {
             "chunks": sum(len(g.get("chunks") or []) for g in groups.values()),
+            "literature": {
+                "items": len({c["source_id"] for c in lit.get("chunks") or []}),
+                "refused": lit.get("refused") or [],
+            },
             "built_at": data.get("built_at"),
             "building": str(self.path) in _BUILDING,
             "retriever": data.get("retriever") or ("embeddings" if self._embedder else "bm25"),
@@ -765,7 +889,7 @@ class AssistIndex:
         self, query: str, *, campaign_id: str | None = None, k: int = 6, min_similarity: float = 0.35,
     ) -> list[Hit]:
         """The `k` most relevant chunks. Campaign chunks are limited to
-        `campaign_id` when given (docs and skills always qualify). A chunk is
+        `campaign_id` when given (docs, skills and literature always qualify). A chunk is
         relevant only if it shares a word with the question (BM25) or, with
         embeddings, its similarity reaches `min_similarity`. Empty when nothing
         is relevant: the caller abstains."""
@@ -786,7 +910,7 @@ class AssistIndex:
         corpus = [tokens(c.title + " " + c.text) for c in pool]
         scores = _bm25_scores(corpus, q)
         # The lab's own records first: a doc must match clearly better to outrank them.
-        scores = scores * np.asarray([1.0 if c.kind in ("doc", "skill") else 1.6 for c in pool])
+        scores = scores * np.asarray([1.0 if c.kind in ("doc", "skill", "literature") else 1.6 for c in pool])
         qset = set(q)
         hits = [
             Hit(pool[i], float(scores[i]))
@@ -819,6 +943,8 @@ __all__ = [
     "Hit",
     "campaign_chunks",
     "doc_chunks",
+    "literature_chunks",
+    "literature_years",
     "load_embedder",
     "refresh_quietly",
     "skill_chunks",

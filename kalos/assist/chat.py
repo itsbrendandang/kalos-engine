@@ -10,6 +10,9 @@ reply, `check_answer`:
    (`nonexistent_citation`);
 2. drops every sentence with a number that none of its cited texts contains
    (`mismatched_number`);
+   A sentence citing a `literature` source (a paper excerpt, not the lab's
+   data) may hold no number at all except the paper's publication year
+   (`literature_number`): numbers shown are the lab's, computed by Kalos;
 3. drops every sentence naming a column-like identifier (`titer_g_L`) that is
    not in the campaign's columns or its cited texts (`unknown_column`), or a
    run id that its cited texts do not contain (`nonexistent_citation`);
@@ -35,7 +38,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from kalos.assist.guide import guide_text
-from kalos.assist.index import Hit, strip_terms, tokens
+from kalos.assist.index import Hit, literature_years, strip_terms, tokens
 from kalos.assist.llm import ChatModel, ModelUnavailable
 from kalos.assist.words import banned_in, unsupported_claims
 from kalos.providers.cascade import (
@@ -74,6 +77,13 @@ Rules:
 - Plain words, short sentences, at most 6 sentences."""
 
 
+# Added to the prompt only when a paper excerpt was retrieved, so prompts
+# without literature stay exactly as they were.
+LITERATURE_NOTE = """Sources marked (literature: ...) are excerpts from published papers, not this lab's data.
+- Name the paper by first author and year when you use one ("Smith 2020 reports ...").
+- Never state a number from a paper, and never say a paper's result holds for this campaign."""
+
+
 @dataclass
 class Labelled:
     label: str
@@ -87,8 +97,9 @@ def build_prompt(question: str, hits: list[Hit], guide: dict[str, Any]) -> tuple
         f"[{item.label}] ({item.hit.chunk.kind}: {item.hit.chunk.title})\n{item.hit.chunk.text}"
         for item in labelled
     ]
+    note = LITERATURE_NOTE + "\n\n" if any(i.hit.chunk.kind == "literature" for i in labelled) else ""
     prompt = (
-        "Sources:\n\n" + "\n\n".join(blocks)
+        note + "Sources:\n\n" + "\n\n".join(blocks)
         + f"\n\n[G] Guide step: {guide_text(guide)}"
         + f"\n\nQuestion: {question.strip()}\n\nAnswer:"
     )
@@ -239,7 +250,13 @@ def check_answer(reply: str, labelled: list[Labelled], guide: dict[str, Any]) ->
         if claims:
             rejected.append(f"claim not in the sources: {', '.join(claims)}")
             continue
+        papers = [table[lab].chunk for lab in labels if lab != "G" and table[lab].chunk.kind == "literature"]
+        years = set().union(*(_numbers(y) for c in papers for y in literature_years(c)))
+        if papers and _value_numbers(bare) - years:
+            drop("literature_number")  # numbers shown are the lab's, never a paper's
+            continue
         allowed_numbers = set().union(*(_numbers(t) for t in cited)) if cited else set()
+        allowed_numbers |= years
         if _value_numbers(bare) - allowed_numbers:
             drop("mismatched_number")
             continue
@@ -254,6 +271,8 @@ def check_answer(reply: str, labelled: list[Labelled], guide: dict[str, Any]) ->
                     "kind": chunk.kind, "id": chunk.source_id,
                     "quote": _quote(chunk.text, bare), "campaign_id": chunk.campaign_id,
                 }
+                if chunk.kind == "literature":
+                    sources[key]["citation"] = chunk.title
     return Checked(" ".join(kept), list(sources.values()), rejected, dropped, reasons)
 
 
@@ -305,6 +324,7 @@ def ask(question: str, hits: list[Hit], guide: dict[str, Any], model: ChatModel 
 
 
 __all__ = [
+    "LITERATURE_NOTE",
     "MAX_QUESTION_CHARS",
     "SYSTEM_PROMPT",
     "abstain",
