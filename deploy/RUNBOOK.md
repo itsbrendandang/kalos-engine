@@ -38,6 +38,9 @@ Env knobs that exist because this deployment found the need for them:
 - `KALOS_TORCH_THREADS` (engine) - the compose passes 0 (= do not pin) by
   default: the bare-metal 4-thread pin measured a >12x pathological slowdown
   (47s -> 600s+) on this image's linux-aarch64 torch/OpenBLAS build.
+- `KALOS_CV_WORKERS` (engine) - worker processes for cross-validation fold
+  fits, default one per CPU; `1` fits them in the engine process. The numbers
+  do not depend on it.
 - One analysis at a time is enforced engine-side (HTTP 503 + Retry-After when
   busy; kalos/portal/busy.py): a client that gives up cannot stack orphaned
   fits against its own retry.

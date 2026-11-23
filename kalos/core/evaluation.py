@@ -9,7 +9,11 @@ more precise than it is, so `grouped_cv_report` is the number to quote.
 """
 from __future__ import annotations
 
+import os
+import threading
 from collections.abc import Iterator, Sequence
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 
 import numpy as np
 import pandas as pd
@@ -17,6 +21,90 @@ from scipy.stats import norm, spearmanr
 
 from .splits import make_splits, row_hash_groups
 from .surrogate import Surrogate
+
+# Cross-validation fold fits are independent, so they run in a pool of worker
+# processes (KALOS_CV_WORKERS, default: one per CPU; 1 = in this process, one
+# after another). Each worker runs torch on one thread. The pool is created on
+# first use and reused, so the cost of starting workers is paid once per process.
+_POOL: ProcessPoolExecutor | None = None
+_POOL_LOCK = threading.Lock()
+
+
+def cv_workers() -> int:
+    raw = os.environ.get("KALOS_CV_WORKERS", "").strip()
+    if not raw:
+        return os.cpu_count() or 1
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        raise ValueError(f"KALOS_CV_WORKERS must be a whole number; got {raw!r}") from None
+
+
+def _fold_pool() -> ProcessPoolExecutor:
+    global _POOL
+    with _POOL_LOCK:
+        if _POOL is None:
+            import multiprocessing as mp
+
+            _POOL = ProcessPoolExecutor(
+                max_workers=cv_workers(), mp_context=mp.get_context("spawn"),
+            )
+        return _POOL
+
+
+def _reset_fold_pool() -> None:
+    global _POOL
+    with _POOL_LOCK:
+        if _POOL is not None:
+            _POOL.shutdown(wait=False, cancel_futures=True)
+        _POOL = None
+
+
+def _fit_fold(X_tr, y_tr, X_te, bounds, cat_dims):
+    """Fit one fold and return its held-out predictive mean and sd. The torch RNG
+    is reset per fold, so a fit that falls back to random restarts draws the same
+    numbers whichever process runs it and whatever ran there before."""
+    import torch
+
+    with torch.random.fork_rng():
+        torch.manual_seed(0)
+        s = Surrogate().fit(X_tr, y_tr, bounds=bounds, cat_dims=cat_dims)
+        mean, std = s.posterior(X_te, observation_noise=True)
+    return np.asarray(mean).ravel(), np.asarray(std).ravel()
+
+
+def _fit_fold_in_worker(task):
+    import torch
+
+    torch.set_num_threads(1)
+    return _fit_fold(*task)
+
+
+def _fit_folds_here(tasks: list[tuple]) -> list[tuple[np.ndarray, np.ndarray]]:
+    """The folds in this process, on one torch thread like the workers: the
+    optimizer's path depends on the thread count, so this keeps the numbers the
+    same for any worker count and any KALOS_TORCH_THREADS."""
+    import torch
+
+    prev = torch.get_num_threads()
+    torch.set_num_threads(1)
+    try:
+        return [_fit_fold(*task) for task in tasks]
+    finally:
+        torch.set_num_threads(prev)
+
+
+def _fit_folds(tasks: list[tuple]) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Every fold's (mean, sd), in fold order: in the worker pool when there is
+    more than one worker, else in this process. The analysis fits its proposal
+    surrogate while the pool runs, so with a pool no fit runs in this process. A
+    pool that breaks (a worker killed) is dropped and the folds rerun here."""
+    if tasks and cv_workers() > 1:
+        try:
+            return list(_fold_pool().map(_fit_fold_in_worker, tasks))
+        except BrokenProcessPool:
+            _reset_fold_pool()
+    return _fit_folds_here(tasks)
 
 
 def grouped_folds(groups: Sequence, n_splits: int = 5) -> Iterator[tuple[np.ndarray, np.ndarray]]:
@@ -68,15 +156,19 @@ def _oof(
     # what actually ships.
     if bounds is None and len(X):
         bounds = np.vstack([X.min(axis=0), X.max(axis=0)])
-    pred, sd, actual, grp, n_folds = [], [], [], [], 0
-    for tr, te in make_splits(X, y, groups, n_splits=n_splits, shuffle=shuffle, random_state=random_state):
-        if len(tr) < 4 or len(te) < 1:
-            continue
-        n_folds += 1
-        s = Surrogate().fit(X[tr], y[tr], bounds=bounds, cat_dims=cat_dims)
-        mean, std = s.posterior(X[te], observation_noise=True)
-        pred.extend(np.asarray(mean).ravel().tolist())
-        sd.extend(np.asarray(std).ravel().tolist())
+    folds = [
+        (tr, te)
+        for tr, te in make_splits(
+            X, y, groups, n_splits=n_splits, shuffle=shuffle, random_state=random_state,
+        )
+        if len(tr) >= 4 and len(te) >= 1
+    ]
+    fits = _fit_folds([(X[tr], y[tr], X[te], bounds, cat_dims) for tr, te in folds])
+    pred, sd, actual, grp = [], [], [], []
+    n_folds = len(folds)
+    for (_tr, te), (mean, std) in zip(folds, fits):
+        pred.extend(mean.tolist())
+        sd.extend(std.tolist())
         actual.extend(y[te].tolist())
         grp.extend(groups[te].tolist())
         if index_out is not None:

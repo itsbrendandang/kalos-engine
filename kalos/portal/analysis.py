@@ -6,10 +6,12 @@ so the model never "predicts" titer from another measured output (leakage).
 from __future__ import annotations
 
 import contextlib
+import functools
 import gc
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import numpy as np
@@ -337,6 +339,7 @@ def _analyze_body(
         # second import site. Skipped by a preflight, which returns before any
         # of these names is used.
         from kalos.core.evaluation import (
+            cv_workers,
             group_mean_baseline_spearman,
             group_mean_margin,
             grouped_cv_report,
@@ -851,9 +854,72 @@ def _analyze_body(
     # honest grouped cross-validation: pooled out-of-fold predictions + a
     # group-level bootstrap CI, all through the single leakage-checked splitter.
     _progress("fitting", 0.15)
-    rep = grouped_cv_report(
+    cv_call = functools.partial(
+        grouped_cv_report,
         X, y, groups=groups, n_splits=5, bounds=bounds, cat_dims=cat_dims, n_repeats=CV_N_REPEATS,
     )
+    # The CV folds fit in worker processes (`cv_workers`), so they start first and
+    # the proposal surrogate is fit here while they run. With one worker the CV
+    # runs in this thread after the proposal fit, as before.
+    cv_job = None
+    if cv_workers() > 1:
+        cv_thread = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kalos-cv")
+        cv_job = cv_thread.submit(cv_call)
+        cv_thread.shutdown(wait=False)
+
+    # Replicate structure + assay noise floor (the "SNR lever", BENCHMARK.md).
+    # Media DoE sheets are frequently heavily replicated because the ASSAY is
+    # noisy, not the process. Scoring/optimizing single measurements rewards
+    # lucky noise spikes - which is why undirected search can out-score BO on
+    # such data. When replicates are present we instead fit the PROPOSAL
+    # surrogate on the reproducible (replicate-averaged) titer and hand the GP
+    # the measured assay noise floor as fixed per-recipe observation variance
+    # (sigma^2 / n_reps, the variance of each recipe mean), so it stops chasing
+    # spikes. This is the configuration the benchmark shows actually beats random
+    # on the real data. Diagnostics (grouped-CV reliability, drivers) stay on the
+    # raw rows - they are already replicate-grouped for leakage and describe the
+    # as-measured signal; only the proposed batch switches to the reproducible
+    # objective.
+    nr = noise_report(X, y, groups=recipe_key)
+    # Is the homoscedastic assumption behind that noise floor actually true? A
+    # diagnostic only: nothing is transformed here, because silently changing the
+    # target's scale would change every number the engine reports.
+    het = heteroscedasticity_report(X, y, groups=recipe_key)
+    best_single = float(y.min() if _minimize else y.max())
+    best_reproducible: float | None = None
+    replicate_aware = False
+    incumbent = best_single
+    # The rows the PROPOSAL surrogate is fit on. They stay the raw rows unless the
+    # replicate-aware swap below happens, and they are what the shape report has
+    # to be handed - see the `gp_shape_report` call for why that matters.
+    X_fit, y_fit = X, y
+    if nr["n_replicated"] >= 1:
+        Xf, yf, _yvar_g, n_reps_g = aggregate_replicates(X, y, groups=recipe_key)
+        best_reproducible = float(yf.min() if _minimize else yf.max())
+        sigma2 = nr["noise_var"]
+        # Only swap in the reproducible objective when there are enough distinct
+        # recipes to fit a meaningful GP and a real, positive noise floor to feed;
+        # otherwise fall through to the unchanged raw fit (still reported honestly).
+        if nr["n_recipes"] >= 6 and np.isfinite(sigma2) and sigma2 > 0:
+            replicate_aware = True
+            per_point_var = float(sigma2) / np.maximum(n_reps_g, 1).astype(float)
+            s = Surrogate().fit(
+                Xf, yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
+                check_conditioning=True,
+                restarts=proposal_restarts(len(yf), Xf.shape[1], PROPOSAL_FIT_RESTARTS),
+                restart_seed=ANALYZE_SEED,
+            )
+            incumbent = best_reproducible
+            X_fit, y_fit = Xf, yf
+
+    if not replicate_aware:
+        s = Surrogate().fit(
+            X, y, bounds=bounds, cat_dims=cat_dims, check_conditioning=True,
+            restarts=proposal_restarts(len(y), X.shape[1], PROPOSAL_FIT_RESTARTS),
+            restart_seed=ANALYZE_SEED,
+        )
+
+    rep = cv_job.result() if cv_job is not None else cv_call()
     # F05: every batch/lot/plate/date/round/scale grouping is cross-validated
     # too, and the LOWEST held-out score drives everything below (trust,
     # conformal, calibration). Run after the primary CV so a sheet with no such
@@ -1377,59 +1443,8 @@ def _analyze_body(
     drv.sort(key=lambda d: -abs(float(d["rho"])))
     drv = drv[:DRIVER_TOP_K]
 
-    # Replicate structure + assay noise floor (the "SNR lever", BENCHMARK.md).
-    # Media DoE sheets are frequently heavily replicated because the ASSAY is
-    # noisy, not the process. Scoring/optimizing single measurements rewards
-    # lucky noise spikes - which is why undirected search can out-score BO on
-    # such data. When replicates are present we instead fit the PROPOSAL
-    # surrogate on the reproducible (replicate-averaged) titer and hand the GP
-    # the measured assay noise floor as fixed per-recipe observation variance
-    # (sigma^2 / n_reps, the variance of each recipe mean), so it stops chasing
-    # spikes. This is the configuration the benchmark shows actually beats random
-    # on the real data. Diagnostics (grouped-CV reliability, drivers) stay on the
-    # raw rows - they are already replicate-grouped for leakage and describe the
-    # as-measured signal; only the proposed batch switches to the reproducible
-    # objective.
-    nr = noise_report(X, y, groups=recipe_key)
-    # Is the homoscedastic assumption behind that noise floor actually true? A
-    # diagnostic only: nothing is transformed here, because silently changing the
-    # target's scale would change every number the engine reports.
-    het = heteroscedasticity_report(X, y, groups=recipe_key)
-    best_single = float(y.min() if _minimize else y.max())
-    best_reproducible: float | None = None
-    replicate_aware = False
-    incumbent = best_single
-    # The rows the PROPOSAL surrogate is fit on. They stay the raw rows unless the
-    # replicate-aware swap below happens, and they are what the shape report has
-    # to be handed - see the `gp_shape_report` call for why that matters.
-    X_fit, y_fit = X, y
-    if nr["n_replicated"] >= 1:
-        Xf, yf, _yvar_g, n_reps_g = aggregate_replicates(X, y, groups=recipe_key)
-        best_reproducible = float(yf.min() if _minimize else yf.max())
-        sigma2 = nr["noise_var"]
-        # Only swap in the reproducible objective when there are enough distinct
-        # recipes to fit a meaningful GP and a real, positive noise floor to feed;
-        # otherwise fall through to the unchanged raw fit (still reported honestly).
-        if nr["n_recipes"] >= 6 and np.isfinite(sigma2) and sigma2 > 0:
-            replicate_aware = True
-            per_point_var = float(sigma2) / np.maximum(n_reps_g, 1).astype(float)
-            s = Surrogate().fit(
-                Xf, yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
-                check_conditioning=True,
-                restarts=proposal_restarts(len(yf), Xf.shape[1], PROPOSAL_FIT_RESTARTS),
-                restart_seed=ANALYZE_SEED,
-            )
-            incumbent = best_reproducible
-            X_fit, y_fit = Xf, yf
-
     # proposed next batch, with predicted target + uncertainty + a why per row
     _progress("proposing", 0.8)
-    if not replicate_aware:
-        s = Surrogate().fit(
-            X, y, bounds=bounds, cat_dims=cat_dims, check_conditioning=True,
-            restarts=proposal_restarts(len(y), X.shape[1], PROPOSAL_FIT_RESTARTS),
-            restart_seed=ANALYZE_SEED,
-        )
     # In-flight recipes, encoded into this design so the acquisition treats them
     # as taken. Encoding can drop rows (a recipe naming an unknown categorical
     # level cannot be placed in the design at all), so the count actually used is
