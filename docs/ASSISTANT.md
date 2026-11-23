@@ -88,7 +88,7 @@ With `anthropic` both tiers are the same remote model, and the same checks apply
 | `KALOS_OPENAI_MODEL` | unset | the model id the OpenAI-compatible server exposes; must be set to select a model |
 | `KALOS_OPENAI_API_KEY` | unset | optional bearer key for the OpenAI-compatible server |
 | `KALOS_OPENAI_ALLOW_REMOTE` | unset (off) | set to `1`, `true`, `yes` or `on` to allow a non-loopback OpenAI server; prompts and any bearer key go to that host |
-| `KALOS_NO_PAID_CALLS` | unset (off) | `1`, `true`, `yes` or `on` blocks remote OpenAI chat and probes even with remote access enabled; loopback servers still work |
+| `KALOS_NO_PAID_CALLS` | unset (off) | `1`, `true`, `yes` or `on` blocks Anthropic and remote OpenAI calls, even with credentials or remote access enabled; local servers still work |
 | `KALOS_OPENAI_TIMEOUT_S` | `120` | how long to wait for an answer |
 | `KALOS_OLLAMA_URL` | `http://localhost:11434` | where Ollama listens |
 | `KALOS_LLM_FAST_MODEL` | `phi4-mini` | the fast Ollama model |
@@ -109,6 +109,14 @@ With `anthropic` both tiers are the same remote model, and the same checks apply
 If the model does not answer, Ask returns 503 with code `assist_provider_unavailable`. Nothing else is affected.
 
 ## Run a local Qwen model
+
+Set `KALOS_NO_PAID_CALLS=true` to prevent billable model calls. Anthropic
+assistant chat refuses with a message naming the flag, and its status reports
+`available: false`. Anthropic normalization uses the offline plan without
+contacting the API. Remote OpenAI-compatible chat and probes are also blocked.
+Loopback OpenAI servers and Ollama are unaffected (including remote Ollama URLs).
+The flag is read on each call; unset or any value other than `1`, `true`, `yes`
+or `on` leaves paid calls enabled. Values ignore case and surrounding spaces.
 
 Install [Ollama](https://ollama.com) and start its server. Then:
 

@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from kalos.envconfig import env_enum
+from kalos.paid import no_paid_calls
 
 if TYPE_CHECKING:
     from kalos.providers.cascade import Cascade
@@ -123,6 +124,8 @@ class AnthropicChat:
     def complete(self, system: str, prompt: str) -> str:
         from kalos.normalize import credentials_available
 
+        if no_paid_calls():
+            raise ModelUnavailable("Anthropic calls are disabled by KALOS_NO_PAID_CALLS")
         if not credentials_available():
             raise ModelUnavailable("no Anthropic API key is set")
         try:
@@ -156,8 +159,11 @@ def model_info(*, probe: bool = False) -> dict[str, object]:
         return {"provider": "openai", "model": openai_model(), "local": openai_is_loopback_url(openai_url()),
                 **(OpenAICompatibleProvider().probe() if probe else {})}
     if provider == "anthropic":
+        from kalos.normalize import credentials_available
+
         model = os.environ.get(_ANTHROPIC_MODEL_ENV) or _DEFAULT_ANTHROPIC_MODEL
-        return {"provider": "anthropic", "model": model, "local": False}
+        return {"provider": "anthropic", "model": model, "local": False,
+                "available": credentials_available() and not no_paid_calls()}
     return {"provider": "none", "model": None, "local": True}
 
 

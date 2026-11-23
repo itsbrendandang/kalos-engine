@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from kalos.envconfig import env_enum
+from kalos.paid import no_paid_calls
 from kalos.providers.ollama_provider import DEFAULT_MODEL as _DEFAULT_OLLAMA_MODEL
 
 _MODEL_ENV_VAR = "KALOS_NORMALIZE_MODEL"
@@ -58,7 +59,7 @@ class NormalizeConfig:
         misconfigured/unreachable server is caught by the live call's own
         health-check + try/except, not here).
       - `provider == "anthropic"`: `credentials_available()` at load time,
-        unchanged from before `provider` existed.
+        unless `KALOS_NO_PAID_CALLS` disables hosted calls.
     The Anthropic API key itself is never stored on this object - only the
     boolean presence check.
     """
@@ -131,7 +132,7 @@ def load_config() -> NormalizeConfig:
     elif provider == "ollama":
         enabled_live = True
     else:
-        enabled_live = credentials_available()
+        enabled_live = credentials_available() and not no_paid_calls()
 
     return NormalizeConfig(
         model=model,

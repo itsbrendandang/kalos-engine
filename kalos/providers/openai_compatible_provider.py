@@ -30,6 +30,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
+from kalos.paid import no_paid_calls
 from kalos.providers.base import ProviderStatus
 from kalos.providers.text import strip_thinking
 
@@ -109,7 +110,7 @@ def _remote_allowed(url: str) -> bool:
         return True
     truthy = {"1", "true", "yes", "on"}
     return (
-        os.environ.get("KALOS_NO_PAID_CALLS", "").strip().lower() not in truthy
+        not no_paid_calls()
         and os.environ.get("KALOS_OPENAI_ALLOW_REMOTE", "").strip().lower() in truthy
     )
 
