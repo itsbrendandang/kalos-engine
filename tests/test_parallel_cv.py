@@ -94,3 +94,15 @@ def test_analysis_numbers_do_not_change_with_parallel_cv(monkeypatch):
     parallel = _analyze(_sheet())
     for key in keys:
         assert parallel[key] == serial[key], key
+
+
+def test_fold_labels_name_each_fold(monkeypatch):
+    from kalos.core.splits import make_splits, row_hash_groups
+
+    rep = _report(monkeypatch, 3)
+    X, y = _data()
+    expected = []
+    for k, (_tr, te) in enumerate(make_splits(X, y, row_hash_groups(X), n_splits=5)):
+        expected.extend([k] * len(te))
+    assert rep["oof_repeats"][0]["fold"] == expected
+    assert len(set(expected)) == rep["n_folds"] > 1

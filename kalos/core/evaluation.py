@@ -166,7 +166,7 @@ def _oof(
     fits = _fit_folds([(X[tr], y[tr], X[te], bounds, cat_dims) for tr, te in folds])
     pred, sd, actual, grp = [], [], [], []
     n_folds = len(folds)
-    for (_tr, te), (mean, std) in zip(folds, fits):
+    for k, ((_tr, te), (mean, std)) in enumerate(zip(folds, fits)):
         pred.extend(mean.tolist())
         sd.extend(std.tolist())
         actual.extend(y[te].tolist())
@@ -174,7 +174,7 @@ def _oof(
         if index_out is not None:
             index_out.extend(int(i) for i in te)
         if fold_out is not None:
-            fold_out.extend([n_folds - 1] * len(te))
+            fold_out.extend([k] * len(te))
     return (
         np.asarray(pred),
         np.asarray(sd),
