@@ -249,3 +249,44 @@ def test_a_failed_precompute_still_gives_the_serial_numbers(monkeypatch):
     background = _background_report(monkeypatch)
     serial = _serial_report(monkeypatch)
     assert background["oof_pred"] == serial["oof_pred"]
+
+
+def test_analysis_with_a_retry_draw_in_the_proposal_fit_matches_serial(monkeypatch):
+    """A proposal fit that draws from the torch RNG (a botorch retry) moves the
+    state the CV starts from; the precomputed folds no longer match it, so the CV
+    fits them again on the analysis thread and gives the serial numbers."""
+    import torch
+
+    from kalos.core import surrogate
+    from kalos.portal.analysis import _analyze
+
+    real_fit = surrogate.Surrogate.fit
+
+    def fit_with_retry_draw(self, *a, **k):
+        out = real_fit(self, *a, **k)
+        if "restart_seed" in k:  # the proposal fit, not a fold
+            torch.rand(1)
+        return out
+
+    refit: list[int] = []  # primary-CV folds fitted again instead of taken precomputed
+    real_now = evaluation._fit_folds_now
+
+    def counting_now(tasks):
+        if getattr(evaluation._LOCAL, "cache", None):
+            refit.append(len(tasks))
+        return real_now(tasks)
+
+    monkeypatch.setattr(evaluation, "_fit_folds_now", counting_now)
+    monkeypatch.setattr(surrogate.Surrogate, "fit", fit_with_retry_draw)
+    keys = ("cv_spearman", "cv_ci95", "cv_spearman_per_repeat", "conformal_q", "reliability",
+            "proposals", "oof", "best", "gp_shapes")
+    monkeypatch.setenv("KALOS_CV_WORKERS", "1")
+    torch.manual_seed(0)
+    serial = _analyze(_sheet())
+    refit.clear()
+    monkeypatch.setenv("KALOS_CV_WORKERS", "3")
+    torch.manual_seed(0)
+    parallel = _analyze(_sheet())
+    assert sum(refit) > 0
+    for key in keys:
+        assert parallel[key] == serial[key], key
