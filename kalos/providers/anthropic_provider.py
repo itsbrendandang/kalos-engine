@@ -45,10 +45,8 @@ class AnthropicProvider:
             name=self.name,
             available=ok,
             required_env=(_API_KEY_ENV_VAR,),
-            missing_env=(
-                (() if credentials_available() else (_API_KEY_ENV_VAR,))
-                + (("KALOS_NO_PAID_CALLS",) if no_paid_calls() else ())
-            ),
+            missing_env=() if credentials_available() else (_API_KEY_ENV_VAR,),
+            disabled_by=("KALOS_NO_PAID_CALLS",) if no_paid_calls() else (),
             capability=_CAPABILITY,
             fallback=_FALLBACK,
         )

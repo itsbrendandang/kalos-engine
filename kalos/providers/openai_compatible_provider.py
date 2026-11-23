@@ -132,6 +132,7 @@ class OpenAICompatibleProvider:
             available=self.available(),
             required_env=(),
             missing_env=(),
+            disabled_by=("KALOS_NO_PAID_CALLS",) if no_paid_calls() and not self.local() else (),
             capability=_CAPABILITY,
             fallback=_FALLBACK,
         )

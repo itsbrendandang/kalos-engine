@@ -42,7 +42,8 @@ def test_paid_switch_assistant(monkeypatch, anthropic_client, flag):
     assert no_paid_calls() is blocked
     assert model_info()["available"] is not blocked
     assert AnthropicProvider().status().available is not blocked
-    assert AnthropicProvider().status().missing_env == (("KALOS_NO_PAID_CALLS",) if blocked else ())
+    assert AnthropicProvider().status().missing_env == ()
+    assert AnthropicProvider().status().disabled_by == (("KALOS_NO_PAID_CALLS",) if blocked else ())
     if blocked:
         with pytest.raises(ModelUnavailable, match="Anthropic calls are disabled by KALOS_NO_PAID_CALLS"):
             AnthropicChat(model="test").complete("system", "prompt")
@@ -78,6 +79,18 @@ def test_paid_switch_keeps_ollama_available(monkeypatch):
     assert load_config().enabled_live is True
     monkeypatch.setattr("kalos.providers.ollama_provider._open", lambda *a: b'{"message":{"content":"answer"}}')
     assert OllamaProvider().chat("system", "prompt") == "answer"
+
+
+@pytest.mark.parametrize("url,disabled", [("http://localhost:8080/v1", ()),
+                                         ("https://example.com/v1", ("KALOS_NO_PAID_CALLS",))])
+def test_openai_status_reports_paid_policy(monkeypatch, url, disabled):
+    from kalos.providers.openai_compatible_provider import OpenAICompatibleProvider
+
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", "true")
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", url)
+    status = OpenAICompatibleProvider().status()
+    assert status.missing_env == ()
+    assert status.disabled_by == disabled
 
 
 def test_anthropic_status_without_key(monkeypatch):

@@ -24,6 +24,7 @@ class ProviderStatus:
     """A provider's credential status, safe to serialize verbatim.
 
     `required_env` / `missing_env` are variable NAMES, never values.
+    `disabled_by` lists the NAMES of set policy switches disabling the provider.
     `capability` is one sentence on what this provider unlocks once its key
     is present. `fallback` is one sentence on exactly what happens today,
     without it.
@@ -35,6 +36,7 @@ class ProviderStatus:
     missing_env: tuple[str, ...]
     capability: str
     fallback: str
+    disabled_by: tuple[str, ...] = ()
 
 
 class Provider(Protocol):

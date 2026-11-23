@@ -118,7 +118,7 @@ def test_provider_status_is_json_dumps_able():
     assert {entry["name"] for entry in data} == {"anthropic", "bionemo", "ollama", "openai"}
     for entry in data:
         assert set(entry) == {
-            "name", "available", "required_env", "missing_env", "capability", "fallback",
+            "name", "available", "required_env", "missing_env", "capability", "fallback", "disabled_by",
         }
 
 
