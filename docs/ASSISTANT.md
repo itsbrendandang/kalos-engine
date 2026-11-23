@@ -37,6 +37,7 @@ The **next step** and **SOP drafts** use no model, so they work on any engine.
 | Setting | What happens |
 |---|---|
 | `ollama` | A model on this machine, through [Ollama](https://ollama.com). With the default address (`http://localhost:11434`) nothing leaves the machine. This is the default in the desktop app. |
+| `openai` | A model behind any OpenAI-compatible `/v1/chat/completions` server on this machine or your own host (llama.cpp's server, LM Studio, vLLM, and similar). With a loopback address nothing leaves the machine; the status route reports `local: false` if you point it elsewhere. Set `KALOS_OPENAI_BASE_URL` and `KALOS_OPENAI_MODEL` (and `KALOS_OPENAI_API_KEY` if the server needs one). |
 | `anthropic` | The Anthropic API. For a question, the question and the retrieved pieces of your data are **sent off the machine** to Anthropic. For an SOP revise, the **whole draft** (every setting, value and filled-in blank in it) and your instruction are sent. Needs `ANTHROPIC_API_KEY`. |
 | `none` | No model. Ask and revise answer 404 with code `assist_disabled`. The next step, the index and SOP drafts keep working. |
 
@@ -56,7 +57,7 @@ With `ollama`, two models share the work (`kalos/providers/cascade.py`):
 | Tier | Used for | Default | Licence |
 |---|---|---|---|
 | fast | header mapping, short labels, intent routing, plain wording of engine warnings and refusals, setup suggestions | `phi4-mini` | MIT |
-| quality | answers with sources, SOP revise, summaries | `qwen2.5:7b` | Apache-2.0 |
+| quality | answers with sources, SOP revise, summaries | `qwen2.5:7b-instruct` | Apache-2.0 |
 
 Older engines defaulted to `llama3.1`, which is under the Llama community licence; the defaults are now MIT and Apache-2.0 models. The choice is measured, not assumed: see [Measured model choice](#measured-model-choice).
 
@@ -82,10 +83,16 @@ With `anthropic` both tiers are the same remote model, and the same checks apply
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `KALOS_LLM_PROVIDER` | `ollama` in desktop mode, else `none` | `ollama`, `anthropic` or `none` |
+| `KALOS_LLM_PROVIDER` | `ollama` in desktop mode, else `none` | `ollama`, `openai`, `anthropic` or `none` |
+| `KALOS_OPENAI_BASE_URL` | `http://localhost:8080/v1` | OpenAI-compatible server base URL (used when provider is `openai`) |
+| `KALOS_OPENAI_MODEL` | unset | the model id the OpenAI-compatible server exposes; must be set to select a model |
+| `KALOS_OPENAI_API_KEY` | unset | optional bearer key for the OpenAI-compatible server |
+| `KALOS_OPENAI_ALLOW_REMOTE` | unset (off) | set to `1`, `true`, `yes` or `on` to allow a non-loopback OpenAI server; prompts and any bearer key go to that host |
+| `KALOS_NO_PAID_CALLS` | unset (off) | `1`, `true`, `yes` or `on` blocks remote OpenAI chat and probes even with remote access enabled; loopback servers still work |
+| `KALOS_OPENAI_TIMEOUT_S` | `120` | how long to wait for an answer |
 | `KALOS_OLLAMA_URL` | `http://localhost:11434` | where Ollama listens |
 | `KALOS_LLM_FAST_MODEL` | `phi4-mini` | the fast Ollama model |
-| `KALOS_LLM_QUALITY_MODEL` | `qwen2.5:7b` | the quality Ollama model |
+| `KALOS_LLM_QUALITY_MODEL` | `qwen2.5:7b-instruct` | the quality Ollama model |
 | `KALOS_LLM_CASCADE` | `1` | `0`: a fast task uses the fast model only, then the offline path |
 | `KALOS_OLLAMA_MODEL` | unset | older setting. Set on its own, it is the only model (both tiers, no cascade); set with `KALOS_LLM_FAST_MODEL`, it is the quality model |
 | `KALOS_OLLAMA_TIMEOUT_S` | `120` | how long to wait for an answer |
@@ -100,6 +107,33 @@ With `anthropic` both tiers are the same remote model, and the same checks apply
 | `KALOS_ASSIST_INDEX_ON_WRITE` | `1` | `0` stops the index refresh after uploads and results |
 
 If the model does not answer, Ask returns 503 with code `assist_provider_unavailable`. Nothing else is affected.
+
+## Run a local Qwen model
+
+Install [Ollama](https://ollama.com) and start its server. Then:
+
+```sh
+ollama pull qwen2.5:7b-instruct
+export KALOS_LLM_PROVIDER=ollama
+python -m kalos.providers.check
+```
+
+The assistant and normalization share this default. You can pull another model
+and set `KALOS_OLLAMA_MODEL=qwen3:8b`, for example. Thinking blocks are removed
+from local replies before showing text or reading normalization JSON.
+
+The check prints provider, URL, model, local, reachable and model pulled. It
+suggests `ollama pull` if the server answers but the model is missing.
+`GET /api/assist/index/status?probe=true` includes `reachable` and `model_present`
+for local providers. The probe has a two-second timeout and runs only with this
+query parameter, never at import. Ordinary status requests and provider slot
+status (`/api/providers`) do not probe. The check CLI always probes.
+
+For LM Studio or llama.cpp, start its OpenAI-compatible server, set
+`KALOS_LLM_PROVIDER=openai`, `KALOS_OPENAI_BASE_URL=http://localhost:8080/v1`
+(adjust the port), and `KALOS_OPENAI_MODEL` to the served model id. Set
+`KALOS_OPENAI_API_KEY` only if needed. This is an assistant-only path;
+normalization uses the offline mapper with `openai` selected.
 
 ## The index
 

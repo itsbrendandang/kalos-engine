@@ -50,6 +50,7 @@ from typing import Any
 import pandas as pd
 
 from kalos.data.anonymizer import Anonymizer
+from kalos.providers.text import strip_thinking
 
 from .config import NormalizeConfig, load_config
 from .payload import build_payload
@@ -474,7 +475,7 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     local models wrap JSON in prose/markdown fences more often than a hosted
     API's structured-output mode, so the widest brace-delimited match is
     parsed rather than trusting the whole response to be pure JSON."""
-    match = _JSON_OBJECT_RE.search(text)
+    match = _JSON_OBJECT_RE.search(strip_thinking(text))
     if not match:
         return None
     try:
