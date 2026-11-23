@@ -69,3 +69,21 @@ These rules are non-negotiable. If a task conflicts with one, stop and ask; do n
 - Type hints on public signatures; pathlib for paths; pydantic models with `extra="forbid"` at boundaries; dependencies pinned in pyproject.toml and uv.lock. Comment the why, never the what.
 ### Communication
 - When unsure between options, ask. State uncertainty; don't fake confidence.
+
+## 11. Assistant review and work lanes
+- Backend lane: this repo. UI lane: the separate kalos-web repo. Coordinate through
+  the HTTP contract guarded by tests/test_web_contract.py. Change it deliberately
+  and note contract changes in the PR for the web lane.
+- Give agents narrow tasks and separate file ownership. Re-read shared files before
+  editing: kalos/portal/app.py, pyproject.toml, uv.lock, AGENTS.md and CHANGELOG.md.
+- Set KALOS_NO_PAID_CALLS=1 for agent work. Never unset it or turn it off outside a
+  test. Tests may turn it off only with network-free fakes. Never make paid calls
+  in tests. Local loopback Ollama is not a paid provider.
+- Never send writes to someone's running engine. Start your own on a free port:
+  `KALOS_NO_PAID_CALLS=1 KALOS_LLM_PROVIDER=none KALOS_PORT=8051 KALOS_STATE_DIR=$(mktemp -d) python -m kalos.portal`.
+- Review verdicts and grounding checks stay in code, not models.
+- Store model replies before relying on them. Replays reuse stored replies.
+- Replay files are tenant-local under the assistant's swarm folder. Keep its
+  oldest-first cap of 128 replies. Deleting the folder is safe but causes new calls.
+- Never log prompts, replies, customer records or credentials. Log counts only.
+- Keep the README capability table honest. An open PR is not implemented on main.

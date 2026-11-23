@@ -11,7 +11,7 @@ import pytest
 from kalos.assist.llm import AnthropicChat, ModelUnavailable, model_info
 from kalos.normalize.config import load_config
 from kalos.normalize.llm import propose_plan
-from kalos.paid import no_paid_calls
+from kalos.paid import PaidCallsOff, no_paid_calls, refuse_paid
 from kalos.providers.anthropic_provider import AnthropicProvider
 from kalos.providers.ollama_provider import OllamaProvider
 
@@ -45,7 +45,7 @@ def test_paid_switch_assistant(monkeypatch, anthropic_client, flag):
     assert AnthropicProvider().status().missing_env == ()
     assert AnthropicProvider().status().disabled_by == (("KALOS_NO_PAID_CALLS",) if blocked else ())
     if blocked:
-        with pytest.raises(ModelUnavailable, match="Anthropic calls are disabled by KALOS_NO_PAID_CALLS"):
+        with pytest.raises(ModelUnavailable, match="KALOS_NO_PAID_CALLS"):
             AnthropicChat(model="test").complete("system", "prompt")
         assert anthropic_client == []
     else:
@@ -99,3 +99,28 @@ def test_anthropic_status_without_key(monkeypatch):
     monkeypatch.setenv("KALOS_LLM_PROVIDER", "anthropic")
     assert model_info()["available"] is False
     assert AnthropicProvider().status().missing_env == ("ANTHROPIC_API_KEY",)
+
+
+@pytest.mark.parametrize("value", ["1", "true", "YES", " On "])
+def test_refuse_true_values(monkeypatch, value):
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", value)
+    with pytest.raises(PaidCallsOff, match="KALOS_NO_PAID_CALLS"):
+        refuse_paid("fake step")
+
+
+@pytest.mark.parametrize("value", [None, "", "0", "false", "off"])
+def test_unset_or_off_keeps_existing_behavior(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("KALOS_NO_PAID_CALLS", raising=False)
+    else:
+        monkeypatch.setenv("KALOS_NO_PAID_CALLS", value)
+    refuse_paid("fake step")
+
+
+def test_paid_paths_refused_before_client_creation(monkeypatch, anthropic_client):
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", "1")
+    with pytest.raises(ModelUnavailable, match="KALOS_NO_PAID_CALLS"):
+        AnthropicChat("fake").complete("system", "prompt")
+    plan = propose_plan(pd.DataFrame({"Titer": [1.0, 2.0]}), config=load_config())
+    assert plan.created_by == "offline"
+    assert anthropic_client == []

@@ -18,6 +18,8 @@ list in sync with `lib/api.ts` when the web starts or stops depending on a field
 from __future__ import annotations
 
 import pytest
+from test_assist_routes import H
+from test_assist_routes import env as assist_env  # noqa: F401
 
 pytest.importorskip("fastapi")
 
@@ -301,3 +303,23 @@ def test_clone_fields_and_routes_the_web_renders() -> None:
     assert hist["history"]["items"][0]["basis_kind"] == "measured"
     assert client.put(f"/api/campaigns/{cid}/clones/CHO-C33",
                       json={"status": "lead", "sequence": "MKT"}).status_code == 400
+
+
+def test_review_contract(assist_env, monkeypatch):  # noqa: F811 - imported pytest fixture
+    client, _, _ = assist_env
+    monkeypatch.setenv("KALOS_ASSIST_ASK_PER_MINUTE", "0")
+    monkeypatch.setattr("kalos.assist.routes.AssistIndex.search", lambda *a, **kw: [])
+    response = client.post("/api/assist/review", headers=H("a-read"), json={})
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"claims", "report", "abstained", "ledger", "next"}
+    assert body["claims"] == [] and body["abstained"] is True
+    assert isinstance(body["report"], str) and isinstance(body["next"], dict)
+    assert all(set(e) == {"role", "kind", "claim_id", "verdict", "reasons"}
+               for e in body["ledger"])
+    roles = client.get("/api/assist/review/roles", headers=H("a-read"))
+    assert roles.status_code == 200
+    assert all(set(role) == {"key", "model_group", "description"}
+               for role in roles.json())
+    assert client.get("/api/assist/review/roles").status_code == 401
+    assert client.post("/api/assist/review", json={}).status_code == 401

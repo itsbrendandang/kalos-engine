@@ -45,6 +45,7 @@ from kalos.assist.semantic import MAX_K, MAX_QUERY_CHARS
 from kalos.assist.semantic import search as semantic_search
 from kalos.assist.setup_suggest import suggest
 from kalos.assist.state import campaign_inputs
+from kalos.assist.swarm import catalog, review
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
 from kalos.portal.campaign import CampaignNotFound, CampaignStore, get_campaign_store
 from kalos.portal.campaign_routes import campaign_not_found_response
@@ -60,6 +61,54 @@ class _AskBody(BaseModel):
 
     question: Annotated[str, StringConstraints(min_length=1, max_length=MAX_QUESTION_CHARS)]
     campaign_id: str | None = None
+
+
+class _ReviewBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: Annotated[str, StringConstraints(min_length=1, max_length=MAX_QUESTION_CHARS)] = "Review the current campaign round"
+    campaign_id: str | None = None
+
+
+@router.get("/api/assist/review/roles")
+def assist_review_roles(principal: Principal = Depends(require_scope(READ))) -> JSONResponse:
+    return JSONResponse(catalog())
+
+
+@router.post("/api/assist/review")
+def assist_review(
+    body: _ReviewBody,
+    principal: Principal = Depends(require_scope(READ)),
+    store: CampaignStore = Depends(get_campaign_store),
+    model: ChatModel | None = Depends(get_chat_model),
+) -> JSONResponse:
+    if model is None or assist_disabled():
+        return assist_disabled_response()
+    wait = ratelimit.check(principal.tenant, principal.subject, cost=3)
+    if wait:
+        return JSONResponse({"error": "too many questions in a short time; try again shortly",
+                             "code": "rate_limited"}, status_code=429,
+                            headers={"Retry-After": str(wait)})
+    if body.campaign_id is not None and not _valid_campaign_id(body.campaign_id):
+        return campaign_not_found_response()
+    try:
+        guide = _guide(store, principal.tenant, body.campaign_id)
+    except CampaignNotFound:
+        return campaign_not_found_response()
+    index = AssistIndex(store, principal.tenant)
+    cid = guide.get("campaign_id")
+    if index.path.exists():
+        index.refresh(campaign_ids=[cid] if cid else [])
+    else:
+        index.refresh()
+    hits = index.search(body.question, campaign_id=cid)
+    try:
+        result = review(body.question, hits, guide, model, store.state_dir, principal.tenant)
+    except ModelUnavailable:
+        return provider_unavailable_response()
+    log.info("assist review: hits=%d claims=%d abstained=%s", len(hits),
+             len(result["claims"]), result["abstained"])
+    return JSONResponse(result)
 
 
 def _guide(store: CampaignStore, tenant: str, campaign_id: str | None) -> dict[str, Any]:

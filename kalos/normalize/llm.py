@@ -50,7 +50,7 @@ from typing import Any
 import pandas as pd
 
 from kalos.data.anonymizer import Anonymizer
-from kalos.paid import no_paid_calls
+from kalos.paid import no_paid_calls, refuse_paid
 from kalos.providers.text import strip_thinking
 
 from .config import NormalizeConfig, load_config
@@ -377,6 +377,7 @@ def _live_plan_anthropic(
     `anthropic` and `pydantic` - never imported at module scope so the
     package stays import-light and this function is the only place either
     dependency is required for this provider."""
+    refuse_paid("Anthropic normalization")
     import anthropic
 
     LLMPlan = _llm_plan_model()
@@ -397,6 +398,7 @@ def _live_plan_anthropic(
 
     parsed: Any
     if hasattr(client.messages, "parse"):
+        refuse_paid("Anthropic normalization")
         response = client.messages.parse(output_format=LLMPlan, **kwargs)
         # `parsed_output` is None when the model returned no parseable object.
         # Raise rather than propagate a None into the plan walk below: the
@@ -407,6 +409,7 @@ def _live_plan_anthropic(
         parsed = response.parsed_output
     else:
         schema = LLMPlan.model_json_schema()
+        refuse_paid("Anthropic normalization")
         response = client.messages.create(
             output_config={"format": {"type": "json_schema", "schema": schema}},
             **kwargs,
