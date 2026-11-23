@@ -45,6 +45,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from kalos.portal.analysis_parts.trust_gate import MIN_ROWS_TO_JUDGE
 from kalos.portal.cells import is_null_label
 
 # Same number as kalos.core.optimize.NEAR_DUPLICATE_TOL (kept torch-free here;
@@ -277,18 +278,19 @@ def strict_candidates_default() -> bool:
 def _training_gap(groups: Any, column: str | None) -> str | None:
     """Why holding out one group of this candidate leaves too little to train on, or None.
 
-    A fold that holds out more runs than it trains on scores a model fitted to
-    the minority of the data on the majority of the rows; in a young campaign
-    (upload round 0 plus a couple of runs per round) round 0 is predicted from 4
-    rows and that one fold sets the candidate's Spearman."""
+    In a young campaign (upload round 0 plus a couple of runs per round) the
+    round-0 fold is fitted to 4 runs and predicts most of the sheet, so that one
+    fold sets the candidate's Spearman. A fold passes when it trains on at least
+    MIN_ROWS_TO_JUDGE runs (the fewest the trust gate judges a model on) or on at
+    least as many runs as it holds out."""
     labels, counts = np.unique(np.asarray(groups).astype(str), return_counts=True)
     i = int(np.argmax(counts))
     held, train = int(counts[i]), int(counts.sum() - counts[i])
-    if held <= train:
+    if train >= MIN_ROWS_TO_JUDGE or train >= held:
         return None
     return (
-        f"holding out {column!r} {labels[i]!r} ({held} runs) leaves {train} runs to train on; "
-        f"it needs at least as many runs outside that group as in it"
+        f"holding out {column!r} {str(labels[i])!r} ({held} runs) leaves {train} runs to train on; "
+        f"it needs {MIN_ROWS_TO_JUDGE} runs outside that group, or as many as in it"
     )
 
 
@@ -335,8 +337,8 @@ def leak_free_cv(
     re-run.
 
     `strict_candidates` (default: `strict_candidates_default()`, on): a
-    candidate counts as evaluable only when no fold holds out more runs than it
-    trains on, every run was held out once, and its 95% interval exists.
+    candidate counts as evaluable only when every fold trains on enough runs
+    (`_training_gap`), every run was held out once, and its 95% interval exists.
     Off restores the old rule, where such a candidate could bind on a score
     from a model fitted to a handful of rows."""
     strict = strict_candidates_default() if strict_candidates is None else strict_candidates
