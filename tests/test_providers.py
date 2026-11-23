@@ -143,6 +143,18 @@ def test_provider_status_rejects_available_when_disabled():
         ProviderStatus("test", True, (), (), "capability", "fallback", ("POLICY_SWITCH",))
 
 
+@pytest.mark.parametrize("flag", ["false", "true"])
+def test_provider_status_with_malformed_openai_url(monkeypatch, flag):
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", "http://[::1")
+    monkeypatch.setenv("KALOS_NO_PAID_CALLS", flag)
+    payload = provider_status()
+    assert {entry["name"] for entry in payload} == {"anthropic", "bionemo", "ollama", "openai"}
+    status = next(entry for entry in payload if entry["name"] == "openai")
+    assert status["available"] is (flag == "false")
+    assert status["disabled_by"] == (("KALOS_NO_PAID_CALLS",) if flag == "true" else ())
+
+
 # --- no import-time caching: a key set AFTER import is picked up ------------- #
 
 def test_key_set_after_import_is_picked_up(monkeypatch):

@@ -95,7 +95,10 @@ def _open(request: urllib.request.Request, timeout: float) -> bytes:
 
 
 def is_loopback_url(url: str) -> bool:
-    host = (urlparse(url).hostname or "").lower()
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
     return host in _LOOPBACK
 
 
@@ -121,7 +124,7 @@ class OpenAICompatibleProvider:
     name = "openai"
 
     def available(self) -> bool:
-        return selected() and (self.local() or not no_paid_calls())
+        return selected() and (not no_paid_calls() or self.local())
 
     def local(self) -> bool:
         return is_loopback_url(openai_url())
