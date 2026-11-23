@@ -39,7 +39,9 @@ def test_none_gives_no_model(monkeypatch):
 def test_ollama_info_is_local_and_names_the_model(monkeypatch):
     monkeypatch.setenv("KALOS_LLM_PROVIDER", "ollama")
     monkeypatch.setenv("KALOS_OLLAMA_MODEL", "qwen2.5:3b")
-    assert model_info() == {"provider": "ollama", "model": "qwen2.5:3b", "local": True}
+    # KALOS_OLLAMA_MODEL on its own is the only model: both cascade tiers.
+    assert model_info() == {"provider": "ollama", "model": "qwen2.5:3b", "local": True,
+                            "fast_model": "qwen2.5:3b", "quality_model": "qwen2.5:3b", "escalation": True}
     monkeypatch.setenv("KALOS_OLLAMA_URL", "http://10.0.0.5:11434")
     assert model_info()["local"] is False
 

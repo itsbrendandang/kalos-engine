@@ -95,6 +95,10 @@ def test_bh_mask_is_aligned_to_input_order():
 
 # --- the live driver panel -------------------------------------------------- #
 
+# The tests that read one analysis of the default sheet share it through
+# `shared_analysis` (tests/conftest.py); the xdist group keeps them on one worker.
+_DEFAULT_SHEET = pytest.mark.xdist_group("driver_multiplicity_default_sheet")
+
 
 def _sheet_one_real_driver_many_noise(n: int = 60, n_noise: int = 14, seed: int = 0):
     """One genuine driver plus many pure-noise columns: the exact shape that
@@ -107,19 +111,21 @@ def _sheet_one_real_driver_many_noise(n: int = 60, n_noise: int = 14, seed: int 
     return pd.DataFrame(cols)
 
 
-def test_only_the_real_driver_is_significant():
+@_DEFAULT_SHEET
+def test_only_the_real_driver_is_significant(shared_analysis):
     """Without FDR control this sheet reports noise columns as significant with
     confidence intervals excluding zero."""
-    out = _analyze(_sheet_one_real_driver_many_noise(), target="lipase_titer")
+    out = shared_analysis(_sheet_one_real_driver_many_noise(), target="lipase_titer")
     significant = [d["name"] for d in out["drivers"] if d["significant"]]
     assert significant == ["Methanol"]
 
 
-def test_a_noise_driver_can_clear_the_ci_and_still_be_rejected():
+@_DEFAULT_SHEET
+def test_a_noise_driver_can_clear_the_ci_and_still_be_rejected(shared_analysis):
     """The specific rescue: a feature whose bootstrap CI excludes zero purely by
     chance must not be reported as significant. If this ever finds no such
     feature the test is vacuous, so it asserts the setup too."""
-    out = _analyze(_sheet_one_real_driver_many_noise(), target="lipase_titer")
+    out = shared_analysis(_sheet_one_real_driver_many_noise(), target="lipase_titer")
     noise = [d for d in out["drivers"] if d["name"].startswith("noise_")]
     tricked = [d for d in noise if d["ci_excludes_zero"]]
     assert tricked, "expected at least one noise feature to fool the raw CI"
@@ -128,18 +134,20 @@ def test_a_noise_driver_can_clear_the_ci_and_still_be_rejected():
         assert d["significant"] is False
 
 
-def test_significant_requires_both_tests():
+@_DEFAULT_SHEET
+def test_significant_requires_both_tests(shared_analysis):
     """`significant` is the conjunction, never either alone."""
-    out = _analyze(_sheet_one_real_driver_many_noise(), target="lipase_titer")
+    out = shared_analysis(_sheet_one_real_driver_many_noise(), target="lipase_titer")
     for d in out["drivers"]:
         assert d["significant"] == (d["ci_excludes_zero"] and d["survives_fdr"])
 
 
-def test_selection_is_disclosed_not_silent():
+@_DEFAULT_SHEET
+def test_selection_is_disclosed_not_silent(shared_analysis):
     """Selecting the strongest of many tested features is a statistical act; the
     client has to be able to see that it happened."""
-    df = _sheet_one_real_driver_many_noise(n_noise=14)
-    out = _analyze(df, target="lipase_titer")
+    df = _sheet_one_real_driver_many_noise(n_noise=14)  # the default sheet
+    out = shared_analysis(df, target="lipase_titer")
     sel = out["driver_selection"]
     assert sel["n_tested"] == 15  # 1 real + 14 noise
     assert sel["n_reported"] == len(out["drivers"]) <= DRIVER_TOP_K
@@ -161,8 +169,9 @@ def test_fdr_is_applied_over_all_tested_features_not_the_reported_subset():
         assert [d["name"] for d in out["drivers"] if d["significant"]] == ["Methanol"]
 
 
-def test_every_driver_carries_its_evidence():
-    out = _analyze(_sheet_one_real_driver_many_noise(), target="lipase_titer")
+@_DEFAULT_SHEET
+def test_every_driver_carries_its_evidence(shared_analysis):
+    out = shared_analysis(_sheet_one_real_driver_many_noise(), target="lipase_titer")
     for d in out["drivers"]:
         assert 0.0 <= d["p"] <= 1.0
         assert isinstance(d["ci_excludes_zero"], bool)
@@ -173,9 +182,10 @@ def test_every_driver_carries_its_evidence():
 # --- the band's stated coverage --------------------------------------------- #
 
 
-def test_response_states_the_coverage_it_actually_computed():
+@_DEFAULT_SHEET
+def test_response_states_the_coverage_it_actually_computed(shared_analysis):
     """So no consumer has to hardcode 90 or 95 and drift from the engine."""
-    out = _analyze(_sheet_one_real_driver_many_noise(), target="lipase_titer")
+    out = shared_analysis(_sheet_one_real_driver_many_noise(), target="lipase_titer")
     assert out["conformal_coverage"] == pytest.approx(1.0 - CONFORMAL_ALPHA)
     assert out["conformal_coverage"] == pytest.approx(0.9)
 

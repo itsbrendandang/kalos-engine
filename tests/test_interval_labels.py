@@ -1,0 +1,199 @@
+"""F02: every interval carries the basis of its coverage claim, and proposal
+intervals carry the measured-at-proposals caveat as structured fields.
+
+Fast unit tests on `kalos.portal.analysis_parts.intervals` and
+`coverage_evidence`, plus one integration check through `_analyze`.
+"""
+from __future__ import annotations
+
+import json
+import math
+import re
+
+import numpy as np
+import pandas as pd
+
+from kalos.portal.analysis_parts.coverage_evidence import (
+    BASIS_HELD_OUT,
+    BASIS_MODEL,
+    BASIS_SELECTION_AWARE,
+    CAVEAT_CODE,
+    CAVEAT_CODE_MEASURED,
+    MEASURED,
+    coverage_at_proposals_estimate,
+    proposal_caveat,
+)
+from kalos.portal.analysis_parts.intervals import (
+    band_from_summary,
+    calibrate_normalized,
+    conformal_band_caveat,
+    interval_method_summary,
+    proposal_interval_fields,
+)
+
+LEVELS = (0.9, 0.95)
+
+
+def _cal(n: int = 40, seed: int = 0) -> dict:
+    rng = np.random.default_rng(seed)
+    sd = rng.uniform(0.5, 2.0, n)
+    return calibrate_normalized(rng.normal(0, sd), np.zeros(n), sd, LEVELS)
+
+
+def test_estimate_has_source_and_range():
+    est = coverage_at_proposals_estimate("conformal_normalized", 0.9)
+    assert est is not None
+    assert est["nominal"] == 0.9 and est["basis"] == "simulation"
+    assert est["measured_min"] <= est["measured_max"] < 0.9  # measured BELOW nominal before F15
+    assert est["source"]["benchmark"].startswith("python -m kalos.bench.coverage_at_proposals")
+    assert est["source"]["doc"].startswith("VALIDATION.md")
+    assert set(est["by_scenario"]) == set(est["source"]["scenarios"])
+    assert coverage_at_proposals_estimate("conformal_normalized", 0.5) is None
+    assert coverage_at_proposals_estimate("no_such_method", 0.9) is None
+
+
+def test_caveat_states_the_measured_range_in_plain_words():
+    cav = proposal_caveat("conformal_normalized", 0.9)
+    assert cav["code"] == CAVEAT_CODE
+    lo = math.floor(cav["coverage_at_proposals_estimate"]["measured_min"] * 100 + 1e-9)
+    hi = math.floor(cav["coverage_at_proposals_estimate"]["measured_max"] * 100 + 1e-9)
+    assert cav["message"].startswith("Based on held-out runs similar to past runs.")
+    assert f"{lo}-{hi}%" in cav["message"] and "lower" in cav["message"]
+    # an unmeasured method says so instead of inventing a number
+    assert "not been measured" in proposal_caveat("no_such_method", 0.9)["message"]
+
+
+_CALIBRATED_CLAIM = re.compile(r"\b(is|are|was|were|been|be)\s+(well[- ])?calibrated\b", re.I)
+
+
+def _assert_honest_proposal_wording(message: str) -> None:
+    """No text next to a proposal interval says it 'is calibrated'; it says
+    what the band was calibrated on and what coverage was measured."""
+    assert not _CALIBRATED_CLAIM.search(message), message
+    assert "range is calibrated" not in message.lower(), message
+    assert message.startswith("Based on held-out runs"), message
+
+
+def test_no_proposal_caveat_says_the_range_is_calibrated():
+    methods = (*MEASURED, "no_such_method")
+    for method in methods:
+        for level in LEVELS:
+            _assert_honest_proposal_wording(proposal_caveat(method, level)["message"])
+    msg = conformal_band_caveat(0.1)["message"]
+    assert not _CALIBRATED_CLAIM.search(msg), msg
+    # The held-out-run wording for the global band stays: that coverage WAS
+    # measured on held-out past runs.
+    assert msg.startswith("The +/- conformal_q band's coverage was measured on held-out past runs.")
+
+
+def test_selection_aware_caveat_states_coverage_measured_at_proposed_recipes():
+    for level, pct in ((0.9, 90), (0.95, 95)):
+        cav = proposal_caveat("conformal_selection_aware", level)
+        est = cav["coverage_at_proposals_estimate"]
+        lo = math.floor(est["measured_min"] * 100 + 1e-9)
+        hi = math.floor(est["measured_max"] * 100 + 1e-9)
+        assert cav["code"] == CAVEAT_CODE_MEASURED
+        assert cav["message"].startswith("Based on held-out runs:")
+        assert f"At proposed recipes this {pct}% range covered {lo}-{hi}% in simulation" in cav["message"]
+        assert "not guaranteed" in cav["message"]
+    # The committed benchmark numbers (seeds 100-139): 90% -> 92-99%, 95% -> 96-99%.
+    assert "covered 92-99% in simulation" in proposal_caveat("conformal_selection_aware", 0.9)["message"]
+    assert "covered 96-99% in simulation" in proposal_caveat("conformal_selection_aware", 0.95)["message"]
+
+
+def test_every_proposal_interval_carries_its_basis_and_caveat():
+    rows = proposal_interval_fields([4.0, 5.0], [0.2, 0.4], [0.3, 0.5], _cal(), LEVELS, 4.5,
+                                    "best_measured_single")
+    for r in rows:
+        for iv in r["intervals"]:
+            assert iv["coverage_basis"] == BASIS_HELD_OUT
+            assert iv["caveat"]["code"] == CAVEAT_CODE
+            est = iv["caveat"]["coverage_at_proposals_estimate"]
+            assert est["nominal"] == iv["coverage"]
+        for g in r["gp_intervals"]:
+            assert g["coverage_basis"] == BASIS_MODEL
+            assert g["coverage_at_proposals_estimate"]["nominal"] == g["coverage"]
+        assert r["quantiles"]["coverage_basis"] == BASIS_MODEL
+    json.dumps(rows, allow_nan=False)
+
+
+def test_refused_level_still_carries_basis_and_caveat():
+    sd = np.ones(10)
+    cal = calibrate_normalized(np.linspace(-1, 1, 10), np.zeros(10), sd, LEVELS)
+    (row,) = proposal_interval_fields([1.0], [0.1], [0.2], cal, LEVELS, 0.5, "best_measured_single")
+    off = row["intervals"][1]
+    assert off["available"] is False
+    assert off["coverage_basis"] == BASIS_HELD_OUT and off["caveat"]["code"] == CAVEAT_CODE
+
+
+def test_method_summary_and_conformal_caveat():
+    summary = interval_method_summary(_cal(), "surrogate_fitted_noise")
+    assert summary["coverage_basis"] == BASIS_HELD_OUT
+    assert set(summary["coverage_at_proposals"]) == {"0.9", "0.95"}
+    cc = conformal_band_caveat(0.1)
+    assert cc["code"] == "coverage_not_guaranteed" and cc["caveat_code"] == CAVEAT_CODE
+    assert cc["coverage_basis"] == BASIS_HELD_OUT
+    assert cc["coverage_at_proposals_estimate"]["nominal"] == 0.9
+    json.dumps([summary, cc], allow_nan=False)
+
+
+def test_band_from_summary_matches_the_shipped_proposal_band():
+    cal = _cal()
+    summary = interval_method_summary(cal, "surrogate_fitted_noise")
+    (row,) = proposal_interval_fields([3.0], [0.2], [0.6], cal, LEVELS, 1.0, "best_measured_single")
+    for k, lv in enumerate(LEVELS):
+        lo, hi = band_from_summary(np.array([3.0]), np.array([0.6]), summary, lv)
+        assert lo is not None and hi is not None
+        assert abs(lo[0] - row["intervals"][k]["lo"]) < 1e-3 and abs(hi[0] - row["intervals"][k]["hi"]) < 1e-3
+    assert band_from_summary(np.array([3.0]), np.array([0.6]), summary, 0.5) == (None, None)
+
+
+def test_measured_table_is_in_unit_interval():
+    for method, levels in MEASURED.items():
+        for lv, by in levels.items():
+            assert all(0.0 <= v <= 1.0 for v in by.values()), (method, lv)
+
+
+def test_analysis_labels_every_band():
+    from kalos.portal.analysis import _analyze
+
+    rng = np.random.default_rng(0)
+    m, ph = rng.uniform(0, 4, 24), rng.uniform(5, 7, 24)
+    df = pd.DataFrame({"Methanol": m.round(3), "pH": ph.round(2),
+                       "titer": (1.5 * m - 0.8 * (ph - 6) ** 2 + rng.normal(0, 0.1, 24)).round(3)})
+    r = _analyze(df, target="titer")
+    assert r["conformal_caveat"]["coverage_basis"] == BASIS_HELD_OUT
+    assert r["interval_method"]["coverage_basis"] == BASIS_HELD_OUT
+    for p in r["proposals"]:
+        # F15: the proposal bands are selection-aware when enough held-out runs
+        # are top-ranked; the plain band (held_out_past_runs) is the fallback.
+        assert all(iv["coverage_basis"] in {BASIS_HELD_OUT, BASIS_SELECTION_AWARE}
+                   and iv["caveat"]["code"] in {CAVEAT_CODE, CAVEAT_CODE_MEASURED}
+                   for iv in p["intervals"])
+        assert all(g["coverage_basis"] == BASIS_MODEL for g in p["gp_intervals"])
+        for iv in p["intervals"]:
+            _assert_honest_proposal_wording(iv["caveat"]["message"])
+
+
+def test_evidence_table_matches_the_committed_benchmark_results():
+    """The numbers a client shows are the numbers the benchmark wrote."""
+    from pathlib import Path
+
+    from kalos.portal.analysis_parts.coverage_evidence import SOURCE
+
+    root = Path(__file__).resolve().parents[1]
+    before = json.loads((root / "benchmarks/results/coverage_at_proposals_before.json").read_text())["summary"]
+    for lv in ("0.9", "0.95"):
+        for sc, v in MEASURED["conformal_normalized"][lv].items():
+            assert before[sc]["levels"][lv]["coverage_at_proposals"] == v, (sc, lv)
+            assert before[sc]["levels"][lv]["methods"] == ["conformal_normalized"]
+        for sc, v in MEASURED["gp_posterior"][lv].items():
+            assert before[sc]["levels"][lv]["gp_posterior_coverage_at_proposals"] == v, (sc, lv)
+    after = json.loads((root / "benchmarks/results/coverage_at_proposals_after.json").read_text())["summary"]
+    for lv in ("0.9", "0.95"):
+        for sc, v in MEASURED["conformal_selection_aware"][lv].items():
+            assert after[sc]["levels"][lv]["coverage_at_proposals"] == v, (sc, lv)
+            assert after[sc]["levels"][lv]["methods"] == ["conformal_selection_aware"]
+    for sc, v in MEASURED["conformal_abs_global"]["0.9"].items():
+        assert before[sc]["levels"]["0.9"]["conformal_q_coverage_at_proposals"] == v, sc
+    assert set(SOURCE["scenarios"]) <= set(before)

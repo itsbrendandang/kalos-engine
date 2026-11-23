@@ -201,3 +201,25 @@ def test_esm2_embeds():
     e = ESM2Embedder()
     v = e.embed("MKWVTFISLLFLFSSAYSRGVF")
     assert v.shape == (e.dim,) and np.isfinite(v).all()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("KALOS_TEST_ESM"),
+    reason="set KALOS_TEST_ESM=1 to run the ESMC model download + embed test",
+)
+def test_esmc_embeds():
+    pytest.importorskip("transformers")
+    from kalos.features import ESMCEmbedder
+
+    e = ESMCEmbedder()
+    v = e.embed("MKWVTFISLLFLFSSAYSRGVF")
+    assert e.dim == 960
+    assert v.shape == (e.dim,) and np.isfinite(v).all()
+
+
+@pytest.mark.parametrize("name", ["ESM2Embedder", "ESMCEmbedder"])
+def test_default_pin_rejected_for_other_model(name):
+    import kalos.features as features
+
+    with pytest.raises(ValueError, match="does not exist in"):
+        getattr(features, name)(model="someone/other-model")

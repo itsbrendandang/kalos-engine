@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
+import numpy as np
 import pandas as pd
 
 Orientation = Literal["standard", "transposed", "ambiguous"]
@@ -63,7 +64,17 @@ _BIOPROCESS_KEYWORDS: tuple[str, ...] = (
 # A first column of parameter LABELS (the true transposed case) does not look
 # like this - parameter names differ from each other in words, not counters.
 _ID_LIKE_RE = re.compile(r"^[a-z]{0,12}[\s_\-#]*\d{1,6}$")
+# Composite run ids: two or more letter+counter groups ("S1N1", "S2N17",
+# "B2R07", "P3-C12"). Screening funnels name clones this way (campaign, then
+# clone). `_ID_LIKE_RE` alone missed them, so a first column of such ids was
+# not recognised as an id column and a header row of them gave no signal.
+_COMPOSITE_ID_RE = re.compile(r"^[a-z]+\d+[a-z_\-]*\d+$")
 _ID_FRACTION = 0.7
+# A header row whose cells (after the first) are run ids is the other face of a
+# transposed sheet: runs are columns. Strong enough to outweigh the wide-shape
+# penalty, which is exactly the shape of a transposed sheet with many runs.
+_HEADER_RUN_ID_SCORE = 6.0
+_HEADER_RUN_ID_MIN_COLUMNS = 3
 # Fraction of sampled first-column values that must match the id shape before
 # the column is ruled a run-identifier. 0.7 tolerates a few stray labels
 # (headers, blanks, one-off notes) while a genuinely transposed sheet's
@@ -119,6 +130,19 @@ class OrientationReport:
     confidence: float
     signals: dict[str, float] = field(default_factory=dict)
     normalized_frame: pd.DataFrame | None = None
+    notes: tuple[str, ...] = ()
+
+
+def _is_blank(value: object) -> bool:
+    return value is None or (isinstance(value, float) and value != value) or str(value).strip() == ""
+
+
+def _first_column_text(df: pd.DataFrame) -> pd.Series:
+    """The first column as plain Python strings, blanks as "". `astype(str)`
+    keeps NaN as a float under pandas' string dtype, and one blank cell (a
+    spacer row in a transposed sheet) then raised inside the heuristics, which
+    degraded a clearly transposed sheet to "ambiguous"."""
+    return df.iloc[:, 0].map(lambda v: "" if _is_blank(v) else str(v)).astype(object)
 
 
 def _score_signals(df: pd.DataFrame) -> dict[str, float]:
@@ -133,7 +157,7 @@ def _score_signals(df: pd.DataFrame) -> dict[str, float]:
     if df.shape[0] == 0 or df.shape[1] == 0:
         return signals
 
-    first_col_values = df.iloc[:, 0].astype(str).str.lower()
+    first_col_values = _first_column_text(df).str.lower()
 
     # 1. bioprocess-keyword matches in the first column (first N rows) - a
     #    first column full of parameter names is a transposed-sheet signal.
@@ -166,18 +190,18 @@ def _score_signals(df: pd.DataFrame) -> dict[str, float]:
         signals["standard_header_hints"] = -float(standard_indicators * 2)
 
     # 5. numeric density by row vs. by column (excluding the first
-    #    column/row respectively, which may be labels/headers).
+    #    column/row respectively, which may be labels/headers). Density is
+    #    over NON-BLANK cells: a sparse funnel row (a value only for the
+    #    clones that reached that scale) is still a numeric row.
     numeric_rows = 0
     if df.shape[1] > 1:
         for idx in range(min(len(df), _SHAPE_SAMPLE)):
-            row_data = df.iloc[idx, 1:]
-            if pd.to_numeric(row_data, errors="coerce").notna().sum() > len(row_data) * _NUMERIC_DENSITY_THRESHOLD:
+            if _numeric_share_of_filled(df.iloc[idx, 1:]) > _NUMERIC_DENSITY_THRESHOLD:
                 numeric_rows += 1
     numeric_cols = 0
     if len(df) > 1:
         for col_idx in range(1, min(df.shape[1], _SHAPE_SAMPLE)):
-            col_data = df.iloc[1:, col_idx]
-            if pd.to_numeric(col_data, errors="coerce").notna().sum() > len(col_data) * _NUMERIC_DENSITY_THRESHOLD:
+            if _numeric_share_of_filled(df.iloc[1:, col_idx]) > _NUMERIC_DENSITY_THRESHOLD:
                 numeric_cols += 1
     if numeric_rows > numeric_cols and df.shape[1] < len(df):
         signals["numeric_density"] = 2.0
@@ -193,69 +217,180 @@ def _score_signals(df: pd.DataFrame) -> dict[str, float]:
     elif len(df) > df.shape[1] * 1.5:
         signals["shape_ratio"] = 2.0
 
+    # 7. a header row of run ids ("exp1", "Batch-3", "S1N1"): runs are
+    #    columns. When it fires, the wide-shape penalty is dropped - a
+    #    transposed sheet with many runs is wide by construction.
+    #    Guarded by magnitudes: in a transposed sheet each ROW is one
+    #    measurement (values of a similar size), while each run column mixes
+    #    measurements of very different sizes. A standard sheet with generic
+    #    id-like headers (x1, x2, ...) has it the other way round.
+    header_ids = _header_id_count(df)
+    if (
+        header_ids >= _HEADER_RUN_ID_MIN_COLUMNS
+        and header_ids >= _ID_FRACTION * (df.shape[1] - 1)
+        and _rows_look_like_variables(df)
+    ):
+        signals["header_run_ids"] = _HEADER_RUN_ID_SCORE
+        if signals.get("shape_ratio", 0.0) < 0:
+            del signals["shape_ratio"]
+
     return signals
 
 
-def _normalize_transposed(df: pd.DataFrame) -> pd.DataFrame | None:
+def _is_run_id(value: str) -> bool:
+    """A lowercased, trimmed cell shaped like a run id: prefix + counter
+    (`_ID_LIKE_RE`) or a composite id (`_COMPOSITE_ID_RE`)."""
+    return bool(_ID_LIKE_RE.match(value) or _COMPOSITE_ID_RE.match(value))
+
+
+def _header_id_count(df: pd.DataFrame) -> int:
+    """How many headers after the first are run ids. pandas' placeholders for
+    a missing header (`Unnamed: 3`) are not ids."""
+    headers = [str(c).strip().lower() for c in df.columns[1:]]
+    return sum(1 for h in headers if h and not h.startswith("unnamed:") and _is_run_id(h))
+
+
+def _rows_look_like_variables(df: pd.DataFrame) -> bool:
+    """True when the median spread of log10|value| within a row is smaller
+    than within a column (numeric cells only, rows/columns with >= 2 numeric
+    cells, first column excluded, at most 200 x 200 cells sampled). False
+    when either spread cannot be computed."""
+    body = df.iloc[:200, 1:201].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        logs = np.log10(np.abs(body))
+    logs[~np.isfinite(logs)] = np.nan
+
+    def median_spread(axis: int) -> float:
+        counts = np.isfinite(logs).sum(axis=axis)
+        if not (counts >= 2).any():
+            return float("nan")
+        filled = logs[counts >= 2, :] if axis == 1 else logs[:, counts >= 2]
+        means = np.nanmean(filled, axis=axis, keepdims=True)
+        spread = np.sqrt(np.nanmean((filled - means) ** 2, axis=axis))
+        return float(np.median(spread))
+
+    within_row, within_col = median_spread(1), median_spread(0)
+    return bool(np.isfinite(within_row) and np.isfinite(within_col) and within_row < within_col)
+
+
+def _numeric_share_of_filled(values: pd.Series) -> float:
+    """Share of the non-blank cells that parse as numbers (0.0 when every cell
+    is blank: no data is not numeric data)."""
+    filled = [v for v in values.tolist() if not _is_blank(v)]
+    if not filled:
+        return 0.0
+    return float(pd.to_numeric(pd.Series(filled, dtype=object), errors="coerce").notna().mean())
+
+
+# A first-column header that names the runs ("run_id", "batch_no", "sample"):
+# the transposed sheet's header row then holds the run ids, and they are kept in
+# a column of that name. Same vocabulary as the validation gate's run-id check.
+_RUN_LABEL_HEADER_RE = re.compile(
+    r"^(run|batch|lot|experiment|expt|sample|culture|vessel|reactor|bioreactor)"
+    r"([ _\-.]?(id|ids|no|num|number|code|label|name|key|ref))?$|^(id|uuid)$",
+    re.I,
+)
+_DEFAULT_RUN_LABEL_COLUMN = "run"
+
+
+def _normalize_transposed(df: pd.DataFrame) -> tuple[pd.DataFrame | None, list[str]]:
     """Transpose `df` (rows = parameters, columns = runs) to standard
-    orientation (rows = runs, columns = parameters).
+    orientation (rows = runs, columns = parameters). Returns the frame and plain
+    notes on what was done, or `(None, [reason])` when there is nothing to keep.
 
-    Mirrors `csv_adapter.py`'s `_process_transposed_format`: rows that are
-    not >=70% numeric across the run columns are dropped (label/annotation
-    rows, not data), and duplicate parameter names are disambiguated with a
-    `__2`, `__3`, ... suffix so the transpose never silently collides two
-    parameters into one column. Returns `None` (never an empty/garbage
-    frame) if no row survives the numeric filter - `detect_orientation`
-    treats that as "ambiguous" rather than emitting a frame with zero
-    parameters.
+    BRE-115: EVERY parameter row is kept. The earlier port dropped any row that
+    was not 70 % numeric, which silently threw away text factors (`medium_base`)
+    and annotation rows. Now a row whose cells all parse as numbers becomes a
+    numeric column; any other row is kept as a text column, cells exactly as
+    written, for the downstream column checks to judge (a text factor becomes a
+    categorical, a notes row is reported and not fitted). Only a row with no
+    name and no values at all is dropped (it is not data).
+
+    The run labels in the header row are kept too, in a column named by the
+    first header when it names runs (`run_id`, `batch_no`), else `run`. pandas'
+    placeholders for a missing header (`Unnamed: 3`) are not labels.
+
+    Duplicate parameter names are disambiguated with `__2`, `__3`, ... so the
+    transpose never silently collides two parameters into one column. Returns
+    None if no row is numeric: then this is not a transposed table of
+    measurements and the caller reports "ambiguous" and leaves it alone.
     """
-    feature_names = df.iloc[:, 0].astype(str).tolist()
-    experiment_data = df.iloc[:, 1:]
+    names = df.iloc[:, 0].tolist()
+    data = df.iloc[:, 1:]
+    notes: list[str] = []
+    rows: list[tuple[str, list[object]]] = []
+    n_blank = 0
+    for i, (raw_name, (_, row)) in enumerate(zip(names, data.iterrows())):
+        cells = row.tolist()
+        if _is_blank(raw_name) and all(_is_blank(c) for c in cells):
+            n_blank += 1
+            continue
+        name = str(raw_name).strip() if not _is_blank(raw_name) else f"row_{i + 2}"
+        if _is_blank(raw_name):
+            notes.append(f"row {i + 2} had no parameter name; kept as column '{name}'")
+        rows.append((name, cells))
+    if n_blank:
+        notes.append(f"{n_blank} empty row(s) skipped")
 
-    keep_mask = [
-        bool(len(row) and pd.to_numeric(row, errors="coerce").notna().sum() >= len(row) * _NUMERIC_DENSITY_THRESHOLD)
-        for _, row in experiment_data.iterrows()
-    ]
-    if not any(keep_mask):
-        return None
+    def numeric_rate(cells: list[object]) -> float:
+        filled = [c for c in cells if not _is_blank(c)]
+        if not filled:
+            return 0.0
+        return float(pd.to_numeric(pd.Series(filled, dtype=object), errors="coerce").notna().mean())
 
-    kept_names = [name for name, keep in zip(feature_names, keep_mask) if keep]
-    kept_rows = experiment_data.loc[[i for i, keep in zip(experiment_data.index, keep_mask) if keep]]
+    if not any(cells and numeric_rate(cells) >= _NUMERIC_DENSITY_THRESHOLD for _, cells in rows):
+        return None, ["no parameter row holds numbers, so this is not a table of runs"]
 
     seen: dict[str, int] = {}
-    unique_names: list[str] = []
-    for name in kept_names:
+    columns: dict[str, pd.Series] = {}
+    text_rows: list[str] = []
+    for name, cells in rows:
         if name in seen:
             seen[name] += 1
-            unique_names.append(f"{name}__{seen[name]}")
+            unique = f"{name}__{seen[name]}"
         else:
             seen[name] = 0
-            unique_names.append(name)
+            unique = name
+        series = pd.Series(cells, dtype=object)
+        series = series.where(~series.map(_is_blank), None)
+        if numeric_rate(cells) == 1.0:
+            columns[unique] = pd.to_numeric(series, errors="coerce")
+        else:
+            columns[unique] = series.map(lambda v: v.strip() if isinstance(v, str) else v)
+            text_rows.append(unique)
+    out = pd.DataFrame(columns)
 
-    transposed = kept_rows.T
-    transposed.columns = pd.Index(unique_names)
-    # Built column-by-column (rather than a single `.apply`) so the result's
-    # static type is unambiguously `DataFrame` - `DataFrame.apply` returning
-    # a per-column-transformed frame is, per pandas-stubs, ambiguous with
-    # the Series-returning overload.
-    numeric_columns = {name: pd.to_numeric(transposed[name], errors="coerce") for name in unique_names}
-    return pd.DataFrame(numeric_columns).reset_index(drop=True)
+    labels = [str(c).strip() for c in data.columns]
+    if labels and not all(lbl.startswith("Unnamed:") or lbl == "" for lbl in labels):
+        header = str(df.columns[0]).strip()
+        label_col = header if _RUN_LABEL_HEADER_RE.match(header) else _DEFAULT_RUN_LABEL_COLUMN
+        while label_col in out.columns:
+            label_col = f"{label_col}_label"
+        out.insert(0, label_col, labels)
+        notes.append(f"run labels from the header row kept in column '{label_col}'")
+    if text_rows:
+        shown = ", ".join(f"'{t}'" for t in text_rows[:5]) + (" ..." if len(text_rows) > 5 else "")
+        notes.append(f"{len(text_rows)} non-numeric row(s) kept as text column(s): {shown}")
+    notes.insert(0, f"runs were columns; turned so each of the {len(out)} runs is a row, all "
+                    f"{len(rows)} parameter row(s) kept")
+    return out.reset_index(drop=True), notes
 
 
 def _first_column_id_rate(df: pd.DataFrame) -> float:
     """Fraction of non-blank first-column values shaped like a run identifier.
 
     The id shape (`_ID_LIKE_RE`): optional short alphabetic prefix, optional
-    separator, then a counter - "batch-1", "run 0007", "bq0031", "12". Values
+    separator, then a counter - "batch-1", "run 0007", "bq0031", "12" - or a
+    composite id (`_COMPOSITE_ID_RE`: "s1n1", "b2r07"). Values
     are lowercased and whitespace-trimmed first. Blank cells are excluded from
     the denominator (a sparse id column is still an id column). Returns 0.0 on
     an empty column so the gate simply never fires.
     """
-    values = df.iloc[:, 0].astype(str).str.strip().str.lower()
+    values = _first_column_text(df).str.strip().str.lower()
     nonblank = values[(values != "") & (values != "nan")]
     if len(nonblank) == 0:
         return 0.0
-    matches = sum(bool(_ID_LIKE_RE.match(v)) for v in nonblank)
+    matches = sum(_is_run_id(v) for v in nonblank)
     return matches / len(nonblank)
 
 
@@ -335,14 +470,17 @@ def detect_orientation(df: pd.DataFrame) -> OrientationReport:
             "type_column_indicator", 0.0
         ) > 0
         if score > _TRANSPOSED_THRESHOLD and has_label_signal:
-            normalized = _normalize_transposed(df)
+            normalized, notes = _normalize_transposed(df)
             if normalized is None:
-                return OrientationReport(orientation="ambiguous", confidence=confidence, signals=signals)
+                return OrientationReport(
+                    orientation="ambiguous", confidence=confidence, signals=signals, notes=tuple(notes)
+                )
             return OrientationReport(
                 orientation="transposed",
                 confidence=confidence,
                 signals=signals,
                 normalized_frame=normalized,
+                notes=tuple(notes),
             )
         if score < _STANDARD_THRESHOLD:
             return OrientationReport(orientation="standard", confidence=confidence, signals=signals)

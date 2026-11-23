@@ -80,6 +80,7 @@ GLOSSARY: dict[str, str] = {
     'dropped_constant': 'A column with one value cannot show any effect, so the model learns nothing from it.',
     'dropped_constant_on_fitted_rows': 'A column that only changes in rows the model could not use cannot show any effect in the rows it learned from.',
     'dropped_all_blank': 'A column with no values cannot teach the model anything.',
+    'dropped_cv_group': 'A batch, lot, plate, date or round is when or how a run happened, not a setting; it is used to hold whole batches out when the model is checked, so the check cannot lean on batch-mates.',
     'dropped_non_numeric': 'A column of mostly text cannot be placed on a scale, so the model cannot learn from it as a setting.',
     'dropped_sparse': 'A column that is mostly blank would leave out most runs if it were used, so it was left out instead.',
     'user_excluded': 'You chose to leave this column out, so no suggestion changes it.',
@@ -137,6 +138,8 @@ GLOSSARY: dict[str, str] = {
     'model_check': 'A check the model has not passed means its suggestions have not been tested that way.',
     # Sheet facts from the upload (how Kalos read the sheet)
     'auto_categorical': 'A text column was read as a set of labels, so Kalos compares each label with the others instead of treating it as a number.',
+    'strain_column_detected': 'A column named like a clone or strain was read as a set of labels, so a numeric clone ID is never treated as a quantity; declare it to hold proposals at one clone.',
+    'covariate_columns_detected': 'A passage, generation, PDL or thaw column was read as a recorded run property, so it is never proposed as a setpoint.',
     'blank_as_absent': 'Blank cells in this column were read as "none added"; if a blank meant "not recorded", the model learns from a value the lab never set.',
     'censored_rows': 'Runs whose result is only "below detection" have no exact value, so they are left out and teach the model nothing.',
     'censored_values': 'A value like "below detection" has no exact number, so it is not used as a number and that run teaches the model less.',
@@ -192,6 +195,7 @@ GLOSSARY: dict[str, str] = {
     'reason_required': 'Changing a result already recorded needs a reason, so the record shows why it changed; nothing was saved without one.',
     'invalid_result': 'A result must be a number, so nothing was saved for this run.',
     'invalid_body': 'Kalos could not read what was sent, so nothing was saved.',
+    'invalid_field': 'One field was not a finite number or a short label, so nothing was saved.',
     'invalid_request': 'Kalos could not use what was sent, so nothing was saved.',
     'validation_error': 'Kalos could not read what was sent, so nothing was saved.',
     'auth_not_configured': 'Sign-in is not set up, so Kalos refuses all work from other computers; nothing is lost.',
@@ -219,6 +223,14 @@ GLOSSARY: dict[str, str] = {
 }
 
 ENGINE_ONLY: dict[str, str] = {
+    # Result-entry checks (kalos/portal/result_referee.py) and the same problems on upload
+    'result_physically_impossible': 'A result that cannot physically happen is a typo or a unit mix-up; if the next round learns from it, every suggestion after it bends toward a run that never happened.',
+    'result_magnitude_jump': 'A result ten or a thousand times away from everything measured so far is most often a unit or decimal slip; check it before the next round learns from it.',
+    'result_duplicate_entry': 'Two runs with exactly the same precise result are often one value pasted twice, which hides what the second run really gave.',
+    # Sheet check
+    'duplicate_ids': 'Two runs under one id cannot be told apart, so a surprising result cannot be traced back to the run that gave it.',
+    'target_leak': 'A column worked out from the result, such as a grade or a tier, makes the model look far better than it is and is not something you can set before a run.',
+    'derived_output': 'A column that is only known after the run is not a setting, so the model does not learn from it or suggest a value for it.',
 }
 
 # The desktop engine names the verdict states reliable / not_yet / refused; the

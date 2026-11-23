@@ -40,12 +40,35 @@ the database level. No row changes when the triggers are created. `down` drops
 them (v4 -> v3); a v3 engine runs on the result. Its startup no longer deletes
 audit rows (see docs/HARDENING.md, "Audit retention").
 
+Schema v5 adds the append-only `run_results` history; v6 adds
+`campaign_settings` (one JSON document per campaign and kind) and the append-only
+`gate_decisions` registry. Both are additive; their `down` steps rename the new
+tables aside (`<name>_v5_rolledback`, `<name>_v6_rolledback`), never drop them.
+
+Schema v7 adds the label-only clone registry: `campaign_clones` (one row per
+campaign and clone label, allowlisted label fields only) and the append-only
+`clone_titer_history` (the same two-trigger guard as `run_results`). Additive;
+its `down` step renames both tables aside (`<name>_v7_rolledback`).
+
+Schema v8 (BRE-32, Crux Rank 2 "prospective track record") stops the loop from
+losing history: three append-only tables (the same two-trigger guard as
+`gate_decisions`): `analysis_snapshots` (every published analysis, byte for
+byte, per round), `run_predictions` (each run's prediction recorded at start:
+mean, 90/95% intervals, coverage basis, model version, round, analysis hash) and
+`run_folds` (which `run_results` version each fold wrote into the model). The
+upgrade copies the current `analyses` rows and the in-flight runs' recorded
+predictions into them (rows are read, never changed); runs folded before v8 lost
+their predictions in v7 and are not invented. `down` renames the tables aside
+(`<name>_v8_rolledback`). The remaining Crux items (result check, decision
+ledger) take v9 or later. See kalos/portal/prediction_history.py.
+
 This module is torch-free and FastAPI-free on purpose: the CLI must run on a
 box where the engine itself is stopped.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -63,15 +86,22 @@ from kalos.portal.tenancy import is_valid_tenant_id
 
 log = logging.getLogger("kalos.portal")
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 8
 V2 = 2  # the multi-campaign schema; v1 <-> v2 code below is keyed on it
 V3 = 3  # the background-job queue
 V4 = 4  # the append-only audit log
 V5 = 5  # the append-only result history
+V6 = 6  # campaign settings + scale-up stage gate decisions
+V7 = 7  # label-only clone registry + append-only clone titer history
+V8 = 8  # prediction history: analysis snapshots, run predictions, run folds (BRE-32)
+# The remaining Crux items (result check, decision ledger) take v9 or later.
 V2_NAME = "multi-campaign storage"
 V3_NAME = "background jobs"
 V4_NAME = "append-only audit log"
 V5_NAME = "append-only result history"
+V6_NAME = "campaign settings and stage gate decisions"
+V7_NAME = "clone registry and clone titer history"
+V8_NAME = "prediction history: analysis snapshots, run predictions and run folds"
 BUSY_TIMEOUT_MS = 5000
 DB_FILENAME = "portal.db"
 
@@ -81,7 +111,11 @@ CAMPAIGN_ID_PATTERN = re.compile(r"cmp_[0-9a-f]{32}")
 
 # Tables that hold tenant data. Every statement the store issues against these
 # carries `tenant = ?` (tests/test_campaign_schema_v2.py enforces it).
-TENANT_TABLES = ("campaigns", "analyses", "tenant_defaults", "audit_log", "jobs", "run_results")
+TENANT_TABLES = (
+    "campaigns", "analyses", "tenant_defaults", "audit_log", "jobs", "run_results",
+    "campaign_settings", "gate_decisions", "campaign_clones", "clone_titer_history",
+    "analysis_snapshots", "run_predictions", "run_folds",
+)
 
 # A job id is `job_` + uuid4().hex (kalos/portal/jobs.py), validated the same way.
 JOB_ID_PATTERN = re.compile(r"job_[0-9a-f]{32}")
@@ -269,6 +303,256 @@ _V5_DDL: tuple[str, ...] = (
         SELECT RAISE(ABORT, 'run_results is append-only: DELETE is rejected');
     END
     """,
+)
+# Schema v6: per-campaign settings and the scale-up stage gate registry. Additive.
+# `campaign_settings` holds one JSON document per (campaign, kind): kind 'setup'
+# (goal direction, user bounds, linear constraints, target unit) and kind
+# 'stages' (the campaign's editable stage definitions). Settings are NOT part of
+# the campaign state blob, so editing them never mints a campaign generation.
+# `gate_decisions` is the append-only record of HUMAN go/no-go decisions (the
+# same two-trigger guard as `audit_log`): the current decision of a gate is its
+# newest row. A decision always carries a non-empty note. Computed evidence is
+# never stored here; `evidence` only holds ids the decider chose to link.
+_V6_TABLES = ("campaign_settings", "gate_decisions")
+_V6_TRIGGERS = ("gate_decisions_no_update", "gate_decisions_no_delete")
+_V6_INDEXES = ("gate_decisions_campaign_idx",)
+_V6_DDL: tuple[str, ...] = (
+    """
+    CREATE TABLE campaign_settings (
+        campaign_id TEXT NOT NULL,
+        tenant TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('setup', 'stages')),
+        value TEXT NOT NULL,
+        updated_at REAL NOT NULL,
+        updated_by TEXT,
+        PRIMARY KEY (campaign_id, tenant, kind),
+        FOREIGN KEY (campaign_id, tenant) REFERENCES campaigns (id, tenant)
+    )
+    """,
+    """
+    CREATE TABLE gate_decisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant TEXT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        gate TEXT NOT NULL,
+        decision TEXT NOT NULL CHECK (decision IN ('go', 'no_go', 'pending')),
+        note TEXT NOT NULL CHECK (length(trim(note)) > 0),
+        evidence TEXT,
+        decided_by TEXT,
+        auth_method TEXT,
+        decided_at REAL NOT NULL,
+        FOREIGN KEY (campaign_id, tenant) REFERENCES campaigns (id, tenant)
+    )
+    """,
+    "CREATE INDEX gate_decisions_campaign_idx ON gate_decisions (tenant, campaign_id, gate, id)",
+    """
+    CREATE TRIGGER gate_decisions_no_update BEFORE UPDATE ON gate_decisions
+    BEGIN
+        SELECT RAISE(ABORT, 'gate_decisions is append-only: UPDATE is rejected');
+    END
+    """,
+    """
+    CREATE TRIGGER gate_decisions_no_delete BEFORE DELETE ON gate_decisions
+    BEGIN
+        SELECT RAISE(ABORT, 'gate_decisions is append-only: DELETE is rejected');
+    END
+    """,
+)
+# Schema v7: the label-only clone registry (docs/CLONES.md). Additive.
+# `campaign_clones` holds one row per (campaign, clone label): a status enum and
+# a JSON object of allowlisted LABEL fields (host, parent_cell_bank, construct_id,
+# ...). No sequence, map or structure is ever stored; the route refuses those keys.
+# Like settings, registry rows live outside the campaign state blob, so an edit
+# never mints a campaign generation. `clone_titer_history` is the append-only
+# record of MEASURED titer / qP / space-time-yield values per clone (the same
+# two-trigger guard as `run_results`); a correction is a new row naming the row
+# it supersedes (`previous_id`) with a non-empty `reason`.
+_V7_TABLES = ("campaign_clones", "clone_titer_history")
+_V7_TRIGGERS = ("clone_titer_history_no_update", "clone_titer_history_no_delete")
+_V7_INDEXES = ("clone_titer_history_label_idx",)
+_V7_DDL: tuple[str, ...] = (
+    """
+    CREATE TABLE campaign_clones (
+        tenant TEXT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        label TEXT NOT NULL CHECK (length(label) BETWEEN 1 AND 64),
+        fields TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('lead', 'backup', 'retired', 'candidate')),
+        updated_at REAL NOT NULL,
+        updated_by TEXT,
+        PRIMARY KEY (tenant, campaign_id, label),
+        FOREIGN KEY (campaign_id, tenant) REFERENCES campaigns (id, tenant)
+    )
+    """,
+    """
+    CREATE TABLE clone_titer_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant TEXT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        recorded_at REAL NOT NULL,
+        measured_on TEXT,
+        basis TEXT NOT NULL CHECK (basis IN ('harvest_titer', 'qP', 'space_time_yield')),
+        value REAL NOT NULL,
+        unit TEXT NOT NULL,
+        scale_label TEXT,
+        age_kind TEXT CHECK (age_kind IN ('passage', 'generation', 'pdl')),
+        age_value REAL,
+        source_note TEXT,
+        actor TEXT,
+        previous_id INTEGER,
+        reason TEXT,
+        CHECK (previous_id IS NULL OR (reason IS NOT NULL AND length(trim(reason)) > 0)),
+        FOREIGN KEY (campaign_id, tenant) REFERENCES campaigns (id, tenant)
+    )
+    """,
+    "CREATE INDEX clone_titer_history_label_idx ON clone_titer_history (tenant, campaign_id, label, id)",
+    """
+    CREATE TRIGGER clone_titer_history_no_update BEFORE UPDATE ON clone_titer_history
+    BEGIN
+        SELECT RAISE(ABORT, 'clone_titer_history is append-only: UPDATE is rejected');
+    END
+    """,
+    """
+    CREATE TRIGGER clone_titer_history_no_delete BEFORE DELETE ON clone_titer_history
+    BEGIN
+        SELECT RAISE(ABORT, 'clone_titer_history is append-only: DELETE is rejected');
+    END
+    """,
+)
+# Schema v8: prediction history (BRE-32; kalos/portal/prediction_history.py).
+# Additive. Three append-only tables, each with the two-trigger guard:
+# - `analysis_snapshots`: every published analysis, stored byte for byte with its
+#   sha256 (`analysis_sha256`), the campaign round it describes, the provenance
+#   hashes and engine version. Written in the transaction that publishes it.
+# - `run_predictions`: one row per started run (UNIQUE per tenant, campaign and
+#   run id), written in the transaction that starts it: the engine's mean/sd, the
+#   per-proposal 90% and 95% intervals (method + coverage basis per level), the
+#   global conformal band, the caveat the engine served with each interval and
+#   with the band (code + message, verbatim), the model (engine) version, the round, the upload
+#   (`seed_id`) and the analysis it was read from (sha256 + snapshot id). A run
+#   the engine never predicted has `available = 0` and a reason (CHECK).
+# - `run_folds`: one row per folded run: the round, the value written into
+#   `base_rows` and the `run_results` version it came from.
+# Result versions and corrections stay in `run_results` (v5).
+_V8_TABLES = ("analysis_snapshots", "run_predictions", "run_folds")
+_V8_TRIGGERS = (
+    "analysis_snapshots_no_update", "analysis_snapshots_no_delete",
+    "run_predictions_no_update", "run_predictions_no_delete",
+    "run_folds_no_update", "run_folds_no_delete",
+)
+_V8_INDEXES = ("analysis_snapshots_campaign_idx", "run_predictions_campaign_idx")
+
+
+def _append_only_triggers(table: str) -> tuple[str, str]:
+    return (
+        f"""
+    CREATE TRIGGER {table}_no_update BEFORE UPDATE ON {table}
+    BEGIN
+        SELECT RAISE(ABORT, '{table} is append-only: UPDATE is rejected');
+    END
+    """,
+        f"""
+    CREATE TRIGGER {table}_no_delete BEFORE DELETE ON {table}
+    BEGIN
+        SELECT RAISE(ABORT, '{table} is append-only: DELETE is rejected');
+    END
+    """,
+    )
+
+
+_V8_DDL: tuple[str, ...] = (
+    """
+    CREATE TABLE analysis_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant TEXT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        round INTEGER,
+        kind TEXT NOT NULL CHECK (kind IN ('upload', 'reanalyze', 'publish', 'migrated_v7')),
+        campaign_generation TEXT,
+        analysis_sha256 TEXT NOT NULL CHECK (length(analysis_sha256) = 64),
+        provenance_sha256 TEXT,
+        input_sha256 TEXT,
+        engine_version TEXT,
+        dataset TEXT,
+        n_rows INTEGER,
+        n_proposals INTEGER,
+        analysis_bytes INTEGER NOT NULL,
+        analysis TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        FOREIGN KEY (campaign_id, tenant) REFERENCES campaigns (id, tenant)
+    )
+    """,
+    "CREATE INDEX analysis_snapshots_campaign_idx ON analysis_snapshots (tenant, campaign_id, id)",
+    *_append_only_triggers("analysis_snapshots"),
+    """
+    CREATE TABLE run_predictions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant TEXT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        round INTEGER,
+        seed_id TEXT,
+        source TEXT NOT NULL CHECK (source IN ('start', 'migrated_v7_state')),
+        pred_source TEXT NOT NULL CHECK (pred_source IN ('engine', 'caller')),
+        recipe TEXT NOT NULL,
+        available INTEGER NOT NULL CHECK (available IN (0, 1)),
+        unavailable_reason TEXT,
+        pred REAL,
+        std REAL,
+        lo_90 REAL,
+        hi_90 REAL,
+        method_90 TEXT,
+        basis_90 TEXT,
+        caveat_code_90 TEXT,
+        caveat_90 TEXT,
+        lo_95 REAL,
+        hi_95 REAL,
+        method_95 TEXT,
+        basis_95 TEXT,
+        caveat_code_95 TEXT,
+        caveat_95 TEXT,
+        band_lo REAL,
+        band_hi REAL,
+        band_coverage REAL,
+        band_method TEXT,
+        band_basis TEXT,
+        band_caveat_code TEXT,
+        band_caveat TEXT,
+        model_version TEXT,
+        provenance_sha256 TEXT,
+        analysis_generation TEXT,
+        proposal_index INTEGER,
+        analysis_sha256 TEXT,
+        analysis_snapshot_id INTEGER,
+        recorded_at REAL NOT NULL,
+        UNIQUE (tenant, campaign_id, run_id),
+        CHECK (available = 0 OR pred IS NOT NULL),
+        CHECK (available = 1 OR length(trim(coalesce(unavailable_reason, ''))) > 0),
+        CHECK ((lo_90 IS NULL) = (hi_90 IS NULL) AND (lo_95 IS NULL) = (hi_95 IS NULL)),
+        FOREIGN KEY (campaign_id, tenant) REFERENCES campaigns (id, tenant)
+    )
+    """,
+    "CREATE INDEX run_predictions_campaign_idx ON run_predictions (tenant, campaign_id, round, id)",
+    *_append_only_triggers("run_predictions"),
+    """
+    CREATE TABLE run_folds (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant TEXT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        round_started INTEGER,
+        folded_in_round INTEGER NOT NULL,
+        result_version INTEGER,
+        value REAL NOT NULL,
+        measured_at REAL,
+        analysis_snapshot_id INTEGER,
+        folded_at REAL NOT NULL,
+        UNIQUE (tenant, campaign_id, run_id),
+        FOREIGN KEY (campaign_id, tenant) REFERENCES campaigns (id, tenant)
+    )
+    """,
+    *_append_only_triggers("run_folds"),
 )
 _V4_DDL: tuple[str, ...] = (
     """
@@ -489,6 +773,15 @@ def _assert_v2_shape(conn: sqlite3.Connection, version: int | None = None) -> No
     if v >= V5:
         missing += [t for t in _V5_TABLES if t not in tables]
         missing += [f"trigger {t}" for t in _V5_TRIGGERS if t not in triggers]
+    if v >= V6:
+        missing += [t for t in _V6_TABLES if t not in tables]
+        missing += [f"trigger {t}" for t in _V6_TRIGGERS if t not in triggers]
+    if v >= V7:
+        missing += [t for t in _V7_TABLES if t not in tables]
+        missing += [f"trigger {t}" for t in _V7_TRIGGERS if t not in triggers]
+    if v >= V8:
+        missing += [t for t in _V8_TABLES if t not in tables]
+        missing += [f"trigger {t}" for t in _V8_TRIGGERS if t not in triggers]
     cols = {str(r[1]) for r in _columns(conn, "campaigns")}
     missing_cols = sorted(_V2_CAMPAIGN_COLUMNS - cols)
     if missing or missing_cols:
@@ -621,6 +914,26 @@ class UpPlan:
                 lines.append("  triggers: audit_log rejects UPDATE and DELETE (append-only); no row changes")
             if self.from_version < V5:
                 lines.append("  create: run_results (append-only result history) with its UPDATE/DELETE triggers")
+            if self.from_version < V6:
+                lines.append(
+                    "  create: campaign_settings, and gate_decisions (append-only: UPDATE/DELETE "
+                    "triggers) (schema v6); no existing row changes"
+                )
+            if self.from_version < V7:
+                lines.append(
+                    "  create: campaign_clones (label-only clone registry), and clone_titer_history "
+                    "(append-only: UPDATE/DELETE triggers) (schema v7); no existing row changes"
+                )
+            if self.from_version < V8:
+                lines.append(
+                    "  create: analysis_snapshots, run_predictions and run_folds (append-only: "
+                    "UPDATE/DELETE triggers) (schema v8, prediction history)"
+                )
+                lines.append(
+                    "  copy: each campaign's published analysis -> analysis_snapshots, and each "
+                    "in-flight run's recorded prediction -> run_predictions (read only; no existing "
+                    "row changes; runs folded before v8 have no recorded prediction to copy)"
+                )
             return "\n".join(lines)
         lines = [f"{self.db_path}: schema v{self.from_version} -> v{V2}"]
         if self.from_version > 0:
@@ -641,7 +954,7 @@ class UpPlan:
         for sk in self.latest_skipped:
             lines.append(f"  skip: latest/{sk.filename} ({sk.reason})")
         lines.append("  latest/ files are left in place")
-        lines.append(f"  then: schema v{V2} -> v{SCHEMA_VERSION} (create the jobs table; add the audit_log triggers; create run_results)")
+        lines.append(f"  then: schema v{V2} -> v{SCHEMA_VERSION} (create the jobs table; add the audit_log triggers; create run_results; create campaign_settings and gate_decisions; create campaign_clones and clone_titer_history; create analysis_snapshots, run_predictions and run_folds)")
         return "\n".join(lines)
 
 
@@ -843,6 +1156,254 @@ def _apply_v5_in_txn(conn: sqlite3.Connection) -> None:
     _record_version(conn, V5, V5_NAME)
 
 
+def _apply_v6_in_txn(conn: sqlite3.Connection) -> None:
+    """v5 -> v6, inside the caller's BEGIN IMMEDIATE: create `campaign_settings`
+    and `gate_decisions` (+ triggers). Additive; no existing row is read or changed."""
+    for ddl in _V6_DDL:
+        conn.execute(ddl)
+    _record_version(conn, V6, V6_NAME)
+
+
+def _apply_v7_in_txn(conn: sqlite3.Connection) -> None:
+    """v6 -> v7, inside the caller's BEGIN IMMEDIATE: create `campaign_clones` and
+    `clone_titer_history` (+ index and triggers). Additive; no existing row is read
+    or changed."""
+    for ddl in _V7_DDL:
+        conn.execute(ddl)
+    _record_version(conn, V7, V7_NAME)
+
+
+# --- the v7 -> v8 copy (frozen) ------------------------------------------------ #
+# The copy uses its OWN frozen extraction and INSERT statements, not the live
+# write path in kalos/portal/prediction_history.py: a later change to that module
+# can never change what this migration does, and the storage layer does not
+# import campaign code (docs/ARCHITECTURE.md, R03). tests/test_schema_v8.py
+# checks that both extract the same columns today.
+_V8_PRE_R5_REASON = (
+    "the run was started before the engine recorded predictions at start; no prediction "
+    "was recorded for it"
+)
+_V8_UNKNOWN_REASON = "no engine prediction was recorded for this run"
+_V8_LEVELS = (("90", 0.9), ("95", 0.95))
+_V8_PRED_COLUMNS = (
+    "available", "unavailable_reason", "pred", "std",
+    "lo_90", "hi_90", "method_90", "basis_90", "caveat_code_90", "caveat_90",
+    "lo_95", "hi_95", "method_95", "basis_95", "caveat_code_95", "caveat_95",
+    "band_lo", "band_hi", "band_coverage", "band_method", "band_basis",
+    "band_caveat_code", "band_caveat",
+    "model_version", "provenance_sha256", "analysis_generation", "proposal_index",
+)
+_V8_INSERT_SNAPSHOT = (
+    "INSERT INTO analysis_snapshots (tenant, campaign_id, round, kind, campaign_generation, "
+    "analysis_sha256, provenance_sha256, input_sha256, engine_version, dataset, n_rows, "
+    "n_proposals, analysis_bytes, analysis, created_at) "
+    "VALUES (?, ?, ?, 'migrated_v7', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
+_V8_INSERT_PREDICTION = (
+    "INSERT INTO run_predictions ("
+    "tenant, campaign_id, run_id, round, seed_id, source, pred_source, "
+    "recipe, available, unavailable_reason, pred, std, lo_90, hi_90, "
+    "method_90, basis_90, caveat_code_90, caveat_90, lo_95, hi_95, "
+    "method_95, basis_95, caveat_code_95, caveat_95, band_lo, band_hi, "
+    "band_coverage, band_method, band_basis, band_caveat_code, "
+    "band_caveat, model_version, provenance_sha256, analysis_generation, "
+    "proposal_index, analysis_sha256, analysis_snapshot_id, recorded_at) "
+    "VALUES ("
+    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+    ")"
+)
+
+
+def _v8_num(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    v = float(value)
+    return v if v == v and v not in (float("inf"), float("-inf")) else None
+
+
+def _v8_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _v8_str(value: Any, limit: int = 128) -> str | None:
+    return value[:limit] if isinstance(value, str) and value else None
+
+
+def _v8_map(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _v8_caveat(value: Any) -> tuple[str | None, str | None]:
+    if not isinstance(value, dict):
+        return None, None
+    msg = value.get("message")
+    return _v8_str(value.get("code"), 64), (msg[:2048] if isinstance(msg, str) and msg else None)
+
+
+def _v8_prediction_columns(
+    block: Any, proposal: dict[str, Any] | None, analysis: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Frozen: the run_predictions columns for a v7 `prediction_at_start` block."""
+    out: dict[str, Any] = dict.fromkeys(_V8_PRED_COLUMNS)
+    out["available"] = 0
+    if not isinstance(block, dict):
+        out["unavailable_reason"] = _V8_PRE_R5_REASON
+        return out
+    pred = _v8_num(block.get("pred"))
+    if not block.get("available") or pred is None:
+        reason = block.get("reason")
+        out["unavailable_reason"] = reason[:512] if isinstance(reason, str) and reason else _V8_UNKNOWN_REASON
+        return out
+    out.update(available=1, pred=pred, std=_v8_num(block.get("std")),
+               proposal_index=_v8_int(block.get("proposal_index")),
+               analysis_generation=_v8_str(block.get("analysis_generation")))
+    intervals = (proposal if isinstance(proposal, dict) else block).get("intervals")
+    for entry in intervals if isinstance(intervals, list) else []:
+        if not isinstance(entry, dict) or entry.get("available") is False:
+            continue
+        cov = _v8_num(entry.get("coverage"))
+        key = next((k for k, lv in _V8_LEVELS if cov is not None and abs(cov - lv) < 1e-9), None)
+        lo, hi = _v8_num(entry.get("lo")), _v8_num(entry.get("hi"))
+        if key is None or lo is None or hi is None or out[f"lo_{key}"] is not None:
+            continue
+        out[f"lo_{key}"], out[f"hi_{key}"] = lo, hi
+        out[f"method_{key}"] = _v8_str(entry.get("method"), 64)
+        out[f"basis_{key}"] = _v8_str(entry.get("coverage_basis"), 64)
+        out[f"caveat_code_{key}"], out[f"caveat_{key}"] = _v8_caveat(entry.get("caveat"))
+    band = block.get("interval")
+    if isinstance(band, dict):
+        lo, hi, cov = _v8_num(band.get("lo")), _v8_num(band.get("hi")), _v8_num(band.get("coverage"))
+        if lo is not None and hi is not None and cov is not None:
+            out.update(band_lo=lo, band_hi=hi, band_coverage=cov,
+                       band_method=_v8_str(band.get("method"), 64))
+            cc = _v8_map(analysis).get("conformal_caveat")
+            if isinstance(cc, dict):
+                out["band_basis"] = _v8_str(cc.get("coverage_basis"), 64)
+                out["band_caveat_code"], out["band_caveat"] = _v8_caveat(cc)
+    prov = block.get("analysis_provenance")
+    if isinstance(prov, dict):
+        out["model_version"] = _v8_str(prov.get("engine_version"), 64)
+        out["provenance_sha256"] = _v8_str(prov.get("provenance_sha256"), 64)
+    return out
+
+
+def _v8_recipe_json(recipe: Any) -> str:
+    try:
+        text = json.dumps(recipe if isinstance(recipe, dict) else {}, sort_keys=True, allow_nan=False)
+    except (TypeError, ValueError):
+        return json.dumps({"omitted": "recipe is not JSON-safe; not stored in the history"})
+    if len(text) > 16_384:
+        return json.dumps({"omitted": "recipe too large to store in the history"})
+    return text
+
+
+def _apply_v8_in_txn(conn: sqlite3.Connection) -> list[str]:
+    """v7 -> v8, inside the caller's BEGIN IMMEDIATE: create the three append-only
+    prediction-history tables, then COPY into them what v7 still holds (read only;
+    no existing row is changed):
+
+    - each campaign's published analysis (`analyses`) becomes one snapshot,
+      `kind = 'migrated_v7'`, with the round of the in-flight runs that record
+      they were started from it (else round NULL: v7 did not record it);
+    - each in-flight run (`pending` in the campaign state) becomes one
+      `run_predictions` row, `source = 'migrated_v7_state'`, carrying the
+      prediction block the v7 engine recorded at start. Its `recorded_at` is the
+      block's own `recorded_at`; else the run's `created_at` (the block is written
+      when the run is started); only a run with neither gets the migration time,
+      which is later than any result it already has, so it is never scored. A run
+      started before predictions were recorded gets `available = 0` with the
+      reason. Intervals and the global band keep the caveats the engine served
+      (from the block's copy, or from the analysis the run records it was started
+      from).
+
+    Runs folded before v8 lost their prediction in v7: nothing is invented for
+    them. A campaign state that is not valid JSON is skipped with a warning.
+    Returns the warnings."""
+    for ddl in _V8_DDL:
+        conn.execute(ddl)
+    warnings: list[str] = []
+    now = time.time()
+    analyses = {
+        (str(t), str(c)): (blob, dataset, a_gen, updated_at)
+        for c, t, blob, dataset, a_gen, updated_at in conn.execute(
+            "SELECT campaign_id, tenant, state, dataset, campaign_generation, updated_at FROM analyses"
+        ).fetchall()
+    }
+    states: dict[tuple[str, str], dict[str, Any] | None] = {}
+    for cid, tenant, c_state in conn.execute(
+        "SELECT id, tenant, state FROM campaigns WHERE state IS NOT NULL ORDER BY created_at, id"
+    ).fetchall():
+        parsed = _parse_state(c_state)
+        if parsed is None:
+            warnings.append(f"campaign {cid}: state is not valid JSON; its runs were not copied "
+                            "into run_predictions")
+        states[(str(tenant), str(cid))] = parsed
+
+    def pending_of(key: tuple[str, str]) -> list[dict[str, Any]]:
+        p = (states.get(key) or {}).get("pending")
+        return [r for r in p if isinstance(r, dict) and isinstance(r.get("id"), str)] if isinstance(p, list) else []
+
+    def block_gen(run: dict[str, Any]) -> Any:
+        block = run.get("prediction_at_start")
+        return block.get("analysis_generation") if isinstance(block, dict) else None
+
+    # The analyses rows first (oldest first), so their snapshot ids exist when the
+    # runs started from them are copied. The round an analysis describes is known
+    # only when an in-flight run records that it was started from it.
+    snap_of: dict[tuple[str, str], tuple[int, str, Any, dict[str, Any] | None]] = {}
+    for key in sorted(analyses, key=lambda k: (float(analyses[k][3]), k)):
+        blob, dataset, a_gen, updated_at = analyses[key]
+        if not isinstance(blob, str):
+            continue
+        rounds = {r.get("round") for r in pending_of(key) if a_gen is not None and block_gen(r) == a_gen}
+        rnd = next(iter(rounds)) if len(rounds) == 1 else None
+        parsed_a = _parse_state(blob)
+        a = _v8_map(parsed_a)
+        prov, run_rec = _v8_map(a.get("proposal_provenance")), _v8_map(a.get("run"))
+        props = a.get("proposals")
+        n_rows = _v8_int(run_rec.get("n_rows"))
+        digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+        cur = conn.execute(_V8_INSERT_SNAPSHOT, (
+            key[0], key[1], rnd if _v8_int(rnd) is not None else None, a_gen, digest,
+            _v8_str(prov.get("provenance_sha256"), 64),
+            _v8_str(prov.get("input_sha256") or run_rec.get("input_sha256"), 64),
+            _v8_str(prov.get("engine_version") or a.get("engine_version"), 64),
+            dataset[:256] if isinstance(dataset, str) else None,
+            n_rows if n_rows is not None else _v8_int(a.get("n")),
+            len(props) if isinstance(props, list) else None,
+            len(blob.encode("utf-8")), blob, float(updated_at),
+        ))
+        snap_of[key] = (int(cur.lastrowid or 0), digest, a_gen, parsed_a)
+    for key in states:
+        for run in pending_of(key):
+            block = run.get("prediction_at_start")
+            recorded = _v8_num(block.get("recorded_at")) if isinstance(block, dict) else None
+            if recorded is None:
+                recorded = _v8_num(run.get("created_at"))
+            if recorded is None:
+                recorded = now
+            snap = snap_of.get(key)
+            linked = snap is not None and snap[2] is not None and block_gen(run) == snap[2]
+            analysis = snap[3] if linked and snap is not None else None
+            proposal = None
+            idx = _v8_int(block.get("proposal_index")) if isinstance(block, dict) else None
+            props = _v8_map(analysis).get("proposals")
+            if idx is not None and isinstance(props, list) and 0 <= idx < len(props) and isinstance(props[idx], dict):
+                proposal = props[idx]
+            cols = _v8_prediction_columns(block, proposal, analysis)
+            rnd = run.get("round")
+            conn.execute(_V8_INSERT_PREDICTION, (
+                key[0], key[1], run["id"], rnd if _v8_int(rnd) is not None else None, None,
+                "migrated_v7_state", "engine" if run.get("pred_source") == "engine" else "caller",
+                _v8_recipe_json(run.get("recipe")), *(cols[c] for c in _V8_PRED_COLUMNS),
+                snap[1] if linked and snap is not None else None,
+                snap[0] if linked and snap is not None else None, recorded,
+            ))
+    _record_version(conn, V8, V8_NAME)
+    return warnings
+
+
 def _generation_of(state: str | None) -> str | None:
     parsed = _parse_state(state)
     gen = parsed.get("generation") if parsed else None
@@ -933,9 +1494,9 @@ def migrate_up(
     latest_dir: Path | str | None = None,
     dry_run: bool = False,
 ) -> MigrationResult:
-    """Bring `db_path` to the current schema (v5). Idempotent: a current database
-    is a no-op. v0/v1 go through the v1 -> v2 migration and then v2 -> v3 -> v4 in
-    the SAME transaction; a v2 or v3 database gets the remaining steps. The backup
+    """Bring `db_path` to the current schema (v8). Idempotent: a current database
+    is a no-op. v0/v1 go through the v1 -> v2 migration and then v2 -> ... -> v8 in
+    the SAME transaction; a v2..v7 database gets the remaining steps. The backup
     is labelled for the version it is taken FROM plus one (`pre-v2` from v1,
     `pre-v3` from v2, `pre-v4` from v3, ...).
 
@@ -1003,6 +1564,12 @@ def migrate_up(
                 _apply_v4_in_txn(conn)
             if now_version < V5:
                 _apply_v5_in_txn(conn)
+            if now_version < V6:
+                _apply_v6_in_txn(conn)
+            if now_version < V7:
+                _apply_v7_in_txn(conn)
+            if now_version < V8:
+                warnings += _apply_v8_in_txn(conn)
             conn.execute("COMMIT")
         except BaseException:
             if conn.in_transaction:
@@ -1026,7 +1593,7 @@ def _refuse_newer(version: int) -> None:
 
 
 def ensure_schema(db_path: Path | str, *, latest_dir: Path | str | None = None) -> MigrationResult:
-    """Startup hook used by `CampaignStore`: migrate to v3 when needed, else verify."""
+    """Startup hook used by `CampaignStore`: migrate to SCHEMA_VERSION when needed, else verify."""
     return migrate_up(db_path, latest_dir=latest_dir)
 
 
@@ -1177,14 +1744,128 @@ def _down_v5_in_txn(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM schema_migrations WHERE version = ?", (V5,))
 
 
+def _down_v6_in_txn(conn: sqlite3.Connection) -> None:
+    """v6 -> v5 inside the caller's transaction: drop the gate_decisions triggers and
+    index, rename both v6 tables aside (`<name>_v6_rolledback`). Nothing is dropped."""
+    tables = _tables(conn)
+    for name in _V6_TRIGGERS:
+        conn.execute(f'DROP TRIGGER IF EXISTS "{name}"')
+    for idx in _V6_INDEXES:
+        conn.execute(f'DROP INDEX IF EXISTS "{idx}"')
+    for table in _V6_TABLES:
+        if table in tables:
+            new = _free_name(tables, f"{table}_v6_rolledback")
+            conn.execute(f'ALTER TABLE "{table}" RENAME TO "{new}"')
+            tables.add(new)
+    conn.execute("DELETE FROM schema_migrations WHERE version = ?", (V6,))
+
+
+def _down_v7_in_txn(conn: sqlite3.Connection) -> None:
+    """v7 -> v6 inside the caller's transaction: drop the clone_titer_history
+    triggers and index, rename both v7 tables aside (`<name>_v7_rolledback`).
+    Nothing is dropped."""
+    tables = _tables(conn)
+    for name in _V7_TRIGGERS:
+        conn.execute(f'DROP TRIGGER IF EXISTS "{name}"')
+    for idx in _V7_INDEXES:
+        conn.execute(f'DROP INDEX IF EXISTS "{idx}"')
+    for table in _V7_TABLES:
+        if table in tables:
+            new = _free_name(tables, f"{table}_v7_rolledback")
+            conn.execute(f'ALTER TABLE "{table}" RENAME TO "{new}"')
+            tables.add(new)
+    conn.execute("DELETE FROM schema_migrations WHERE version = ?", (V7,))
+
+
+def _down_v8_in_txn(conn: sqlite3.Connection) -> None:
+    """v8 -> v7 inside the caller's transaction: drop the six append-only triggers
+    and the two indexes, rename the three v8 tables aside (`<name>_v8_rolledback`).
+    Nothing is dropped. The campaign state keeps its `seed_id` key, which v7 ignores."""
+    tables = _tables(conn)
+    for name in _V8_TRIGGERS:
+        conn.execute(f'DROP TRIGGER IF EXISTS "{name}"')
+    for idx in _V8_INDEXES:
+        conn.execute(f'DROP INDEX IF EXISTS "{idx}"')
+    for table in _V8_TABLES:
+        if table in tables:
+            new = _free_name(tables, f"{table}_v8_rolledback")
+            conn.execute(f'ALTER TABLE "{table}" RENAME TO "{new}"')
+            tables.add(new)
+    conn.execute("DELETE FROM schema_migrations WHERE version = ?", (V8,))
+
+
+def _render_down_v8(db_path: Path, conn: sqlite3.Connection) -> str:
+    tables = _tables(conn)
+    lines = [
+        f"{db_path}: schema v{V8} -> v{V7}",
+        "  drop: the UPDATE/DELETE triggers of analysis_snapshots, run_predictions and "
+        "run_folds, and their indexes",
+    ]
+    for table in _V8_TABLES:
+        if table not in tables:
+            lines.append(f"  {table}: absent; nothing to rename")
+            continue
+        n = int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])  # noqa: S608 - module-constant table names
+        new = _free_name(tables, f"{table}_v8_rolledback")
+        tables.add(new)
+        lines.append(f"  rename: {table} -> {new} (kept, not dropped; {n} row(s))")
+    lines.append("  every v7 table: unchanged (a v7 engine drops a run's prediction when it is "
+                 "folded again)")
+    return "\n".join(lines)
+
+
+def _render_down_v7(db_path: Path, conn: sqlite3.Connection) -> str:
+    """The v7 -> v6 step, naming the rename targets exactly as `_down_v7_in_txn`
+    computes them (an earlier rollback's name is never reused)."""
+    tables = _tables(conn)
+    lines = [
+        f"{db_path}: schema v{V7} -> v{V6}",
+        "  drop: clone_titer_history UPDATE/DELETE triggers and its index",
+    ]
+    for table in _V7_TABLES:
+        if table not in tables:
+            lines.append(f"  {table}: absent; nothing to rename")
+            continue
+        n = int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])  # noqa: S608 - module-constant table names
+        new = _free_name(tables, f"{table}_v7_rolledback")
+        tables.add(new)
+        lines.append(f"  rename: {table} -> {new} (kept, not dropped; {n} row(s))")
+    lines.append("  campaigns, analyses, jobs, audit_log, run_results, campaign_settings and "
+                 "gate_decisions: unchanged")
+    return "\n".join(lines)
+
+
+def _render_down_v6(db_path: Path, conn: sqlite3.Connection) -> str:
+    """The v6 -> v5 step. Names the tables each v6 table is renamed TO, computed
+    the same way `_down_v6_in_txn` does (an earlier rollback's
+    `<name>_v6_rolledback` is never reused: the next free `_2`, `_3`, ... is)."""
+    tables = _tables(conn)
+    lines = [
+        f"{db_path}: schema v{V6} -> v{V5}",
+        "  drop: gate_decisions UPDATE/DELETE triggers and its index",
+    ]
+    for table in _V6_TABLES:
+        if table not in tables:
+            lines.append(f"  {table}: absent; nothing to rename")
+            continue
+        n = int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])  # noqa: S608 - module-constant table names
+        new = _free_name(tables, f"{table}_v6_rolledback")
+        tables.add(new)
+        lines.append(f"  rename: {table} -> {new} (kept, not dropped; {n} row(s))")
+    lines.append("  campaigns, analyses, jobs, audit_log and run_results: unchanged")
+    return "\n".join(lines)
+
+
 def _render_down_v5(db_path: Path, conn: sqlite3.Connection) -> str:
     n = 0
-    if "run_results" in _tables(conn):
+    tables = _tables(conn)
+    if "run_results" in tables:
         n = int(conn.execute("SELECT COUNT(*) FROM run_results").fetchone()[0])
+    new = _free_name(tables, "run_results_v5_rolledback")
     return "\n".join([
         f"{db_path}: schema v{V5} -> v{V4}",
         "  drop: run_results UPDATE/DELETE triggers",
-        f"  rename: run_results -> run_results_v5_rolledback (kept, not dropped; {n} row(s))",
+        f"  rename: run_results -> {new} (kept, not dropped; {n} row(s))",
         "  the campaign state blob keeps each run's current value, so the v4 code still reads it",
     ])
 
@@ -1204,6 +1885,12 @@ def _down_goal(version: int, target: int | None) -> int | None:
 
 
 def _render_down_step(db_path: Path, conn: sqlite3.Connection, step_from: int) -> str:
+    if step_from == V8:
+        return _render_down_v8(db_path, conn)
+    if step_from == V7:
+        return _render_down_v7(db_path, conn)
+    if step_from == V6:
+        return _render_down_v6(db_path, conn)
     if step_from == V5:
         return _render_down_v5(db_path, conn)
     if step_from == V4:
@@ -1223,6 +1910,13 @@ def migrate_down(
     """Roll the database back, ONE version by default, or down to `target`
     (1 .. current - 1). Each step is listed in the plan:
 
+    v8 -> v7: drops the six prediction-history triggers and two indexes and
+    renames analysis_snapshots, run_predictions and run_folds to
+    `<name>_v8_rolledback` (kept).
+    v7 -> v6: drops the clone_titer_history triggers and index and renames
+    campaign_clones and clone_titer_history to `<name>_v7_rolledback` (kept).
+    v6 -> v5: drops the gate_decisions triggers and renames campaign_settings and
+    gate_decisions to `<name>_v6_rolledback` (kept).
     v5 -> v4: drops the run_results triggers and renames the table to
     `run_results_v5_rolledback` (kept). The campaign blobs keep current values.
     v4 -> v3: drops the two `audit_log` triggers. No row is touched.
@@ -1272,7 +1966,16 @@ def migrate_down(
         conn.execute("BEGIN IMMEDIATE")
         try:
             for step in range(version, goal, -1):
-                if step == V5:
+                if step == V8:
+                    parts.append(_render_down_v8(db, conn))
+                    _down_v8_in_txn(conn)
+                elif step == V7:
+                    parts.append(_render_down_v7(db, conn))
+                    _down_v7_in_txn(conn)
+                elif step == V6:
+                    parts.append(_render_down_v6(db, conn))
+                    _down_v6_in_txn(conn)
+                elif step == V5:
                     parts.append(_render_down_v5(db, conn))
                     _down_v5_in_txn(conn)
                 elif step == V4:
@@ -1413,7 +2116,7 @@ def _default_state_dir() -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m kalos.portal.migrate",
-        description="Inspect, apply or roll back the kalos portal.db schema migrations (v1 .. v5).",
+        description="Inspect, apply or roll back the kalos portal.db schema migrations (v1 .. v8).",
     )
     parser.add_argument("command", choices=["up", "down", "status"])
     parser.add_argument("--dry-run", action="store_true", help="print the plan; change nothing")

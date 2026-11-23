@@ -1,0 +1,31 @@
+name: Bug report
+description: Something gives a wrong number, an error, a crash or a silent result.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Never paste secrets, tokens or data whose rights are not in docs/DATA_RIGHTS.md. Use a synthetic or anonymized sheet."
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Commands, route and request body, or a minimal sheet.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "e.g. 179bb59, or the engine_version in the response"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or response body
+      render: text

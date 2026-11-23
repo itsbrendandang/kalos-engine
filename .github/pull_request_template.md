@@ -1,5 +1,8 @@
 ## What changed
-<!-- One or two sentences, and why. Link the issue if there is one. -->
+<!-- One or two sentences, and why. -->
+
+Fixes BRE-
+<!-- The Linear issue; `Fixes` closes it on merge. Delete the line if there is none. -->
 
 ## Tests run
 <!-- Exact commands and results. Say what was NOT run and why. -->
@@ -7,6 +10,10 @@
 
 ## UI screenshots (if applicable)
 <!-- Before/after for any visible change. Delete this section otherwise. -->
+
+## Checklist
+- [ ] Changelog entry added as a file in `changes/` (or none needed: say why)
+- [ ] Stacked on another PR? Retarget to `main` before that PR merges
 
 ## Security impact
 - [ ] None

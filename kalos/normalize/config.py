@@ -45,11 +45,11 @@ Provider = Literal["anthropic", "ollama", "none"]
 _PROVIDERS: tuple[Provider, ...] = ("anthropic", "ollama", "none")
 _DEFAULT_PROVIDER: Provider = "anthropic"
 _DEFAULT_OLLAMA_URL = "http://localhost:11434"
-# llama3.1 is a widely-available general-purpose Ollama model (a single
-# `ollama pull llama3.1` away) reasonable at following a schema-constrained
-# JSON instruction - a sensible default for self-hosters who have not pulled
-# anything task-specific, not a claim that it is the best available model.
-_DEFAULT_OLLAMA_MODEL = "llama3.1"
+# The Ollama path runs the model cascade (kalos.providers.cascade): the fast
+# model first, the quality model when the fast reply fails its checks. This is
+# the QUALITY model's default (Apache-2.0); the measured comparison is in
+# benchmarks/llm/RESULTS.md. `KALOS_OLLAMA_MODEL` still overrides it.
+_DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
 
 
 @dataclass(frozen=True)
@@ -106,8 +106,10 @@ def load_config() -> NormalizeConfig:
       unrecognized value RAISES `ConfigError` (fail closed: a typo of `none`
       must not reach a live API). The startup check refuses it first.
     - `ollama_url` / `ollama_model`: `KALOS_OLLAMA_URL` (default
-      `"http://localhost:11434"`) / `KALOS_OLLAMA_MODEL` (default
-      `"llama3.1"`) - only consulted when `provider == "ollama"`.
+      `"http://localhost:11434"`) / the cascade's quality model
+      (`KALOS_LLM_QUALITY_MODEL`, else `KALOS_OLLAMA_MODEL`, else
+      `"qwen2.5:7b"`) - only consulted when `provider == "ollama"`. The fast
+      model is `KALOS_LLM_FAST_MODEL` (`kalos.providers.cascade`).
     - `enabled_live`: see `NormalizeConfig`'s docstring for the per-provider
       rule. The Anthropic key value itself is never read into this object.
     """
@@ -123,7 +125,9 @@ def load_config() -> NormalizeConfig:
     provider = provider_setting()
 
     ollama_url = os.environ.get(_OLLAMA_URL_ENV_VAR, _DEFAULT_OLLAMA_URL) or _DEFAULT_OLLAMA_URL
-    ollama_model = os.environ.get(_OLLAMA_MODEL_ENV_VAR, _DEFAULT_OLLAMA_MODEL) or _DEFAULT_OLLAMA_MODEL
+    from kalos.providers.cascade import quality_model
+
+    ollama_model = quality_model()
 
     if provider == "none":
         enabled_live = False

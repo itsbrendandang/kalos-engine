@@ -14,12 +14,20 @@ import re
 import zipfile
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from kalos.normalize.orientation import detect_orientation
-from kalos.portal.cells import BLANK, CENSORED, NON_NUMERIC, NUMERIC, classify_cells
+from kalos.portal.cells import (
+    BLANK,
+    CENSORED,
+    NON_NUMERIC,
+    NUMERIC,
+    classify_cells,
+    parse_number,
+)
 
 log = logging.getLogger("kalos.portal")
 
@@ -471,6 +479,9 @@ def _apply_orientation_prepass(df: pd.DataFrame) -> pd.DataFrame:
         "orientation": report.orientation,
         "confidence": report.confidence,
         "signals": dict(report.signals),
+        # BRE-115: what the re-orientation kept (every parameter row, the run
+        # labels), in plain words; empty for a standard sheet.
+        "notes": list(report.notes),
     }
     return out
 
@@ -729,6 +740,54 @@ def _name_unlabeled(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     return out, given
 
 
+_ZERO_PADDED_RE = re.compile(r"[+-]?0[0-9]+")
+
+
+def _is_zero_padded_code(series: pd.Series, kinds: pd.Series) -> bool:
+    """True for a column of distinct whole numbers written with leading zeros
+    (`001`, `002`, `010`): run ids or codes. Read as numbers they would lose the
+    zeros, and `001` and `0001` would become the same id."""
+    texts = [str(v).strip() for v, k in zip(series.tolist(), kinds.tolist()) if k == NUMERIC]
+    if not texts or not any(_ZERO_PADDED_RE.fullmatch(t) for t in texts):
+        return False
+    return all(re.fullmatch(r"[+-]?[0-9]+", t) for t in texts) and len(set(texts)) == len(texts)
+
+
+_LEADING_ZERO_FIELD_RE = re.compile(r"(?:^|[,;\t|])[ \t\"']*[+-]?0[0-9]", re.M)
+
+
+def _restore_zero_padded(df: pd.DataFrame, raw: pd.DataFrame) -> pd.DataFrame:
+    """pandas reads `001` (CSV text, or an Excel text cell) as the integer 1. For
+    each column pandas typed as numbers whose written cells (`raw`, the same
+    table read as text) are zero-padded codes (`_is_zero_padded_code`), put the
+    text back exactly as written."""
+    if raw.shape != df.shape:
+        return df
+    out = df
+    for i in range(df.shape[1]):
+        if not pd.api.types.is_numeric_dtype(df.iloc[:, i].dtype):
+            continue
+        col = raw.iloc[:, i]
+        if _is_zero_padded_code(col, classify_cells(col)):
+            if out is df:
+                out = df.copy()
+            out.isetitem(i, col.astype(object).where(col.notna(), None).to_numpy(dtype=object))
+    return out
+
+
+def _restore_excel_zero_padded(book: Any, name: str, df: pd.DataFrame, header_row: int) -> pd.DataFrame:
+    """`_restore_zero_padded` for a workbook sheet: only whole-number columns can
+    hide a zero-padded text id, so only those are re-read, as text."""
+    ints = [i for i in range(df.shape[1]) if pd.api.types.is_integer_dtype(df.iloc[:, i].dtype)]
+    if not ints:
+        return df
+    try:
+        raw = book.parse(name, header=header_row, keep_default_na=False, na_values=[""], dtype=str)
+    except Exception:  # noqa: BLE001 - the typed read already succeeded; keep it
+        return df
+    return _restore_zero_padded(df, raw)
+
+
 def _typed_cells(df: pd.DataFrame) -> pd.DataFrame:
     """Give numeric-looking text its number, column by column, the way pandas did
     before null tokens were kept as text. A column is converted only when it holds
@@ -743,10 +802,12 @@ def _typed_cells(df: pd.DataFrame) -> pd.DataFrame:
         kinds = classify_cells(series)
         if (kinds == NON_NUMERIC).any() or not (kinds == NUMERIC).any():
             continue
+        if _is_zero_padded_code(series, kinds):
+            continue  # `001`, `0007`: an id or code, kept exactly as written
         if out is df:
             out = df.copy()
         converted = [
-            float(v) if isinstance(v, str) and k == NUMERIC else v
+            parse_number(v) if isinstance(v, str) and k == NUMERIC else v
             for v, k in zip(series.tolist(), kinds.tolist())
         ]
         out.isetitem(i, np.array(converted, dtype=object))
@@ -889,6 +950,7 @@ def _parse_excel(raw: bytes, sheet: str | None) -> ParsedUpload:
                 code="corrupt_excel",
                 context={**ctx, "sheet": name},
             ) from exc
+        df = _restore_excel_zero_padded(book, name, df, header_row)
         df, named = _name_unlabeled(_typed_cells(df))
         # Belt-and-suspenders: re-check the materialized shape. The pre-read guard
         # uses the sheet's declared dimensions; this catches a mismatch and the
@@ -1047,10 +1109,16 @@ def _parse_text(raw: bytes) -> ParsedUpload:
     try:
         # Null tokens (`n/a`, `NA`) stay text on read (see `kalos.portal.cells`):
         # only a truly empty cell is NaN, so each drop can report its real reason.
-        # The one and only pandas parse of the body.
+        # The one pandas parse of the body (a second, text-only read happens only
+        # when a field starts with a leading zero; see `_restore_zero_padded`).
         df = pd.read_csv(
             io.StringIO(text), sep=sep, header=header_row, keep_default_na=False, na_values=[""]
         )
+        if _LEADING_ZERO_FIELD_RE.search(text):
+            df = _restore_zero_padded(df, pd.read_csv(
+                io.StringIO(text), sep=sep, header=header_row, keep_default_na=False,
+                na_values=[""], dtype=str,
+            ))
     except pd.errors.ParserError as exc:
         log.warning("rejected an unparseable text upload: %s", type(exc).__name__)
         raise UploadRejected(_ERR_NOT_A_TABLE, code="not_a_table") from exc

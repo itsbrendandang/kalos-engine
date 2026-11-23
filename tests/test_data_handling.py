@@ -63,9 +63,16 @@ def _findings(out: dict, check: str) -> list[dict]:
 
 # --- D5: text factors are categorical features ------------------------------ #
 
+# The tests below that read one analysis of `_sheet()` (or of `_with_bad_cells()`)
+# share it through `shared_analysis` (tests/conftest.py); the xdist group keeps
+# them on one worker so it runs once.
+_SHEET = pytest.mark.xdist_group("data_handling_sheet")
+_BAD_CELLS = pytest.mark.xdist_group("data_handling_bad_cells")
 
-def test_text_factor_is_auto_detected_and_modeled():
-    out = _analyze(_sheet(), target="lipase_titer")
+
+@_SHEET
+def test_text_factor_is_auto_detected_and_modeled(shared_analysis):
+    out = shared_analysis(_sheet(), target="lipase_titer")
     assert "Resin" in _features(out)
     assert "Resin" in out["categorical_features"]
     assert out["auto_categorical"] == ["Resin"]
@@ -73,8 +80,9 @@ def test_text_factor_is_auto_detected_and_modeled():
     assert statuses["Resin"] == "kept_feature"
 
 
-def test_auto_categorical_is_reported_as_a_finding_per_column():
-    out = _analyze(_sheet(), target="lipase_titer")
+@_SHEET
+def test_auto_categorical_is_reported_as_a_finding_per_column(shared_analysis):
+    out = shared_analysis(_sheet(), target="lipase_titer")
     found = _findings(out, "auto_categorical")
     assert [f["column"] for f in found] == ["Resin"]
     assert found[0]["severity"] == "info"
@@ -82,8 +90,9 @@ def test_auto_categorical_is_reported_as_a_finding_per_column():
     assert "roles.categoricals" in found[0]["message"]
 
 
-def test_auto_categorical_factor_is_varied_by_proposals():
-    out = _analyze(_sheet(), target="lipase_titer")
+@_SHEET
+def test_auto_categorical_factor_is_varied_by_proposals(shared_analysis):
+    out = shared_analysis(_sheet(), target="lipase_titer")
     levels = {p["recipe"]["Resin"] for p in out["proposals"]}
     assert levels <= {"A", "B", "C"}
     # The factor is part of the design: the recipe carries every modeled feature.
@@ -134,15 +143,17 @@ def _with_bad_cells() -> pd.DataFrame:
     return df
 
 
-def test_dropped_runs_are_counted_not_silent():
-    out = _analyze(_with_bad_cells(), target="lipase_titer")
+@_BAD_CELLS
+def test_dropped_runs_are_counted_not_silent(shared_analysis):
+    out = shared_analysis(_with_bad_cells(), target="lipase_titer")
     assert out["n_dropped_incomplete"] == 3
     assert out["n"] == N - 3
     assert out["data_drops"]["rows_dropped"] == 3
 
 
-def test_dropped_cells_are_counted_per_column_and_reason():
-    out = _analyze(_with_bad_cells(), target="lipase_titer")
+@_BAD_CELLS
+def test_dropped_cells_are_counted_per_column_and_reason(shared_analysis):
+    out = shared_analysis(_with_bad_cells(), target="lipase_titer")
     by_column = out["data_drops"]["cells_by_column"]
     assert by_column["lipase_titer"] == {"missing": 1}
     assert by_column["Temp"] == {"non_numeric": 1}
@@ -150,8 +161,9 @@ def test_dropped_cells_are_counted_per_column_and_reason():
     assert out["data_drops"]["cells_by_reason"] == {"missing": 2, "non_numeric": 1, "censored": 0}
 
 
-def test_each_drop_has_a_finding_naming_the_column():
-    out = _analyze(_with_bad_cells(), target="lipase_titer")
+@_BAD_CELLS
+def test_each_drop_has_a_finding_naming_the_column(shared_analysis):
+    out = shared_analysis(_with_bad_cells(), target="lipase_titer")
     assert _findings(out, "dropped_rows")[0]["severity"] == "warning"
     by_col = {f["column"]: f for f in _findings(out, "dropped_cells")}
     assert set(by_col) == {"lipase_titer", "Temp", "pH"}
@@ -244,10 +256,11 @@ def test_anonymized_run_record_carries_counts_but_no_column_names():
         assert name not in run_blob
 
 
-def test_anonymize_leaves_drop_detail_for_model_columns_unchanged():
+@_BAD_CELLS
+def test_anonymize_leaves_drop_detail_for_model_columns_unchanged(shared_analysis):
     """Only identifier names are aliased; the drop detail is about model inputs and
     the target, which are never identifiers, so the keys are the same as the owner's."""
-    plain = _analyze(_with_bad_cells(), target="lipase_titer")
+    plain = shared_analysis(_with_bad_cells(), target="lipase_titer")
     anon = _analyze(_with_bad_cells(), target="lipase_titer", anonymize=True)
     assert anon["data_drops"]["cells_by_column"] == plain["data_drops"]["cells_by_column"]
 

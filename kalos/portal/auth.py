@@ -49,7 +49,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from fastapi import Depends, Header, HTTPException
 
@@ -479,6 +479,11 @@ def require_principal(
         raise HTTPException(status_code=500, detail="authentication is misconfigured") from None
 
 
+# Markers read by the per-route scope manifest (kalos/portal/route_scopes.py).
+SCOPE_ATTR = "__kalos_required_scope__"
+CONDITIONAL_SCOPES_ATTR = "__kalos_conditional_scopes__"
+
+
 def require_scope(scope: str):
     """Build a dependency that requires the caller's principal to hold `scope`
     (403 otherwise). Use as `Depends(require_scope(WRITE))` on an endpoint."""
@@ -490,4 +495,32 @@ def require_scope(scope: str):
             raise HTTPException(status_code=403, detail=f"requires '{scope}' scope")
         return principal
 
+    # Recorded for the per-route scope manifest (scripts/export_scope_manifest.py,
+    # docs/route-scopes.json); read back with `scope_of`.
+    setattr(_dep, SCOPE_ATTR, scope)
     return _dep
+
+
+def scope_of(dependency: object) -> str | None:
+    """The scope a `require_scope(...)` dependency enforces, else None."""
+    value = getattr(dependency, SCOPE_ATTR, None)
+    return value if isinstance(value, str) else None
+
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def conditional_scope(scope: str, when: str) -> Callable[[_F], _F]:
+    """Declare (for the scope manifest only) an extra scope the endpoint
+    enforces in its body when `when` holds, e.g. `admin` to archive. It does
+    NOT enforce anything: the endpoint must still check `principal.has(scope)`.
+    Apply it BELOW the `@router.<method>(...)` decorator."""
+    if scope not in _VALID_SCOPES:
+        raise ValueError(f"unknown scope {scope!r}")
+
+    def mark(endpoint: _F) -> _F:
+        existing = list(getattr(endpoint, CONDITIONAL_SCOPES_ATTR, ()))
+        setattr(endpoint, CONDITIONAL_SCOPES_ATTR, (*existing, (scope, when)))
+        return endpoint
+
+    return mark

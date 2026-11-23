@@ -179,5 +179,6 @@ def test_state_names_say_recipes_not_batch_and_keep_a_legacy_map():
 
     doc = (Path(__file__).resolve().parents[1] / "docs" / "ASSISTANT.md").read_text()
     leftover = [ln for ln in doc.splitlines() if "batch" in ln.lower()
-                and "batch_recipe" not in ln and "batch_proposed" not in ln]
+                and "batch_recipe" not in ln and "batch_proposed" not in ln
+                and "`batch_group`" not in ln]  # a column role (setup suggestions), not a state name
     assert leftover == []

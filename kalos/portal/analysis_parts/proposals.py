@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from kalos.domains import DesignSpace
+from kalos.portal.cells import cell_labels
 
 
 def _annotate(
@@ -24,6 +25,8 @@ def _annotate(
     p_feasible: np.ndarray | None = None,
     constraint: tuple[str, np.ndarray, np.ndarray] | None = None,
     distance: np.ndarray | None = None,
+    minimize: bool = False,
+    interval_fields: Sequence[Mapping[str, Any]] | None = None,
 ) -> list:
     """Attach predicted value, uncertainty, and an explore/exploit rationale to
     each proposed experiment. Explore = high model uncertainty (chosen to learn);
@@ -47,7 +50,15 @@ def _annotate(
     constraint was actually applied.
 
     `distance`, when given, adds `nearest_training_distance` to every row (see
-    `nearest_training_distance`). Omitted when None."""
+    `nearest_training_distance`). Omitted when None.
+
+    `minimize=True` (campaign goal minimize): `best` is the LOWEST measured value
+    and "exploit" means predicted below it; `pred` stays in the target's units.
+
+    `interval_fields`, when given, is one dict per proposal (from
+    `analysis_parts.intervals.proposal_interval_fields`) merged into the row:
+    `predictive_std`, `intervals`, `gp_intervals`, `quantiles`,
+    `expected_improvement`, `p_improve`. Omitted when None."""
     mean = np.asarray(mean, float).reshape(-1)
     std = np.asarray(std, float).reshape(-1)
     thr = float(np.quantile(std, 2 / 3)) if len(std) > 2 else float(std.max() if len(std) else 0.0)
@@ -55,9 +66,12 @@ def _annotate(
     rows = []
     for i in range(len(batch)):
         m, sd = float(mean[i]), float(std[i])
-        gain = m - best
+        gain = best - m if minimize else m - best
         if gain > eps:
-            mode, reason = "exploit", f"predicted high (+{gain:.3g} vs best)"
+            mode, reason = (
+                ("exploit", f"predicted low (-{gain:.3g} vs best)") if minimize
+                else ("exploit", f"predicted high (+{gain:.3g} vs best)")
+            )
         elif sd >= thr:
             mode, reason = "explore", f"reduce model uncertainty here (±{sd:.3g})"
         else:
@@ -78,6 +92,8 @@ def _annotate(
             }
         if distance is not None:
             row["nearest_training_distance"] = round(float(distance[i]), 4)
+        if interval_fields is not None:
+            row.update(interval_fields[i])
         rows.append(row)
     return rows
 
@@ -157,7 +173,7 @@ def _encode_pending(
     for c in kept_cats:
         codes = np.full(len(frame), np.nan)
         if c in frame.columns:
-            labels = frame[c].fillna("").astype(str).str.strip()
+            labels = cell_labels(frame[c])
             codes = labels.map(code_maps[c]).to_numpy(dtype=float)
         usable &= np.isfinite(codes)
         cols.append(codes)

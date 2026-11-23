@@ -26,7 +26,7 @@ def test_typical_range_nested_inside_hard_range() -> None:
 def test_ph_and_percent_are_bounded_physical_scales() -> None:
     ph = DIMENSION_BOUNDS["ph"]
     assert (ph.hard_lo, ph.hard_hi) == (0.0, 14.0)
-    assert (ph.typical_lo, ph.typical_hi) == (4.0, 9.0)
+    assert (ph.typical_lo, ph.typical_hi) == (3.0, 9.0)
     assert ph.unit == ""
 
     pct = DIMENSION_BOUNDS["percent"]

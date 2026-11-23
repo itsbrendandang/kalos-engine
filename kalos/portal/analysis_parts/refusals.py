@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from kalos.domains import DomainProfile
+from kalos.portal.analysis_parts.columns import is_outcome_name
 from kalos.portal.uploads import MIN_FIT_ROWS, UploadRejected, clip_name
 from kalos.validation.target import TargetVariation, assess_target_variation
 
@@ -47,7 +48,7 @@ def _target_error_context(
     alternatives = [
         str(c) for c in num
         if str(c) != str(target)
-        and profile.outcome_hint.search(str(c))
+        and is_outcome_name(str(c), profile)
         and assess_target_variation(df[c]).varies
     ]
     return {

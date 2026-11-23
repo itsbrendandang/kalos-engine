@@ -62,6 +62,7 @@ from kalos.portal.campaign_routes import audit as _audit
 from kalos.portal.campaign_routes import campaign_error_response
 from kalos.portal.campaign_routes import router as _campaign_router
 from kalos.portal.campaigns_api import router as _campaigns_router
+from kalos.portal.clones_api import router as _clones_router
 from kalos.portal.config import (
     ProductionConfigError,
     assert_production_posture,
@@ -72,6 +73,9 @@ from kalos.portal.config import (
     log_security_posture,
     open_access_explicitly_allowed,
 )
+from kalos.portal.exports_api import router as _exports_router
+from kalos.portal.gates_api import router as _gates_router
+from kalos.portal.history_api import router as _history_router
 from kalos.portal.jobs_api import JobUploadAuthPrecheck, JobUploadSizeLimit
 from kalos.portal.jobs_api import router as _jobs_router
 from kalos.portal.jwt_auth import log_config_error_once
@@ -84,6 +88,8 @@ from kalos.portal.limits import (
 from kalos.portal.migrate import legacy_latest_filename
 from kalos.portal.pipeline import compute_upload_analysis, publish_upload_analysis
 from kalos.portal.scale_routes import router as _scale_router
+from kalos.portal.setup_api import router as _setup_router
+from kalos.portal.setup_settings import setup_for_analysis
 from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.uploads import (
     _ERR_FIT,
@@ -108,7 +114,7 @@ log = logging.getLogger("kalos.portal")
 
 # Routes that accept a multipart file upload, and so get the upload-sized body
 # cap rather than the small JSON one (kalos/portal/limits.py).
-UPLOAD_PATHS = frozenset({"/api/run", "/api/scale/readout"})
+UPLOAD_PATHS = frozenset({"/api/run", "/api/scale/readout", "/api/scale/readout.json"})
 
 # --- CPU thread budget ------------------------------------------------------- #
 # The upload handler offloads its CPU-bound body (pandas parse + ~7 GP fits +
@@ -736,8 +742,13 @@ def _run_uploaded_sync(
     # functions the background-job worker uses (kalos/portal/pipeline.py).
     # `_analyze` is resolved from THIS module at call time so tests can stub it.
     validate_tenant_id(tenant)
+    # The campaign's setup (goal, bounds, constraints, unit); None = today's analysis.
+    setup = setup_for_analysis(
+        store if store is not None else get_campaign_store(), tenant=tenant, campaign_id=campaign_id,
+    )
     df, result = compute_upload_analysis(
-        raw, target, anonymize, filename, roles_json, sheet=sheet, analyze=_analyze,
+        raw, target, anonymize, filename, roles_json, sheet=sheet,
+        analyze=_analyze if setup is None else functools.partial(_analyze, setup=setup),
     )
     # A fresh upload starts a fresh campaign state (docs/CAMPAIGN_LOOP.md,
     # "Seeding") in THIS tenant's default campaign (or the explicit
@@ -752,11 +763,14 @@ def _run_uploaded_sync(
     publish_kwargs: dict[str, Any] = (
         {} if expected_generation is _NO_GUARD else {"expected_generation": expected_generation}
     )
-    publish_upload_analysis(
+    generation = publish_upload_analysis(
         store if store is not None else get_campaign_store(), result, filename,
         tenant=tenant, campaign_id=campaign_id, df=df, **publish_kwargs,
     )
-    return result
+    # Whether the run sheet's rows were saved to the campaign. False only when
+    # seeding failed and the analysis was published unstamped (logged): the
+    # response says so instead of implying the samples were stored.
+    return {**result, "rows_stored": generation is not None}
 
 
 @app.post("/api/run")
@@ -903,9 +917,14 @@ def upload_error_response(error: BaseException) -> JSONResponse:
 # app.
 app.include_router(_campaign_router)
 app.include_router(_campaigns_router)  # /api/campaigns* (kalos.portal.campaigns_api)
+app.include_router(_setup_router)  # /api/campaigns/{id}/setup (kalos.portal.setup_api)
+app.include_router(_exports_router)  # exports, result history, operating ranges (kalos.portal.exports_api)
 app.include_router(_jobs_router)  # background jobs (kalos.portal.jobs_api, docs/JOBS.md)
 app.include_router(_assist_router)  # /api/assist/* (kalos.assist, docs/ASSISTANT.md)
 app.include_router(_assist_sop_router)  # /api/assist/sop* (kalos.assist.sop)
+app.include_router(_gates_router)  # /api/campaigns/{id}/stages|gates (kalos.portal.gates_api)
+app.include_router(_clones_router)  # /api/campaigns/{id}/clones* (kalos.portal.clones_api)
+app.include_router(_history_router)  # track record + prediction/analysis history (kalos.portal.history_api)
 
 
 _CAMPAIGN_BODY_FIELDS = frozenset(

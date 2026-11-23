@@ -14,7 +14,15 @@ from .profile import DomainProfile
 BIOPROCESS_PROFILE = DomainProfile(
     name="bioprocess",
     outcome_hint=re.compile(
-        r"titer|titre|yield|conc|purity|lipase|biomass|od\d|product|response|output|score|kda|activity",
+        # `product(?!ion)`: "production" names a process PHASE (pH_production,
+        # temperature_production_C are setpoints of the production phase), not
+        # a product measurement. Plain `product` silently dropped a real
+        # 11-level pH setpoint as an output (real-backtest bug). Name rules are
+        # also never silent now: every column they exclude is reported
+        # (`derived_output`, reason `outcome_name`), and a setting-looking name
+        # (pH, temperature, setpoint) is never read as an output
+        # (`kalos.portal.analysis_parts.columns.is_outcome_name`).
+        r"titer|titre|yield|conc|purity|lipase|biomass|od\d|product(?!ion)|response|output|score|kda|activity",
         re.I,
     ),
     target_pref=re.compile(r"titer|titre|lipase|yield", re.I),
@@ -37,6 +45,14 @@ BIOPROCESS_PROFILE = DomainProfile(
     # when it is declared in roles, or when each of its levels is confounded with
     # a single recipe (see `kalos.portal.analysis_parts.columns._auto_group_column`).
     group_hint=re.compile(r"medium|strain|recipe|batch|campaign|group|lot", re.I),
+    # F06: observed during or after a run, never a setting. Kept narrow on
+    # purpose (a "grade" can be a reagent grade, a setting): a renamed result
+    # label is caught on its content instead (validation `target_leak`).
+    observed_hint=re.compile(
+        r"contaminat|steril(e|ity)|(?<![a-z])qc(?![a-z])|pass.?fail|(?<![a-z])(in|out.?of)[ _-]?spec(?![a-z])"
+        r"|(?<![a-z])oos(?![a-z])|(?<![a-z])tier(?![a-z])|outcome|verdict|failure",
+        re.I,
+    ),
 )
 
 __all__ = ["BIOPROCESS_PROFILE"]

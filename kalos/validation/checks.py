@@ -33,6 +33,8 @@ that column is computed as if the numbers were all in the same unit.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
+from itertools import pairwise
 from re import Pattern
 
 import numpy as np
@@ -42,13 +44,14 @@ from scipy.stats import spearmanr
 from kalos.core.replicates import noise_report
 from kalos.normalize import units
 
-from .bounds import DIMENSION_BOUNDS, infer_dimension
+from .bounds import DIMENSION_BOUNDS, column_bounds
 from .report import Finding, UnitConversion, cap_rows
 
 __all__ = [
     "check_constant_columns",
     "check_constant_within_group",
     "check_controls_present",
+    "check_duplicate_ids",
     "check_duplicate_rows",
     "check_informative_missingness",
     "check_missingness",
@@ -56,7 +59,12 @@ __all__ = [
     "check_physical_bounds",
     "check_provenance_metadata",
     "check_replicate_adequacy",
+    "check_result_duplicates",
+    "check_target_leak",
     "check_units_consistency",
+    "detached_from_reference",
+    "significant_digits",
+    "target_leak_evidence",
 ]
 
 
@@ -232,88 +240,90 @@ def check_units_consistency(
 
 
 def check_physical_bounds(df: pd.DataFrame) -> list[Finding]:
-    """Flag values outside a column's inferred dimension's HARD or TYPICAL range.
+    """Flag values outside a column's HARD (ERROR) or TYPICAL (WARNING) range.
 
-    Dimension is inferred from the header (`bounds.infer_dimension`); a
-    column with no recognizable dimension is silently skipped - no bounds
-    check without a confident guess at what the column measures. Every cell
-    is converted to its dimension's base unit via `units.parse_value` +
-    `units.convert` before comparison, so a Fahrenheit cell in a Celsius
-    column is judged correctly instead of compared as a raw number.
+    The bounds come from `bounds.column_bounds`: the unit the header states
+    (`DO_pct` is a percentage, `antifoam_mgL` is mg/L) through a unit-aware
+    table, else the column name (`temperature_C`, `pH`). A column whose unit and
+    name say nothing is skipped: no bounds check without a confident reading of
+    what the column measures.
+
+    A bare number is judged in the header's unit. A cell carrying its own unit
+    token ("94.3 F") is converted to its dimension's base unit
+    (`units.convert`) and judged against that dimension's base-unit bounds, so a
+    Fahrenheit cell in a Celsius column is judged correctly instead of compared
+    as a raw number.
 
     Outside HARD range -> ERROR (physically impossible). Inside HARD but
-    outside TYPICAL range -> WARNING (possible but operationally suspect).
-    Each finding's `detail` carries the offending rows' min/max seen value
-    (in base units) alongside the capped row list.
+    outside TYPICAL -> WARNING (possible but operationally suspect). Each
+    finding names an example row and value, the allowed range, and where the
+    bounds came from; `detail` carries min/max seen and the capped row list.
     """
     findings: list[Finding] = []
 
     for col in df.columns:
         name = str(col)
-        dim = infer_dimension(name)
-        if dim is None:
+        cb = column_bounds(name)
+        if cb is None:
             continue
-        bounds = DIMENSION_BOUNDS[dim]
         series = df[col]
         mask = _nonblank_mask(series)
         if not mask.any():
             continue
 
-        error_rows: list[int] = []
-        error_vals: list[float] = []
-        warning_rows: list[int] = []
-        warning_vals: list[float] = []
+        error: list[tuple[int, float]] = []
+        warning: list[tuple[int, float]] = []
         for idx, raw in series[mask].items():
             value, token = units.parse_value(raw)
             if value is None:
                 continue
-            base_value, _ = units.convert(value, token)
-            if base_value < bounds.hard_lo or base_value > bounds.hard_hi:
-                error_rows.append(_row_index(idx))
-                error_vals.append(base_value)
-            elif base_value < bounds.typical_lo or base_value > bounds.typical_hi:
-                warning_rows.append(_row_index(idx))
-                warning_vals.append(base_value)
+            lo, hi, tlo, thi = cb.hard_lo, cb.hard_hi, cb.typical_lo, cb.typical_hi
+            if token is not None:
+                base_value, suffix = units.convert(value, token)
+                dim = _SUFFIX_DIMENSION.get(suffix)
+                if dim is None or not units.is_known_unit(token):
+                    continue  # a unit of another kind: check_units_consistency's job
+                if dim != cb.cell_dimension:
+                    b = DIMENSION_BOUNDS[dim]
+                    lo, hi, tlo, thi = b.hard_lo, b.hard_hi, b.typical_lo, b.typical_hi
+                value = base_value
+            if value < lo or value > hi:
+                error.append((_row_index(idx), value))
+            elif value < tlo or value > thi:
+                warning.append((_row_index(idx), value))
 
-        if error_rows:
-            capped, total = cap_rows(error_rows)
+        unit = f" {cb.unit}" if cb.unit and cb.unit != "%" else cb.unit
+        for severity, hits, rng, what in (
+            ("error", error, (cb.hard_lo, cb.hard_hi), "not physically possible"),
+            ("warning", warning, (cb.typical_lo, cb.typical_hi), "possible but outside the usual range"),
+        ):
+            if not hits:
+                continue
+            rows = [r for r, _ in hits]
+            vals = [v for _, v in hits]
+            capped, total = cap_rows(rows)
+            lo_txt = f"{rng[0]:g}"
+            allowed = (f"{lo_txt}{unit} or more" if np.isinf(rng[1])
+                       else f"{lo_txt} to {rng[1]:g}{unit}")
+            note = f" {cb.note}" if severity == "error" and cb.note else ""
             findings.append(
                 Finding(
                     check="physical_bounds",
-                    severity="error",
+                    severity=severity,  # type: ignore[arg-type]
                     message=(
-                        f"column '{name}' (inferred dimension '{dim}') has values outside "
-                        f"the physically possible range [{bounds.hard_lo}, {bounds.hard_hi}]"
+                        f"column '{name}': {total} value(s) are {what} for {cb.dimension} "
+                        f"({allowed}; {cb.source}), e.g. {hits[0][1]:g} in row {hits[0][0]}."
+                        f"{note} Check the source record; nothing was changed."
                     ),
                     column=name,
                     rows=capped,
                     detail={
-                        "dimension": dim,
-                        "hard_range": [bounds.hard_lo, bounds.hard_hi],
-                        "min_seen": min(error_vals),
-                        "max_seen": max(error_vals),
-                        "n_rows_affected": total,
-                    },
-                )
-            )
-        if warning_rows:
-            capped, total = cap_rows(warning_rows)
-            findings.append(
-                Finding(
-                    check="physical_bounds",
-                    severity="warning",
-                    message=(
-                        f"column '{name}' (inferred dimension '{dim}') has values outside "
-                        f"the typical range [{bounds.typical_lo}, {bounds.typical_hi}] "
-                        "though within physical limits"
-                    ),
-                    column=name,
-                    rows=capped,
-                    detail={
-                        "dimension": dim,
-                        "typical_range": [bounds.typical_lo, bounds.typical_hi],
-                        "min_seen": min(warning_vals),
-                        "max_seen": max(warning_vals),
+                        "dimension": cb.dimension,
+                        "unit": cb.unit,
+                        "bounds_source": cb.source,
+                        ("hard_range" if severity == "error" else "typical_range"): [rng[0], rng[1]],
+                        "min_seen": min(vals),
+                        "max_seen": max(vals),
                         "n_rows_affected": total,
                     },
                 )
@@ -322,21 +332,35 @@ def check_physical_bounds(df: pd.DataFrame) -> list[Finding]:
     return findings
 
 
+# Base-unit suffix (kalos.normalize.units) -> DIMENSION_BOUNDS key, for cells
+# that carry their own unit token.
+_SUFFIX_DIMENSION = {
+    "_c": "temperature_c", "_pct": "percent", "_g_l": "concentration", "_ml_h": "flow_rate", "_h": "time_h",
+}
+
+
 # --- 3. duplicate rows -------------------------------------------------------- #
 
 
-def check_duplicate_rows(df: pd.DataFrame, *, outcome_hint: Pattern[str]) -> list[Finding]:
-    """Flag exact duplicate rows (WARNING) and outcome-only-differing rows (INFO).
+def _identifier_columns(df: pd.DataFrame) -> list:
+    """Columns that name a run rather than describe it (run_id, sample_id,
+    batch_no, ...), by the provenance check's `_RUN_ID_RE`."""
+    return [c for c in df.columns if _RUN_ID_RE.match(str(c).strip())]
 
-    An exact duplicate (every column equal) is very likely a copy-paste or
-    export bug - two "different" measurements cannot be bit-for-bit
-    identical across every column including any id/date column, so this is
-    a WARNING, not an INFO. Rows equal on every column EXCEPT the ones
-    `outcome_hint` matches are a different, benign thing: a genuine
-    replicate of the same recipe with a different measured result, which is
-    INFO, not a defect. `outcome_hint` is passed in (rather than
-    hardcoded) so the caller's `DomainProfile` stays the single source of
-    truth for what counts as an outcome column.
+
+def check_duplicate_rows(df: pd.DataFrame, *, outcome_hint: Pattern[str]) -> list[Finding]:
+    """Flag repeated rows: exact copies (WARNING), copies under a new run id
+    (WARNING), and replicates that differ only in the outcome (INFO).
+
+    - Exact duplicate (every column equal): a copy-paste or export bug; two
+      different measurements are not identical across every column.
+    - BRE-116: identical on every column EXCEPT the identifier columns (run id,
+      sample id, batch number: `_RUN_ID_RE`): the same run pasted again under a
+      new id. Comparing the id column too hid exactly this case, since a pasted
+      row usually gets the next free id.
+    - Equal on every column except the outcome columns (`outcome_hint`, passed
+      in by the caller's `DomainProfile`): a replicate of the same condition
+      with a different measured result. INFO, not a defect.
     """
     findings: list[Finding] = []
     if df.empty:
@@ -350,17 +374,44 @@ def check_duplicate_rows(df: pd.DataFrame, *, outcome_hint: Pattern[str]) -> lis
             Finding(
                 check="duplicate_rows",
                 severity="warning",
-                message="exact duplicate rows found (identical across every column)",
+                message=(
+                    f"{total} rows are exact copies of another row (identical in every column): "
+                    "a run entered twice counts twice. Keep one copy unless they are separate runs."
+                ),
                 rows=capped,
                 detail={"n_rows_affected": total},
             )
         )
 
+    ids = _identifier_columns(df)
+    non_id = [c for c in df.columns if c not in ids]
+    new_id_mask = pd.Series(False, index=df.index)
+    if ids and non_id:
+        new_id_mask = df.duplicated(subset=non_id, keep=False) & ~full_dup_mask
+        if new_id_mask.any():
+            rows = sorted(int(i) for i in df.index[new_id_mask])
+            capped, total = cap_rows(rows)
+            id_names = [str(c) for c in ids]
+            findings.append(
+                Finding(
+                    check="duplicate_rows",
+                    severity="warning",
+                    message=(
+                        f"{total} rows are identical to another row in every column except "
+                        f"{', '.join(repr(n) for n in id_names)}, results included: the same run "
+                        "pasted again under a new id would look like this. Check the lab record; "
+                        "if they are separate runs that gave the same numbers, keep both."
+                    ),
+                    rows=capped,
+                    detail={"identifier_columns": id_names, "n_rows_affected": total},
+                )
+            )
+
     outcome_cols = [c for c in df.columns if outcome_hint.search(str(c))]
-    compare_cols = [c for c in df.columns if c not in outcome_cols]
-    if compare_cols:
+    compare_cols = [c for c in non_id if c not in outcome_cols]
+    if compare_cols and outcome_cols:
         subset_dup_mask = df.duplicated(subset=compare_cols, keep=False)
-        replicate_only_mask = subset_dup_mask & ~full_dup_mask
+        replicate_only_mask = subset_dup_mask & ~full_dup_mask & ~new_id_mask
         if replicate_only_mask.any():
             rows = sorted(int(i) for i in df.index[replicate_only_mask])
             capped, total = cap_rows(rows)
@@ -380,6 +431,63 @@ def check_duplicate_rows(df: pd.DataFrame, *, outcome_hint: Pattern[str]) -> lis
                 )
             )
 
+    return findings
+
+
+def check_duplicate_ids(df: pd.DataFrame) -> list[Finding]:
+    """BRE-116: flag a run identifier used by more than one row.
+
+    Only a column that names runs one-to-one is checked: an identifier-named
+    column (`_RUN_ID_RE`) with at least 5 values, at least 90 % of them unique.
+    (A `batch` or `vessel` column legitimately repeats; it fails the 90 % test
+    and is left alone.) Rows sharing an id that DIFFER are two runs under one
+    name: their results cannot be traced to a physical run. Rows sharing an id
+    that are identical are a run pasted twice (also reported by
+    `duplicate_rows`). WARNING, one finding per id column.
+    """
+    findings: list[Finding] = []
+    for col in _identifier_columns(df):
+        labels = df[col][_nonblank_mask(df[col])].astype(str).str.strip()
+        if len(labels) < 5 or labels.nunique() < 0.9 * len(labels):
+            continue
+        dup_mask = labels.duplicated(keep=False)
+        if not dup_mask.any():
+            continue
+        name = str(col)
+        rows = sorted(_row_index(i) for i in labels.index[dup_mask])
+        groups = labels[dup_mask].groupby(labels[dup_mask]).groups
+        others = [c for c in df.columns if c != col]
+        differing: list[str] = []
+        identical: list[str] = []
+        for label, idx in groups.items():
+            block = df.loc[list(idx), others].astype(str)
+            (identical if len(block.drop_duplicates()) == 1 else differing).append(str(label))
+        capped, total = cap_rows(rows)
+        parts = []
+        if differing:
+            parts.append(
+                f"{len(differing)} id(s) are shared by rows that differ (e.g. '{differing[0]}'): two runs "
+                "under one name, so a result cannot be traced to its run"
+            )
+        if identical:
+            parts.append(f"{len(identical)} id(s) are shared by identical rows (the same run pasted twice)")
+        findings.append(
+            Finding(
+                check="duplicate_ids",
+                severity="warning",
+                message=(
+                    f"column '{name}': {'; '.join(parts)}. Give each run its own id, or remove the "
+                    "extra copy. Nothing was changed."
+                ),
+                column=name,
+                rows=capped,
+                detail={
+                    "shared_by_different_rows": differing[:20],
+                    "shared_by_identical_rows": identical[:20],
+                    "n_rows_affected": total,
+                },
+            )
+        )
     return findings
 
 
@@ -447,97 +555,331 @@ def check_missingness(df: pd.DataFrame) -> list[Finding]:
 
 # --- 5. outliers --------------------------------------------------------------- #
 
-# Orders of magnitude a strictly-positive column must span before outliers are
-# judged on a log10 scale rather than a linear one. 2.0 (a 100x spread) is a
-# convention, not a derived constant, chosen to sit clearly above the spread of
-# ordinary process measurements - a titer range, a viability percentage, or an
-# endotoxin level rarely covers 100x - and clearly below a designed scale ladder
-# or any quantity proportional to it, which covers thousands-fold. See
-# `check_outliers` for what goes wrong without this.
-_LOG_SCALE_DECADES = 2.0
+# BRE-118. The old rule was one marginal MAD z-score per column, |z| > 5, with a
+# switch to log10 when a positive column spanned two decades. On the shipped
+# 160-run example it flagged 60 rows of a perfectly clean sheet: the titer is
+# zero-inflated (non-producers read 0) and right-skewed (the runs near the
+# optimum are the point of the experiment), so its median and MAD describe the
+# non-producers and every good run scored |z| > 5; and a uniformly varied
+# antifoam setting (0.2-50 mg/L) crossed the two-decade switch and its lowest
+# settings were called outliers. A check that cries wolf on the best runs of a
+# clean sheet gets switched off, taking the real findings with it.
+#
+# The rule now asks the question an entry slip actually raises, per column:
+#
+#   1. Which scale? A column is judged on log10 when its positive values are
+#      right-skewed and the log makes them less skewed (titers, a scale ladder,
+#      anything multiplicative). Otherwise it stays linear (a uniformly varied
+#      setpoint, pH, temperature). Zeros are a floor (a non-producer, a
+#      component not added), never part of the spread.
+#   2. On a log column: is a value DETACHED from the rest? A x10 or x1000 slip
+#      lands a whole decade or three above its true value. A value (or a small
+#      cluster, at most a quarter of the column) that sits at least
+#      `_jump_threshold(m)` times above the next value below it is flagged. The
+#      threshold shrinks as the column grows, because the best of 30 runs can
+#      legitimately stand far above the second best while the best of 150 rarely
+#      does (see `_jump_threshold`). Values that repeat exactly (designed levels
+#      such as a 1/3/10/30 L ladder) are never called slips.
+#   3. On a linear column: the robust z-score |z| > 5 (median and MAD), as
+#      before. On a designed (roughly uniform) setting the most extreme setting
+#      scores about 1.35, so only a value far outside the design is flagged.
+#
+# Every flagged value carries the factor it stands apart by and, where a x10,
+# x100 or x1000 slip would put it back inside the column's range, the value it
+# would then be (`suspected_value`). Nothing is changed in the data.
+
+_OUTLIER_MIN_VALUES = 3          # linear robust z needs at least this many values
+_JUMP_MIN_POSITIVE = 8           # the jump test needs at least this many positive values
+_JUMP_MAX_CLUSTER_FRACTION = 0.25
+_LINEAR_Z = 5.0
+_SLIP_POWERS = (1, 2, 3)         # x10, x100, x1000
 
 
-def check_outliers(df: pd.DataFrame) -> list[Finding]:
-    """Flag numeric outliers via a robust MAD-based z-score, |z| > 5.
+def _jump_threshold(m: int) -> float | None:
+    """How many times above the next value a value must sit to be called detached.
 
-    `z = 0.6745 * (x - median) / MAD`, deliberately not mean/std: a single
-    real outlier inflates the standard deviation enough to mask itself in a
-    mean/std z-score, while the median and MAD barely move. Columns whose
-    MAD is 0 (constant, or fewer than half the values differ from the
-    median) are skipped outright - the guard exists because MAD == 0 makes
-    z undefined (division by zero), not because a MAD of 0 is itself a
-    problem (that is `check_constant_columns`'s job).
+    `m` is the number of positive values in the column. Calibrated on clean data,
+    not on faults: on 2,000 random subsamples of the repo's clean sheets (a
+    zero-inflated, right-skewed synthetic titer, the Kaggle yields and feeds, a
+    scale-up ladder's airflow) the largest value exceeded the second largest by
+    these factors in fewer than about 1 % of samples of that size. The skewed
+    titer is the hardest case: its best-to-second-best ratio passed 3.2 in 4 % of
+    30-run samples, passed 3.2 in under 1 % of 45-run samples, and never passed
+    2 in 150-run samples. Fewer than `_JUMP_MIN_POSITIVE` values: no test.
+    """
+    if m < _JUMP_MIN_POSITIVE:
+        return None
+    if m < 25:
+        return 10.0
+    if m < 50:
+        return 5.0
+    if m < 100:
+        return 3.0
+    return 2.0
+
+
+def _skew(values: np.ndarray) -> float:
+    if len(values) < 3:
+        return 0.0
+    sd = float(values.std())
+    if sd == 0.0:
+        return 0.0
+    return float(np.mean(((values - values.mean()) / sd) ** 3))
+
+
+def _prefers_log(positive: np.ndarray) -> bool:
+    """True when the positive values are right-skewed and log10 makes them more
+    symmetric: the signature of a multiplicative quantity (a titer, a ladder)."""
+    if len(positive) < _JUMP_MIN_POSITIVE:
+        return False
+    raw = _skew(positive)
+    return raw > 0.5 and abs(_skew(np.log10(positive))) < abs(raw)
+
+
+def _suspected_value(value: float, rest: np.ndarray, *, upward: bool) -> tuple[float | None, int | None]:
+    """The value a x10 / x100 / x1000 slip would have come from: the SMALLEST
+    such slip that puts it back inside the range of `rest` (a misplaced decimal
+    is more common than a larger slip; a larger one cannot be ruled out, which
+    is why the result is called suspected). `(None, None)` when none does."""
+    if len(rest) == 0 or value <= 0:
+        return None, None
+    lo, hi = float(rest.min()), float(rest.max())
+    for k in _SLIP_POWERS:
+        cand = value / 10**k if upward else value * 10**k
+        if lo <= cand <= hi:
+            return cand, k
+    return None, None
+
+
+def _ladder_floor(arr: np.ndarray) -> float:
+    """The smallest factor that can count as detached given the column's own
+    spacing: three of its widest steps between neighbouring distinct values in
+    its middle half (25th-75th percentile), on a log scale. A dense column (a
+    titer) has tiny steps and this floor is near 1. A designed ladder (1, 3, 10,
+    30 L, or an airflow that follows it) steps about 3x per rung, so a missing
+    rung or two is the design, not a slip; only a jump far beyond the ladder's
+    own step counts there."""
+    lo, hi = np.percentile(arr, [25, 75])
+    mid = np.unique(arr[(arr >= lo) & (arr <= hi)])
+    if len(mid) < 2:
+        return 1.0
+    step = float(np.max(np.diff(np.log10(mid))))
+    return float(10 ** (3.0 * step))
+
+
+def _detached_clusters(
+    values: pd.Series, threshold: float
+) -> list[tuple[list[int], float, float, bool]]:
+    """Clusters of positive values detached from the rest by >= `threshold`x.
+
+    Returns `(row_labels, factor, neighbour_value, upward)` per cluster: the rows
+    in the cluster, how many times apart it sits from the value it is compared
+    with, that value, and whether the cluster is above (True) or below.
+
+    A value is compared with the next value toward the bulk and, so that a
+    second slip cannot hide the first (two x10 slips, the smaller one sitting
+    between the bulk and the larger), also with the value after that, skipping
+    one (Dixon's r21 idea). The skipped value is not flagged on that account.
+    The skip-one ratio is calibrated by the same clean-data rule as
+    `_jump_threshold`. At most a quarter of the positive values can form a
+    cluster; more than that is a mode of the data, not a slip.
+
+    The lower tail is only tested when the column holds no zeros or negatives
+    and its bulk is well away from zero (10th percentile at least half the
+    median): near a detection limit, low values are naturally far apart in
+    ratio terms.
+    """
+    pos = values[values > 0].sort_values(kind="mergesort")
+    m = len(pos)
+    arr = pos.to_numpy(float)
+    labels = [_row_index(i) for i in pos.index]
+    k_max = max(1, int(np.floor(_JUMP_MAX_CLUSTER_FRACTION * m)))
+    out: list[tuple[list[int], float, float, bool]] = []
+    threshold = max(threshold, _ladder_floor(arr))
+
+    def designed_level(cluster: np.ndarray) -> bool:
+        # Exact repeats are designed levels (a scale ladder, a two-level DoE),
+        # not slips: a slip lands on an arbitrary value.
+        return len(cluster) >= 2 and len(np.unique(cluster)) <= len(cluster) / 2
+
+    def scan(a: np.ndarray) -> tuple[int, float, float] | None:
+        """On ascending `a` (bulk first), the first top position i (cluster
+        a[i:]) detached from the bulk: (i, factor, neighbour)."""
+        for skip in (1, 2):
+            for i in range(m - k_max, m):
+                if i - skip < 0:
+                    continue
+                factor = float(a[i] / a[i - skip])
+                if factor >= threshold and not designed_level(a[i:]):
+                    return i, factor, float(a[i - skip])
+        return None
+
+    hit = scan(arr)
+    if hit is not None:
+        i, factor, neighbour = hit
+        out.append((labels[i:], factor, neighbour, True))
+
+    no_floor = not bool((values <= 0).any())
+    bulk_away_from_zero = float(np.percentile(arr, 10)) >= 0.5 * float(np.median(arr))
+    if no_floor and bulk_away_from_zero:
+        hit = scan(1.0 / arr[::-1])
+        if hit is not None:
+            i, factor, neighbour = hit
+            out.append((labels[::-1][i:], factor, 1.0 / neighbour, False))
+    return out
+
+
+def significant_digits(value: float) -> int:
+    """Significant digits as written (0.942 -> 3, 5.0 -> 1, 1200 -> 2). Trailing
+    zeros of an integer are not counted: 1200 may well be a rounded reading."""
+    if not np.isfinite(value) or value == 0:
+        return 0
+    text = repr(abs(float(value))).lower().split("e")[0]
+    digits = text.replace(".", "").lstrip("0")
+    if text.endswith(".0"):
+        digits = digits[:-1]
+    return len(digits.rstrip("0")) or 1
+
+
+def detached_from_reference(value: float, reference: Iterable[float]) -> dict | None:
+    """Judge one new value against measured `reference` values with the same
+    detached-value rule as `check_outliers` (the reference plus the new value,
+    the factor set by the number of positive values). None when the value is
+    not detached, not positive, or the reference is too small to judge.
+
+    Returns `factor`, `threshold_factor`, `neighbour` (the measured value it is
+    compared with), `direction` ("high"/"low"), `suspected_value` and
+    `slip_factor` (the x10/x100/x1000 slip that puts it back inside the
+    measured range, or None) and `n_reference`."""
+    ref = [float(v) for v in reference if v is not None and np.isfinite(float(v))]
+    if not np.isfinite(value) or value <= 0:
+        return None
+    series = pd.Series([*ref, float(value)])
+    new_label = len(series) - 1
+    threshold = _jump_threshold(int((series > 0).sum()))
+    if threshold is None:
+        return None
+    for rows, factor, neighbour, upward in _detached_clusters(series, threshold):
+        if new_label not in rows:
+            continue
+        rest = np.asarray([v for v in ref if v > 0], float)
+        suspect, power = _suspected_value(float(value), rest, upward=upward)
+        return {
+            "factor": factor,
+            "threshold_factor": max(threshold, _ladder_floor(np.sort(series[series > 0].to_numpy(float)))),
+            "neighbour": neighbour,
+            "direction": "high" if upward else "low",
+            "suspected_value": None if suspect is None else float(f"{suspect:.6g}"),
+            "slip_factor": None if power is None else 10**power,
+            "n_reference": len(ref),
+        }
+    return None
+
+
+def check_outliers(df: pd.DataFrame, *, outcome_columns: Iterable[str] = ()) -> list[Finding]:
+    """Flag values that stand apart from the rest of their column (see the
+    section comment above for the rule and why it replaced a marginal z-score).
+
+    `outcome_columns` (the target and other measured outputs) are judged by the
+    detached-value test only, whatever their shape: an outcome is skewed by the
+    very settings the sheet varies (titer falls at the largest scales, peaks
+    near the optimum), so a marginal z-score would flag the experiment's own
+    effects. A x10 or x1000 slip still stands a decade or more apart.
 
     Operates on `pd.to_numeric` coercion of each column, so a cell holding
-    unit-tagged text ("34.6 C") coerces to NaN and is excluded rather than
-    compared as a raw number; this check does not need unit-awareness
-    because it only cares about a column's numeric spread.
-
-    SCALE ASSUMPTION, and why it is not optional: a MAD z-score presumes the
-    column is roughly unimodal on a LINEAR scale. A scale-up dataset breaks that
-    assumption hard. Given a designed bioreactor ladder
-    (0.01, 0.05, 0.25, 1, 5, 10, 50, 200, 500, 1000, 2000 L) the median is 10
-    and the MAD is about 10, so every run at 200 L or above scores |z| > 5 and
-    20 of 55 rows get flagged as outliers. They are not outliers, they are the
-    experimental design, and the same happens to every column proportional to
-    scale (harvest volume, harvest mass). A check that cries wolf on a third of
-    a legitimate dataset gets switched off, taking the genuine findings with it.
-
-    So a strictly-positive column spanning at least `_LOG_SCALE_DECADES` orders
-    of magnitude is assessed on log10 instead, which is how a multiplicative
-    quantity is actually distributed. This is a statement about the data's
-    geometry, not a fudge factor: on the ladder above, log10 spacing is roughly
-    even, so nothing is flagged, while narrow-range columns (endotoxin spanning
-    10x, aggregate percent spanning 5x) stay on the linear scale and keep
-    reporting their real outliers. `detail["scale"]` records which scale was
-    used, so the client is never left guessing how a value was judged.
+    unit-tagged text ("34.6 C") is excluded rather than compared as a raw
+    number. WARNING severity: a flagged value may be real (a breakthrough run, a
+    deliberate edge setting); the finding says what to check and changes nothing.
     """
     findings: list[Finding] = []
+    outcomes = {str(c) for c in outcome_columns}
 
     for col in df.columns:
         name = str(col)
         numeric = pd.to_numeric(df[col], errors="coerce")
         valid = numeric.dropna()
-        if len(valid) < 3:
+        if len(valid) < _OUTLIER_MIN_VALUES:
+            continue
+        positive = valid[valid > 0].to_numpy(float)
+        is_outcome = name in outcomes
+
+        if not (valid < 0).any() and (is_outcome or _prefers_log(positive)):
+            threshold = _jump_threshold(len(positive))
+            if threshold is None:
+                continue
+            for rows, factor, neighbour, upward in _detached_clusters(valid, threshold):
+                rest = valid[(valid > 0) & ~valid.index.isin(rows)].to_numpy(float)
+                flagged = []
+                for r in rows[:20]:
+                    v = float(valid.loc[r])
+                    suspect, power = _suspected_value(v, rest, upward=upward)
+                    flagged.append({
+                        "row": r, "value": v,
+                        "suspected_value": None if suspect is None else float(f"{suspect:.6g}"),
+                        "slip_factor": None if power is None else 10**power,
+                    })
+                capped, total = cap_rows(rows)
+                first = flagged[0]
+                side = "above the next-highest" if upward else "below the next-lowest"
+                hint = ""
+                if first["suspected_value"] is not None:
+                    hint = (
+                        f" A x{first['slip_factor']} entry slip would look like this; the value "
+                        f"would then be {first['suspected_value']:g}."
+                    )
+                findings.append(
+                    Finding(
+                        check="outliers",
+                        severity="warning",
+                        message=(
+                            f"column '{name}': {total} value(s) stand apart from the rest, e.g. "
+                            f"{first['value']:g} (row {first['row']}) is {factor:.1f}x {side} value "
+                            f"({neighbour:g}).{hint} Check the source record; nothing was changed."
+                        ),
+                        column=name,
+                        rows=capped,
+                        detail={
+                            "scale": "ratio",
+                            "rule": "detached_value",
+                            "factor": factor,
+                            "threshold_factor": threshold,
+                            "n_positive": len(positive),
+                            "direction": "high" if upward else "low",
+                            "flagged": flagged,
+                            "n_rows_affected": total,
+                        },
+                    )
+                )
             continue
 
-        # Decide the scale before computing anything, and judge on that scale
-        # throughout so median/MAD/z are mutually consistent.
-        scale = "linear"
-        assessed = valid
-        vmin = float(valid.min())
-        if vmin > 0.0:
-            spread_decades = np.log10(float(valid.max()) / vmin)
-            if spread_decades >= _LOG_SCALE_DECADES:
-                scale = "log10"
-                assessed = np.log10(valid)
-
-        median = float(assessed.median())
-        mad = float((assessed - median).abs().median())
+        median = float(valid.median())
+        mad = float((valid - median).abs().median())
         if mad == 0.0:
             continue
-        z = 0.6745 * (assessed - median) / mad
-        outlier_mask = z.abs() > 5
+        z = 0.6745 * (valid - median) / mad
+        outlier_mask = z.abs() > _LINEAR_Z
         if outlier_mask.any():
             rows = sorted(int(i) for i in valid.index[outlier_mask])
             capped, total = cap_rows(rows)
+            worst = int(z.abs().idxmax())  # type: ignore[arg-type]
             findings.append(
                 Finding(
                     check="outliers",
                     severity="warning",
                     message=(
-                        f"column '{name}' has values with MAD-based |z| > 5 "
-                        f"(assessed on a {scale} scale)"
+                        f"column '{name}': {total} value(s) lie far outside the rest of the column, "
+                        f"e.g. {float(valid.loc[worst]):g} (row {worst}) against a median of "
+                        f"{median:g} (robust z {float(z.loc[worst]):.1f}; flagged above 5). "
+                        "Check the source record; nothing was changed."
                     ),
                     column=name,
                     rows=capped,
-                    # median/mad are in the assessed scale's units: for a log10
-                    # assessment they are log10 values, not raw ones. Reported
-                    # alongside `scale` so the two can never be misread.
                     detail={
+                        "scale": "linear",
+                        "rule": "robust_z",
                         "median": median,
                         "mad": mad,
-                        "scale": scale,
+                        "threshold_z": _LINEAR_Z,
                         "n_rows_affected": total,
                     },
                 )
@@ -1032,4 +1374,236 @@ def check_constant_within_group(df: pd.DataFrame, *, group_hint: Pattern[str]) -
                 )
             )
 
+    return findings
+
+
+# --- 12. copy-pasted results ------------------------------------------------------ #
+
+# Expected number of neighbouring matches by chance on the sheet (see
+# `check_result_duplicates`). At or below `_PASTE_WARN_EXPECTED` a match between
+# neighbours is a warning; up to `_PASTE_MAX_EXPECTED` it is reported as info
+# (worth a look, but a coincidence would not be surprising); above that the check
+# stays silent, because a long sheet of 3-decimal values repeats by chance.
+_PASTE_WARN_EXPECTED = 0.02
+_PASTE_MAX_EXPECTED = 0.1
+
+
+def check_result_duplicates(df: pd.DataFrame, target: str | None) -> list[Finding]:
+    """Flag neighbouring rows whose result is exactly the same while their
+    settings differ: the signature of a value pasted into the next run.
+
+    Only precise values count (3 or more significant digits, not 0, and not a
+    reading the sheet records often, such as a reporting limit). The check
+    also asks how often two neighbours would match by chance on THIS sheet:
+    with every repeated value placed at random, the expected number of
+    neighbouring matches is sum(c * (c - 1)) / n over the repeated values. When
+    that exceeds `_PASTE_MAX_EXPECTED`, a match between neighbours is not
+    evidence of anything and nothing is reported; up to `_PASTE_WARN_EXPECTED`
+    it is a WARNING, in between INFO.
+
+    The suspected correct value is unknown (only the lab record has it), so the
+    finding names both rows and asks for the record to be checked.
+    """
+    if target is None or target not in df.columns or len(df) < 3:
+        return []
+    y = pd.to_numeric(df[target], errors="coerce")
+    counts = y.dropna().value_counts()
+    n = int(y.notna().sum())
+    common = max(3, int(np.ceil(0.05 * n)))
+
+    def eligible(v: float) -> bool:
+        return bool(np.isfinite(v)) and v != 0 and significant_digits(v) >= 3 and int(counts.get(v, 0)) < common
+
+    repeated = [int(c) for v, c in zip(counts.index.to_numpy(float), counts.to_numpy()) if c >= 2 and eligible(float(v))]
+    expected = sum(c * (c - 1) for c in repeated) / max(n, 1)
+    if not repeated or expected > _PASTE_MAX_EXPECTED:
+        return []
+    settings = [c for c in df.columns if c != target and not _RUN_ID_RE.match(str(c).strip())]
+    as_text = df[settings].astype(str) if settings else None
+    labels = list(df.index)
+    pairs: list[tuple[int, int, float]] = []
+    for a, b in pairwise(labels):
+        va, vb = y.loc[a], y.loc[b]
+        if pd.isna(va) or va != vb or not eligible(float(va)):
+            continue
+        if as_text is not None and as_text.loc[a].equals(as_text.loc[b]):
+            continue  # the whole row repeats: check_duplicate_rows reports it
+        pairs.append((_row_index(a), _row_index(b), float(va)))
+    if not pairs:
+        return []
+    rows = sorted({r for a, b, _ in pairs for r in (a, b)})
+    capped, total = cap_rows(rows)
+    a, b, v = pairs[0]
+    return [
+        Finding(
+            check="result_duplicate_entry",
+            severity="warning" if expected <= _PASTE_WARN_EXPECTED else "info",
+            message=(
+                f"column '{target}': rows {a} and {b} are neighbours with exactly the same result "
+                f"({v:g}) but different settings{f', and {len(pairs) - 1} more such pair(s)' if len(pairs) > 1 else ''}. "
+                "Either the value was pasted into the next run or the two results happen to match "
+                f"(on this sheet a match between neighbours is expected about {expected:.2f} times by "
+                "chance). Check both runs in the lab record; nothing was changed."
+            ),
+            column=str(target),
+            rows=capped,
+            detail={
+                "pairs": [{"rows": [a_, b_], "value": v_} for a_, b_, v_ in pairs[:20]],
+                "expected_by_chance": expected,
+                "suspected_value": None,
+                "n_rows_affected": total,
+            },
+        )
+    ]
+
+
+
+# --- 13. target leakage --------------------------------------------------------- #
+
+# F06. A column computed FROM the result (a QC grade, a yield tier, the titer in
+# other units) is not a setting: fitting it makes the model look perfect and
+# proposing it is meaningless ("set qc_grade = A"). Flagged on content, so a
+# renamed column is caught too. The thresholds are deliberately strict: only a
+# near-deterministic relation is called leakage.
+_LEAK_MIN_ROWS = 12
+_LEAK_MIN_RANK_AGREEMENT = 0.98  # share of runs a monotone threshold rule on the target explains
+_LEAK_MIN_ABS_SPEARMAN = 0.98
+_LEAK_MAX_LEVELS = 12
+
+
+def _monotone_agreement(y: np.ndarray, labels: np.ndarray) -> tuple[float, list[str]]:
+    """The largest share of runs whose label follows a set of thresholds on the
+    target, with the levels ordered by their median target (the longest
+    non-decreasing run of level ranks in target order, ties placed favourably),
+    and that order (lowest first)."""
+    levels = sorted(set(labels.tolist()), key=lambda lv: (float(np.median(y[labels == lv])), str(lv)))
+    rank = {lv: i for i, lv in enumerate(levels)}
+    order = sorted(range(len(y)), key=lambda i: (y[i], rank[labels[i]]))
+    seq = [rank[labels[i]] for i in order]
+    # longest non-decreasing subsequence, O(n log n)
+    tails: list[int] = []
+    for r in seq:
+        lo, hi = 0, len(tails)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if tails[mid] <= r:
+                lo = mid + 1
+            else:
+                hi = mid
+        if lo == len(tails):
+            tails.append(r)
+        else:
+            tails[lo] = r
+    return len(tails) / len(seq), [str(lv) for lv in levels]
+
+
+def target_leak_evidence(
+    df: pd.DataFrame, target: str | None, *, factor_hint: Pattern[str] | None = None
+) -> dict[str, dict]:
+    """Columns that are, on their content, a near-deterministic function of the
+    target: `{column: evidence}`.
+
+    - A text column with 2-12 levels whose levels sort the runs by the
+      target: thresholds on the target reproduce at least 98 % of its labels (a
+      grade or tier cut from the result). Every level needs at least 2 runs, at
+      least half the levels 2 different results, and the target at least 3
+      distinct values per level (bands, not recipes).
+    - A numeric column whose rank order matches the target's (|Spearman| >=
+      0.98): the result in other units, or a quantity computed from it.
+
+    Only a text/level column can be excluded on content (`exclude`); a numeric
+    column is always reported and kept (see the comment in the loop).
+
+    Needs at least `_LEAK_MIN_ROWS` runs with a numeric target. Evidence says
+    what was measured; it never claims the column WAS computed from the target:
+    a setting with an overwhelming, low-noise effect looks the same. So
+    `exclude` is False when the name reads like a process factor
+    (`factor_hint`, e.g. medium, strain, batch): such a column is reported and
+    kept, and the user can declare it an output. Otherwise it is excluded and
+    the user can declare it a setting.
+    """
+    out: dict[str, dict] = {}
+    if target is None or target not in df.columns:
+        return out
+    y_all = pd.to_numeric(df[target], errors="coerce")
+    ok = y_all.notna()
+    if int(ok.sum()) < _LEAK_MIN_ROWS or y_all[ok].nunique() < 3:
+        return out
+    y = y_all[ok].to_numpy(float)
+    for col in df.columns:
+        if col == target:
+            continue
+        name = str(col)
+        series = df.loc[ok, col]
+        nonblank = _nonblank_mask(series)
+        if int(nonblank.sum()) < _LEAK_MIN_ROWS or nonblank.mean() < 0.9:
+            continue
+        numeric = pd.to_numeric(series[nonblank], errors="coerce")
+        yy = y[nonblank.to_numpy()]
+        if numeric.notna().all() and numeric.nunique() > _LEAK_MAX_LEVELS:
+            rho = float(spearmanr(numeric.to_numpy(float), yy).statistic)
+            if np.isfinite(rho) and abs(rho) >= _LEAK_MIN_ABS_SPEARMAN:
+                # Reported, never excluded on content alone: a clean one-factor
+                # dose-response (a feed sweep with little noise) ranks the runs the
+                # same way, and dropping the sheet's real input would be worse than
+                # the leak. The finding asks the user to declare it if it is an output.
+                out[name] = {"kind": "numeric", "spearman": round(rho, 4), "n": int(len(yy)),
+                             "exclude": False}
+            continue
+        if numeric.notna().all():
+            continue  # a numeric setting with few levels (a 3-level DoE) is not a label
+        labels = series[nonblank].astype(str).str.strip().to_numpy(object)
+        counts = pd.Series(labels).value_counts()
+        if not (2 <= len(counts) <= _LEAK_MAX_LEVELS) or int(counts.min()) < 2:
+            continue
+        # A label cut from the result groups many different results into a few
+        # bands. Levels that each hold a single result value (every run of one
+        # recipe giving the same number) are recipes, not bands. One band may be
+        # a single value (all the zeros of the non-producers).
+        distinct = pd.Series(yy).groupby(labels).nunique()
+        if int((distinct >= 2).sum()) * 2 < len(distinct) or len(np.unique(yy)) < 3 * len(counts):
+            continue
+        share, order = _monotone_agreement(yy, labels)
+        if share >= _LEAK_MIN_RANK_AGREEMENT:
+            out[name] = {"kind": "levels", "agreement": round(share, 4), "levels_low_to_high": order,
+                         "n": int(len(yy)),
+                         "exclude": not (factor_hint is not None and factor_hint.search(name))}
+    return out
+
+
+def check_target_leak(
+    df: pd.DataFrame, target: str | None, *, factor_hint: Pattern[str] | None = None
+) -> list[Finding]:
+    """WARNING per column that looks computed from the target (see
+    `target_leak_evidence`): it would make the model look better than it is and
+    is not a setting anyone can choose before a run."""
+    findings: list[Finding] = []
+    for name, ev in target_leak_evidence(df, target, factor_hint=factor_hint).items():
+        if ev["kind"] == "levels":
+            what = (
+                f"its levels sort the runs by '{target}' ({' < '.join(ev['levels_low_to_high'])}; "
+                f"{ev['agreement']:.0%} of {ev['n']} runs fit simple cut-offs on '{target}')"
+            )
+        else:
+            what = f"it ranks the runs in the same order as '{target}' (Spearman {ev['spearman']:+.2f}, {ev['n']} runs)"
+        findings.append(
+            Finding(
+                check="target_leak",
+                severity="warning",
+                message=(
+                    f"column '{name}' looks computed from the result: {what}. A grade, tier or "
+                    "converted copy of the result is known only after the run, so it is not used "
+                    "as an input or proposed. If it really is a setting chosen before the run, "
+                    "declare it in roles.features (or roles.categoricals)."
+                ) if ev["exclude"] else (
+                    f"column '{name}' follows the result almost perfectly: {what}. A setting with "
+                    "a very strong, low-noise effect can do this, and so can a value computed from "
+                    "the result, so it is not excluded on this evidence"
+                    + (" (its name reads like a process factor or grouping)" if ev["kind"] == "levels" else "")
+                    + ". If it is only known after the run, declare it in roles.outputs."
+                ),
+                column=name,
+                detail={"target": str(target), **ev},
+            )
+        )
     return findings

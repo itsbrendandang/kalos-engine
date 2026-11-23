@@ -82,7 +82,7 @@ SYNONYMS: dict[str, tuple[str, ...]] = {
 # `kalos/normalize/__init__.py`). Keep these patterns byte-identical to the
 # source so the offline plan and the live analyze path never disagree.
 _OUTCOME_HINT = re.compile(
-    r"titer|titre|yield|conc|purity|lipase|biomass|od\d|product|response|output|score|kda|activity|titer",
+    r"titer|titre|yield|conc|purity|lipase|biomass|od\d|product(?!ion)|response|output|score|kda|activity|titer",
     re.I,
 )
 _TARGET_PREF = re.compile(r"titer|titre|lipase|yield", re.I)

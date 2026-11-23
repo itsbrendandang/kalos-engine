@@ -1,0 +1,810 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/assist/ask",
+    "module": "kalos.assist.routes",
+    "endpoint": "assist_ask",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/assist/index/rebuild",
+    "module": "kalos.assist.routes",
+    "endpoint": "assist_index_rebuild",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/assist/index/status",
+    "module": "kalos.assist.routes",
+    "endpoint": "assist_index_status",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/assist/next",
+    "module": "kalos.assist.routes",
+    "endpoint": "assist_next",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/assist/review",
+    "module": "kalos.assist.routes",
+    "endpoint": "assist_review",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/assist/review/roles",
+    "module": "kalos.assist.routes",
+    "endpoint": "assist_review_roles",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/assist/sop",
+    "module": "kalos.assist.sop_routes",
+    "endpoint": "list_sops",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": "dict"
+  },
+  {
+    "method": "POST",
+    "path": "/api/assist/sop/draft",
+    "module": "kalos.assist.sop_routes",
+    "endpoint": "draft_sop",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/assist/sop/{draft_id}",
+    "module": "kalos.assist.sop_routes",
+    "endpoint": "get_sop",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/assist/sop/{draft_id}/export",
+    "module": "kalos.assist.sop_routes",
+    "endpoint": "export_sop",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/assist/sop/{draft_id}/fill",
+    "module": "kalos.assist.sop_routes",
+    "endpoint": "fill_sop",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/assist/sop/{draft_id}/revise",
+    "module": "kalos.assist.sop_routes",
+    "endpoint": "revise_sop",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaign",
+    "module": "kalos.portal.campaign_routes",
+    "endpoint": "get_campaign",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": "dict"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaign/reanalyze",
+    "module": "kalos.portal.campaign_routes",
+    "endpoint": "reanalyze_campaign",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaign/result",
+    "module": "kalos.portal.campaign_routes",
+    "endpoint": "log_campaign_result",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaign/start",
+    "module": "kalos.portal.campaign_routes",
+    "endpoint": "start_campaign",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns",
+    "module": "kalos.portal.campaigns_api",
+    "endpoint": "list_campaigns",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": "Any"
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns",
+    "module": "kalos.portal.campaigns_api",
+    "endpoint": "create_campaign",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}",
+    "module": "kalos.portal.campaigns_api",
+    "endpoint": "get_campaign",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/campaigns/{campaign_id}",
+    "module": "kalos.portal.campaigns_api",
+    "endpoint": "update_campaign",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null,
+    "conditional_scopes": [
+      {
+        "scope": "admin",
+        "when": "body sets 'archived' (archive/unarchive)"
+      }
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/analyses",
+    "module": "kalos.portal.history_api",
+    "endpoint": "analysis_history",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/analyses/{snapshot_id}",
+    "module": "kalos.portal.history_api",
+    "endpoint": "analysis_snapshot",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/analysis",
+    "module": "kalos.portal.campaigns_api",
+    "endpoint": "campaign_analysis",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/clones",
+    "module": "kalos.portal.clones_api",
+    "endpoint": "get_clones",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/clones/summary",
+    "module": "kalos.portal.clones_api",
+    "endpoint": "get_clones_summary",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "PUT",
+    "path": "/api/campaigns/{campaign_id}/clones/{label}",
+    "module": "kalos.portal.clones_api",
+    "endpoint": "put_clone_route",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/clones/{label}/titer-history",
+    "module": "kalos.portal.clones_api",
+    "endpoint": "get_titer_history",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/clones/{label}/titer-history",
+    "module": "kalos.portal.clones_api",
+    "endpoint": "post_titer_history",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/export/rows",
+    "module": "kalos.portal.exports_api",
+    "endpoint": "export_rows",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/gates",
+    "module": "kalos.portal.gates_api",
+    "endpoint": "get_gates",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "PUT",
+    "path": "/api/campaigns/{campaign_id}/gates/{gate}",
+    "module": "kalos.portal.gates_api",
+    "endpoint": "put_gate_decision",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/gates/{gate}/history",
+    "module": "kalos.portal.gates_api",
+    "endpoint": "get_gate_history",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/jobs",
+    "module": "kalos.portal.jobs_api",
+    "endpoint": "list_campaign_jobs",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/jobs",
+    "module": "kalos.portal.jobs_api",
+    "endpoint": "submit_job",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": 202,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/operating-ranges",
+    "module": "kalos.portal.exports_api",
+    "endpoint": "operating_ranges_get",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/operating-ranges",
+    "module": "kalos.portal.exports_api",
+    "endpoint": "operating_ranges_post",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/reanalyze",
+    "module": "kalos.portal.campaigns_api",
+    "endpoint": "reanalyze",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/reanalyze/jobs",
+    "module": "kalos.portal.jobs_api",
+    "endpoint": "submit_reanalyze_job",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": 202,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/results/history",
+    "module": "kalos.portal.exports_api",
+    "endpoint": "results_history",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/runs",
+    "module": "kalos.portal.campaigns_api",
+    "endpoint": "start_runs",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/runs/{run_id}/history",
+    "module": "kalos.portal.history_api",
+    "endpoint": "run_history",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/runs/{run_id}/result",
+    "module": "kalos.portal.campaigns_api",
+    "endpoint": "log_run_result",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/search",
+    "module": "kalos.assist.routes",
+    "endpoint": "campaign_search",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/setup",
+    "module": "kalos.portal.setup_api",
+    "endpoint": "get_setup",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "PUT",
+    "path": "/api/campaigns/{campaign_id}/setup",
+    "module": "kalos.portal.setup_api",
+    "endpoint": "put_setup",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/setup/suggestions",
+    "module": "kalos.assist.routes",
+    "endpoint": "setup_suggestions",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/stages",
+    "module": "kalos.portal.gates_api",
+    "endpoint": "get_stages",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "PUT",
+    "path": "/api/campaigns/{campaign_id}/stages",
+    "module": "kalos.portal.gates_api",
+    "endpoint": "put_stages",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/track-record",
+    "module": "kalos.portal.history_api",
+    "endpoint": "track_record",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/campaigns/{campaign_id}/track-record/runs",
+    "module": "kalos.portal.history_api",
+    "endpoint": "track_record_runs",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/campaigns/{campaign_id}/upload",
+    "module": "kalos.portal.campaigns_api",
+    "endpoint": "upload_to_campaign",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/jobs/{job_id}",
+    "module": "kalos.portal.jobs_api",
+    "endpoint": "get_job",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/jobs/{job_id}/cancel",
+    "module": "kalos.portal.jobs_api",
+    "endpoint": "cancel_job",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/latest",
+    "module": "kalos.portal.app",
+    "endpoint": "latest",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": "dict"
+  },
+  {
+    "method": "GET",
+    "path": "/api/multi",
+    "module": "kalos.portal.app",
+    "endpoint": "run_multi",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/providers",
+    "module": "kalos.portal.app",
+    "endpoint": "providers",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": "dict"
+  },
+  {
+    "method": "POST",
+    "path": "/api/run",
+    "module": "kalos.portal.app",
+    "endpoint": "run_uploaded",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/scale/readout",
+    "module": "kalos.portal.scale_routes",
+    "endpoint": "scale_readout",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/api/scale/readout.json",
+    "module": "kalos.portal.scale_routes",
+    "endpoint": "scale_readout_json",
+    "scopes": [
+      "write"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/single",
+    "module": "kalos.portal.app",
+    "endpoint": "run_single",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/healthz",
+    "module": "kalos.portal.app",
+    "endpoint": "healthz",
+    "scopes": [],
+    "auth": "public",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": "dict"
+  },
+  {
+    "method": "GET",
+    "path": "/readyz",
+    "module": "kalos.portal.app",
+    "endpoint": "readyz",
+    "scopes": [],
+    "auth": "public",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  }
+]

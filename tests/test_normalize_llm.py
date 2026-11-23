@@ -299,13 +299,13 @@ def test_max_sample_clamped(monkeypatch):
     assert load_config().max_sample == 5
 
 
-def test_offline_plan_production_phase_headers_do_not_break_validation():
+def test_offline_plan_production_phase_headers_are_features():
     """Bioprocess sheets name process conditions after the production phase
-    ("temp_production_C", "pH_production"). The outcome heuristic matches
-    "product" inside those headers; without a named target the plan must
-    still validate instead of raising "more than one target column": the
-    preferred outcome (lipase) is the target and the other flagged headers
-    are metadata, never features."""
+    ("temp_production_C", "pH_production"). "production" is a phase, not a
+    product measurement: the outcome heuristic no longer matches it
+    (`product(?!ion)`), so these stay features and lipase is the only target.
+    (Before, both were demoted to metadata: a real pH setpoint was silently
+    lost; real-backtest bug.)"""
     df = pd.DataFrame(
         {
             "temp_production_C": [25.0, 25.0, 30.0],
@@ -315,9 +315,7 @@ def test_offline_plan_production_phase_headers_do_not_break_validation():
     )
     plan = offline_plan(df)
     roles = {c.raw_name: c.role for c in plan.columns}
-    assert roles == {"temp_production_C": "metadata", "pH_production": "metadata", "lipase_g.L": "target"}
-    notes = {c.raw_name: c.note for c in plan.columns}
-    assert "'lipase_g.L' is the target" in notes["temp_production_C"]
+    assert roles == {"temp_production_C": "feature", "pH_production": "feature", "lipase_g.L": "target"}
 
 
 def test_offline_plan_two_outcomes_keeps_one_target_and_demotes_the_other_to_metadata():

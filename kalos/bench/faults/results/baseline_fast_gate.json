@@ -1,0 +1,39 @@
+{
+ "clean": {
+  "clean_bioprocess160": [],
+  "clean_bioprocess30": [],
+  "clean_bioprocess60": [],
+  "clean_results_plain": [],
+  "clean_results_surprise": [],
+  "clean_scaleup90": []
+ },
+ "faults": {
+  "constant_target": "caught",
+  "duplicate_run_id": "caught",
+  "duplicated_rows_exact": "caught",
+  "duplicated_rows_new_id": "caught",
+  "fahrenheit_rows_bare": "caught",
+  "fahrenheit_rows_labeled": "caught",
+  "impossible_value": "caught",
+  "mixed_units_labeled": "caught",
+  "mixed_units_unlabeled": "caught",
+  "result_copy_paste": "caught",
+  "result_negative": "caught",
+  "result_x10": "caught",
+  "result_x1000": "caught",
+  "swapped_columns": "caught",
+  "swapped_levels": "missed",
+  "too_few_rows_5": "caught",
+  "too_few_rows_8": "missed",
+  "transposed_sheet": "caught",
+  "transposed_sheet_no_id": "caught",
+  "typo_x1000_feature": "caught",
+  "typo_x1000_target": "caught",
+  "typo_x10_feature": "caught",
+  "typo_x10_target": "caught"
+ },
+ "note": "CI regression gate: fast tier, repo-only bases (Kaggle skipped). Regenerate with `python -m kalos.bench.faults all --tier fast --datasets /nonexistent --out DIR` then `... baseline --out DIR`; see docs/PLANTED_FAULTS.md.",
+ "protocol_version": "1",
+ "source_commit": "e864b3efbdc158e3b76f88058a1d49c48cf82e68",
+ "tier": "fast"
+}

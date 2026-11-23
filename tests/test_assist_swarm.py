@@ -5,7 +5,13 @@ import pytest
 from test_assist_routes import H, env  # noqa: F401
 
 from kalos.assist.index import Chunk, Hit
-from kalos.assist.llm import AnthropicChat, ModelUnavailable
+from kalos.assist.llm import (
+    AnthropicChat,
+    ModelUnavailable,
+    OllamaChat,
+    cascade_for,
+    get_chat_model,
+)
 from kalos.assist.swarm import ROLES, group_model, review
 
 
@@ -79,6 +85,28 @@ def test_group_override(monkeypatch):
     monkeypatch.setenv("KALOS_ASSIST_MODEL_CRITIC", "critic-test")
     assert group_model(ROLES[2], AnthropicChat("normal")).model == "critic-test"
     assert group_model(ROLES[1], AnthropicChat("normal")).model == "normal"
+
+
+@pytest.mark.parametrize("provider", ["ollama", "anthropic"])
+@pytest.mark.parametrize("override", ["", "critic-test"])
+def test_role_model_with_cascade(monkeypatch, provider, override):
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", provider)
+    monkeypatch.setenv("KALOS_LLM_FAST_MODEL", "fast-test")
+    monkeypatch.setenv("KALOS_LLM_QUALITY_MODEL", "quality-test")
+    monkeypatch.setenv("KALOS_ASSIST_ANTHROPIC_MODEL", "anthropic-test")
+    monkeypatch.setenv("KALOS_ASSIST_MODEL_CRITIC", override)
+    base = get_chat_model()
+    assert base is not None
+    selected = group_model(ROLES[2], base)
+    cascade = cascade_for(selected)
+    assert cascade is not None
+    assert cascade.tiers_for("answer") == [("quality", selected)]
+    expected = "quality-test" if provider == "ollama" else "anthropic-test"
+    assert selected.model == (override or expected)
+    if isinstance(selected, OllamaChat):
+        assert cascade.fast.model == "fast-test"
+    else:
+        assert cascade.fast is selected
 
 
 def test_routes(env, monkeypatch):  # noqa: F811 - imported pytest fixture

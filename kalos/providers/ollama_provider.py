@@ -11,8 +11,11 @@ prompts leave the machine, and the status says so.
 
 The HTTP client is stdlib `urllib` (no extra dependency), same as
 `kalos.normalize.llm`'s Ollama path, and shares its env vars:
-`KALOS_OLLAMA_URL` (default http://localhost:11434) and `KALOS_OLLAMA_MODEL`
-(default llama3.1).
+`KALOS_OLLAMA_URL` (default http://localhost:11434). Which model answers is
+chosen by the cascade (`kalos.providers.cascade`): a fast model
+(`KALOS_LLM_FAST_MODEL`) and a quality model (`KALOS_LLM_QUALITY_MODEL`), both
+MIT or Apache-2.0 licensed by default. `KALOS_OLLAMA_MODEL`, when set, is the
+quality model (the one model older engines used for everything).
 """
 from __future__ import annotations
 
@@ -25,10 +28,11 @@ from urllib.parse import urlparse
 from kalos.providers.base import ProviderStatus
 
 _URL_ENV = "KALOS_OLLAMA_URL"
-_MODEL_ENV = "KALOS_OLLAMA_MODEL"
 _TIMEOUT_ENV = "KALOS_OLLAMA_TIMEOUT_S"
 DEFAULT_URL = "http://localhost:11434"
-DEFAULT_MODEL = "llama3.1"
+# The quality model is the default for a single-model call (benchmarks/llm:
+# the measured winner). Apache-2.0. See kalos.providers.cascade for both tiers.
+DEFAULT_MODEL = "qwen2.5:7b"
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
 _CAPABILITY = (
@@ -51,7 +55,10 @@ def ollama_url() -> str:
 
 
 def ollama_model() -> str:
-    return (os.environ.get(_MODEL_ENV) or DEFAULT_MODEL).strip()
+    """The quality-tier model (the single model a non-cascaded call uses)."""
+    from kalos.providers.cascade import quality_model
+
+    return quality_model()
 
 
 def _timeout() -> float:
@@ -109,20 +116,27 @@ class OllamaProvider:
             fallback=_FALLBACK,
         )
 
-    def chat(self, system: str, prompt: str, *, model: str | None = None) -> str:
-        """One non-streamed chat turn at temperature 0. Raises `OllamaUnavailable`."""
+    def chat(
+        self, system: str, prompt: str, *, model: str | None = None, json_mode: bool = False,
+    ) -> str:
+        """One non-streamed chat turn at temperature 0. `json_mode` asks the
+        server to constrain the reply to JSON (still validated by the caller).
+        Raises `OllamaUnavailable`."""
         url = ollama_url()
         if urlparse(url).scheme not in {"http", "https"}:
             raise OllamaUnavailable("the Ollama URL must be http or https")
-        body = json.dumps({
+        payload: dict[str, object] = {
             "model": model or ollama_model(),
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
-            "options": {"temperature": 0},
-        }).encode("utf-8")
+            "options": {"temperature": 0, "seed": 0},
+        }
+        if json_mode:
+            payload["format"] = "json"
+        body = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(  # noqa: S310 - scheme checked just above
             f"{url}/api/chat", data=body, headers={"Content-Type": "application/json"},
             method="POST",
@@ -135,6 +149,30 @@ class OllamaProvider:
         if not isinstance(content, str):
             raise OllamaUnavailable("the Ollama server gave no answer text")
         return content
+
+    def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
+        """Embedding vectors for `texts` from `/api/embed`, one per text, in
+        order. Raises `OllamaUnavailable` (unreachable server, model not
+        pulled, or a malformed reply)."""
+        url = ollama_url()
+        if urlparse(url).scheme not in {"http", "https"}:
+            raise OllamaUnavailable("the Ollama URL must be http or https")
+        body = json.dumps({"model": model, "input": texts, "truncate": True}).encode("utf-8")
+        request = urllib.request.Request(  # noqa: S310 - scheme checked just above
+            f"{url}/api/embed", data=body, headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            data = json.loads(_open(request, _timeout()).decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            raise OllamaUnavailable("the Ollama server did not answer") from exc
+        vectors = data.get("embeddings") if isinstance(data, dict) else None
+        if (
+            not isinstance(vectors, list) or len(vectors) != len(texts)
+            or not all(isinstance(v, list) and v for v in vectors)
+        ):
+            raise OllamaUnavailable("the Ollama server gave no embeddings")
+        return [[float(x) for x in v] for v in vectors]
 
 
 __all__ = [

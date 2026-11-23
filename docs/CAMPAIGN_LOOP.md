@@ -144,6 +144,71 @@ They are also present on the `{"has_campaign": false}` response (stage `setup`),
 While any run awaits a result the round stays in `run` and `next_action` is `record`.
 `pending[].round` is the 0-based round a run was started in, and null for runs started before it was stamped.
 
+## Prediction recorded at start (VIZ_SPEC R5)
+
+When a run is started (`POST /api/campaign/start`, `POST /api/campaigns/{id}/runs`) the
+engine, in the same transaction, looks up the campaign's currently published analysis and
+checks whether the started recipe is one of its `proposals[].recipe`
+(`kalos/portal/run_prediction.py`). The run stores the result as `prediction_at_start`;
+the block is never backfilled onto runs started before this change (they read `null`).
+
+Matching: the proposal's recipe goes through the same value normalization `start()`
+applies to the caller's recipe (`check_recipe_values`). Then both must have the same keys
+and, per key, equal values: categorical and null values exactly; numeric values equal
+after rounding both to 3 decimals (the precision the engine rounds proposal coordinates
+to). So `1.2341` matches a proposed `1.234`, and `1.236` does not. `5` matches `5.0`, and
+the string `"5"` does not match `5`. If several proposals match, the first one is used.
+
+Matched (`pred_source: "engine"`, and the run's `pred`/`std` are set to the engine's values):
+
+```json
+"prediction_at_start": {
+  "available": true, "basis": "predicted",
+  "pred": 4.2, "std": 0.3, "std_method": "gp_posterior",
+  "interval": {"lo": 3.7, "hi": 4.7, "half_width": 0.5, "coverage": 0.8,
+               "method": "conformal_global"},
+  "interval_unavailable_reason": null,
+  "proposal_index": 0,
+  "analysis_provenance": {"provenance_sha256": "...", "input_sha256": "...", "...": "..."},
+  "analysis_generation": "3f9a...",
+  "recorded_at": 1700000000.0
+}
+```
+
+`interval` is `pred ± conformal_q` with the analysis's `conformal_coverage`. That is the
+global band from pooled grouped-CV residuals, and its coverage is approximate. When the
+analysis has no finite `conformal_q`/`conformal_coverage`, `interval` is null and
+`interval_unavailable_reason` says why. `std` is the surrogate's posterior std, which is
+model-based and not calibrated on held-out data. When the matched proposal carries
+`intervals` or `gp_intervals`, they are copied verbatim if their JSON is at most 2048
+characters. A larger block is left out and `<key>_omitted` explains why; it is never
+truncated. Nothing else from the analysis is copied.
+
+Not matched (the user edited the recipe, or there is no published analysis with proposals):
+`{"available": false, "reason": "recipe is not one of the published proposals; the engine has
+no prediction recorded for it", "recorded_at": ...}`. The run keeps the caller's `pred`/`std`
+with `pred_source: "caller"`, and the engine never treats them as its own prediction.
+
+Every run returned by start, by the summaries (`GET /api/campaign` and
+`GET /api/campaigns/{id}` → `summary.pending[]`) and by result recording carries
+`prediction_at_start`, `pred_source` (null on legacy runs) and three fields computed at
+read time from the current result, so a correction never leaves a stale value:
+`residual` (= measured `result` − `prediction_at_start.pred`, rounded to 6 places),
+`residual_basis: "derived"`, and `inside_band` (`lo <= result <= hi`). All three are null
+for an awaiting run, a caller-predicted run or a legacy run. `inside_band` is also null when
+no interval was recorded. The fold (`plan_fold`/`commit_fold`) only reads `recipe` and
+`result`, so none of these keys ever becomes a dataset column.
+
+Since schema v8 the same transaction also appends the prediction to `run_predictions`
+(with the per-proposal 90%/95% intervals read from the published proposal itself, not the
+size-capped copy above, plus the analysis's sha256 and snapshot id), every publish appends
+the analysis to `analysis_snapshots`, and `commit_fold` appends one `run_folds` row per
+folded run (the value and `run_results` version written into `base_rows`). A folded run
+leaves `pending` but keeps its id, prediction and band in those append-only tables; the
+cross-round track record reads them (`GET /api/campaigns/{id}/track-record`,
+docs/CAMPAIGNS_API.md, "Prediction history and track record"). `seed()` writes a random
+`seed_id` into the state on every upload, so a round is identified by `(seed_id, round)`.
+
 ## Analysis/campaign coherence
 
 The campaign and `/api/latest` used to be **separate** resources: separate locks, separate persistence (`portal.db` vs `latest/<tenant>.json`). Since schema v2 both live in `portal.db`, and the normal paths write them in one transaction (below), but the stamp still matters for the best-effort fallback.

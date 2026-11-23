@@ -1,9 +1,24 @@
 name: CI
 
-# The checks the README documents under "Local development": ruff, mypy, pytest.
-# The suite is CPU-bound GP fits, so pytest runs in parallel (pytest-xdist, -n
-# auto). GP-heavy tests are marked `slow`: every push runs the fast set, and the
-# full suite runs on main and on demand.
+# The checks the README documents under "Development": ruff, mypy, pytest.
+#
+# The test suite is CPU-bound GP fits. It runs as ONE suite split across
+# parallel jobs: every test except the `serial` determinism tests goes to one of
+# 6 shards, cut into contiguous runs of equal recorded duration (pytest-split's
+# default duration_based_chunks, using the committed `.test_durations`; being
+# contiguous keeps a module's tests, and the analyses they share, together).
+# Each shard runs its share in parallel (pytest-xdist, one worker per core,
+# `--dist loadgroup` so tests sharing an expensive fixture via an `xdist_group`
+# mark run on one worker). The `serial` tests run in their own job without
+# xdist. Together the shards and the serial job are the full suite, slow tests
+# included, on every PR and every push to main; no test runs twice.
+#
+# Keeping the shards balanced: each shard uploads the measured durations of the
+# tests it ran, and the `durations` job merges them into one `test-durations`
+# artifact. When the shard times drift apart (new or slower tests), download it
+# and commit it as `.test_durations` (`gh run download <run-id> -n test-durations`).
+# Tests missing from the file are assigned the average duration, so a stale file
+# only unbalances the shards; it never skips a test.
 
 # Changes only to these top-level notes skip CI: no code, test or package build
 # reads them. README.md is NOT skipped (it is the package's readme), nor is docs/
@@ -22,64 +37,95 @@ on:
     paths-ignore: *docs-only
   workflow_dispatch:
 
+# A newer push to a PR branch cancels the older run there. On main every run
+# finishes: cancelling there left main with no completed run at all.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-# Pin BLAS/OpenMP to one thread everywhere. The suite has determinism tests that
-# compare analysis outputs for exact equality; under parallel xdist, a varying
-# per-worker BLAS thread count perturbs GP fits at the last float digit and makes
-# those comparisons flaky. One thread per process keeps them reproducible (and,
-# with many xdist workers, is also faster - no oversubscription).
 env:
+  # Pin BLAS/OpenMP to one thread everywhere. The suite has determinism tests
+  # that compare analysis outputs for exact equality; under parallel xdist, a
+  # varying per-worker BLAS thread count perturbs GP fits at the last float
+  # digit and makes those comparisons flaky. One thread per process keeps them
+  # reproducible (and, with one xdist worker per core, avoids oversubscription).
   OMP_NUM_THREADS: "1"
   MKL_NUM_THREADS: "1"
   OPENBLAS_NUM_THREADS: "1"
+  # The engine's own torch pin (default min(4, cpus)) overrides OMP_NUM_THREADS,
+  # so it is set to 1 too: 4 torch threads in each xdist worker oversubscribe the
+  # runner and slow GP fits 10x or more on linux. tests/conftest.py defaults to 1
+  # as well; this makes the CI setting explicit.
+  KALOS_TORCH_THREADS: "1"
+  # CPU-only torch, from PyTorch's CPU wheel index, as in deploy/engine/Containerfile.
+  # The default PyPI torch wheel on linux pulls about 3 GB of CUDA libraries that
+  # no runner uses. `uv run --no-sync` below keeps `uv run` from re-syncing the
+  # venv to the lock's (CUDA) torch.
+  UV_TORCH_BACKEND: cpu
+  PYTHON_VERSION: "3.11"
 
 jobs:
   lint-type:
     name: ruff + mypy
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - &setup-uv
+        uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - name: Create a 3.11 venv and install (ml, portal, bench, dev)
+          # Keep downloaded wheels (torch and friends) in the cache. The default
+          # prune drops every wheel uv did not build itself, i.e. all of them.
+          prune-cache: false
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+      - &install
+        name: Create a venv and install the locked versions (ml, portal, bench, dev; CPU torch)
+        # Every version comes from uv.lock (exported as constraints), so CI tests
+        # the stack the lock pins. torch is the lock's version, but the CPU build.
         run: |
-          uv venv --python 3.11 .venv
-          uv pip install -e ".[ml,portal,bench,dev]"
+          uv venv --python "$PYTHON_VERSION" .venv
+          uv export --frozen --extra ml --extra portal --extra bench --extra dev \
+            --no-emit-project --no-hashes -o "$RUNNER_TEMP/constraints.txt"
+          uv pip install -e ".[ml,portal,bench,dev]" -c "$RUNNER_TEMP/constraints.txt"
+          uv pip show torch numpy botorch | grep -E '^(Name|Version)'
       - name: ruff
-        run: uv run ruff check kalos/ tests/ examples/
+        run: uv run --no-sync ruff check kalos/ tests/ examples/
       - name: mypy
-        run: uv run mypy
+        run: uv run --no-sync mypy
 
   tests:
-    name: pytest (fast)
+    name: pytest (shard ${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
-    # The fast suite (slow tests excluded) is still ~35 min of CPU-bound GP fits
-    # on a small runner, so it is SHARDED across parallel jobs: each shard runs a
-    # disjoint ~half via xdist's loadgroup, so wall time stays well under the cap
-    # even as the suite grows. Shards must agree, so the branch is green only when
-    # both pass.
+    # A balanced shard takes about 1/6 of the suite (about 2-4 min of tests). The
+    # cap is a hang guard, far above that.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
-    timeout-minutes: 30
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-      - name: Create a 3.11 venv and install (ml, portal, bench, dev)
-        run: |
-          uv venv --python 3.11 .venv
-          uv pip install -e ".[ml,portal,bench,dev]"
-      - name: pytest (fast shard ${{ matrix.shard }}/2, parallel, skip slow + serial)
+      - *setup-uv
+      - *install
+      - name: pytest (shard ${{ matrix.shard }}/6, parallel, all but serial)
         run: >
-          uv run python -m pytest -q -m "not slow and not serial" -n auto
-          --splits 2 --group ${{ matrix.shard }}
+          cp .test_durations ci-durations.json 2>/dev/null || echo '{}' > ci-durations.json;
+          uv run --no-sync python -m pytest -v -m "not serial" -n auto --dist loadgroup
+          -o faulthandler_timeout=900
+          --splits 6 --group ${{ matrix.shard }}
+          --durations-path=ci-durations.json --store-durations --clean-durations
+          --durations=25
+      - name: Upload this shard's test durations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: durations-shard-${{ matrix.shard }}
+          path: ci-durations.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   tests-serial:
     name: pytest (serial determinism)
@@ -90,31 +136,53 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-      - name: Create a 3.11 venv and install (ml, portal, bench, dev)
-        run: |
-          uv venv --python 3.11 .venv
-          uv pip install -e ".[ml,portal,bench,dev]"
+      - *setup-uv
+      - *install
       - name: pytest (serial, no xdist)
-        run: uv run python -m pytest -q -m "serial"
+        run: uv run --no-sync python -m pytest -q -m "serial" --durations=10
 
-  tests-full:
-    name: pytest (full, incl. slow)
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+  tests-assist:
+    name: pytest (assistant, with the assist extra)
+    # The shards install ml, portal, bench and dev only. The assistant ships with the
+    # `assist` extra, whose absence once hid a search bug (#202), so its tests also
+    # run with it installed.
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-      - name: Create a 3.11 venv and install (ml, portal, bench, dev)
+      - *setup-uv
+      - name: Create a venv and install the locked versions (+ assist; CPU torch)
         run: |
-          uv venv --python 3.11 .venv
-          uv pip install -e ".[ml,portal,bench,dev]"
-      - name: pytest (everything except serial, parallel)
-        run: uv run python -m pytest -q -m "not serial" -n auto
-      - name: pytest (serial determinism, no xdist)
-        run: uv run python -m pytest -q -m "serial"
+          uv venv --python "$PYTHON_VERSION" .venv
+          uv export --frozen --extra ml --extra portal --extra bench --extra dev --extra assist \
+            --no-emit-project --no-hashes -o "$RUNNER_TEMP/constraints.txt"
+          uv pip install -e ".[ml,portal,bench,dev,assist]" -c "$RUNNER_TEMP/constraints.txt"
+      - name: pytest (assistant and LLM tests)
+        run: >
+          uv run --no-sync python -m pytest -q -n auto
+          tests/test_assist*.py tests/test_llm*.py tests/test_setup_suggestions.py
+
+  durations:
+    name: merge test durations
+    needs: tests
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: durations-shard-*
+          path: shards
+      - name: Merge the shard durations into one .test_durations
+        run: |
+          # `--dist loadgroup` reports grouped tests as `<nodeid>@<group>`; pytest-split
+          # looks them up by the plain node id, so the suffix is dropped.
+          jq -s 'add | with_entries(.key |= sub("@[A-Za-z0-9_]+$"; "")) | to_entries | sort_by(.key) | from_entries' \
+            shards/*/ci-durations.json > .test_durations
+          jq -r '"\(length) tests, \((([.[]] | add) / 60) | floor) min of test time in total"' .test_durations
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-durations
+          path: .test_durations
+          include-hidden-files: true
+          retention-days: 30

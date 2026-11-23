@@ -4,6 +4,8 @@ rule and duplicate-header handling.
 """
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 
 from kalos.core.splits import row_hash_groups
@@ -13,10 +15,30 @@ from kalos.portal.cells import (
     CENSORED,
     NON_NUMERIC,
     NUMERIC,
+    cell_labels,
     classify_cells,
     is_null_label,
 )
 from kalos.portal.uploads import numeric_columns
+from kalos.validation.bounds import infer_dimension
+from kalos.validation.checks import target_leak_evidence
+
+# A name that reads as a SETTING is never read as an output by the outcome-name
+# rule: a pH or temperature column ("pH_production", "temp_product_phase"), or
+# anything called a setpoint. Measured outputs are not named that way.
+_SETTING_NAME = re.compile(r"set.?point|(?<![a-z])sp(?![a-z])|(?<![a-z])target.?(ph|temp)", re.I)
+
+
+def is_outcome_name(name: str, profile: DomainProfile) -> bool:
+    """True when the column NAME alone reads as a measured output
+    (`profile.outcome_hint`) and not as a setting (`_SETTING_NAME`, or a pH /
+    temperature column by `kalos.validation.bounds.infer_dimension`). Every
+    column this excludes from the inputs is reported with the reason
+    (`name_inferred_outputs`, finding `derived_output`, reason `outcome_name`)."""
+    text = str(name)
+    if not profile.outcome_hint.search(text):
+        return False
+    return not (_SETTING_NAME.search(text) or infer_dimension(text) in ("ph", "temperature_c"))
 
 
 def _numeric_cols(df: pd.DataFrame) -> list:
@@ -81,7 +103,12 @@ def _resolve_columns(
         # Fail loudly so the caller is never told a declared column was honored
         # when it was not - ids included (a typo'd id leaves the real id in as a
         # feature otherwise).
-        declared_names = [*roles.features, *roles.categoricals, *roles.ids, *roles.sparse]
+        declared_names = [
+            *roles.features, *roles.categoricals, *roles.ids, *roles.sparse, *roles.covariates,
+            *roles.outputs,
+        ]
+        if roles.strain:
+            declared_names.append(roles.strain)
         if roles.groups:
             declared_names.append(roles.groups)
         unknown = sorted({c for c in declared_names if c not in df.columns})
@@ -115,8 +142,9 @@ def _resolve_columns(
             cont_feats = [
                 c for c in num
                 if c != target and c not in cat_set and c not in ids
+                and c not in set(roles.outputs)
                 and not is_identifier_name(c, profile.id_hint)
-                and not profile.outcome_hint.search(str(c))
+                and not is_outcome_name(str(c), profile)
             ]
         gcol = roles.groups if (roles.groups and roles.groups in df.columns) else None
         # normalize both feature lists to sheet-column order
@@ -127,7 +155,7 @@ def _resolve_columns(
         return target, cont_feats, cat_feats, gcol, declared
 
     # inference mode (default profile = bioprocess): unchanged legacy behavior
-    outcomes = [c for c in num if profile.outcome_hint.search(str(c))]
+    outcomes = [c for c in num if is_outcome_name(str(c), profile)]
     if target is None or target not in df.columns:
         target = next(
             (c for c in outcomes if profile.target_pref.search(str(c))),
@@ -137,7 +165,7 @@ def _resolve_columns(
         c for c in num
         if c != target
         and not is_identifier_name(c, profile.id_hint)
-        and not profile.outcome_hint.search(str(c))
+        and not is_outcome_name(str(c), profile)
     ]
     cat_feats = _auto_categorical(df, num, target, profile)
     gcol = _auto_group_column(df, profile, [*cont_feats, *cat_feats])
@@ -164,7 +192,7 @@ def _auto_group_column(df: pd.DataFrame, profile: DomainProfile, features: list)
         feats = [f for f in names if f != str(c)]
         if not feats:
             continue
-        labels = df[c].fillna("").astype(str).str.strip()
+        labels = cell_labels(df[c])
         levels = [v for v in labels.unique().tolist() if not is_null_label(v)]
         if len(levels) < 2:
             continue
@@ -197,7 +225,7 @@ def _auto_categorical(df: pd.DataFrame, num: list, target: str, profile: DomainP
         if c in num_set or c == target:
             continue
         name = str(c)
-        if is_identifier_name(name, profile.id_hint) or profile.outcome_hint.search(name):
+        if is_identifier_name(name, profile.id_hint) or is_outcome_name(name, profile):
             continue
         series = df[c]
         if isinstance(series, pd.DataFrame):  # duplicate header; analysis dedupes later
@@ -211,3 +239,82 @@ def _auto_categorical(df: pd.DataFrame, num: list, target: str, profile: DomainP
         if len(labels) >= 3 and 2 <= n_levels <= AUTO_CATEGORICAL_MAX_LEVELS and enough_repeats:
             found.append(c)
     return found
+
+
+def derived_output_columns(
+    df: pd.DataFrame, target: str, candidates: list, roles: ColumnRoles | None,
+    profile: DomainProfile,
+) -> dict[str, dict]:
+    """F06: which candidate input columns are really outputs, `{column: why}`.
+
+    - `declared`: listed in `roles.outputs` by the user.
+    - `observed`: the name says it is observed during or after a run
+      (`profile.observed_hint`: contamination, QC pass/fail, a tier).
+    - `target_leak`: on its content, a near-deterministic function of the
+      target (`kalos.validation.checks.target_leak_evidence`): a grade or tier
+      cut from the result, or the result in other units. A column whose name
+      reads like a process factor (`profile.group_hint`) is reported by the
+      validation finding but kept.
+
+    A column the user declared a feature or categorical is never excluded here
+    (an explicit declaration wins); the validation finding still reports a leak.
+    """
+    explicit = set(roles.features) | set(roles.categoricals) if roles is not None else set()
+    outputs = set(roles.outputs) if roles is not None else set()
+    names = [str(c) for c in candidates]
+    out: dict[str, dict] = {}
+    for name in names:
+        if name in outputs:
+            out[name] = {"reason": "declared"}
+        elif name in explicit:
+            continue
+        elif profile.observed_hint is not None and profile.observed_hint.search(name):
+            out[name] = {"reason": "observed"}
+    pending = [n for n in names if n not in out and n not in explicit]
+    if pending:
+        leak = target_leak_evidence(df[[*pending, target]], target, factor_hint=profile.group_hint)
+        for name, ev in leak.items():
+            if ev.get("exclude"):
+                out[name] = {"reason": "target_leak", **ev}
+    return out
+
+
+DERIVED_OUTPUT_TEXT = {
+    "declared": "declared in roles.outputs",
+    "outcome_name": "its name reads like a measured output (a titer, yield, concentration, product or score)",
+    "observed": "its name says it is observed during or after a run (an outcome, not a setting)",
+    "target_leak": "its values follow the result almost exactly, so it looks computed from it",
+}
+
+
+def name_inferred_outputs(
+    df: pd.DataFrame, target: str, profile: DomainProfile, roles: ColumnRoles | None,
+    already: set[str],
+) -> dict[str, dict]:
+    """Columns kept out of the inputs ONLY because their name reads as an
+    output (`is_outcome_name`), so each is reported, never dropped silently.
+
+    `looks_like_setting` is True for a numeric column with 2-12 distinct
+    values each used in at least two runs: the shape of a designed setpoint,
+    which a measured output rarely has. Such a column is reported as a warning
+    (check the role), every other one as info. Not reported when the user
+    declared the features explicitly (an unlisted column is their choice).
+    """
+    if roles is not None and roles.features:
+        return {}
+    explicit = set(roles.categoricals) if roles is not None else set()
+    out: dict[str, dict] = {}
+    for col in df.columns:
+        name = str(col)
+        if name == str(target) or name in already or name in explicit:
+            continue
+        if not is_outcome_name(name, profile) or is_identifier_name(name, profile.id_hint):
+            continue
+        values = pd.to_numeric(df[col], errors="coerce").dropna()
+        counts = values.value_counts()
+        setting_like = bool(
+            len(values) >= 4 and 2 <= len(counts) <= 12 and int(counts.min()) >= 2
+        )
+        out[name] = {"reason": "outcome_name", "looks_like_setting": setting_like}
+    return out
+

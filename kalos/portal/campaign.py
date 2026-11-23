@@ -46,7 +46,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
@@ -62,6 +62,13 @@ from kalos.portal.migrate import (
 )
 from kalos.portal.migrate import (
     campaigns_table_is_v1_compatible as _campaigns_table_is_compatible,
+)
+from kalos.portal.prediction_history import (
+    record_fold,
+    record_prediction,
+    record_snapshot,
+    sha256_text,
+    snapshot_id_for,
 )
 from kalos.portal.tenancy import validate_tenant_id
 
@@ -150,13 +157,63 @@ def _finite_number(value: Any) -> float | None:
     return v if math.isfinite(v) else None
 
 
-def _best_measured(base_rows: list[dict[str, Any]], target: str) -> float | None:
-    """The best (max) MEASURED target value over `base_rows`, or None when no
-    row carries a finite numeric target — never a prediction (docs/CAMPAIGN_LOOP.md,
-    "Honesty constraints"). Because base rows only ever grow, this is
-    non-decreasing round over round, which is what the progress trajectory plots."""
+def base_row_rounds(state: Mapping[str, Any]) -> list[int] | None:
+    """The round in which each of `state["base_rows"]` entered the campaign
+    (0 = the upload), read off the fold history: `seed` records `{round: 0,
+    n_base}` and every `commit_fold` APPENDS its rows and records `{round: k,
+    n_base}`, so rows `[n_base[k-1], n_base[k])` are round k (the same rule
+    exports_api `_partition_rows` uses). None when the history is missing,
+    malformed or does not match the rows."""
+    rows = state.get("base_rows")
+    history = state.get("history")
+    if not isinstance(rows, list) or not isinstance(history, list) or not history:
+        return None
+    sizes: list[int] = []
+    for k, h in enumerate(history):
+        if not isinstance(h, dict):
+            return None
+        r, n = h.get("round"), h.get("n_base")
+        if not (isinstance(r, int) and isinstance(n, int)) or isinstance(r, bool) or isinstance(n, bool):
+            return None
+        if r != k or n < 0 or (sizes and n < sizes[-1]):
+            return None
+        sizes.append(n)
+    if sizes[-1] != len(rows):
+        return None
+    out = [0] * sizes[0]
+    for k in range(1, len(sizes)):
+        out += [k] * (sizes[k] - sizes[k - 1])
+    return out
+
+
+def _best_measured(
+    base_rows: list[dict[str, Any]], target: str, *, minimize: bool = False
+) -> float | None:
+    """The best MEASURED target value over `base_rows` (the max; the min when the
+    campaign's setup goal is minimize), or None when no row carries a finite
+    numeric target — never a prediction (docs/CAMPAIGN_LOOP.md, "Honesty
+    constraints"). Because base rows only ever grow, this only ever improves
+    round over round, which is what the progress trajectory plots."""
     values = [v for row in base_rows if (v := _finite_number(row.get(target))) is not None]
-    return max(values) if values else None
+    if not values:
+        return None
+    return min(values) if minimize else max(values)
+
+
+def _goal_minimize(store: CampaignStore, tenant: str, campaign_id: str | None) -> bool:
+    """True when the campaign's stored setup (`campaign_settings` kind `setup`)
+    says goal=minimize. No setup, or no campaign, is the default maximize."""
+    from kalos.portal.campaign_settings import get_setting
+
+    cid = campaign_id or store.default_campaign_id(tenant=tenant)
+    if cid is None:
+        return False
+    try:
+        row = get_setting(store, tenant=tenant, campaign_id=cid, kind="setup")
+    except CampaignNotFound:
+        return False
+    value = row.get("value") if row else None
+    return isinstance(value, dict) and value.get("goal") == "minimize"
 
 
 def _clip(value: str | None, limit: int = MAX_AUDIT_FIELD_CHARS) -> str | None:
@@ -418,7 +475,12 @@ class CampaignStore:
     def _write_analysis(
         conn: sqlite3.Connection, tenant: str, campaign_id: str, blob: str,
         dataset: str | None, campaign_generation: str | None, now: float,
-    ) -> None:
+        *, analysis: Mapping[str, Any] | None = None, kind: str = "publish",
+        round_: int | None = None,
+    ) -> int:
+        """Publish `blob` as the campaign's analysis AND append it to
+        `analysis_snapshots` (schema v8) in the same transaction. Returns the
+        snapshot id."""
         conn.execute(
             "INSERT INTO analyses (campaign_id, tenant, state, dataset, campaign_generation, "
             "updated_at) VALUES (?, ?, ?, ?, ?, ?) "
@@ -426,6 +488,11 @@ class CampaignStore:
             "dataset = excluded.dataset, campaign_generation = excluded.campaign_generation, "
             "updated_at = excluded.updated_at WHERE analyses.tenant = excluded.tenant",
             (campaign_id, tenant, blob, dataset, campaign_generation, now),
+        )
+        return record_snapshot(
+            conn, tenant=tenant, campaign_id=campaign_id, blob=blob, analysis=analysis,
+            kind=kind, round_=round_, campaign_generation=campaign_generation,
+            dataset=dataset, created_at=now,
         )
 
     @staticmethod
@@ -635,6 +702,9 @@ class CampaignStore:
             "base_rows": base_rows,
             "pending": [],
             "round": 0,
+            # Schema v8: identifies this upload in the prediction history. A
+            # re-upload restarts the round count, so (seed_id, round) is a round.
+            "seed_id": uuid.uuid4().hex,
             # Progress trajectory: best-so-far at each round, starting at
             # round 0 (the uploaded base). Each reanalyze appends a point.
             "history": [{"round": 0, "best": _best_measured(base_rows, target), "n_base": len(base_rows)}],
@@ -650,7 +720,8 @@ class CampaignStore:
             if analysis is not None:
                 blob = self._analysis_blob(analysis, dataset or "uploaded dataset", generation, now)
                 if blob is not None:
-                    self._write_analysis(conn, tenant, row.id, blob, dataset, generation, now)
+                    self._write_analysis(conn, tenant, row.id, blob, dataset, generation, now,
+                                         analysis=analysis, kind="upload", round_=0)
             if on_commit is not None:
                 on_commit(conn, generation)
             return generation
@@ -677,7 +748,8 @@ class CampaignStore:
         any upload has ever seeded a campaign, else the full summary
         (docs/CAMPAIGN_LOOP.md, "GET /api/campaign response").
 
-        `best` is `max(target over base_rows)` — the best MEASURED value so
+        `best` is `max(target over base_rows)` (`min` when the campaign setup's
+        goal is minimize; `goal` says which) — the best MEASURED value so
         far, never a prediction (see "Honesty constraints" in the design
         doc) — and is None when there is no base data yet or the target
         column carries no finite numeric value.
@@ -694,11 +766,25 @@ class CampaignStore:
 
         target = state["target"]
         base_rows: list[dict[str, Any]] = state["base_rows"]
-        best = _best_measured(base_rows, target)
+        minimize = _goal_minimize(self, tenant, campaign_id)
+        best = _best_measured(base_rows, target, minimize=minimize)
+        history = state.get("history")
+        if minimize and history:
+            # Stored points were recorded as maxima. base_rows only grow, so the
+            # best at each point is recomputed over the first `n_base` rows.
+            history = [
+                {**p, "best": _best_measured(base_rows[: p["n_base"]], target, minimize=True)}
+                if isinstance(p.get("n_base"), int) else p
+                for p in history
+            ]
 
         # `round` is absent on runs started before it was stamped: reads null.
+        # prediction_at_start / pred_source / residual / inside_band: see
+        # kalos.portal.run_prediction (null on runs started before R5).
+        from kalos.portal.run_prediction import run_view
+
         pending = [
-            {**run, "round": run.get("round"), "awaiting": run["result"] is None}
+            {**run_view(run), "round": run.get("round"), "awaiting": run["result"] is None}
             for run in state["pending"]
         ]
         n_awaiting = sum(1 for run in pending if run["awaiting"])
@@ -708,10 +794,12 @@ class CampaignStore:
             "features": state["features"],
             "n_base": len(base_rows),
             "best": best,
+            # What `best` means: the campaign setup's goal (default maximize).
+            "goal": "minimize" if minimize else "maximize",
             "round": state["round"],
             # Older campaigns (seeded before history existed) fall back to a
             # single current point so the frontend always has something to plot.
-            "history": state.get("history")
+            "history": history
             or [{"round": state["round"], "best": best, "n_base": len(base_rows)}],
             "pending": pending,
             "n_awaiting": n_awaiting,
@@ -734,28 +822,36 @@ class CampaignStore:
         return row, state
 
     @staticmethod
-    def _published_provenance(
+    def _published_analysis(
         conn: sqlite3.Connection, tenant: str, campaign_id: str
-    ) -> dict[str, Any] | None:
-        from kalos.portal.run_record import provenance_ref
-
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """The campaign's published analysis read inside `conn`'s transaction, and
+        the sha256 of its stored blob (None when there is none)."""
         arow = conn.execute(
             "SELECT state FROM analyses WHERE campaign_id = ? AND tenant = ?",
             (campaign_id, tenant),
         ).fetchone()
         if arow is None:
-            return None
+            return None, None
+        digest = sha256_text(str(arow[0]))
         try:
             data = json.loads(arow[0])
         except ValueError:
-            return None
-        return provenance_ref(data if isinstance(data, dict) else None)
+            return None, digest
+        return (data if isinstance(data, dict) else None), digest
 
     def start(
         self, recipes: list[dict[str, Any]], *, tenant: str, campaign_id: str | None = None
     ) -> list[dict[str, Any]]:
         """Append each proposed recipe as a pending, awaiting run. Returns
-        the appended runs (each with its assigned `id`)."""
+        the appended runs (each with its assigned `id`).
+
+        Each run also stores `prediction_at_start` (VIZ_SPEC R5): the engine's
+        prediction and band for the recipe, looked up in the published analysis
+        in THIS transaction, or `{available: false, reason}` when the recipe is
+        not one of its proposals (kalos.portal.run_prediction). `pred_source`
+        says whether the run's `pred`/`std` are the engine's (matched: they are
+        replaced by the engine's values) or the caller's (unmatched)."""
         self._check(tenant, campaign_id)
         with self._txn(write=True) as conn:
             row, state = self._writable_state(
@@ -792,7 +888,15 @@ class CampaignStore:
             # has no analysis or one written before the block existed). The
             # recipe itself is caller input; this says what was published, not
             # that the recipe came from it.
-            analysis_ref = self._published_provenance(conn, tenant, row.id)
+            from kalos.portal.run_prediction import prediction_at_start, run_view
+            from kalos.portal.run_record import provenance_ref
+
+            published, published_sha = self._published_analysis(conn, tenant, row.id)
+            analysis_ref = provenance_ref(published)
+            snapshot_id = (
+                snapshot_id_for(conn, tenant=tenant, campaign_id=row.id, analysis_sha256=published_sha)
+                if published_sha is not None else None
+            )
             for recipe in recipes:
                 # Validate the recipe mapping HERE, at the point of the bad
                 # input, so a malformed body 400s cleanly at /api/campaign/start
@@ -813,11 +917,17 @@ class CampaignStore:
                 recipe_map, problem = check_recipe_values(recipe_map, kinds)
                 if problem:
                     raise CampaignError(problem)
+                prediction = prediction_at_start(
+                    recipe_map, published, kinds, analysis_ref=analysis_ref, now=now
+                )
+                engine = bool(prediction.get("available"))
                 run = {
                     "id": uuid.uuid4().hex,
                     "recipe": recipe_map,
-                    "pred": recipe.get("pred"),
-                    "std": recipe.get("std"),
+                    "pred": prediction["pred"] if engine else recipe.get("pred"),
+                    "std": prediction["std"] if engine else recipe.get("std"),
+                    "pred_source": "engine" if engine else "caller",
+                    "prediction_at_start": prediction,
                     "mode": recipe.get("mode"),
                     "reason": recipe.get("reason"),
                     "result": None,
@@ -828,9 +938,28 @@ class CampaignStore:
                 }
                 state["pending"].append(run)
                 appended.append(run)
+                # Schema v8: the prediction recorded at start, append-only, in this
+                # transaction. Per-proposal intervals are read from the published
+                # proposal itself (the per-run copy is size-capped).
+                index = prediction.get("proposal_index") if engine else None
+                proposals = (published or {}).get("proposals")
+                proposal = (
+                    proposals[index]
+                    if isinstance(index, int) and isinstance(proposals, list)
+                    and 0 <= index < len(proposals) and isinstance(proposals[index], dict)
+                    else None
+                )
+                record_prediction(
+                    conn, tenant=tenant, campaign_id=row.id, run_id=run["id"],
+                    round_=state["round"], seed_id=state.get("seed_id"), recipe=recipe_map,
+                    block=prediction, proposal=proposal, pred_source=run["pred_source"],
+                    analysis_sha256=published_sha if engine else None,
+                    analysis_snapshot_id=snapshot_id if engine else None,
+                    source="start", recorded_at=now, analysis=published if engine else None,
+                )
             state["updated_at"] = now
             self._cas_write(conn, tenant, row, state, row.generation)
-            return appended
+            return [run_view(run) for run in appended]
 
     def set_result(
         self, run_id: str, value: float, *, tenant: str, campaign_id: str | None = None,
@@ -857,7 +986,12 @@ class CampaignStore:
         on success.
 
         Returns the run with `result_version`, `previous_result`, `result_reason`,
-        `result_actor` and `result_recorded_at` for THIS submission.
+        `result_actor` and `result_recorded_at` for THIS submission, plus the
+        result-entry checks (`kalos.portal.result_referee`): `verdict` (`valid`, or
+        `result_physically_impossible` / `result_magnitude_jump` /
+        `result_duplicate_entry` with the reason and the suspected correct value)
+        and `held` (always False: the checks warn, they never block or hold). The
+        same verdict is stored on the run as `entry_check`.
         """
         if not math.isfinite(value):
             raise CampaignError(f"result value must be a finite number; got {value!r}")
@@ -885,9 +1019,16 @@ class CampaignStore:
                         (tenant, row.id, run_id, version, value, prior,
                          reason_text or None, _clip(actor), _clip(auth_method), now),
                     )
+                    # Result-entry checks (kalos.portal.result_referee): warn-only,
+                    # blind to the prediction; the verdict is stored on the run and
+                    # returned, and the value is recorded exactly as entered.
+                    from kalos.portal.result_referee import judge_run
+
+                    entry_check = judge_run(value, run, state)
                     run["result"] = value
                     run["measured_at"] = now
                     run["result_version"] = version
+                    run["entry_check"] = entry_check
                     state["updated_at"] = now
                     self._cas_write(conn, tenant, row, state, row.generation)
                     if audit:
@@ -901,8 +1042,12 @@ class CampaignStore:
                             subject=actor, auth_method=auth_method, campaign_id=row.id,
                             detail=detail, now=now, structured_detail=True,
                         )
+                    from kalos.portal.run_prediction import run_view
+
                     return {
-                        **run,
+                        **run_view(run),
+                        "verdict": entry_check,
+                        "held": False,
                         "previous_result": prior,
                         "result_reason": reason_text or None,
                         "result_actor": _clip(actor),
@@ -961,7 +1106,14 @@ class CampaignStore:
                 measured += 1
         if measured == 0:
             raise CampaignError("no measured runs to fold; log at least one result first")
-        return pd.DataFrame(folded), target, state.get("generation")
+        frame = pd.DataFrame(folded)
+        # F05: the round each row was measured in (upload = 0, this fold = the
+        # next round), so the analysis can hold whole rounds out of its
+        # cross-validation. Absent when the fold history cannot place every row.
+        rounds = base_row_rounds(state)
+        if rounds is not None:
+            frame.attrs["kalos_round_index"] = [*rounds, *([int(state["round"]) + 1] * measured)]
+        return frame, target, state.get("generation")
 
     def awaiting_recipes(
         self, *, tenant: str, campaign_id: str | None = None
@@ -987,6 +1139,7 @@ class CampaignStore:
     def commit_fold(
         self, generation: str | None, *, tenant: str, campaign_id: str | None = None,
         analysis: dict[str, Any] | None = None, dataset: str | None = None,
+        on_commit: Callable[[sqlite3.Connection, str], None] | None = None,
     ) -> dict[str, Any]:
         """Make the fold planned by `plan_fold` durable, but ONLY if the
         campaign has not changed since: the UPDATE is a compare-and-swap on
@@ -1002,6 +1155,10 @@ class CampaignStore:
 
         Raises `CampaignError` if the campaign was reseeded or otherwise
         written underneath the in-flight re-analysis; nothing is written then.
+
+        `on_commit(conn, new_generation)` (background reanalyze jobs, as in
+        `seed`) runs inside the SAME transaction after the write; if it raises,
+        nothing is written.
         """
         self._check(tenant, campaign_id)
         changed = (
@@ -1016,9 +1173,11 @@ class CampaignStore:
                 raise CampaignConflict(changed)
             target = state["target"]
             still_pending: list[dict[str, Any]] = []
+            folded_runs: list[dict[str, Any]] = []
             for run in state["pending"]:
                 if run["result"] is not None:
                     state["base_rows"].append({**run["recipe"], target: run["result"]})
+                    folded_runs.append(run)
                 else:
                     still_pending.append(run)
             state["pending"] = still_pending
@@ -1039,11 +1198,24 @@ class CampaignStore:
                 new_generation = self._cas_write(conn, tenant, row, state, generation)
             except CampaignConflict:
                 raise CampaignConflict(changed) from None
+            snapshot_id: int | None = None
             if analysis is not None:
                 label = dataset or f"campaign round {state['round']}"
                 blob = self._analysis_blob(analysis, label, new_generation, now)
                 if blob is not None:
-                    self._write_analysis(conn, tenant, row.id, blob, label, new_generation, now)
+                    snapshot_id = self._write_analysis(
+                        conn, tenant, row.id, blob, label, new_generation, now,
+                        analysis=analysis, kind="reanalyze", round_=state["round"],
+                    )
+            # Schema v8: which value (and run_results version) of each run the fold
+            # wrote into base_rows. The run's id, prediction and band stay in
+            # run_predictions; nothing about the run is lost when it leaves pending.
+            for run in folded_runs:
+                record_fold(conn, tenant=tenant, campaign_id=row.id, run=run,
+                            folded_in_round=state["round"], analysis_snapshot_id=snapshot_id,
+                            folded_at=now)
+            if on_commit is not None:
+                on_commit(conn, new_generation)
             return state
 
     # --- analyses (what /api/latest serves) ---------------------------------- #
@@ -1066,7 +1238,14 @@ class CampaignStore:
             assert row is not None
             if row.archived_at is not None:
                 raise CampaignArchived()
-            self._write_analysis(conn, tenant, row.id, blob, dataset, campaign_generation, now)
+            current = row.state()
+            in_sync = campaign_generation is not None and campaign_generation == row.generation
+            rnd = current.get("round") if (in_sync and current is not None) else None
+            self._write_analysis(
+                conn, tenant, row.id, blob, dataset, campaign_generation, now, analysis=result,
+                kind="publish",
+                round_=rnd if isinstance(rnd, int) and not isinstance(rnd, bool) else None,
+            )
 
     def load_analysis(
         self, *, tenant: str, campaign_id: str | None = None

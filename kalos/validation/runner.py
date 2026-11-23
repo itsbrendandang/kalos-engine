@@ -29,6 +29,7 @@ from .checks import (
     check_constant_columns,
     check_constant_within_group,
     check_controls_present,
+    check_duplicate_ids,
     check_duplicate_rows,
     check_informative_missingness,
     check_missingness,
@@ -36,6 +37,8 @@ from .checks import (
     check_physical_bounds,
     check_provenance_metadata,
     check_replicate_adequacy,
+    check_result_duplicates,
+    check_target_leak,
     check_units_consistency,
 )
 from .report import Finding, UnitConversion, ValidationReport, build_report
@@ -96,8 +99,13 @@ def validate_frame(
     run("units_consistency", run_units)
     run("physical_bounds", lambda: check_physical_bounds(df))
     run("duplicate_rows", lambda: check_duplicate_rows(df, outcome_hint=profile.outcome_hint))
+    run("duplicate_ids", lambda: check_duplicate_ids(df))
     run("missingness", lambda: check_missingness(df))
-    run("outliers", lambda: check_outliers(df))
+    outcome_columns = [
+        str(c) for c in df.columns
+        if (target is not None and str(c) == str(target)) or profile.outcome_hint.search(str(c))
+    ]
+    run("outliers", lambda: check_outliers(df, outcome_columns=outcome_columns))
     run("provenance_metadata", lambda: check_provenance_metadata(df, profile.id_hint))
     run("replicate_adequacy", lambda: check_replicate_adequacy(df, target, feats))
     run("controls_present", lambda: check_controls_present(df))
@@ -107,6 +115,8 @@ def validate_frame(
         "constant_within_group",
         lambda: check_constant_within_group(df, group_hint=profile.group_hint),
     )
+    run("result_duplicate_entry", lambda: check_result_duplicates(df, target))
+    run("target_leak", lambda: check_target_leak(df, target, factor_hint=profile.group_hint))
 
     return build_report(
         mode=mode,
