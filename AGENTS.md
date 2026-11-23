@@ -8,7 +8,8 @@ These rules are non-negotiable. If a task conflicts with one, stop and ask; do n
 - Refusals are first-class: when the data cannot support an answer, return `not_judged` or a refusal with a reason and the action that would fix it. Never return a weaker answer silently.
 - Never impute. Unusable rows and cells are reported with their location and reason.
 - Synthetic data is only ever a labelled benchmark or test generator. It never enters a user's model as if it were measured.
-- Language models never produce numbers, intervals, verdicts, proposals or units. Every LLM output is checked against engine data; anything that fails the check is refused.
+- Language models never supply unchecked numbers, intervals, proposals or units. Every LLM output is checked against engine data; anything that fails the check is refused. Code, not a model, computes verdicts.
+- In assistant reviews, the critic returns severities: `ok`, `minor`, `major` or `blocking`. Code maps `ok`/`minor` to `supported`, `major` to `contested`, and `blocking` to `rejected`. Failed grounding checks mean `rejected`; no usable critic judgement means `unreviewed`.
 - Docs, README, PRs and Linear never claim more than the code and benchmarks show. No marketing language.
 
 ## 2. Changing ML behaviour
