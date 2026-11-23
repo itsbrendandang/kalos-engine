@@ -57,7 +57,7 @@ With `ollama`, two models share the work (`kalos/providers/cascade.py`):
 | Tier | Used for | Default | Licence |
 |---|---|---|---|
 | fast | header mapping, short labels, intent routing, plain wording of engine warnings and refusals, setup suggestions | `phi4-mini` | MIT |
-| quality | answers with sources, SOP revise, summaries | `qwen2.5:7b` | Apache-2.0 |
+| quality | answers with sources, SOP revise, summaries | `qwen2.5:7b-instruct` | Apache-2.0 |
 
 Older engines defaulted to `llama3.1`, which is under the Llama community licence; the defaults are now MIT and Apache-2.0 models. The choice is measured, not assumed: see [Measured model choice](#measured-model-choice).
 
