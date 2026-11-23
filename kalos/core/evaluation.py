@@ -9,6 +9,7 @@ more precise than it is, so `grouped_cv_report` is the number to quote.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import threading
 from collections.abc import Iterator, Sequence
@@ -93,7 +94,73 @@ def cv_uses_pool() -> bool:
     return cv_workers() > 1 and not mp.current_process().daemon
 
 
+_LOCAL = threading.local()
+
+
+def _fold_key(task: tuple, rng_state) -> bytes:
+    import hashlib
+    import pickle
+
+    h = hashlib.sha256(pickle.dumps(task, protocol=4))
+    h.update(rng_state.numpy().tobytes())
+    return h.digest()
+
+
+@contextlib.contextmanager
+def precomputing_folds(cache: dict, rng_state, threads: int) -> Iterator[None]:
+    """In this thread, fold fits go to the pool from `rng_state` on `threads` torch
+    threads and their results land in `cache`, without reading or changing this
+    process's torch RNG (another thread may be using it)."""
+    _LOCAL.precompute = (cache, rng_state, threads)
+    try:
+        yield
+    finally:
+        _LOCAL.precompute = None
+
+
+@contextlib.contextmanager
+def using_precomputed_folds(cache: dict) -> Iterator[None]:
+    """In this thread, a fold whose result is in `cache` for the current torch RNG
+    state takes it instead of fitting again."""
+    _LOCAL.cache = cache
+    try:
+        yield
+    finally:
+        _LOCAL.cache = None
+
+
+def _precompute_folds(tasks, cache, rng_state, threads) -> list[tuple[np.ndarray, np.ndarray]]:
+    fits = []
+    for t, (mean, std, end) in zip(tasks, _fold_pool().map(
+        _fit_fold_in_worker, [(threads, rng_state, t) for t in tasks],
+    )):
+        cache[_fold_key(t, rng_state)] = (mean, std, end)
+        fits.append((mean, std))
+    return fits
+
+
 def _fit_folds(tasks: list[tuple]) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Every fold's (mean, sd), in fold order, byte-identical to fitting them one
+    after another in this process. Folds precomputed from the current RNG state
+    are taken from the cache (`using_precomputed_folds`); the rest are fitted."""
+    pre = getattr(_LOCAL, "precompute", None)
+    if pre is not None:
+        return _precompute_folds(tasks, *pre)
+    fits: list[tuple[np.ndarray, np.ndarray]] = []
+    cache = getattr(_LOCAL, "cache", None)
+    if cache:
+        import torch
+
+        for t in tasks:
+            hit = cache.get(_fold_key(t, torch.get_rng_state()))
+            if hit is None:
+                break
+            fits.append((hit[0], hit[1]))
+            torch.set_rng_state(hit[2])
+    return fits + _fit_folds_now(tasks[len(fits):])
+
+
+def _fit_folds_now(tasks: list[tuple]) -> list[tuple[np.ndarray, np.ndarray]]:
     """Every fold's (mean, sd), in fold order, byte-identical to fitting them one
     after another in this process.
 

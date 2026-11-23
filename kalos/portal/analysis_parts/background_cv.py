@@ -1,7 +1,8 @@
-"""The grouped cross-validation, started before the proposal surrogate is fit so
-the two overlap: the folds fit in the worker pool while the analysis fits its
-proposal model. Without a pool the CV runs when its result is asked for, after
-the proposal fit, as before.
+"""The grouped cross-validation's folds, precomputed in the worker pool while the
+analysis fits its proposal model. The CV itself still runs after the proposal
+fit, in the analysis thread, as before: it takes each precomputed fold that
+started from the RNG state it has reached and fits the rest, so its numbers are
+those of a CV run without the pool.
 """
 from __future__ import annotations
 
@@ -12,17 +13,31 @@ from concurrent.futures import Future, ThreadPoolExecutor
 
 class BackgroundCV:
     def __init__(self, call: Callable[[], dict]):
-        self._call = call
-        self._job: Future | None = None
-        from kalos.core.evaluation import cv_uses_pool  # torch: not at import time
+        from kalos.core.evaluation import cv_uses_pool, precomputing_folds
 
+        self._call = call
+        self._cache: dict = {}
+        self._job: Future | None = None
         if cv_uses_pool():
+            import torch
+
+            start, threads = torch.get_rng_state(), torch.get_num_threads()
+
+            def precompute() -> None:
+                with precomputing_folds(self._cache, start, threads):
+                    call()
+
             runner = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kalos-cv")
-            self._job = runner.submit(call)
+            self._job = runner.submit(precompute)
             runner.shutdown(wait=False)
 
     def result(self) -> dict:
-        return self._job.result() if self._job is not None else self._call()
+        from kalos.core.evaluation import using_precomputed_folds
+
+        self.settle()  # a fold that failed from the precompute state is refit below
+        cache, self._cache = self._cache, {}
+        with using_precomputed_folds(cache):
+            return self._call()
 
     def settle(self) -> None:
         if self._job is not None:

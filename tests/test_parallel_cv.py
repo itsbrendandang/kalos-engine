@@ -193,3 +193,59 @@ def test_daemon_analysis_runs_cv_after_the_proposal_fit(monkeypatch):
         assert ran_in == []
     cv.result()
     assert ran_in == [threading.current_thread().name]
+
+
+def _background_report(monkeypatch, between=lambda: None):
+    import torch
+
+    from kalos.portal.analysis_parts.background_cv import BackgroundCV
+
+    monkeypatch.setenv("KALOS_CV_WORKERS", "3")
+    X, y = _data()
+    bounds = np.vstack([X.min(0), X.max(0)])
+    torch.manual_seed(3)
+    cv = BackgroundCV(lambda: grouped_cv_report(X, y, bounds=bounds, n_boot=200, n_repeats=2))
+    between()
+    return cv.result()
+
+
+def _serial_report(monkeypatch, between=lambda: None):
+    import torch
+
+    torch.manual_seed(3)
+    between()
+    return _report(monkeypatch, 1)
+
+
+def test_precomputed_folds_are_used_and_give_the_serial_numbers(monkeypatch):
+    refit: list[int] = []
+    real = evaluation._fit_folds_now
+    monkeypatch.setattr(evaluation, "_fit_folds_now", lambda t: refit.append(len(t)) or real(t))
+    background = _background_report(monkeypatch)
+    assert sum(refit) == 0
+    serial = _serial_report(monkeypatch)
+    assert background["oof_pred"] == serial["oof_pred"] and background["oof_std"] == serial["oof_std"]
+
+
+def test_folds_are_refit_when_the_proposal_fit_moves_the_rng(monkeypatch):
+    """The proposal fit runs between the precompute and the CV; if it draws from
+    the torch RNG, the CV starts from a different state than the precompute did,
+    as it would without the pool."""
+    import torch
+
+    def draw():
+        torch.rand(3)
+
+    background = _background_report(monkeypatch, draw)
+    serial = _serial_report(monkeypatch, draw)
+    assert background["oof_pred"] == serial["oof_pred"] and background["oof_std"] == serial["oof_std"]
+
+
+def test_a_failed_precompute_still_gives_the_serial_numbers(monkeypatch):
+    def broken(*_a, **_k):
+        raise RuntimeError("worker failed from the precompute state")
+
+    monkeypatch.setattr(evaluation, "_precompute_folds", broken)
+    background = _background_report(monkeypatch)
+    serial = _serial_report(monkeypatch)
+    assert background["oof_pred"] == serial["oof_pred"]
