@@ -244,7 +244,8 @@ def test_a_full_coverage_candidate_without_an_interval_does_not_bind():
     assert block["candidates"][1]["reason"].startswith("no 95% interval")
 
 
-@pytest.mark.parametrize("raw,expected", [(None, True), ("1", True), ("off", False), ("0", False), ("False", False)])
+@pytest.mark.parametrize("raw,expected", [(None, True), ("", True), ("1", True), ("On", True), ("off", False),
+                                          ("0", False), ("False", False)])
 def test_strict_candidates_runtime_switch(monkeypatch, raw, expected):
     from kalos.portal.analysis_parts.cv_grouping import (
         STRICT_CANDIDATES_ENV,
@@ -332,3 +333,38 @@ def test_plan_fold_attaches_rounds_through_two_folds(tmp_path):
         expected = [0] * 4 + ([1, 1] if k == 2 else []) + [k, k]
         assert df.attrs["kalos_round_index"] == expected
         store.commit_fold(gen, tenant="t")
+
+
+def test_strict_candidates_typo_is_refused(monkeypatch):
+    from kalos.envconfig import ConfigError
+    from kalos.portal.analysis_parts.cv_grouping import (
+        STRICT_CANDIDATES_ENV,
+        strict_candidates_default,
+    )
+    from kalos.portal.config import check_env_settings
+
+    monkeypatch.setenv(STRICT_CANDIDATES_ENV, "flase")
+    with pytest.raises(ConfigError, match=STRICT_CANDIDATES_ENV):
+        strict_candidates_default()
+    with pytest.raises(ConfigError, match=STRICT_CANDIDATES_ENV):
+        check_env_settings()
+
+
+def test_a_shuffled_repeat_that_pairs_round_0_with_another_round_does_not_set_the_score():
+    # 160 + six rounds of 2: the unshuffled partition holds out round 0 alone and
+    # trains on 12, but the shuffled repeat (seed 1) holds out round 0 with one
+    # more round and trains on 10.
+    from kalos.core.evaluation import cv_partitions
+
+    prim, clusters, cands, run_cv, n, calls = _young_campaign(160, (2,) * 6)
+    g = np.asarray(cands[0]["groups"])
+    parts = cv_partitions(np.zeros((n, 1)), np.zeros(n), g, n_splits=5, n_repeats=2)
+    assert min(len(tr) for tr, _te in parts[0]) == 12
+    assert min(len(tr) for tr, _te in parts[1]) == 10
+    calls.clear()
+    block, rep, _g, basis = leak_free_cv(prim, clusters, "replicate_clusters", None, cands, run_cv,
+                                         n_exact_recipes=n, n_clusters=n, strict_candidates=True)
+    rnd = block["candidates"][1]
+    assert basis == "replicate_clusters" and rep is prim
+    assert rnd["evaluable"] is False and "leaves 10 runs to train on" in rnd["reason"]
+    assert calls == []

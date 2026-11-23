@@ -37,16 +37,18 @@ Torch-free; scipy's hierarchical clustering only.
 """
 from __future__ import annotations
 
-import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
+from warnings import catch_warnings, simplefilter
 
 import numpy as np
 import pandas as pd
 
+from kalos.portal.analysis_parts.policy import CV_N_REPEATS
 from kalos.portal.analysis_parts.trust_gate import MIN_ROWS_TO_JUDGE
 from kalos.portal.cells import is_null_label
+from kalos.portal.config import STRICT_CV_CANDIDATES_VAR, strict_cv_candidates_setting
 
 # Same number as kalos.core.optimize.NEAR_DUPLICATE_TOL (kept torch-free here;
 # tests/test_cv_grouping.py asserts they agree).
@@ -266,32 +268,45 @@ def candidate_report(basis: str, column: str | None, groups: Any, rep: Mapping[s
     return entry
 
 
-STRICT_CANDIDATES_ENV = "KALOS_CV_STRICT_CANDIDATES"
+STRICT_CANDIDATES_ENV = STRICT_CV_CANDIDATES_VAR
+Folds = Iterable[Sequence[tuple[np.ndarray, np.ndarray]]]
 
 
 def strict_candidates_default() -> bool:
     """On unless KALOS_CV_STRICT_CANDIDATES is 0/false/no/off (restores the old rule)."""
-    raw = (os.environ.get(STRICT_CANDIDATES_ENV) or "1").strip().lower()
-    return raw not in {"0", "false", "no", "off"}
+    return strict_cv_candidates_setting()
 
 
-def _training_gap(groups: Any, column: str | None) -> str | None:
-    """Why holding out one group of this candidate leaves too little to train on, or None.
-
-    In a young campaign (upload round 0 plus a couple of runs per round) the
-    round-0 fold is fitted to 4 runs and predicts most of the sheet, so that one
-    fold sets the candidate's Spearman. A fold passes when it trains on at least
-    MIN_ROWS_TO_JUDGE runs (the fewest the trust gate judges a model on) or on at
-    least as many runs as it holds out."""
-    labels, counts = np.unique(np.asarray(groups).astype(str), return_counts=True)
-    i = int(np.argmax(counts))
-    held, train = int(counts[i]), int(counts.sum() - counts[i])
-    if train >= MIN_ROWS_TO_JUDGE or train >= held:
-        return None
-    return (
-        f"holding out {column!r} {str(labels[i])!r} ({held} runs) leaves {train} runs to train on; "
-        f"it needs {MIN_ROWS_TO_JUDGE} runs outside that group, or as many as in it"
+def default_folds(groups: Any) -> Folds:
+    """The partitions the analysis cross-validates a continuous target on."""
+    from kalos.core.evaluation import (
+        cv_partitions,  # deferred: evaluation pulls in torch
     )
+
+    n = len(groups)
+    return cv_partitions(np.zeros((n, 1)), np.zeros(n), groups, n_splits=5, n_repeats=CV_N_REPEATS)
+
+
+def _training_gap(groups: Any, column: str | None, partitions: Folds) -> str | None:
+    """Why a fold of this candidate's CV trains on too little, or None.
+
+    In a young campaign (upload round 0 plus a couple of runs per round) the fold
+    holding out round 0 is fitted to a handful of runs and predicts most of the
+    sheet, so that one fold sets the candidate's Spearman. A fold passes when it
+    trains on at least MIN_ROWS_TO_JUDGE runs (the fewest the trust gate judges a
+    model on) or on at least as many runs as it holds out. Every partition is
+    checked: a shuffled repeat can pair round 0 with another round."""
+    g = np.asarray(groups).astype(str)
+    for folds in partitions:
+        for tr, te in folds:
+            if len(tr) >= MIN_ROWS_TO_JUDGE or len(tr) >= len(te):
+                continue
+            held = ", ".join(repr(v) for v in sorted(set(g[te].tolist())))
+            return (
+                f"holding out {column!r} {held} ({len(te)} runs) leaves {len(tr)} runs to train on; "
+                f"a fold needs {MIN_ROWS_TO_JUDGE} training runs, or as many as it holds out"
+            )
+    return None
 
 
 def _coverage_gap(rep: Mapping[str, Any], n_runs: int) -> str | None:
@@ -327,6 +342,7 @@ def leak_free_cv(
     n_exact_recipes: int,
     n_clusters: int,
     strict_candidates: bool | None = None,
+    folds: Callable[[Any], Folds] = default_folds,
 ) -> tuple[dict[str, Any], dict[str, Any], Any, str]:
     """Cross-validate every candidate grouping and pick the binding one.
 
@@ -337,8 +353,9 @@ def leak_free_cv(
     re-run.
 
     `strict_candidates` (default: `strict_candidates_default()`, on): a
-    candidate counts as evaluable only when every fold trains on enough runs
-    (`_training_gap`), every run was held out once, and its 95% interval exists.
+    candidate counts as evaluable only when every fold `folds(groups)` gives
+    (the partitions `run_cv` fits) trains on enough runs (`_training_gap`),
+    every run was held out once, and its 95% interval exists.
     Off restores the old rule, where such a candidate could bind on a score
     from a model fitted to a handful of rows."""
     strict = strict_candidates_default() if strict_candidates is None else strict_candidates
@@ -368,7 +385,12 @@ def leak_free_cv(
                 ),
             })
             continue
-        gap = _training_gap(g, c["column"]) if strict else None
+        if strict:
+            with catch_warnings():
+                simplefilter("ignore")  # run_cv repeats make_splits' own warnings
+                gap = _training_gap(g, c["column"], folds(g))
+        else:
+            gap = None
         if gap is not None:
             e = candidate_report(c["basis"], c["column"], g, None, n_levels=c["n_levels"],
                                  merged=c["merged_with_replicates"])
