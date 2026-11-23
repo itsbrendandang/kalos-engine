@@ -46,19 +46,51 @@ def test_parallel_folds_match_serial_exactly(monkeypatch, cat_dims):
         assert parallel[key] == serial[key], key
 
 
-def test_serial_folds_ignore_the_torch_thread_count(monkeypatch):
+@pytest.mark.parametrize("threads", [1, 2])
+def test_parallel_folds_match_serial_at_the_callers_thread_count(monkeypatch, threads):
     import torch
 
     prev = torch.get_num_threads()
     try:
-        torch.set_num_threads(1)
-        one = _report(monkeypatch, 1)
-        torch.set_num_threads(4)
-        four = _report(monkeypatch, 1)
-        assert torch.get_num_threads() == 4
+        torch.set_num_threads(threads)
+        serial = _report(monkeypatch, 1)
+        parallel = _report(monkeypatch, 3)
     finally:
         torch.set_num_threads(prev)
-    assert one["oof_pred"] == four["oof_pred"] and one["oof_std"] == four["oof_std"]
+    assert parallel["oof_pred"] == serial["oof_pred"] and parallel["oof_std"] == serial["oof_std"]
+
+
+def test_a_fold_that_draws_from_the_rng_gives_the_serial_numbers(monkeypatch):
+    """A retry that draws from the torch RNG shifts what the next folds start from
+    in a serial run; the parallel path refits those folds so the result and the
+    RNG state it leaves both match the serial run."""
+    import torch
+
+    real_fit = evaluation._fit_fold
+
+    def drawing_fit(*fold):
+        mean, std = real_fit(*fold)
+        return mean + torch.rand(1).item(), std
+
+    class InProcessPool:
+        def map(self, fn, tasks):
+            out = []
+            prev = torch.get_num_threads()
+            with torch.random.fork_rng():
+                for task in tasks:
+                    out.append(fn(task))
+            torch.set_num_threads(prev)
+            return out
+
+    monkeypatch.setattr(evaluation, "_fit_fold", drawing_fit)
+    monkeypatch.setattr(evaluation, "_fold_pool", lambda: InProcessPool())
+    torch.manual_seed(7)
+    serial = _report(monkeypatch, 1)
+    serial_state = torch.get_rng_state()
+    torch.manual_seed(7)
+    parallel = _report(monkeypatch, 3)
+    assert parallel["oof_pred"] == serial["oof_pred"]
+    assert torch.equal(torch.get_rng_state(), serial_state)
 
 
 def test_broken_pool_falls_back_to_serial(monkeypatch):

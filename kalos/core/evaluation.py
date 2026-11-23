@@ -23,17 +23,22 @@ from .splits import make_splits, row_hash_groups
 from .surrogate import Surrogate
 
 # Cross-validation fold fits are independent, so they run in a pool of worker
-# processes (KALOS_CV_WORKERS, default: one per CPU; 1 = in this process, one
-# after another). Each worker runs torch on one thread. The pool is created on
-# first use and reused, so the cost of starting workers is paid once per process.
+# processes (KALOS_CV_WORKERS; 1 = in this process, one after another). Each
+# worker fits on the caller's torch thread count, so the numbers match a fit here.
+# The pool is created on first use and reused, so the cost of starting workers is
+# paid once per process.
 _POOL: ProcessPoolExecutor | None = None
 _POOL_LOCK = threading.Lock()
 
 
 def cv_workers() -> int:
+    """KALOS_CV_WORKERS, else as many workers as fit on the CPUs at this
+    process's torch thread count (each worker fits on that many threads)."""
     raw = os.environ.get("KALOS_CV_WORKERS", "").strip()
     if not raw:
-        return os.cpu_count() or 1
+        import torch
+
+        return max(1, (os.cpu_count() or 1) // max(1, torch.get_num_threads()))
     try:
         return max(1, int(raw))
     except ValueError:
@@ -61,37 +66,23 @@ def _reset_fold_pool() -> None:
 
 
 def _fit_fold(X_tr, y_tr, X_te, bounds, cat_dims):
-    """Fit one fold and return its held-out predictive mean and sd. The torch RNG
-    is reset per fold, so a fit that falls back to random restarts draws the same
-    numbers whichever process runs it and whatever ran there before."""
-    import torch
-
-    with torch.random.fork_rng():
-        torch.manual_seed(0)
-        s = Surrogate().fit(X_tr, y_tr, bounds=bounds, cat_dims=cat_dims)
-        mean, std = s.posterior(X_te, observation_noise=True)
+    """Fit one fold and return its held-out predictive mean and sd."""
+    s = Surrogate().fit(X_tr, y_tr, bounds=bounds, cat_dims=cat_dims)
+    mean, std = s.posterior(X_te, observation_noise=True)
     return np.asarray(mean).ravel(), np.asarray(std).ravel()
 
 
 def _fit_fold_in_worker(task):
+    """One fold in a worker, on the caller's torch thread count and from the
+    caller's torch RNG state, so it gives the numbers the caller would. Returns the
+    RNG state it ends on as well."""
     import torch
 
-    torch.set_num_threads(1)
-    return _fit_fold(*task)
-
-
-def _fit_folds_here(tasks: list[tuple]) -> list[tuple[np.ndarray, np.ndarray]]:
-    """The folds in this process, on one torch thread like the workers: the
-    optimizer's path depends on the thread count, so this keeps the numbers the
-    same for any worker count and any KALOS_TORCH_THREADS."""
-    import torch
-
-    prev = torch.get_num_threads()
-    torch.set_num_threads(1)
-    try:
-        return [_fit_fold(*task) for task in tasks]
-    finally:
-        torch.set_num_threads(prev)
+    threads, rng_state, fold = task
+    torch.set_num_threads(threads)
+    torch.set_rng_state(rng_state)
+    mean, std = _fit_fold(*fold)
+    return mean, std, torch.get_rng_state()
 
 
 def cv_uses_pool() -> bool:
@@ -103,16 +94,33 @@ def cv_uses_pool() -> bool:
 
 
 def _fit_folds(tasks: list[tuple]) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Every fold's (mean, sd), in fold order: in the worker pool when there is
-    more than one worker, else in this process. The analysis fits its proposal
-    surrogate while the pool runs, so with a pool no fit runs in this process. A
-    pool that breaks (a worker killed) is dropped and the folds rerun here."""
-    if tasks and cv_uses_pool():
-        try:
-            return list(_fold_pool().map(_fit_fold_in_worker, tasks))
-        except BrokenProcessPool:
-            _reset_fold_pool()
-    return _fit_folds_here(tasks)
+    """Every fold's (mean, sd), in fold order, byte-identical to fitting them one
+    after another in this process.
+
+    With a pool, every fold starts from this process's RNG state. A fit that draws
+    from the torch RNG (a retry) moves the state the next fold would start from in
+    a one-after-another run, so the folds after it are refit here, and the RNG is
+    left where that run leaves it. A pool that breaks (a worker killed) is dropped
+    and the folds rerun here."""
+    if not tasks or not cv_uses_pool():
+        return [_fit_fold(*t) for t in tasks]
+    import torch
+
+    start = torch.get_rng_state()
+    try:
+        done = list(_fold_pool().map(
+            _fit_fold_in_worker, [(torch.get_num_threads(), start, t) for t in tasks],
+        ))
+    except BrokenProcessPool:
+        _reset_fold_pool()
+        return [_fit_fold(*t) for t in tasks]
+    fits: list[tuple[np.ndarray, np.ndarray]] = []
+    for k, (mean, std, end) in enumerate(done):
+        if not torch.equal(torch.get_rng_state(), start):
+            return fits + [_fit_fold(*t) for t in tasks[k:]]
+        fits.append((mean, std))
+        torch.set_rng_state(end)
+    return fits
 
 
 def grouped_folds(groups: Sequence, n_splits: int = 5) -> Iterator[tuple[np.ndarray, np.ndarray]]:
