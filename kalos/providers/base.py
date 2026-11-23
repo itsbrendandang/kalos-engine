@@ -24,7 +24,8 @@ class ProviderStatus:
     """A provider's credential status, safe to serialize verbatim.
 
     `required_env` / `missing_env` are variable NAMES, never values.
-    `disabled_by` lists the NAMES of set policy switches disabling the provider.
+    `disabled_by` lists policy variable NAMES blocking the provider, whether a
+    refusal switch is set or a required opt-in is absent.
     `capability` is one sentence on what this provider unlocks once its key
     is present. `fallback` is one sentence on exactly what happens today,
     without it.
