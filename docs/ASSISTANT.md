@@ -139,7 +139,9 @@ This works with Ollama (including Qwen), OpenAI-compatible servers and Anthropic
 Unset values use the normal assistant model. Provider `none` disables reviews
 with 404 `assist_disabled`. Rate limits, campaign 404s and provider 503s match Ask.
 Each review reserves three units of the shared Ask rate limit, even when
-replies are cached or no model is called.
+replies are cached or no model is called. With
+`KALOS_ASSIST_ASK_PER_MINUTE=1` or `2`, a review costs that limit instead,
+so one review can run per minute. A value of `0` disables the limit.
 
 Reviews may make three model calls. With Anthropic or a remote OpenAI-compatible
 server, the question and retrieved sources leave the machine. Replies are saved per tenant under

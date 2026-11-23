@@ -203,6 +203,32 @@ def test_review_reserves_three_rate_limit_units(env, monkeypatch):  # noqa: F811
         ratelimit.reset()
 
 
+@pytest.mark.parametrize("limit", [0, 1, 2])
+def test_review_with_small_rate_limit(env, monkeypatch, limit):  # noqa: F811
+    from kalos.assist import ratelimit
+
+    client, _, _ = env
+    monkeypatch.setenv("KALOS_ASSIST_ASK_PER_MINUTE", str(limit))
+    monkeypatch.setattr("kalos.assist.routes.AssistIndex.search", lambda *a, **kw: [])
+    clock = [0]
+    monkeypatch.setattr(ratelimit.time, "monotonic", lambda: clock[0])
+    ratelimit.reset()
+    try:
+        first = client.post("/api/assist/review", headers=H("a-read"), json={})
+        assert first.status_code == 200
+        assert first.json()["abstained"] is True
+        second = client.post("/api/assist/review", headers=H("a-read"), json={})
+        if limit:
+            assert second.status_code == 429
+            assert second.headers["Retry-After"] == "60"
+            clock[0] += 60
+            assert client.post("/api/assist/review", headers=H("a-read"), json={}).status_code == 200
+        else:
+            assert second.status_code == 200
+    finally:
+        ratelimit.reset()
+
+
 def test_only_surviving_sources_reach_critic_and_reporter(tmp_path):
     model = Model(planner="C1: Measured yield is 12 [S1].\nC2: Invented 999 [S2].",
                   reporter="Other source [S2].")
