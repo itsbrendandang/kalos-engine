@@ -8,7 +8,8 @@ These rules are non-negotiable. If a task conflicts with one, stop and ask; do n
 - Refusals are first-class: when the data cannot support an answer, return `not_judged` or a refusal with a reason and the action that would fix it. Never return a weaker answer silently.
 - Never impute. Unusable rows and cells are reported with their location and reason.
 - Synthetic data is only ever a labelled benchmark or test generator. It never enters a user's model as if it were measured.
-- Language models never produce numbers, intervals, verdicts, proposals or units. Every LLM output is checked against engine data; anything that fails the check is refused.
+- Language models never supply unchecked numbers, intervals, proposals or units. Every LLM output is checked against engine data; anything that fails the check is refused. Code, not a model, computes verdicts.
+- In assistant reviews, the critic returns severities: `ok`, `minor`, `major` or `blocking`. Code maps `ok`/`minor` to `supported`, `major` to `contested`, and `blocking` to `rejected`. Failed grounding checks mean `rejected`; no usable critic judgement means `unreviewed`.
 - Docs, README, PRs and Linear never claim more than the code and benchmarks show. No marketing language.
 
 ## 2. Changing ML behaviour
@@ -69,3 +70,26 @@ These rules are non-negotiable. If a task conflicts with one, stop and ask; do n
 - Type hints on public signatures; pathlib for paths; pydantic models with `extra="forbid"` at boundaries; dependencies pinned in pyproject.toml and uv.lock. Comment the why, never the what.
 ### Communication
 - When unsure between options, ask. State uncertainty; don't fake confidence.
+
+## 11. Assistant review and work lanes
+- Skills live in .agents/skills/, with mirrors in .claude/skills/. Read
+  .agents/skills/kalos-assist-review/SKILL.md for review work. Follow
+  .agents/skills/README.md to keep mirrors and skills-lock.json in sync.
+- Backend lane: this repo. UI lane: the separate kalos-web repo. Coordinate through
+  the HTTP contract guarded by tests/test_web_contract.py. Change it deliberately
+  and note contract changes in the PR for the web lane.
+- Give agents narrow tasks and separate file ownership. Re-read shared files before
+  editing: kalos/portal/app.py, pyproject.toml, uv.lock and AGENTS.md.
+- Add change notes as new files in changes/, following changes/README.md.
+  Do not edit CHANGELOG.md for a PR; the release script collects the notes.
+- Set KALOS_NO_PAID_CALLS=1 for agent work. Never unset it or turn it off outside a
+  test. Tests may turn it off only with network-free fakes. Never make paid calls
+  in tests. Local loopback Ollama is not a paid provider.
+- Never send writes to someone's running engine. Start your own on a free port:
+  `KALOS_NO_PAID_CALLS=1 KALOS_LLM_PROVIDER=none KALOS_PORT=8051 KALOS_STATE_DIR=$(mktemp -d) python -m kalos.portal`.
+- Review verdicts and grounding checks stay in code, not models.
+- Store model replies before relying on them. Replays reuse stored replies.
+- Replay files are tenant-local under the assistant's swarm folder. Keep its
+  oldest-first cap of 128 replies. Deleting the folder is safe but causes new calls.
+- Never log prompts, replies, customer records or credentials. Log counts only.
+- Keep the README capability table honest. An open PR is not implemented on main.

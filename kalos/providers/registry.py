@@ -12,11 +12,12 @@ from kalos.providers.anthropic_provider import AnthropicProvider
 from kalos.providers.base import Provider
 from kalos.providers.bionemo_provider import BioNemoProvider
 from kalos.providers.ollama_provider import OllamaProvider
+from kalos.providers.openai_compatible_provider import OpenAICompatibleProvider
 
 
 def all_providers() -> tuple[Provider, ...]:
     """Every provider slot, in a fixed, stable order."""
-    return (AnthropicProvider(), BioNemoProvider(), OllamaProvider())
+    return (AnthropicProvider(), BioNemoProvider(), OllamaProvider(), OpenAICompatibleProvider())
 
 
 def provider_status() -> list[dict]:

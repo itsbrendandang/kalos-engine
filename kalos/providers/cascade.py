@@ -44,13 +44,15 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any, Generic, Literal, Protocol, TypeVar
 
+from kalos.providers.ollama_provider import DEFAULT_MODEL
+
 log = logging.getLogger("kalos.providers.cascade")
 
 Tier = Literal["fast", "quality"]
 
 # Measured defaults (benchmarks/llm/RESULTS.md). Both are MIT / Apache-2.0.
 DEFAULT_FAST_MODEL = "phi4-mini"
-DEFAULT_QUALITY_MODEL = "qwen2.5:7b"
+DEFAULT_QUALITY_MODEL = DEFAULT_MODEL
 FAST_ENV = "KALOS_LLM_FAST_MODEL"
 QUALITY_ENV = "KALOS_LLM_QUALITY_MODEL"
 LEGACY_ENV = "KALOS_OLLAMA_MODEL"

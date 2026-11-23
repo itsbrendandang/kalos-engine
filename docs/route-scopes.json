@@ -32,6 +32,22 @@
     "auth": "required"
   },
   {
+    "method": "POST",
+    "path": "/api/assist/review",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
+    "method": "GET",
+    "path": "/api/assist/review/roles",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required"
+  },
+  {
     "method": "GET",
     "path": "/api/assist/sop",
     "scopes": [

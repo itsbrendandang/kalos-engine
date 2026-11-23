@@ -1,0 +1,315 @@
+"""Round review uses fake models only; no network."""
+from __future__ import annotations
+
+import json
+
+import pytest
+from test_assist_routes import H, env  # noqa: F401
+
+from kalos.assist.index import Chunk, Hit
+from kalos.assist.llm import (
+    AnthropicChat,
+    ModelUnavailable,
+    OllamaChat,
+    cascade_for,
+    get_chat_model,
+)
+from kalos.assist.swarm import ROLES, group_model, review
+
+
+class Model:
+    provider = "fake"
+    model = "review-test"
+    local = True
+
+    def __init__(self, critic="C1: ok: matches", planner="C1: Measured yield is 12 [S1].",
+                 reporter="Measured yield is 12 [S1]."):
+        self.replies = [planner, critic, reporter]
+        self.prompts = []
+
+    def complete(self, system, prompt):
+        self.prompts.append((system, prompt))
+        return self.replies[len(self.prompts) - 1]
+
+
+def run(tmp_path, model, hits=None, tenant="a"):
+    if hits is None:
+        hits = [Hit(Chunk("c", "doc", "d", None, "Yield", "Measured yield is 12."), 1.0)]
+    return review("private planner question", hits, {"step": "Upload a sheet", "why": "No sheet yet"}, model,
+                  tmp_path, tenant)
+
+
+@pytest.mark.parametrize(("severity", "verdict"), [
+    ("ok", "supported"), ("minor", "supported"), ("major", "contested"),
+    ("blocking", "rejected"), ("nonsense", "unreviewed"),
+])
+def test_verdicts(tmp_path, severity, verdict):
+    result = run(tmp_path, Model(critic=f"C1: {severity}: reason"))
+    assert result["claims"][0]["verdict"] == verdict
+    assert result["abstained"] == (verdict != "supported")
+
+
+def test_isolation_and_replay(tmp_path):
+    model = Model()
+    first = run(tmp_path, model)
+    assert run(tmp_path, model) == first
+    assert len(model.prompts) == 3
+    assert "private planner question" not in model.prompts[1][1]
+    assert model.prompts[0][1] not in model.prompts[1][1]
+    assert "private planner question" not in str(first["ledger"])
+    run(tmp_path, Model(), tenant="b")
+    assert len(list(tmp_path.glob("assist/*/swarm/*.json"))) == 6
+
+
+@pytest.mark.parametrize("text", ["No citation.", "Measured yield is 999 [S1].",
+                                  "This guarantees yield [S1].", "This is approved [S1]."])
+def test_rejected(tmp_path, text):
+    model = Model(planner="C1: " + text)
+    result = run(tmp_path, model)
+    assert result["claims"][0]["verdict"] == "rejected"
+    assert result["claims"][0]["issues"]
+    assert result["claims"][0]["text"] == ""
+    assert text not in result["report"]
+    assert len(model.prompts) == 1
+
+
+def test_empty_and_report_fallback(tmp_path):
+    model = Model()
+    assert run(tmp_path, model, hits=[])["abstained"]
+    assert not model.prompts
+    assert run(tmp_path, Model(planner="nothing parseable"))["abstained"]
+    result = run(tmp_path / "fallback", Model(reporter="Invented 999 [S1]."))
+    assert result["report"] == "Measured yield is 12."
+    assert not result["abstained"]
+
+
+def test_group_override(monkeypatch):
+    monkeypatch.setenv("KALOS_ASSIST_MODEL_CRITIC", "critic-test")
+    assert group_model(ROLES[2], AnthropicChat("normal")).model == "critic-test"
+    assert group_model(ROLES[1], AnthropicChat("normal")).model == "normal"
+
+
+@pytest.mark.parametrize("provider", ["ollama", "openai", "anthropic"])
+@pytest.mark.parametrize("override", ["", "critic-test"])
+def test_role_model_with_cascade(monkeypatch, provider, override):
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", provider)
+    monkeypatch.setenv("KALOS_LLM_FAST_MODEL", "fast-test")
+    monkeypatch.setenv("KALOS_LLM_QUALITY_MODEL", "quality-test")
+    monkeypatch.setenv("KALOS_ASSIST_ANTHROPIC_MODEL", "anthropic-test")
+    monkeypatch.setenv("KALOS_OPENAI_MODEL", "openai-test")
+    monkeypatch.setenv("KALOS_ASSIST_MODEL_CRITIC", override)
+    base = get_chat_model()
+    assert base is not None
+    selected = group_model(ROLES[2], base)
+    cascade = cascade_for(selected)
+    assert cascade is not None
+    assert cascade.tiers_for("answer") == [("quality", selected)]
+    expected = {"ollama": "quality-test", "openai": "openai-test", "anthropic": "anthropic-test"}[provider]
+    assert selected.model == (override or expected)
+    if isinstance(selected, OllamaChat):
+        assert cascade.fast.model == "fast-test"
+    else:
+        assert cascade.fast is selected
+
+
+@pytest.mark.parametrize("role", ROLES[1:])
+@pytest.mark.parametrize("host", ["localhost", "192.0.2.1"])
+def test_openai_role_override_and_paid_guard(monkeypatch, role, host):
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("KALOS_OPENAI_BASE_URL", f"http://{host}:8080/v1")
+    monkeypatch.setenv("KALOS_OPENAI_MODEL", "qwen-base")
+    monkeypatch.setenv("KALOS_OPENAI_ALLOW_REMOTE", "true")
+    monkeypatch.setenv(f"KALOS_ASSIST_MODEL_{role.key.upper()}", f"qwen-{role.key}")
+    calls = []
+
+    def respond(request, timeout):
+        calls.append(json.loads(request.data))
+        return b'{"choices":[{"message":{"content":"answer"}}]}'
+
+    monkeypatch.setattr("kalos.providers.openai_compatible_provider._open", respond)
+    base = get_chat_model()
+    selected = group_model(role, base)
+    assert selected.url == base.url
+    if host != "localhost":
+        with pytest.raises(ModelUnavailable, match="KALOS_NO_PAID_CALLS"):
+            selected.complete("system", "prompt")
+        assert calls == []
+        monkeypatch.setenv("KALOS_NO_PAID_CALLS", "0")
+    assert selected.complete("system", "prompt") == "answer"
+    assert calls[0]["model"] == f"qwen-{role.key}"
+
+
+def test_routes(env, monkeypatch):  # noqa: F811 - imported pytest fixture
+    from kalos.assist import ratelimit
+
+    ratelimit.reset()
+    client, _, fake = env
+    monkeypatch.setattr("kalos.assist.routes.AssistIndex.search", lambda *a, **kw: [
+        Hit(Chunk("d", "doc", "doc", None, "Loop",
+                  "Record a result for every started run."), 1.0)])
+    roles = client.get("/api/assist/review/roles", headers=H("a-read"))
+    assert roles.status_code == 200
+    assert [r["key"] for r in roles.json()] == [r.key for r in ROLES]
+    assert all(set(r) == {"key", "model_group", "description"} for r in roles.json())
+    assert all(r.instructions not in roles.text for r in ROLES)
+    def reply(prompt):
+        if "Question:" in prompt:
+            return "C1: Record a result for every started run [S1]."
+        if "Supported claims:" in prompt:
+            return "Record a result for every started run [S1]."
+        return "C1: ok: matches source"
+
+    fake.reply = reply
+    response = client.post("/api/assist/review", headers=H("a-read"),
+                           json={"question": "Record result started run"})
+    assert response.status_code == 200
+    assert {"claims", "report", "abstained", "ledger", "next"} == set(response.json())
+    assert response.json()["claims"][0]["verdict"] == "supported"
+    assert client.post("/api/assist/review", headers=H("a-read"),
+                       json={"campaign_id": "bad"}).status_code == 404
+    fake.fail = True
+    response = client.post("/api/assist/review", headers=H("a-read"),
+                           json={"question": "Record results for started runs"})
+    assert response.status_code == 503
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "none")
+    response = client.post("/api/assist/review", headers=H("a-read"), json={})
+    assert response.status_code == 404
+    assert response.json()["code"] == "assist_disabled"
+    monkeypatch.setenv("KALOS_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("KALOS_ASSIST_ASK_PER_MINUTE", "3")
+    ratelimit.reset()
+    assert client.post("/api/assist/review", headers=H("a-read"),
+                       json={"campaign_id": "bad"}).status_code == 404
+    limited = client.post("/api/assist/review", headers=H("a-read"), json={})
+    assert limited.status_code == 429 and "Retry-After" in limited.headers
+    ratelimit.reset()
+
+
+def test_review_reserves_three_rate_limit_units(env, monkeypatch):  # noqa: F811
+    from kalos.assist import ratelimit
+
+    client, _, _ = env
+    monkeypatch.setenv("KALOS_ASSIST_ASK_PER_MINUTE", "4")
+    monkeypatch.setattr("kalos.assist.routes.AssistIndex.search", lambda *a, **kw: [])
+    ratelimit.reset()
+    try:
+        assert client.post("/api/assist/review", headers=H("a-read"), json={}).status_code == 200
+        assert client.post("/api/assist/ask", headers=H("a-read"),
+                           json={"question": "anything"}).status_code == 200
+        assert client.post("/api/assist/review", headers=H("a-read"), json={}).status_code == 429
+        assert client.post("/api/assist/ask", headers=H("a-read"),
+                           json={"question": "anything"}).status_code == 429
+    finally:
+        ratelimit.reset()
+
+
+@pytest.mark.parametrize("limit", [0, 1, 2])
+def test_review_with_small_rate_limit(env, monkeypatch, limit):  # noqa: F811
+    from kalos.assist import ratelimit
+
+    client, _, _ = env
+    monkeypatch.setenv("KALOS_ASSIST_ASK_PER_MINUTE", str(limit))
+    monkeypatch.setattr("kalos.assist.routes.AssistIndex.search", lambda *a, **kw: [])
+    clock = [0]
+    monkeypatch.setattr(ratelimit.time, "monotonic", lambda: clock[0])
+    ratelimit.reset()
+    try:
+        first = client.post("/api/assist/review", headers=H("a-read"), json={})
+        assert first.status_code == 200
+        assert first.json()["abstained"] is True
+        second = client.post("/api/assist/review", headers=H("a-read"), json={})
+        if limit:
+            assert second.status_code == 429
+            assert second.headers["Retry-After"] == "60"
+            clock[0] += 60
+            assert client.post("/api/assist/review", headers=H("a-read"), json={}).status_code == 200
+        else:
+            assert second.status_code == 200
+    finally:
+        ratelimit.reset()
+
+
+def test_only_surviving_sources_reach_critic_and_reporter(tmp_path):
+    model = Model(planner="C1: Measured yield is 12 [S1].\nC2: Invented 999 [S2].",
+                  reporter="Other source [S2].")
+    hits = [Hit(Chunk("a", "doc", "a", None, "Yield", "Measured yield is 12."), 1.0),
+            Hit(Chunk("b", "doc", "b", None, "Other", "Hidden rejected source."), 0.5)]
+    result = run(tmp_path, model, hits)
+    assert "Hidden rejected source" not in model.prompts[1][1]
+    assert "Hidden rejected source" not in model.prompts[2][1]
+    assert result["report"] == "Measured yield is 12."
+
+
+@pytest.mark.parametrize("critic", ["", "bad line", "C1: ok: yes\nC1: blocking: no"])
+def test_missing_or_ambiguous_judgement(tmp_path, critic):
+    result = run(tmp_path, Model(critic=critic))
+    assert result["claims"][0]["verdict"] == "unreviewed"
+
+
+def test_model_error_not_cached(tmp_path):
+    class Broken(Model):
+        def complete(self, system, prompt):
+            raise ModelUnavailable("offline")
+
+    with pytest.raises(ModelUnavailable):
+        run(tmp_path, Broken())
+    assert not list(tmp_path.rglob("*.json"))
+
+
+@pytest.mark.parametrize("severity", ["blocking", "major"])
+def test_report_cannot_revive_unsupported_claim_from_shared_source(tmp_path, severity):
+    model = Model(
+        planner="C1: Measured yield is 12 [S1].\nC2: Measured temperature is 30 [S1].",
+        critic=f"C1: ok: matches\nC2: {severity}: unreliable",
+        reporter="Measured temperature is 30 [S1].",
+    )
+    hits = [Hit(Chunk("c", "doc", "d", None, "Readings",
+                      "Measured yield is 12. Measured temperature is 30."), 1.0)]
+    result = run(tmp_path, model, hits)
+    assert result["claims"][0]["verdict"] == "supported"
+    assert result["claims"][1]["verdict"] in {"rejected", "contested"}
+    assert result["report"] == "Measured yield is 12."
+    assert result["ledger"][-1]["kind"] == "fallback"
+
+
+def test_blocked_claim_text_is_hidden(tmp_path):
+    result = run(tmp_path, Model(critic="C1: blocking: unreliable"))
+    claim = result["claims"][0]
+    assert claim["id"] == "C1" and claim["verdict"] == "rejected"
+    assert claim["text"] == "" and claim["issues"] == ["unreliable"]
+
+
+def test_cache_evicts_oldest_and_reuses_retained_replies(tmp_path, monkeypatch):
+    import os
+
+    from kalos.assist import swarm
+
+    monkeypatch.setattr(swarm, "MAX_CACHED_REPLIES", 2)
+    model = Model()
+    cache = tmp_path / "cache"
+    swarm._call(cache, ROLES[1], model, "first")
+    first = next(cache.glob("*.json"))
+    os.utime(first, ns=(1, 1))
+    swarm._call(cache, ROLES[1], model, "second")
+    swarm._call(cache, ROLES[1], model, "third")
+    assert not first.exists()
+    assert len(list(cache.glob("*.json"))) == 2
+    swarm._call(cache, ROLES[1], model, "second")
+    assert len(model.prompts) == 3
+    assert len(list(cache.iterdir())) == 3  # two replies and one shared lock
+
+
+def test_mixed_traffic_retry_waits_for_all_review_units(monkeypatch):
+    from kalos.assist import ratelimit
+
+    monkeypatch.setenv("KALOS_ASSIST_ASK_PER_MINUTE", "4")
+    ratelimit.reset()
+    try:
+        assert ratelimit.check("tenant", "reader", now=0) == 0
+        assert ratelimit.check("tenant", "reader", now=10) == 0
+        assert ratelimit.check("tenant", "reader", now=20) == 0
+        wait = ratelimit.check("tenant", "reader", now=30, cost=3)
+        assert wait == 40
+        assert ratelimit.check("tenant", "reader", now=30 + wait, cost=3) == 0
+    finally:
+        ratelimit.reset()

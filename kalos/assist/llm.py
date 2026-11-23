@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from kalos.envconfig import env_enum
+from kalos.paid import PaidCallsOff, no_paid_calls, refuse_paid
 
 if TYPE_CHECKING:
     from kalos.providers.cascade import Cascade
@@ -30,9 +31,18 @@ from kalos.providers.ollama_provider import (
     ollama_model,
     ollama_url,
 )
+from kalos.providers.openai_compatible_provider import (
+    OpenAICompatibleProvider,
+    OpenAICompatUnavailable,
+    openai_model,
+    openai_url,
+)
+from kalos.providers.openai_compatible_provider import (
+    is_loopback_url as openai_is_loopback_url,
+)
 
-AssistProvider = Literal["ollama", "anthropic", "none"]
-_PROVIDERS: tuple[AssistProvider, ...] = ("ollama", "anthropic", "none")
+AssistProvider = Literal["ollama", "openai", "anthropic", "none"]
+_PROVIDERS: tuple[AssistProvider, ...] = ("ollama", "openai", "anthropic", "none")
 _ANTHROPIC_MODEL_ENV = "KALOS_ASSIST_ANTHROPIC_MODEL"
 _DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
 
@@ -89,12 +99,33 @@ class OllamaChat:
 
 
 @dataclass
+class OpenAICompatChat:
+    model: str
+    url: str
+    provider: str = "openai"
+
+    @property
+    def local(self) -> bool:
+        return openai_is_loopback_url(self.url)
+
+    def complete(self, system: str, prompt: str) -> str:
+        try:
+            return OpenAICompatibleProvider().chat(system, prompt, model=self.model)
+        except OpenAICompatUnavailable as exc:
+            raise ModelUnavailable(str(exc)) from exc
+
+
+@dataclass
 class AnthropicChat:
     model: str
     provider: str = "anthropic"
     local: bool = False
 
     def complete(self, system: str, prompt: str) -> str:
+        try:
+            refuse_paid("Anthropic assistant")
+        except PaidCallsOff as exc:
+            raise ModelUnavailable(str(exc)) from exc
         from kalos.normalize import credentials_available
 
         if not credentials_available():
@@ -105,6 +136,7 @@ class AnthropicChat:
             raise ModelUnavailable("the anthropic package is not installed") from exc
         try:
             client = anthropic.Anthropic(timeout=60.0, max_retries=1)
+            refuse_paid("Anthropic assistant")
             reply = client.messages.create(
                 model=self.model, max_tokens=1200, system=system,
                 messages=[{"role": "user", "content": prompt}],
@@ -118,17 +150,23 @@ class AnthropicChat:
         return text
 
 
-def model_info() -> dict[str, object]:
+def model_info(*, probe: bool = False) -> dict[str, object]:
     """`{provider, model, local}` for the status route; never a credential."""
     provider = assist_provider()
     if provider == "ollama":
         from kalos.providers.cascade import models_info
 
         return {"provider": "ollama", "model": ollama_model(), "local": is_loopback_url(ollama_url()),
-                **models_info()}
+                **models_info(), **(OllamaProvider().probe() if probe else {})}
+    if provider == "openai":
+        return {"provider": "openai", "model": openai_model(), "local": openai_is_loopback_url(openai_url()),
+                **(OpenAICompatibleProvider().probe() if probe else {})}
     if provider == "anthropic":
+        from kalos.normalize import credentials_available
+
         model = os.environ.get(_ANTHROPIC_MODEL_ENV) or _DEFAULT_ANTHROPIC_MODEL
-        return {"provider": "anthropic", "model": model, "local": False}
+        return {"provider": "anthropic", "model": model, "local": False,
+                "available": credentials_available() and not no_paid_calls()}
     return {"provider": "none", "model": None, "local": True}
 
 
@@ -158,6 +196,8 @@ def get_chat_model() -> ChatModel | None:
     provider = assist_provider()
     if provider == "ollama":
         return OllamaChat(model=ollama_model(), url=ollama_url())
+    if provider == "openai":
+        return OpenAICompatChat(model=openai_model(), url=openai_url())
     if provider == "anthropic":
         return AnthropicChat(model=os.environ.get(_ANTHROPIC_MODEL_ENV) or _DEFAULT_ANTHROPIC_MODEL)
     return None
@@ -169,6 +209,7 @@ __all__ = [
     "ChatModel",
     "ModelUnavailable",
     "OllamaChat",
+    "OpenAICompatChat",
     "assist_provider",
     "cascade_for",
     "get_chat_model",

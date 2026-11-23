@@ -73,6 +73,7 @@ PLACEMENT: dict[str, str] = {
     # data / config / core
     "kalos.data": "data",
     "kalos.envconfig": "config",
+    "kalos.paid": "config",
     "kalos.config": "config",
     "kalos.portal.config": "config",
     "kalos.core": "core",
