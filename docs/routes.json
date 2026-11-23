@@ -52,6 +52,32 @@
     "response_model": null
   },
   {
+    "method": "POST",
+    "path": "/api/assist/review",
+    "module": "kalos.assist.routes",
+    "endpoint": "assist_review",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/api/assist/review/roles",
+    "module": "kalos.assist.routes",
+    "endpoint": "assist_review_roles",
+    "scopes": [
+      "read"
+    ],
+    "auth": "required",
+    "in_schema": true,
+    "status_code": null,
+    "response_model": null
+  },
+  {
     "method": "GET",
     "path": "/api/assist/sop",
     "module": "kalos.assist.sop_routes",

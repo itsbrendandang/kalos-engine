@@ -30,6 +30,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
+from kalos.paid import PaidCallsOff, refuse_paid
 from kalos.providers.base import ProviderStatus
 from kalos.providers.text import strip_thinking
 
@@ -107,11 +108,11 @@ def selected() -> bool:
 def _remote_allowed(url: str) -> bool:
     if is_loopback_url(url):
         return True
-    truthy = {"1", "true", "yes", "on"}
-    return (
-        os.environ.get("KALOS_NO_PAID_CALLS", "").strip().lower() not in truthy
-        and os.environ.get("KALOS_OPENAI_ALLOW_REMOTE", "").strip().lower() in truthy
-    )
+    try:
+        refuse_paid("remote OpenAI-compatible server")
+    except PaidCallsOff:
+        return False
+    return os.environ.get("KALOS_OPENAI_ALLOW_REMOTE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class OpenAICompatibleProvider:

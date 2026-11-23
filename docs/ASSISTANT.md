@@ -88,7 +88,7 @@ With `anthropic` both tiers are the same remote model, and the same checks apply
 | `KALOS_OPENAI_MODEL` | unset | the model id the OpenAI-compatible server exposes; must be set to select a model |
 | `KALOS_OPENAI_API_KEY` | unset | optional bearer key for the OpenAI-compatible server |
 | `KALOS_OPENAI_ALLOW_REMOTE` | unset (off) | set to `1`, `true`, `yes` or `on` to allow a non-loopback OpenAI server; prompts and any bearer key go to that host |
-| `KALOS_NO_PAID_CALLS` | unset (off) | `1`, `true`, `yes` or `on` blocks remote OpenAI chat and probes even with remote access enabled; loopback servers still work |
+| `KALOS_NO_PAID_CALLS` | unset (off) | `1`, `true`, `yes` or `on` blocks Anthropic calls and remote OpenAI chat and probes, even with remote access enabled; loopback servers still work. Anthropic assistant calls report provider unavailable; normalization falls back offline. |
 | `KALOS_OPENAI_TIMEOUT_S` | `120` | how long to wait for an answer |
 | `KALOS_OLLAMA_URL` | `http://localhost:11434` | where Ollama listens |
 | `KALOS_LLM_FAST_MODEL` | `phi4-mini` | the fast Ollama model |
@@ -107,6 +107,50 @@ With `anthropic` both tiers are the same remote model, and the same checks apply
 | `KALOS_ASSIST_INDEX_ON_WRITE` | `1` | `0` stops the index refresh after uploads and results |
 
 If the model does not answer, Ask returns 503 with code `assist_provider_unavailable`. Nothing else is affected.
+
+## Round review
+
+`POST /api/assist/review` accepts `{campaign_id?, question?}` with read scope.
+Without a question it reviews the current campaign round. It returns
+`{claims, report, abstained, ledger, next}`. Each claim has `id`, `text`,
+`sources`, `verdict` and `issues`. This does not change campaign records.
+
+The scout retrieves sources with the existing local index, without a model.
+The planner writes up to five cited claims. Code checks citations, numbers
+and forbidden claims. The critic sees only surviving claims and their cited
+sources, not the planner's question or prompt. Each model role starts fresh.
+
+Code assigns the verdict. A checked claim with critic `ok` or `minor` is
+`supported`. A `major` issue makes it `contested`. A failed check or `blocking`
+issue makes it `rejected`. No usable critic judgement means `unreviewed`.
+These are review labels, not scientific proof.
+
+The reporter sees only supported claims and their sources. Its summary is
+checked too. A failed summary falls back to the supported claim texts.
+With no supported claims, the response abstains to the guide step.
+The append-only response ledger records role events and reasons, not prompts.
+
+`GET /api/assist/review/roles` lists each role's `key`, `model_group` and short
+public `description`. It needs read scope. No prompts, model names or
+credentials are returned.
+`KALOS_ASSIST_MODEL_PLANNER`, `KALOS_ASSIST_MODEL_CRITIC` and
+`KALOS_ASSIST_MODEL_REPORTER` override model names, using the same provider.
+This works with Ollama (including Qwen), OpenAI-compatible servers and Anthropic.
+Unset values use the normal assistant model. Provider `none` disables reviews
+with 404 `assist_disabled`. Rate limits, campaign 404s and provider 503s match Ask.
+Each review reserves three units of the shared Ask rate limit, even when
+replies are cached or no model is called.
+
+Reviews may make three model calls. With Anthropic or a remote OpenAI-compatible
+server, the question and retrieved sources leave the machine. Replies are saved per tenant under
+`$KALOS_STATE_DIR/assist/<tenant key>/swarm/` as JSON. Stable hashes of the role,
+provider, model, instructions and prompt select cached replies. Repeating the
+same inputs reuses them without another call. These files contain lab text;
+protect them like campaign state. Deleting them loses replay protection.
+The cache keeps at most 128 replies per tenant, removing the oldest replies
+first. The swarm folder is safe to delete while the engine is stopped; no
+campaign records are stored there. Evicted or deleted replies must be generated
+again on the next review, which can make new paid calls.
 
 ## Run a local Qwen model
 
