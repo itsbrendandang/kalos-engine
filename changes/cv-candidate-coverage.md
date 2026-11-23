@@ -1,5 +1,5 @@
-### Fixed - a grouping whose CV skipped a fold no longer sets the reliability score
+### Fixed - a grouping too lopsided to cross-validate no longer sets the reliability score
 
-- A campaign whose newest rounds held 1-2 runs got a round grouping in which holding out round 0 left fewer than 4 training runs, so that fold was skipped and the grouping's held-out Spearman was a rank over 2-3 runs (only ±0.5 or ±1 possible) with no interval. As the lowest score it replaced the primary score, and the reliability floor showed "n/a" (seen in QA: 162 -> 163 rows moved ρ 0.65 -> -0.50).
-- `leak_free_cv` now counts a candidate grouping as evaluable only when every run was held out once and its 95% interval exists; otherwise the candidate is listed with the reason and a `structure_not_checkable` warning. `require_full_coverage=False` restores the old rule.
-- Trust goldens: no change from this fix (`scripts/trust_golden.py diff` output is identical to main's).
+- In a young campaign the newest rounds hold 1-2 runs each, so the round grouping's round-0 fold is predicted by a model fitted to 3-4 runs. At 160/2/1 rows that fold was skipped and the grouping's Spearman came from 3 held-out runs with no interval; at 160/2/2 every run is held out and an interval exists, but round 0 is still predicted from 4 runs. Either way, as the lowest score it replaced the primary score (seen in QA: 162 -> 163 rows moved ρ 0.65 -> -0.50, floor n/a).
+- `leak_free_cv` now counts a candidate grouping as evaluable only when no fold holds out more runs than it trains on, every run was held out once, and its 95% interval exists. Otherwise the candidate is listed with the reason and a `structure_not_checkable` warning, and the primary (or another candidate) sets the score.
+- Runtime switch: `KALOS_CV_STRICT_CANDIDATES=0` (or `false`/`no`/`off`) restores the old rule; `leak_free_cv(strict_candidates=...)` overrides it in code.

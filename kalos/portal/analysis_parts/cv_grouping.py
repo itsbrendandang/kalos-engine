@@ -37,6 +37,7 @@ Torch-free; scipy's hierarchical clustering only.
 """
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -264,15 +265,53 @@ def candidate_report(basis: str, column: str | None, groups: Any, rep: Mapping[s
     return entry
 
 
+STRICT_CANDIDATES_ENV = "KALOS_CV_STRICT_CANDIDATES"
+
+
+def strict_candidates_default() -> bool:
+    """On unless KALOS_CV_STRICT_CANDIDATES is 0/false/no/off (restores the old rule)."""
+    raw = (os.environ.get(STRICT_CANDIDATES_ENV) or "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _training_gap(groups: Any, column: str | None) -> str | None:
+    """Why holding out one group of this candidate leaves too little to train on, or None.
+
+    A fold that holds out more runs than it trains on scores a model fitted to
+    the minority of the data on the majority of the rows; in a young campaign
+    (upload round 0 plus a couple of runs per round) round 0 is predicted from 4
+    rows and that one fold sets the candidate's Spearman."""
+    labels, counts = np.unique(np.asarray(groups).astype(str), return_counts=True)
+    i = int(np.argmax(counts))
+    held, train = int(counts[i]), int(counts.sum() - counts[i])
+    if held <= train:
+        return None
+    return (
+        f"holding out {column!r} {labels[i]!r} ({held} runs) leaves {train} runs to train on; "
+        f"it needs at least as many runs outside that group as in it"
+    )
+
+
 def _coverage_gap(rep: Mapping[str, Any], n_runs: int) -> str | None:
     """Why a candidate's held-out score is not a full held-out score, or None."""
     n_oof = int(rep.get("n_oof", 0))
     lo, hi = rep["ci95"]
     if n_oof < n_runs:
-        return f"only {n_oof} of {n_runs} runs were held out; a fold too large to train without was skipped"
+        return f"only {n_oof} of {n_runs} runs were held out; a fold left too few runs to train on and was skipped"
     if lo != lo or hi != hi:
-        return f"the held-out runs span only {int(rep['n_groups'])} group(s), too few for an interval"
+        return "no 95% interval: every bootstrap resample of its held-out runs had no variation to rank"
     return None
+
+
+def _not_checkable(column: str | None, gap: str) -> dict[str, Any]:
+    return {
+        "code": "structure_not_checkable",
+        "column": column,
+        "message": (
+            f"Holding out each {column!r} group does not give an honest held-out score yet ({gap}), "
+            "so it does not drive the reliability verdict."
+        ),
+    }
 
 
 def leak_free_cv(
@@ -285,7 +324,7 @@ def leak_free_cv(
     *,
     n_exact_recipes: int,
     n_clusters: int,
-    require_full_coverage: bool = True,
+    strict_candidates: bool | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], Any, str]:
     """Cross-validate every candidate grouping and pick the binding one.
 
@@ -295,10 +334,12 @@ def leak_free_cv(
     none is evaluable). Candidates identical to the primary partition are not
     re-run.
 
-    `require_full_coverage` (default on): a candidate counts as evaluable only
-    when every one of its runs was held out once and its 95% interval exists.
-    Off restores the old rule, where a candidate whose CV skipped a fold could
-    bind on a rank over a few rows."""
+    `strict_candidates` (default: `strict_candidates_default()`, on): a
+    candidate counts as evaluable only when no fold holds out more runs than it
+    trains on, every run was held out once, and its 95% interval exists.
+    Off restores the old rule, where such a candidate could bind on a score
+    from a model fitted to a handful of rows."""
+    strict = strict_candidates_default() if strict_candidates is None else strict_candidates
     entries: list[tuple[str, str | None, Any, dict[str, Any] | None, dict[str, Any]]] = []
     prim_entry = candidate_report(primary_basis, primary_column, primary_groups, primary_rep)
     entries.append((primary_basis, primary_column, primary_groups, primary_rep, prim_entry))
@@ -325,25 +366,22 @@ def leak_free_cv(
                 ),
             })
             continue
+        gap = _training_gap(g, c["column"]) if strict else None
+        if gap is not None:
+            e = candidate_report(c["basis"], c["column"], g, None, n_levels=c["n_levels"],
+                                 merged=c["merged_with_replicates"])
+            e["reason"] = gap
+            entries.append((c["basis"], c["column"], g, None, e))
+            warnings.append(_not_checkable(c["column"], gap))
+            continue
         r = run_cv(g)
         e = candidate_report(c["basis"], c["column"], g, r, n_levels=c["n_levels"],
                              merged=c["merged_with_replicates"])
-        if require_full_coverage and e["evaluable"]:
+        if strict and e["evaluable"]:
             gap = _coverage_gap(r, len(g))
             if gap is not None:
-                # A fold too big to train without (round 0 of a young campaign) is
-                # skipped, so the score is a rank over a handful of rows - at 3
-                # rows only +/-0.5 and +/-1 exist - and would bind as the lowest.
                 e.update(evaluable=False, reason=gap)
-                warnings.append({
-                    "code": "structure_not_checkable",
-                    "column": c["column"],
-                    "message": (
-                        f"Holding out each {c['column']!r} group does not give an honest held-out score yet "
-                        f"({gap}), so it does not drive the reliability verdict. More runs in the "
-                        f"smaller {c['column']!r} groups are needed."
-                    ),
-                })
+                warnings.append(_not_checkable(c["column"], gap))
         entries.append((c["basis"], c["column"], g, r, e))
     evaluable = [t for t in entries if t[4]["evaluable"]]
     binding = min(evaluable, key=lambda t: float(t[3]["spearman"])) if evaluable else entries[0]  # type: ignore[index]
