@@ -131,3 +131,66 @@ def test_the_prompt_changes_only_when_a_paper_was_retrieved():
     assert with_paper.startswith(LITERATURE_NOTE)
     assert without.startswith("Sources:\n\n") and "literature" not in without
 
+
+
+# --- attributed paper findings (claim words from the paper itself) ------------------ #
+
+
+def _glucose_paper() -> Chunk:
+    return literature_chunks_from(_item(
+        5, citation="Example A. Glucose feeding in fed-batch CHO culture. 2021",
+        excerpt="Raising the glucose feed concentration increased final titer across the conditions tested."))
+
+
+def test_an_attributed_paper_sentence_may_use_a_claim_word_the_paper_uses():
+    lab = [Labelled("S1", Hit(_glucose_paper(), 1.0))]
+    for sentence in ("Example A 2021 reports that raising the glucose feed increased final titer [S1].",
+                     "According to the paper, raising glucose increased titer [S1].",
+                     "Example A found that raising glucose increased titer [S1].",
+                     "Example A reports that raising the glucose feed increased final titer [S1][G]."):
+        out = check_answer(sentence, lab, GUIDE)
+        assert not out.rejected and out.answer == sentence.replace(" [S1][G]", "").replace(" [S1]", ""), sentence
+        assert out.sources[0]["citation"].startswith("Example A.")
+
+
+def test_an_unattributed_paper_sentence_still_may_not_use_a_claim_word():
+    lab = [Labelled("S1", Hit(_glucose_paper(), 1.0))]
+    out = check_answer("Raising glucose increased titer [S1].", lab, GUIDE)
+    assert out.rejected and out.answer == ""
+
+
+def test_an_attributed_sentence_may_not_use_a_claim_word_the_paper_does_not_use():
+    lab = [Labelled("S1", Hit(_glucose_paper(), 1.0))]
+    for sentence in ("Example A reports that glucose causes higher titer [S1].",
+                     "Raising glucose led to higher titer, according to the paper [S1].",
+                     "Example A reports that more glucose will raise titer [S1]."):
+        assert check_answer(sentence, lab, GUIDE).rejected, sentence
+
+
+def test_a_paper_finding_is_never_applied_to_the_campaign():
+    lab = [Labelled("S1", Hit(_glucose_paper(), 1.0)), Labelled("S2", Hit(_sheet(), 1.0))]
+    out = check_answer(
+        "Example A reports that raising glucose increased titer in your campaign too [S1]. "
+        "Example A found that glucose increased titer, so this campaign should see it [S1]. "
+        "Example A reports that raising glucose increased lipase_titer [S1]. "
+        "Measured lipase_titer was 3.3 [S2].", lab, GUIDE)
+    assert out.answer == "Measured lipase_titer was 3.3."
+    assert out.drop_reasons == {"literature_applied": 3}
+
+
+def test_a_sentence_mixing_a_paper_and_the_campaign_stays_strict():
+    lab = [Labelled("S1", Hit(_glucose_paper(), 1.0)), Labelled("S2", Hit(_sheet(), 1.0))]
+    out = check_answer("Example A reports that raising glucose increased titer [S1][S2].", lab, GUIDE)
+    assert out.rejected
+
+
+def test_numbers_from_an_attributed_paper_sentence_are_still_dropped():
+    lab = [Labelled("S1", Hit(_glucose_paper(), 1.0))]
+    out = check_answer("Example A reports that glucose increased titer by 30% [S1].", lab, GUIDE)
+    assert out.drop_reasons == {"literature_number": 1} and out.answer == ""
+
+
+def test_according_to_a_label_names_the_paper():
+    lab = [Labelled("S1", Hit(_glucose_paper(), 1.0))]
+    out = check_answer("Raising glucose increased final titer according to [S1].", lab, GUIDE)
+    assert out.answer == "Raising glucose increased final titer according to Example 2021."
