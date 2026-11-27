@@ -12,7 +12,12 @@ reply, `check_answer`:
    (`mismatched_number`);
    A sentence citing a `literature` source (a paper excerpt, not the lab's
    data) may hold no number at all except the paper's publication year
-   (`literature_number`): numbers shown are the lab's, computed by Kalos;
+   (`literature_number`): numbers shown are the lab's, computed by Kalos.
+   A sentence citing only papers may use a claim word when it attributes the
+   finding (names the paper's first author, or says "reports", "found",
+   "according to", ...) and the cited excerpt itself uses that word; it may
+   never apply the finding to this campaign ("your", "this campaign", a
+   column name: `literature_applied`);
 3. drops every sentence naming a column-like identifier (`titer_g_L`) that is
    not in the campaign's columns or its cited texts (`unknown_column`), or a
    run id that its cited texts do not contain (`nonexistent_citation`);
@@ -81,7 +86,32 @@ Rules:
 # without literature stay exactly as they were.
 LITERATURE_NOTE = """Sources marked (literature: ...) are excerpts from published papers, not this lab's data.
 - Name the paper by first author and year when you use one ("Smith 2020 reports ...").
+- Say what a paper found in the paper's own words, in a sentence that cites only papers.
 - Never state a number from a paper, and never say a paper's result holds for this campaign."""
+
+# A paper sentence is attributed when it names the paper's first author or uses
+# one of these; it is applied to the lab's data when it uses one of _APPLIED.
+_ATTRIBUTION = re.compile(
+    r"\b(?:reports?|reported|finds|found|observes|observed|shows|showed|shown|describes?|described|"
+    r"notes?|noted|according to|the authors?|the (?:paper|study|studies|literature|review))\b",
+    re.IGNORECASE,
+)
+_APPLIED = re.compile(
+    r"\b(?:this campaign|your|yours|you|our|we|here|this lab|these runs|this data|this sheet)\b",
+    re.IGNORECASE,
+)
+
+
+def _first_author(chunk: Any) -> str | None:
+    m = re.match(r"\s*([A-Za-z][A-Za-z'-]{1,})", chunk.title or "")
+    return m.group(1).lower() if m else None
+
+
+def _attributed(sentence: str, papers: list[Any]) -> bool:
+    if _ATTRIBUTION.search(sentence):
+        return True
+    words = set(re.findall(r"[a-z][a-z'-]+", sentence.lower()))
+    return any(_first_author(c) in words for c in papers)
 
 
 @dataclass
@@ -211,7 +241,20 @@ def check_answer(reply: str, labelled: list[Labelled], guide: dict[str, Any]) ->
         dropped += 1
         reasons[reason] = reasons.get(reason, 0) + 1
 
+    def name_paper(m: re.Match[str]) -> str:
+        hit = table.get(m.group(2))
+        if hit is None or hit.chunk.kind != "literature":
+            return m.group(0)
+        author = re.match(r"\s*([A-Za-z][A-Za-z'-]+)", hit.chunk.title)
+        if not author:
+            return m.group(0)
+        first = re.search(r"(?<!\d)(1[89]\d\d|20\d\d)(?!\d)", hit.chunk.title)  # the citation's year
+        year = first.group(1) if first else ""
+        return f"{m.group(1)} {author.group(1)}{' ' + year if year else ''} [{m.group(2)}]"
+
     for sentence in split_sentences(reply):
+        # "according to [S2]." would read "according to." once labels go: name the paper.
+        sentence = re.sub(r"\b(according to)\s+\[(S\d{1,2})\]", name_paper, sentence, flags=re.IGNORECASE)
         all_labels = _LABEL.findall(sentence)
         labels = [lab for lab in all_labels if lab == "G" or lab in table]
         bare = _LABEL.sub("", sentence)
@@ -240,17 +283,28 @@ def check_answer(reply: str, labelled: list[Labelled], guide: dict[str, Any]) ->
         if banned:
             rejected.append(f"banned word: {', '.join(sorted(set(banned)))}")
             continue
+        papers = [table[lab].chunk for lab in labels if lab != "G" and table[lab].chunk.kind == "literature"]
+        # The guide step is Kalos's own text, not the lab's data: a paper sentence
+        # that also cites [G] (models add it out of habit) still cites only papers.
+        only_papers = bool(papers) and len(papers) == len([lab for lab in labels if lab != "G"])
+        if only_papers and (_APPLIED.search(bare) or identifiers_in(bare)):
+            drop("literature_applied")  # a paper's finding is never said to hold for this campaign
+            continue
         # Claim words count only in what Kalos wrote: lab-written strings (column
-        # names, labels, campaign names) are removed from both sides first.
+        # names, labels, campaign names) are removed from both sides first. A
+        # sentence citing only papers and saying whose finding it is may use a
+        # claim word the cited excerpt itself uses.
         terms = [t for lab in labels if lab != "G" for t in table[lab].chunk.user_terms]
-        kalos_cited = [table[lab].chunk.kalos_text() for lab in labels if lab != "G"]
+        if only_papers and _attributed(bare, papers):
+            kalos_cited = [c.text for c in papers]
+        else:
+            kalos_cited = [table[lab].chunk.kalos_text() for lab in labels if lab != "G"]
         if "G" in labels:
             kalos_cited.append(guide_source)
         claims = unsupported_claims(strip_terms(bare, terms, keep_claims=True), kalos_cited)
         if claims:
             rejected.append(f"claim not in the sources: {', '.join(claims)}")
             continue
-        papers = [table[lab].chunk for lab in labels if lab != "G" and table[lab].chunk.kind == "literature"]
         years = set().union(*(_numbers(y) for c in papers for y in literature_years(c)))
         if papers and _value_numbers(bare) - years:
             drop("literature_number")  # numbers shown are the lab's, never a paper's
