@@ -284,6 +284,11 @@ process on a modest machine.
   (`KALOS_TORCH_THREADS`, `kalos/portal/pipeline.py`). Total CPU threads are
   therefore about `KALOS_JOB_WORKERS` times that budget: on a shared machine,
   lower one or the other.
+- Cross-validation fold fits run in their own pool of worker processes
+  (`KALOS_CV_WORKERS`; `1` fits them in the analysis process). Each worker fits
+  on the engine's torch thread budget, so the default is the CPUs divided by
+  that budget. Each analysing process has its own pool, so on a shared machine
+  also divide by `KALOS_JOB_WORKERS`.
 
 Invalid values for any `KALOS_JOB*` variable (non-numeric, non-finite such as
 `nan` or `inf`, out of range, a job upload limit above the engine cap,

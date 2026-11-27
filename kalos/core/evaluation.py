@@ -9,7 +9,12 @@ more precise than it is, so `grouped_cv_report` is the number to quote.
 """
 from __future__ import annotations
 
+import contextlib
+import os
+import threading
 from collections.abc import Iterator, Sequence
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 
 import numpy as np
 import pandas as pd
@@ -17,6 +22,172 @@ from scipy.stats import norm, spearmanr
 
 from .splits import make_splits, row_hash_groups
 from .surrogate import Surrogate
+
+# Cross-validation fold fits are independent, so they run in a pool of worker
+# processes (KALOS_CV_WORKERS; 1 = in this process, one after another). Each
+# worker fits on the caller's torch thread count, so the numbers match a fit here.
+# The pool is created on first use and reused, so the cost of starting workers is
+# paid once per process.
+_POOL: ProcessPoolExecutor | None = None
+_POOL_LOCK = threading.Lock()
+
+
+def cv_workers() -> int:
+    """KALOS_CV_WORKERS, else as many workers as fit on the CPUs at this
+    process's torch thread count (each worker fits on that many threads)."""
+    raw = os.environ.get("KALOS_CV_WORKERS", "").strip()
+    if not raw:
+        import torch
+
+        return max(1, (os.cpu_count() or 1) // max(1, torch.get_num_threads()))
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        raise ValueError(f"KALOS_CV_WORKERS must be a whole number; got {raw!r}") from None
+
+
+def _fold_pool() -> ProcessPoolExecutor:
+    global _POOL
+    with _POOL_LOCK:
+        if _POOL is None:
+            import multiprocessing as mp
+
+            _POOL = ProcessPoolExecutor(
+                max_workers=cv_workers(), mp_context=mp.get_context("spawn"),
+            )
+        return _POOL
+
+
+def _reset_fold_pool() -> None:
+    global _POOL
+    with _POOL_LOCK:
+        if _POOL is not None:
+            _POOL.shutdown(wait=False, cancel_futures=True)
+        _POOL = None
+
+
+def _fit_fold(X_tr, y_tr, X_te, bounds, cat_dims):
+    """Fit one fold and return its held-out predictive mean and sd."""
+    s = Surrogate().fit(X_tr, y_tr, bounds=bounds, cat_dims=cat_dims)
+    mean, std = s.posterior(X_te, observation_noise=True)
+    return np.asarray(mean).ravel(), np.asarray(std).ravel()
+
+
+def _fit_fold_in_worker(task):
+    """One fold in a worker, on the caller's torch thread count and from the
+    caller's torch RNG state, so it gives the numbers the caller would. Returns the
+    RNG state it ends on as well."""
+    import torch
+
+    threads, rng_state, fold = task
+    torch.set_num_threads(threads)
+    torch.set_rng_state(rng_state)
+    mean, std = _fit_fold(*fold)
+    return mean, std, torch.get_rng_state()
+
+
+def cv_uses_pool() -> bool:
+    """Whether fold fits go to the worker pool: more than one worker, and not in a
+    daemon process (a benchmark's pool worker), which cannot start workers."""
+    import multiprocessing as mp
+
+    return cv_workers() > 1 and not mp.current_process().daemon
+
+
+_LOCAL = threading.local()
+
+
+def _fold_key(task: tuple, rng_state) -> bytes:
+    import hashlib
+    import pickle
+
+    h = hashlib.sha256(pickle.dumps(task, protocol=4))
+    h.update(rng_state.numpy().tobytes())
+    return h.digest()
+
+
+@contextlib.contextmanager
+def precomputing_folds(cache: dict, rng_state, threads: int) -> Iterator[None]:
+    """In this thread, fold fits go to the pool from `rng_state` on `threads` torch
+    threads and their results land in `cache`, without reading or changing this
+    process's torch RNG (another thread may be using it)."""
+    _LOCAL.precompute = (cache, rng_state, threads)
+    try:
+        yield
+    finally:
+        _LOCAL.precompute = None
+
+
+@contextlib.contextmanager
+def using_precomputed_folds(cache: dict) -> Iterator[None]:
+    """In this thread, a fold whose result is in `cache` for the current torch RNG
+    state takes it instead of fitting again."""
+    _LOCAL.cache = cache
+    try:
+        yield
+    finally:
+        _LOCAL.cache = None
+
+
+def _precompute_folds(tasks, cache, rng_state, threads) -> list[tuple[np.ndarray, np.ndarray]]:
+    fits = []
+    for t, (mean, std, end) in zip(tasks, _fold_pool().map(
+        _fit_fold_in_worker, [(threads, rng_state, t) for t in tasks],
+    )):
+        cache[_fold_key(t, rng_state)] = (mean, std, end)
+        fits.append((mean, std))
+    return fits
+
+
+def _fit_folds(tasks: list[tuple]) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Every fold's (mean, sd), in fold order, byte-identical to fitting them one
+    after another in this process. Folds precomputed from the current RNG state
+    are taken from the cache (`using_precomputed_folds`); the rest are fitted."""
+    pre = getattr(_LOCAL, "precompute", None)
+    if pre is not None:
+        return _precompute_folds(tasks, *pre)
+    fits: list[tuple[np.ndarray, np.ndarray]] = []
+    cache = getattr(_LOCAL, "cache", None)
+    if cache:
+        import torch
+
+        for t in tasks:
+            hit = cache.get(_fold_key(t, torch.get_rng_state()))
+            if hit is None:
+                break
+            fits.append((hit[0], hit[1]))
+            torch.set_rng_state(hit[2])
+    return fits + _fit_folds_now(tasks[len(fits):])
+
+
+def _fit_folds_now(tasks: list[tuple]) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Every fold's (mean, sd), in fold order, byte-identical to fitting them one
+    after another in this process.
+
+    With a pool, every fold starts from this process's RNG state. A fit that draws
+    from the torch RNG (a retry) moves the state the next fold would start from in
+    a one-after-another run, so the folds after it are refit here, and the RNG is
+    left where that run leaves it. A pool that breaks (a worker killed) is dropped
+    and the folds rerun here."""
+    if not tasks or not cv_uses_pool():
+        return [_fit_fold(*t) for t in tasks]
+    import torch
+
+    start = torch.get_rng_state()
+    try:
+        done = list(_fold_pool().map(
+            _fit_fold_in_worker, [(torch.get_num_threads(), start, t) for t in tasks],
+        ))
+    except BrokenProcessPool:
+        _reset_fold_pool()
+        return [_fit_fold(*t) for t in tasks]
+    fits: list[tuple[np.ndarray, np.ndarray]] = []
+    for k, (mean, std, end) in enumerate(done):
+        if not torch.equal(torch.get_rng_state(), start):
+            return fits + [_fit_fold(*t) for t in tasks[k:]]
+        fits.append((mean, std))
+        torch.set_rng_state(end)
+    return fits
 
 
 def grouped_folds(groups: Sequence, n_splits: int = 5) -> Iterator[tuple[np.ndarray, np.ndarray]]:
@@ -102,21 +273,25 @@ def _oof(
     # what actually ships.
     if bounds is None and len(X):
         bounds = np.vstack([X.min(axis=0), X.max(axis=0)])
-    pred, sd, actual, grp, n_folds = [], [], [], [], 0
-    for tr, te in make_splits(X, y, groups, n_splits=n_splits, shuffle=shuffle, random_state=random_state):
-        if len(tr) < 4 or len(te) < 1:
-            continue
-        n_folds += 1
-        s = Surrogate().fit(X[tr], y[tr], bounds=bounds, cat_dims=cat_dims)
-        mean, std = s.posterior(X[te], observation_noise=True)
-        pred.extend(np.asarray(mean).ravel().tolist())
-        sd.extend(np.asarray(std).ravel().tolist())
+    folds = [
+        (tr, te)
+        for tr, te in make_splits(
+            X, y, groups, n_splits=n_splits, shuffle=shuffle, random_state=random_state,
+        )
+        if len(tr) >= 4 and len(te) >= 1
+    ]
+    fits = _fit_folds([(X[tr], y[tr], X[te], bounds, cat_dims) for tr, te in folds])
+    pred, sd, actual, grp = [], [], [], []
+    n_folds = len(folds)
+    for k, ((_tr, te), (mean, std)) in enumerate(zip(folds, fits)):
+        pred.extend(mean.tolist())
+        sd.extend(std.tolist())
         actual.extend(y[te].tolist())
         grp.extend(groups[te].tolist())
         if index_out is not None:
             index_out.extend(int(i) for i in te)
         if fold_out is not None:
-            fold_out.extend([n_folds - 1] * len(te))
+            fold_out.extend([k] * len(te))
     return (
         np.asarray(pred),
         np.asarray(sd),

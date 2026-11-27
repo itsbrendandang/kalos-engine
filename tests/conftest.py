@@ -213,6 +213,11 @@ def real_state_guard(_real_state_dir_guard: _Guard) -> _Guard:
 # gives identical analysis output (measured; see also tests/test_golden_determinism.py).
 os.environ.setdefault("KALOS_TORCH_THREADS", "1")
 _TEST_TORCH_THREADS = int(os.environ["KALOS_TORCH_THREADS"].strip() or 0)
+# Under xdist every worker would otherwise start its own pool of CV fold workers
+# (one per CPU), so the processes multiply and run the machine out of memory.
+# Tests that exercise the pool set KALOS_CV_WORKERS themselves.
+if os.environ.get("PYTEST_XDIST_WORKER"):
+    os.environ.setdefault("KALOS_CV_WORKERS", "1")
 
 
 @pytest.fixture(autouse=True)
