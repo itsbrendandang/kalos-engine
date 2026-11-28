@@ -56,7 +56,7 @@ def _arena1_truth(X: np.ndarray) -> np.ndarray:
 
 def run_arena1_high_d_sparse(*, seeds: int, quick: bool) -> dict[str, Any]:
     """Arena 1: High-D Sparse Media (d=25, 4 active drivers, n_init=12, budget=18)."""
-    from kalos.core.frontier.acquisition import AdaptiveTuRBO, TrustRegionState
+    from kalos.core.frontier.acquisition import JointQLogNEI
     from kalos.core.frontier.warped_sparse_gp import WarpedSparseGP
     from kalos.core.optimize import propose
     from kalos.core.surrogate import Surrogate
@@ -96,23 +96,21 @@ def run_arena1_high_d_sparse(*, seeds: int, quick: bool) -> dict[str, Any]:
         times["baseline"].append(time.perf_counter() - t0)
         regrets["baseline"].append(optimum - float(np.max(y_b_true)))
 
-        # Frontier: WarpedSparseGP + AdaptiveTuRBO
+        # Frontier: WarpedSparseGP + JointQLogNEI
         t0 = time.perf_counter()
         X_f, y_f_obs, y_f_true = X_init.copy(), y_init_obs.copy(), y_init_true.copy()
         rng_f = np.random.default_rng([seed, 1, 1])
-        tr = TrustRegionState(bounds, best_value=float(np.max(y_f_obs)))
-        turbo = AdaptiveTuRBO(n_candidates=256 if quick else 512)
+        acq = JointQLogNEI(n_mc=64, n_restarts=6, raw_samples=256 if quick else 512)
         for r in range(rounds):
             gp = WarpedSparseGP(sparsity_strength=0.15).fit(X_f, y_f_obs, bounds, seed=seed * 100 + r)
-            X_next = turbo.propose(
-                gp, bounds, q=q, X_train=X_f, y_train=y_f_obs, tr_state=tr, seed=seed * 100 + r
+            X_next = acq.propose(
+                gp, bounds, q=q, X_train=X_f, y_train=y_f_obs, seed=seed * 100 + r
             )
             y_nt = _arena1_truth(X_next)
             y_no = y_nt + rng_f.normal(0.0, noise_sd, size=len(X_next))
             X_f = np.vstack([X_f, X_next])
             y_f_obs = np.concatenate([y_f_obs, y_no])
             y_f_true = np.concatenate([y_f_true, y_nt])
-            tr.update(float(np.max(y_f_obs)))
         times["frontier"].append(time.perf_counter() - t0)
         regrets["frontier"].append(optimum - float(np.max(y_f_true)))
 
@@ -146,7 +144,7 @@ def _arena2_observe(y_true: np.ndarray, rng: np.random.Generator) -> np.ndarray:
 
 def run_arena2_heteroscedastic_outliers(*, seeds: int, quick: bool) -> dict[str, Any]:
     """Arena 2: Heteroscedastic Log-Normal (CV=25%) + 10% +3sigma Outliers."""
-    from kalos.core.frontier.acquisition import AdaptiveTuRBO, TrustRegionState
+    from kalos.core.frontier.acquisition import JointQLogNEI
     from kalos.core.frontier.warped_sparse_gp import WarpedSparseGP
     from kalos.core.optimize import propose
     from kalos.core.surrogate import Surrogate
@@ -188,21 +186,19 @@ def run_arena2_heteroscedastic_outliers(*, seeds: int, quick: bool) -> dict[str,
         t0 = time.perf_counter()
         X_f, y_f_obs, y_f_true = X_init.copy(), y_init_obs.copy(), y_init_true.copy()
         rng_f = np.random.default_rng([seed, 2, 1])
-        tr = TrustRegionState(bounds, best_value=float(np.max(y_f_obs)))
-        turbo = AdaptiveTuRBO(n_candidates=256 if quick else 512)
+        acq = JointQLogNEI(n_mc=64, n_restarts=6, raw_samples=256 if quick else 512)
         for r in range(rounds):
             gp = WarpedSparseGP(use_output_warp=True, robust=True).fit(
                 X_f, y_f_obs, bounds, seed=seed * 100 + r
             )
-            X_next = turbo.propose(
-                gp, bounds, q=q, X_train=X_f, y_train=y_f_obs, tr_state=tr, seed=seed * 100 + r
+            X_next = acq.propose(
+                gp, bounds, q=q, X_train=X_f, y_train=y_f_obs, seed=seed * 100 + r
             )
             y_nt = _arena2_truth(X_next)
             y_no = _arena2_observe(y_nt, rng_f)
             X_f = np.vstack([X_f, X_next])
             y_f_obs = np.concatenate([y_f_obs, y_no])
             y_f_true = np.concatenate([y_f_true, y_nt])
-            tr.update(float(np.max(y_f_obs)))
         times["frontier"].append(time.perf_counter() - t0)
         regrets["frontier"].append(optimum - float(np.max(y_f_true)))
 
@@ -242,7 +238,7 @@ def _arena3_observe(y_true: np.ndarray, rng: np.random.Generator) -> tuple[np.nd
 
 def run_arena3_censored_cliff(*, seeds: int, quick: bool) -> dict[str, Any]:
     """Arena 3: Censored < LOD Cliff (d=5, 30% dead region, n_init=15, budget=15)."""
-    from kalos.core.frontier.acquisition import AdaptiveTuRBO, TrustRegionState
+    from kalos.core.frontier.acquisition import JointQLogNEI
     from kalos.core.frontier.warped_sparse_gp import WarpedSparseGP
     from kalos.core.optimize import propose
     from kalos.core.surrogate import Surrogate
@@ -289,7 +285,7 @@ def run_arena3_censored_cliff(*, seeds: int, quick: bool) -> dict[str, Any]:
         times["baseline"].append(time.perf_counter() - t0)
         regrets["baseline"].append(optimum - float(np.max(y_b_true)))
 
-        # Frontier: WarpedSparseGP with censored_mask & lod + AdaptiveTuRBO
+        # Frontier: WarpedSparseGP with censored_mask & lod + JointQLogNEI
         t0 = time.perf_counter()
         X_f, y_f_obs, c_f, y_f_true = (
             X_init.copy(),
@@ -298,14 +294,13 @@ def run_arena3_censored_cliff(*, seeds: int, quick: bool) -> dict[str, Any]:
             y_init_true.copy(),
         )
         rng_f = np.random.default_rng([seed, 3, 1])
-        tr = TrustRegionState(bounds, best_value=float(np.max(y_f_obs)))
-        turbo = AdaptiveTuRBO(n_candidates=256 if quick else 512)
+        acq = JointQLogNEI(n_mc=64, n_restarts=6, raw_samples=256 if quick else 512)
         for r in range(rounds):
             gp = WarpedSparseGP().fit(
                 X_f, y_f_obs, bounds, censored_mask=c_f, lod=_ARENA3_LOD, seed=seed * 100 + r
             )
-            X_next = turbo.propose(
-                gp, bounds, q=q, X_train=X_f, y_train=y_f_obs, tr_state=tr, seed=seed * 100 + r
+            X_next = acq.propose(
+                gp, bounds, q=q, X_train=X_f, y_train=y_f_obs, seed=seed * 100 + r
             )
             y_nt = _arena3_truth(X_next)
             y_no, c_n = _arena3_observe(y_nt, rng_f)
@@ -313,7 +308,6 @@ def run_arena3_censored_cliff(*, seeds: int, quick: bool) -> dict[str, Any]:
             y_f_obs = np.concatenate([y_f_obs, y_no])
             c_f = np.concatenate([c_f, c_n])
             y_f_true = np.concatenate([y_f_true, y_nt])
-            tr.update(float(np.max(y_f_obs)))
         times["frontier"].append(time.perf_counter() - t0)
         regrets["frontier"].append(optimum - float(np.max(y_f_true)))
 

@@ -85,6 +85,7 @@ def validation_mode_setting() -> str:
 STRICT_CV_CANDIDATES_VAR = "KALOS_CV_STRICT_CANDIDATES"
 FEAS_ONEHOT_CAT_VAR = "KALOS_FEAS_ONEHOT_CAT"
 SPACE_FILLING_SMALL_N_VAR = "KALOS_SPACE_FILLING_SMALL_N"
+FRONTIER_ENGINE_VAR = "KALOS_FRONTIER_ENGINE"
 CV_WORKERS_VAR = "KALOS_CV_WORKERS"
 _STRICT_ON = ("1", "true", "yes", "on")
 _STRICT_OFF = ("0", "false", "no", "off")
@@ -109,6 +110,13 @@ def space_filling_small_n_setting() -> bool:
     On replaces multi-start qLogNEI with deterministic Sobol+maximin DoE when
     the model is not yet reliable and distinct recipes < 2*d."""
     return env_enum(SPACE_FILLING_SMALL_N_VAR, _STRICT_ON + _STRICT_OFF, "0") in _STRICT_ON
+
+
+def frontier_engine_setting() -> bool:
+    """`KALOS_FRONTIER_ENGINE`: off (default) or on (`1`/`true`/`yes`/`on`).
+    On uses the torch-free `WarpedSparseGP` + `JointQLogNEI` / `AdaptiveTuRBO`
+    frontier stack on eligible continuous single-objective analyses."""
+    return env_enum(FRONTIER_ENGINE_VAR, _STRICT_ON + _STRICT_OFF, "0") in _STRICT_ON
 
 
 def cv_workers_setting() -> int:

@@ -11,6 +11,7 @@ from kalos.core.frontier.acquisition import (
     ActionBatch,
     ActionSlot,
     AdaptiveTuRBO,
+    JointQLogNEI,
     TrustRegionState,
     VOIAllocator,
 )
@@ -460,3 +461,133 @@ def test_voi_allocator_constraints_marginal_fallback_and_auto_noise():
     assert np.all(bx <= bounds[1] + 1e-12)
     assert np.allclose(bx[:, 1], 0.5)
     assert np.all(bx[:, 0] + bx[:, 2] <= 1.2 + 1e-6)
+
+
+def test_joint_qlognei_is_torch_free() -> None:
+    """Importing and running JointQLogNEI must never import torch/botorch/gpytorch."""
+    import textwrap
+
+    code = textwrap.dedent("""\
+        import sys
+        import numpy as np
+        from kalos.core.frontier import JointQLogNEI, WarpedSparseGP
+
+        loaded_at_import = "torch" in sys.modules
+        rng = np.random.default_rng(11)
+        bounds = np.array([[0.0, 0.0], [1.0, 1.0]])
+        X = rng.uniform(0.0, 1.0, size=(12, 2))
+        y = np.sin(3.0 * X[:, 0]) + 0.5 * X[:, 1] + rng.normal(0.0, 0.05, size=12)
+        gp = WarpedSparseGP().fit(X, y, bounds, seed=11)
+        pts = JointQLogNEI(n_mc=16, n_restarts=2, raw_samples=32).propose(
+            gp, bounds, q=3, X_train=X, y_train=y, seed=11
+        )
+        loaded_at_call = "torch" in sys.modules
+        print(loaded_at_import, loaded_at_call, pts.shape[0], pts.shape[1])
+    """)
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert out == "False False 3 2"
+
+
+def test_joint_qlognei_gradient_matches_finite_differences() -> None:
+    """Reverse-mode Murray Cholesky pullback matches central FD in warp and Tobit modes."""
+    from kalos.core.frontier.warped_sparse_gp import WarpedSparseGP
+
+    rng = np.random.default_rng(31)
+    d = 3
+    bounds = np.array([[0.0, -1.0, 2.0], [2.0, 3.0, 6.0]])
+    X = rng.uniform(bounds[0], bounds[1], size=(18, d))
+    y = np.exp(0.4 * X[:, 0]) + np.sin(X[:, 1]) - 0.2 * X[:, 2] + rng.normal(0.0, 0.05, size=18)
+    pending = np.array([[1.2, 0.5, 4.1]])
+    fixed = {1: 0.8}
+    acq = JointQLogNEI(n_mc=16, n_restarts=2, raw_samples=32)
+
+    # 1. Exact Cholesky + Kumaraswamy input warp + Box-Cox output warp + pending + minimize
+    gp_chol = WarpedSparseGP(
+        use_input_warp=True, use_output_warp=True, sparsity_strength=0.05, robust=False
+    ).fit(X, y, bounds, seed=31)
+    assert gp_chol._active_input_warp is True
+    ctx_c = gp_chol.qlognei_context(X)
+    obj_c, _, free_c = acq._build_objective(
+        ctx_c, q=2, pending=pending, fixed=fixed, maximize=False, seed=31
+    )
+    assert free_c == [0, 2]
+    x0 = np.array([0.7, 3.3, 1.4, 4.8])
+    _, g_analytic = obj_c(x0)
+    eps = 1e-6
+    g_fd = np.zeros_like(x0)
+    for k in range(len(x0)):
+        dx = np.zeros_like(x0)
+        dx[k] = eps
+        f_p, _ = obj_c(x0 + dx)
+        f_m, _ = obj_c(x0 - dx)
+        g_fd[k] = (f_p - f_m) / (2.0 * eps)
+    assert np.allclose(g_analytic, g_fd, rtol=1e-3, atol=2e-4)
+
+    # 2. Tobit Laplace censored mode + maximize
+    cens = X[:, 0] < 0.7
+    lod = 2.0
+    y_c = np.where(cens, lod, np.maximum(y, lod + 0.1))
+    gp_lap = WarpedSparseGP(
+        use_input_warp=False, use_output_warp=True, sparsity_strength=0.05, robust=False
+    ).fit(X, y_c, bounds, censored_mask=cens, lod=lod, seed=32)
+    assert gp_lap._is_laplace is True
+    ctx_l = gp_lap.qlognei_context()
+    obj_l, _, free_l = acq._build_objective(
+        ctx_l, q=2, pending=None, fixed={}, maximize=True, seed=32
+    )
+    assert free_l == [0, 1, 2]
+    x1 = np.array([0.9, 0.2, 3.5, 1.5, 1.8, 5.1])
+    _, g_ana_l = obj_l(x1)
+    g_fd_l = np.zeros_like(x1)
+    for k in range(len(x1)):
+        dx = np.zeros_like(x1)
+        dx[k] = eps
+        f_p, _ = obj_l(x1 + dx)
+        f_m, _ = obj_l(x1 - dx)
+        g_fd_l[k] = (f_p - f_m) / (2.0 * eps)
+    assert np.allclose(g_ana_l, g_fd_l, rtol=1e-3, atol=1e-4)
+
+
+def test_joint_qlognei_bounds_fixed_separation_constraints_and_determinism() -> None:
+    """Verify JointQLogNEI respects bounds, fixed_features, min_separation, constraints, and seed."""
+    from kalos.core.frontier.warped_sparse_gp import WarpedSparseGP
+
+    rng = np.random.default_rng(55)
+    d = 4
+    bounds = np.array([[-1.0, 0.0, 10.0, -2.0], [3.0, 5.0, 20.0, 2.0]])
+    X = rng.uniform(bounds[0], bounds[1], size=(18, d))
+    y = -(X[:, 0] - 1.2) ** 2 + 0.3 * X[:, 2] + rng.normal(0.0, 0.05, size=18)
+    gp = WarpedSparseGP(sparsity_strength=0.05).fit(X, y, bounds, seed=55)
+
+    acq = JointQLogNEI(n_mc=32, n_restarts=4, raw_samples=128, min_separation=0.05)
+    fixed = {1: 2.5}
+    pending = np.array([[0.5, 2.5, 14.0, 0.0]])
+
+    p1 = acq.propose(gp, bounds, q=4, X_train=X, y_train=y, pending=pending, fixed_features=fixed, seed=5)
+    p2 = acq.propose(gp, bounds, q=4, X_train=X, y_train=y, pending=pending, fixed_features=fixed, seed=5)
+    assert p1.shape == (4, d)
+    assert np.allclose(p1, p2, atol=1e-12)
+    assert np.all(p1 >= bounds[0] - 1e-12)
+    assert np.all(p1 <= bounds[1] + 1e-12)
+    assert np.allclose(p1[:, 1], 2.5)
+
+    refs = np.vstack([X, pending])
+    for i, row in enumerate(p1):
+        for r in refs:
+            assert proposal_separation(row, r, bounds[0], bounds[1]) >= 0.05 - 1e-9
+        for j in range(i + 1, len(p1)):
+            assert proposal_separation(row, p1[j], bounds[0], bounds[1]) >= 0.05 - 1e-9
+
+    # Linear constraint path delegates safely to AdaptiveTuRBO and respects constraint
+    constraints = [([0, 2], [-1.0, -0.1], -2.0)]  # x0 + 0.1*x2 <= 2.0
+    pc = acq.propose(
+        gp, bounds, q=3, X_train=X, y_train=y, fixed_features=fixed, inequality_constraints=constraints, seed=9
+    )
+    assert 1 <= pc.shape[0] <= 3
+    assert np.allclose(pc[:, 1], 2.5)
+    assert np.all(pc[:, 0] + 0.1 * pc[:, 2] <= 2.0 + 1e-6)

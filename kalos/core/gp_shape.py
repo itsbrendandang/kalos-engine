@@ -171,6 +171,11 @@ def ard_lengthscales(
         return None
     model = getattr(surrogate, "model", None)
     if model is None:
+        diag = getattr(surrogate, "fit_diagnostics", None)
+        if isinstance(diag, dict) and diag.get("lengthscales") is not None:
+            vals = np.asarray(diag["lengthscales"], dtype=float).reshape(-1)
+            if vals.size == d and np.all(np.isfinite(vals)) and np.all(vals > 0.0):
+                return vals
         return None
     cols = [int(c) for c in sweep_columns] if sweep_columns is not None else None
     if cols is not None and len(cols) != d:
@@ -321,7 +326,7 @@ def gp_shape_report(
     d = len(cols)
     if d == 0 or len(names) != d:
         return GPShapeReport(False, "feature names do not match X columns", "incumbent", d)
-    if getattr(surrogate, "model", None) is None:
+    if getattr(surrogate, "model", None) is None and not getattr(surrogate, "fit_diagnostics", None):
         return GPShapeReport(False, "surrogate is not fitted", "incumbent", d)
 
     # SKILL GATE. Posterior separation alone is not enough to justify a shape, and

@@ -1335,6 +1335,68 @@ class WarpedSparseGP:
         chain = dw_du * du_dx
         return mu_std, var_std, dmu_dw * chain, dvar_dw * chain
 
+    def qlognei_context(self, X_train: Any = None) -> dict[str, Any]:
+        """Precompute standardized-warped posterior operators for exact ``JointQLogNEI``."""
+        assert self._w_train is not None and self._theta is not None
+        assert self._lower is not None and self._upper is not None
+        assert self._warp_a is not None and self._warp_b is not None
+        assert self._alpha is not None and self._X is not None
+
+        if X_train is not None:
+            Xa = np.asarray(X_train, dtype=np.float64)
+            if Xa.ndim != 2 or Xa.shape != self._X.shape:
+                raise ValueError(
+                    f"X_train must match fitted training shape {self._X.shape}, got {Xa.shape}"
+                )
+
+        n = int(self._w_train.shape[0])
+        mu_tr_g, _, cov_tr_g = self._predict_warped_space(self._X, observation_noise=False)
+        mu_tr = (mu_tr_g - self._g_mean) / self._g_std
+        Sigma_tr = cov_tr_g / (self._g_std * self._g_std)
+
+        sf2 = float(np.exp(2.0 * self._log_sf))
+        rho = np.exp(-2.0 * self._theta)
+        K_tt = _matern52_kernel(self._w_train, self._w_train, self._log_sf, self._theta)
+
+        if not self._is_laplace:
+            assert self._L_chol is not None
+            L_gp = self._L_chol
+            S_laplace: np.ndarray | None = None
+            V_tt = solve_triangular(L_gp, K_tt, lower=True, check_finite=False)
+        else:
+            assert self._L_B is not None and self._S_laplace is not None
+            L_gp = self._L_B
+            S_laplace = self._S_laplace
+            V_tt = solve_triangular(
+                L_gp,
+                S_laplace[:, None] * K_tt,
+                lower=True,
+                check_finite=False,
+            )
+
+        _ = n
+        width = np.maximum(self._upper - self._lower, 1e-12)
+        return {
+            "lower": self._lower.copy(),
+            "upper": self._upper.copy(),
+            "width": width,
+            "input_eps": float(_INPUT_EPS),
+            "sf2": sf2,
+            "rho": rho.copy(),
+            "m": float(self._m),
+            "alpha": self._alpha.copy(),
+            "w_train": self._w_train.copy(),
+            "active_input_warp": bool(self._active_input_warp),
+            "warp_a": self._warp_a.copy(),
+            "warp_b": self._warp_b.copy(),
+            "mu_tr": mu_tr,
+            "Sigma_tr": Sigma_tr,
+            "L_gp": L_gp.copy(),
+            "S_laplace": None if S_laplace is None else S_laplace.copy(),
+            "V_tt": V_tt,
+            "is_laplace": bool(self._is_laplace),
+        }
+
     def active_dimensions(self, threshold_share: float = 0.05) -> list[int]:
         """Return dimension indices whose ARD relevance share >= ``threshold_share``."""
         if not hasattr(self, "_relevance_shares"):

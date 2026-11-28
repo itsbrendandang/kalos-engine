@@ -9,6 +9,7 @@ if TYPE_CHECKING:
         ActionBatch,
         ActionSlot,
         AdaptiveTuRBO,
+        JointQLogNEI,
         TrustRegionState,
         VOIAllocator,
     )
@@ -20,6 +21,7 @@ _LAZY: dict[str, tuple[str, str]] = {
     "WarpedSparseGP": (".warped_sparse_gp", "WarpedSparseGP"),
     "HierarchicalBatchGP": (".hierarchical_gp", "HierarchicalBatchGP"),
     "MultiScaleTransferGP": (".hierarchical_gp", "MultiScaleTransferGP"),
+    "JointQLogNEI": (".acquisition", "JointQLogNEI"),
     "TrustRegionState": (".acquisition", "TrustRegionState"),
     "AdaptiveTuRBO": (".acquisition", "AdaptiveTuRBO"),
     "ActionSlot": (".acquisition", "ActionSlot"),
@@ -35,6 +37,7 @@ __all__ = [
     "AdaptiveConformalState",
     "AdaptiveTuRBO",
     "HierarchicalBatchGP",
+    "JointQLogNEI",
     "MultiScaleTransferGP",
     "ShiftWeightedConformal",
     "TrustRegionState",

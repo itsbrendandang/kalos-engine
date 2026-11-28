@@ -21,8 +21,9 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import numpy as np
+from scipy.linalg import solve_triangular
 from scipy.optimize import linprog, minimize
-from scipy.special import erfcx, log_ndtr, ndtr
+from scipy.special import erfcx, log_ndtr, ndtr, ndtri
 from scipy.stats.qmc import Sobol
 
 from kalos.core.replicates import aggregate_replicates, estimate_noise_floor
@@ -40,6 +41,7 @@ __all__ = [
     "ActionBatch",
     "ActionSlot",
     "AdaptiveTuRBO",
+    "JointQLogNEI",
     "TrustRegionState",
     "VOIAllocator",
 ]
@@ -1248,3 +1250,374 @@ class VOIAllocator:
             cov_all = _schur_condition(cov_all, chosen_idx, noise_var)
 
         return ActionBatch(slots=tuple(slots), _dim=d)
+
+
+def _chol_pullback(L: np.ndarray, G_L: np.ndarray) -> np.ndarray:
+    """Exact reverse-mode gradient dLoss/dSigma from L = cholesky(Sigma) and G_L = dLoss/dL."""
+    M = L.T @ G_L
+    Phi = np.tril(M)
+    Phi[np.diag_indices_from(Phi)] *= 0.5
+    X = solve_triangular(L.T, Phi, lower=False, check_finite=False)
+    S = solve_triangular(L.T, X.T, lower=False, check_finite=False).T
+    return 0.5 * (S + S.T)
+
+
+class JointQLogNEI:
+    """Pure-NumPy/SciPy QMC Joint-Batch qLogNoisyExpectedImprovement optimizer.
+
+    Computes exact reverse-mode analytical gradients through joint Cholesky QMC
+    fantasy draws (via Murray 2016 triangular Cholesky pullback), smooth log-sum-exp
+    batch max, and smooth softplus Log-NEI without PyTorch or BoTorch dependencies.
+    """
+
+    def __init__(
+        self,
+        n_mc: int = 64,
+        n_restarts: int = 6,
+        raw_samples: int = 256,
+        min_separation: float = 0.05,
+        tau_max: float = 0.02,
+        tau_relu: float = 0.02,
+    ) -> None:
+        if int(n_mc) < 2:
+            raise ValueError("n_mc must be >= 2")
+        if int(n_restarts) < 1:
+            raise ValueError("n_restarts must be >= 1")
+        if int(raw_samples) < 1:
+            raise ValueError("raw_samples must be >= 1")
+        if float(min_separation) < 0.0:
+            raise ValueError("min_separation must be >= 0")
+        if float(tau_max) <= 0.0 or float(tau_relu) <= 0.0:
+            raise ValueError("tau_max and tau_relu must be > 0")
+        self.n_mc = int(n_mc)
+        self.n_restarts = int(n_restarts)
+        self.raw_samples = int(raw_samples)
+        self.min_separation = float(min_separation)
+        self.tau_max = float(tau_max)
+        self.tau_relu = float(tau_relu)
+
+    def _build_objective(
+        self,
+        ctx: dict[str, Any],
+        q: int,
+        *,
+        pending: np.ndarray | None,
+        fixed: dict[int, float],
+        maximize: bool,
+        seed: int,
+    ) -> tuple[Any, float, list[int]]:
+        lower = np.asarray(ctx["lower"], dtype=np.float64)
+        width = np.asarray(ctx["width"], dtype=np.float64)
+        input_eps = float(ctx["input_eps"])
+        du_dx_scale = (1.0 - 2.0 * input_eps) / width
+
+        sf2 = float(ctx["sf2"])
+        rho = np.asarray(ctx["rho"], dtype=np.float64)
+        m_prior = float(ctx["m"])
+        alpha = np.asarray(ctx["alpha"], dtype=np.float64)
+        w_tr = np.asarray(ctx["w_train"], dtype=np.float64)
+        active_warp = bool(ctx["active_input_warp"])
+        warp_a = np.asarray(ctx["warp_a"], dtype=np.float64)
+        warp_b = np.asarray(ctx["warp_b"], dtype=np.float64)
+        mu_tr = np.asarray(ctx["mu_tr"], dtype=np.float64)
+        Sigma_tr = np.asarray(ctx["Sigma_tr"], dtype=np.float64)
+        L_gp = np.asarray(ctx["L_gp"], dtype=np.float64)
+        raw_s_lap = ctx.get("S_laplace")
+        S_laplace = None if raw_s_lap is None else np.asarray(raw_s_lap, dtype=np.float64)
+        V_tt = np.asarray(ctx["V_tt"], dtype=np.float64)
+        is_laplace = bool(ctx["is_laplace"])
+
+        n, d = w_tr.shape
+        free_idx = [j for j in range(d) if j not in fixed]
+        pend_arr = None if (pending is None or len(pending) == 0) else np.asarray(pending, dtype=np.float64)
+        n_pend = 0 if pend_arr is None else int(pend_arr.shape[0])
+        q_eff = int(q) + n_pend
+
+        Sigma_reg = 0.5 * (Sigma_tr + Sigma_tr.T)
+        eig_min = float(np.min(np.linalg.eigvalsh(Sigma_reg)))
+        jitter_tr = max(1e-6, -eig_min + 1e-6)
+        L_tr = np.linalg.cholesky(Sigma_reg + jitter_tr * np.eye(n, dtype=np.float64))
+
+        m_pow = 1 << (self.n_mc - 1).bit_length()
+        u_qmc = Sobol(d=n + q_eff, scramble=True, seed=int(seed)).random(m_pow)[: self.n_mc]
+        Z_all = ndtri(np.clip(u_qmc, 1e-6, 1.0 - 1e-6))
+        Z_tr = Z_all[:, :n]
+        Z_joint = Z_all[:, n:]
+
+        sign = 1.0 if maximize else -1.0
+        f_tr = sign * (mu_tr[None, :] + Z_tr @ L_tr.T)
+        f_best = np.max(f_tr, axis=1)
+        bf_mean = float(np.mean(f_best))
+
+        A_tr = solve_triangular(L_tr.T, Z_tr.T, lower=False, check_finite=False)
+
+        sqrt5 = float(np.sqrt(5.0))
+        tau_max = self.tau_max
+        tau_relu = self.tau_relu
+        n_mc = float(self.n_mc)
+
+        def _warp_batch(X_b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            u_raw = (X_b - lower[None, :]) / width[None, :]
+            u = input_eps + (1.0 - 2.0 * input_eps) * np.clip(u_raw, 0.0, 1.0)
+            du_dx = np.where((u_raw >= 0.0) & (u_raw <= 1.0), du_dx_scale[None, :], 0.0)
+            if active_warp:
+                a_w = np.exp(warp_a)[None, :]
+                b_w = np.exp(warp_b)[None, :]
+                p_w = np.power(u, a_w)
+                q_w = np.clip(1.0 - p_w, 1e-12, 1.0)
+                r_w = np.power(q_w, b_w)
+                w = 1.0 - r_w
+                dw_du = b_w * a_w * (r_w / q_w) * (p_w / np.maximum(u, 1e-12))
+            else:
+                w = u
+                dw_du = np.ones_like(u)
+            return w, dw_du * du_dx
+
+        template = np.zeros((q, d), dtype=np.float64)
+        for j, v in fixed.items():
+            template[:, j] = float(v)
+
+        def _neg_qlognei_and_grad(x_free_flat: np.ndarray) -> tuple[float, np.ndarray]:
+            X_q = template.copy()
+            X_q[:, free_idx] = x_free_flat.reshape(q, len(free_idx))
+            X_joint = np.vstack([X_q, pend_arr]) if pend_arr is not None else X_q
+            w_joint, dw_dx = _warp_batch(X_joint)
+
+            diff_tq = w_joint[None, :, :] - w_tr[:, None, :]
+            r2_tq = np.sum((diff_tq * diff_tq) * rho[None, None, :], axis=2)
+            r_tq = np.sqrt(np.maximum(r2_tq, 1e-18))
+            sr_tq = sqrt5 * r_tq
+            e_tq = np.exp(-sr_tq)
+            k_tq = sf2 * (1.0 + sr_tq + (5.0 / 3.0) * r2_tq) * e_tq
+            dk_tq_fac = -(5.0 / 3.0) * sf2 * (1.0 + sr_tq) * e_tq
+
+            diff_qq = w_joint[:, None, :] - w_joint[None, :, :]
+            r2_qq = np.sum((diff_qq * diff_qq) * rho[None, None, :], axis=2)
+            r_qq = np.sqrt(np.maximum(r2_qq, 1e-18))
+            sr_qq = sqrt5 * r_qq
+            e_qq = np.exp(-sr_qq)
+            K_qq = sf2 * (1.0 + sr_qq + (5.0 / 3.0) * r2_qq) * e_qq
+            dk_qq_fac = -(5.0 / 3.0) * sf2 * (1.0 + sr_qq) * e_qq
+
+            v1_rhs = k_tq if (not is_laplace or S_laplace is None) else (S_laplace[:, None] * k_tq)
+            v1 = solve_triangular(L_gp, v1_rhs, lower=True, check_finite=False)
+            Sig_tr_q = k_tq - V_tt.T @ v1
+            v2 = solve_triangular(L_tr, Sig_tr_q, lower=True, check_finite=False)
+            mu_q = m_prior + k_tq.T @ alpha
+            mu_cond = mu_q[None, :] + A_tr.T @ Sig_tr_q
+            Sig_cond = K_qq - v1.T @ v1 - v2.T @ v2
+            Sig_cond = 0.5 * (Sig_cond + Sig_cond.T) + 1e-6 * np.eye(q_eff, dtype=np.float64)
+            try:
+                L_q = np.linalg.cholesky(Sig_cond)
+            except np.linalg.LinAlgError:
+                ev, evec = np.linalg.eigh(Sig_cond)
+                Sig_psd = (evec * np.maximum(ev, 1e-6)[None, :]) @ evec.T
+                L_q = np.linalg.cholesky(0.5 * (Sig_psd + Sig_psd.T))
+
+            f_joint = sign * (mu_cond + Z_joint @ L_q.T)
+            f_scaled = f_joint / tau_max
+            f_max = np.max(f_scaled, axis=1, keepdims=True)
+            exp_f = np.exp(f_scaled - f_max)
+            sum_exp = np.sum(exp_f, axis=1, keepdims=True)
+            sm_w = exp_f / sum_exp
+            m_q = tau_max * (f_max[:, 0] + np.log(sum_exp[:, 0]))
+
+            u_imp = (m_q - f_best) / tau_relu
+            abs_u = np.abs(u_imp)
+            sp_u = np.maximum(u_imp, 0.0) + np.log1p(np.exp(-abs_u))
+            log_imp = np.where(
+                u_imp > -25.0,
+                np.log(tau_relu * np.maximum(sp_u, 1e-30)),
+                np.log(tau_relu) + u_imp,
+            )
+            max_li = float(np.max(log_imp))
+            w_m_raw = np.exp(log_imp - max_li)
+            sum_wm = float(np.sum(w_m_raw))
+            val = max_li + math.log(sum_wm / n_mc)
+            w_m = w_m_raw / sum_wm
+
+            u_clip = np.clip(u_imp, -50.0, 50.0)
+            sig_u = np.where(
+                u_imp >= 0.0,
+                1.0 / (1.0 + np.exp(-u_clip)),
+                np.exp(u_clip) / (1.0 + np.exp(u_clip)),
+            )
+            dlogimp_dm = np.where(
+                u_imp > -25.0,
+                sig_u / np.maximum(tau_relu * sp_u, 1e-30),
+                1.0 / tau_relu,
+            )
+            G_fq = (w_m * dlogimp_dm)[:, None] * sm_w
+            G_mu_cond = sign * G_fq
+            G_Lq = G_mu_cond.T @ Z_joint
+            G_Sig = _chol_pullback(L_q, G_Lq)
+
+            G_v1 = -2.0 * (v1 @ G_Sig)
+            G_v2 = -2.0 * (v2 @ G_Sig)
+            G_Sig_tr_q = (
+                solve_triangular(L_tr.T, G_v2, lower=False, check_finite=False)
+                + A_tr @ G_mu_cond
+            )
+            G_v1 = G_v1 - V_tt @ G_Sig_tr_q
+            G_ktq_v1 = solve_triangular(L_gp.T, G_v1, lower=False, check_finite=False)
+            if is_laplace and S_laplace is not None:
+                G_ktq_v1 = S_laplace[:, None] * G_ktq_v1
+            G_ktq = np.outer(alpha, np.sum(G_mu_cond, axis=0)) + G_Sig_tr_q + G_ktq_v1
+            G_Kqq = G_Sig
+
+            W_tq = G_ktq[:, :q] * dk_tq_fac[:, :q]
+            G_wq = np.einsum("iq,iqd->qd", W_tq, diff_tq[:, :q, :]) * rho[None, :]
+            W_qq = 2.0 * G_Kqq[:q, :] * dk_qq_fac[:q, :]
+            G_wq += np.einsum("ab,abd->ad", W_qq, diff_qq[:q, :, :]) * rho[None, :]
+
+            G_xq = G_wq * dw_dx[:q, :]
+            return -val, -G_xq[:, free_idx].reshape(-1)
+
+        return _neg_qlognei_and_grad, bf_mean, free_idx
+
+    def propose(
+        self,
+        surrogate: Any,
+        bounds: Any,
+        q: int = 5,
+        *,
+        X_train: Any = None,
+        y_train: Any = None,
+        pending: Any = None,
+        fixed_features: Mapping[int, float] | None = None,
+        inequality_constraints: Sequence[tuple[Sequence[int], Sequence[float], float]] | None = None,
+        maximize: bool = True,
+        seed: int = 0,
+    ) -> np.ndarray:
+        """Optimize a joint batch of up to ``q`` distinct points maximizing Log-NEI."""
+        lower, upper, orig_width, lower_eff, upper_eff, fixed, lin = _prepare_constraints(
+            bounds, fixed_features, inequality_constraints
+        )
+        d = int(lower.shape[0])
+        q_int = max(int(q), 0)
+        if q_int == 0:
+            return np.empty((0, d), dtype=float)
+
+        X_tr, y_tr = _sanitize_xy(X_train, y_train, d)
+        pend = _sanitize_pending_np(pending, lower, upper, [])
+
+        def _fallback_turbo(q_rem: int, pend_pts: Any, fb_seed: int) -> np.ndarray:
+            tr = TrustRegionState(bounds, maximize=maximize)
+            turbo = AdaptiveTuRBO(
+                n_candidates=max(256, self.raw_samples),
+                min_separation=self.min_separation,
+            )
+            return turbo.propose(
+                surrogate,
+                bounds,
+                q=q_rem,
+                X_train=X_tr,
+                y_train=y_tr,
+                pending=pend_pts,
+                fixed_features=fixed_features,
+                inequality_constraints=inequality_constraints,
+                tr_state=tr,
+                maximize=maximize,
+                seed=fb_seed,
+            )
+
+        has_ctx = callable(getattr(surrogate, "qlognei_context", None)) and callable(
+            getattr(surrogate, "warped_posterior_mean_std", None)
+        )
+        free_dims = [j for j in range(d) if j not in fixed and (upper_eff[j] - lower_eff[j]) > 0.0]
+        if lin or not has_ctx or not free_dims:
+            return _fallback_turbo(q_int, pend, int(seed))
+
+        ctx = surrogate.qlognei_context()
+        obj_fn, bf_mean, free_idx = self._build_objective(
+            ctx,
+            q_int,
+            pending=pend,
+            fixed=fixed,
+            maximize=maximize,
+            seed=int(seed),
+        )
+
+        X_raw = _sample_feasible_box(self.raw_samples, d, lower_eff, upper_eff, fixed, [], seed=int(seed) + 17)
+        if len(X_raw) == 0:
+            return np.empty((0, d), dtype=float)
+
+        mu_r, sd_r = surrogate.warped_posterior_mean_std(X_raw)
+        mu_r_arr = np.asarray(mu_r, dtype=float).reshape(-1)
+        sd_r_arr = np.asarray(sd_r, dtype=float).reshape(-1)
+        lei_r = _log_ei_gaussian(mu_r_arr, sd_r_arr, bf_mean, maximize=maximize)
+        order = np.argsort(lei_r)[::-1]
+        cont = list(range(d))
+
+        starts: list[np.ndarray] = []
+        s0: list[np.ndarray] = []
+        for idx in order:
+            cand = X_raw[idx]
+            if not s0 or float(_pairwise_separation(cand.reshape(1, -1), np.vstack(s0), cont, [], orig_width).min()) >= self.min_separation:
+                s0.append(cand)
+                if len(s0) == q_int:
+                    break
+        while len(s0) < q_int:
+            s0.append(X_raw[order[len(s0) % len(order)]])
+        starts.append(np.vstack(s0))
+
+        top_k = order[: min(64, len(order))]
+        rng = np.random.default_rng(int(seed) + 31)
+        logits = lei_r[top_k] - float(np.max(lei_r[top_k]))
+        probs = np.exp(np.clip(logits, -20.0, 0.0))
+        probs_sum = float(np.sum(probs))
+        probs = probs / probs_sum if probs_sum > 0.0 else np.full(len(top_k), 1.0 / len(top_k))
+        replace_draw = len(top_k) < q_int
+        for _ in range(self.n_restarts - 1):
+            chosen_idx = rng.choice(top_k, size=q_int, replace=replace_draw, p=probs)
+            starts.append(X_raw[chosen_idx].copy())
+
+        free_bounds = [(float(lower_eff[j]), float(upper_eff[j])) for j in free_idx] * q_int
+        best_val = np.inf
+        best_X = starts[0].copy()
+        for st in starts:
+            res = minimize(
+                obj_fn,
+                st[:, free_idx].reshape(-1),
+                method="L-BFGS-B",
+                jac=True,
+                bounds=free_bounds,
+                options={"maxiter": 25},
+            )
+            if np.all(np.isfinite(res.x)) and float(res.fun) < best_val:
+                best_val = float(res.fun)
+                cand_full = st.copy()
+                cand_full[:, free_idx] = res.x.reshape(q_int, len(free_idx))
+                cand_full = np.clip(cand_full, lower_eff, upper_eff)
+                for j, v in fixed.items():
+                    cand_full[:, j] = float(v)
+                best_X = cand_full
+
+        if self.min_separation <= 0.0:
+            return best_X
+
+        # Verify min_separation sequentially; repair any colliding slots via AdaptiveTuRBO.
+        refs_base = [r for r in (X_tr, pend) if r is not None and len(r) > 0]
+        kept: list[np.ndarray] = []
+        for row in best_X:
+            refs_cur = list(refs_base) + ([np.vstack(kept)] if kept else [])
+            if not refs_cur:
+                kept.append(row)
+                continue
+            sep = float(_pairwise_separation(row.reshape(1, -1), np.vstack(refs_cur), cont, [], orig_width).min())
+            if sep >= self.min_separation - 1e-12:
+                kept.append(row)
+
+        if len(kept) < q_int:
+            pend_aug = (
+                np.vstack([pend, np.vstack(kept)])
+                if (pend is not None and kept)
+                else (np.vstack(kept) if kept else pend)
+            )
+            extra = _fallback_turbo(q_int - len(kept), pend_aug, int(seed) + 997)
+            if len(extra) > 0:
+                kept.extend(extra[k] for k in range(len(extra)))
+
+        if not kept:
+            return np.empty((0, d), dtype=float)
+        return np.clip(np.vstack(kept[:q_int]), lower_eff, upper_eff)

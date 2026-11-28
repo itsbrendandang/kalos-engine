@@ -24,7 +24,7 @@ from kalos.portal.analysis_parts.intervals import proposal_predictive_std
 from kalos.portal.analysis_parts.policy import ANALYZE_SEED
 from kalos.portal.analysis_parts.proposals import _encode_pending
 from kalos.portal.analysis_parts.setup_apply import _propose_with_setup, withheld_batch
-from kalos.portal.config import space_filling_small_n_setting
+from kalos.portal.config import frontier_engine_setting, space_filling_small_n_setting
 
 
 @dataclass
@@ -65,15 +65,28 @@ def run_proposals(
     proposal_fit_restarts: int,
 ) -> ProposalResult:
     """Fit the proposal surrogate, acquire the next batch, and score batch posteriors."""
-    from kalos.core.optimize import propose_batch
-    from kalos.core.surrogate import Surrogate, proposal_restarts
-
     X = prep.X
     y = prep.y
     bounds = prep.bounds
     cat_dims = prep.cat_dims
     cat_cardinalities = prep.cat_cardinalities
     _minimize = prep.minimize
+    use_frontier = (
+        frontier_engine_setting()
+        and not cat_dims
+        and not trust.gated
+        and not trust.constraint_applied
+    )
+    if use_frontier:
+        from kalos.core.frontier import JointQLogNEI, WarpedSparseGP
+        from kalos.core.space_filling import (
+            NEAR_DUPLICATE_TOL,
+            ProposalBatch,
+            _fewer_notice,
+        )
+    else:
+        from kalos.core.optimize import propose_batch
+        from kalos.core.surrogate import Surrogate, proposal_restarts
 
     nr = noise_report(X, y, groups=trust.recipe_key)
     het = heteroscedasticity_report(X, y, groups=trust.recipe_key)
@@ -90,22 +103,32 @@ def run_proposals(
         if nr["n_recipes"] >= 6 and np.isfinite(sigma2) and sigma2 > 0:
             replicate_aware = True
             per_point_var = float(sigma2) / np.maximum(n_reps_g, 1).astype(float)
-            s = Surrogate().fit(
-                Xf, yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
-                check_conditioning=True,
-                restarts=proposal_restarts(len(yf), Xf.shape[1], proposal_fit_restarts),
-                restart_seed=ANALYZE_SEED,
-            )
+            if use_frontier:
+                s = WarpedSparseGP(
+                    use_input_warp=True, use_output_warp=True, robust=True
+                ).fit(Xf, yf, bounds, noise=per_point_var, seed=ANALYZE_SEED)
+            else:
+                s = Surrogate().fit(
+                    Xf, yf, bounds=bounds, noise=per_point_var, cat_dims=cat_dims,
+                    check_conditioning=True,
+                    restarts=proposal_restarts(len(yf), Xf.shape[1], proposal_fit_restarts),
+                    restart_seed=ANALYZE_SEED,
+                )
             incumbent = best_reproducible
             X_fit, y_fit = Xf, yf
 
     progress("proposing", 0.8)
     if not replicate_aware:
-        s = Surrogate().fit(
-            X, y, bounds=bounds, cat_dims=cat_dims, check_conditioning=True,
-            restarts=proposal_restarts(len(y), X.shape[1], proposal_fit_restarts),
-            restart_seed=ANALYZE_SEED,
-        )
+        if use_frontier:
+            s = WarpedSparseGP(
+                use_input_warp=True, use_output_warp=True, robust=True
+            ).fit(X, y, bounds, seed=ANALYZE_SEED)
+        else:
+            s = Surrogate().fit(
+                X, y, bounds=bounds, cat_dims=cat_dims, check_conditioning=True,
+                restarts=proposal_restarts(len(y), X.shape[1], proposal_fit_restarts),
+                restart_seed=ANALYZE_SEED,
+            )
 
     X_pending, n_pending_dropped = _encode_pending(
         prep.strain.pending(pending) if prep.strain.active else pending,
@@ -146,6 +169,53 @@ def run_proposals(
             )
         except (RuntimeError, ValueError):
             if prep.setup_plan is not None and sf_constraints:
+                prep.setup_plan._refuse(
+                    "constraints_unsatisfiable",
+                    "the optimizer could not find recipes that satisfy every linear constraint "
+                    "inside the search range; proposals are withheld rather than dropping a constraint",
+                    "loosen the linear constraints or widen the bounds",
+                )
+                prep.setup_plan.linear_constraints = []
+                proposal = withheld_batch(prep.setup_plan, q=5, d=X.shape[1])
+            else:
+                raise
+    elif use_frontier:
+        f_bounds = prep.setup_plan.bounds if prep.setup_plan is not None else bounds
+        f_constraints = (
+            prep.setup_plan.linear_constraints
+            if prep.setup_plan is not None and prep.setup_plan.linear_constraints
+            else None
+        )
+        f_maximize = not (prep.setup_plan.minimize if prep.setup_plan is not None else _minimize)
+        try:
+            pts = JointQLogNEI(min_separation=NEAR_DUPLICATE_TOL).propose(
+                s,
+                f_bounds,
+                q=5,
+                X_train=X_fit,
+                y_train=y_fit,
+                pending=X_pending,
+                fixed_features=prep.strain.propose_kwargs().get("fixed_features"),
+                inequality_constraints=f_constraints,
+                maximize=f_maximize,
+                seed=ANALYZE_SEED,
+            )
+            if prep.setup_plan is not None and f_constraints and len(pts) == 0:
+                raise ValueError("frontier optimizer found no feasible points under constraints")
+            notice = (
+                _fewer_notice(5, len(pts), NEAR_DUPLICATE_TOL)
+                if len(pts) < 5
+                else None
+            )
+            proposal = ProposalBatch(
+                X=pts,
+                requested=5,
+                near_duplicates_replaced=0,
+                min_separation=float(NEAR_DUPLICATE_TOL),
+                notice=notice,
+            )
+        except (RuntimeError, ValueError):
+            if prep.setup_plan is not None and f_constraints:
                 prep.setup_plan._refuse(
                     "constraints_unsatisfiable",
                     "the optimizer could not find recipes that satisfy every linear constraint "
