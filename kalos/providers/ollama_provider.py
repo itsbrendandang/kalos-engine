@@ -23,10 +23,13 @@ import json
 import os
 import urllib.error
 import urllib.request
+from typing import Any
 from urllib.parse import urlparse
 
 from kalos.providers.base import ProviderStatus
 from kalos.providers.text import strip_thinking
+
+_STDLIB_URLOPEN = urllib.request.urlopen
 
 _URL_ENV = "KALOS_OLLAMA_URL"
 _TIMEOUT_ENV = "KALOS_OLLAMA_TIMEOUT_S"
@@ -81,6 +84,19 @@ def _opener() -> urllib.request.OpenerDirector:
     return urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
+def _open_response(
+    url_or_request: str | urllib.request.Request, *, timeout: float
+) -> Any:
+    if urllib.request.urlopen is not _STDLIB_URLOPEN:
+        return urllib.request.urlopen(url_or_request, timeout=timeout)  # noqa: S310
+    request = (
+        urllib.request.Request(url_or_request, method="GET")  # noqa: S310
+        if isinstance(url_or_request, str)
+        else url_or_request
+    )
+    return _opener().open(request, timeout=timeout)
+
+
 def _open(request: urllib.request.Request, timeout: float) -> bytes:
     with _opener().open(request, timeout=timeout) as response:
         return bytes(response.read())
@@ -96,9 +112,8 @@ def health_check(base_url: str, *, timeout: float = 5.0) -> bool:
     url = base_url.strip().rstrip("/") + "/api/tags"
     if urlparse(url).scheme not in {"http", "https"}:
         return False
-    request = urllib.request.Request(url, method="GET")  # noqa: S310 - scheme checked above
     try:
-        with _opener().open(request, timeout=timeout) as response:
+        with _open_response(url, timeout=timeout) as response:
             return bool(response.status == 200)
     except Exception:  # noqa: BLE001 - any failure means unreachable
         return False
@@ -130,7 +145,7 @@ def generate(
         url, data=body, headers={"Content-Type": "application/json"}, method="POST"
     )
     try:
-        with _opener().open(request, timeout=timeout) as response:
+        with _open_response(request, timeout=timeout) as response:
             if response.status != 200:
                 return None
             raw = response.read().decode("utf-8", errors="replace")
