@@ -17,6 +17,7 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
+from kalos.campaigns.setup import setup_for_analysis  # noqa: E402
 from kalos.portal import app as portal_module  # noqa: E402
 from kalos.portal import campaign as campaign_module  # noqa: E402
 from kalos.portal.app import app  # noqa: E402
@@ -29,7 +30,6 @@ from kalos.portal.setup_settings import (  # noqa: E402
     anonymize_setup_block,
     check_feasible,
     normalize_setup,
-    setup_for_analysis,
     setup_hash,
 )
 
@@ -394,8 +394,8 @@ def test_anonymize_setup_block_aliases_feature_names():
 def test_with_campaign_setup_binds_only_when_a_setup_is_stored(tmp_path):
     import functools
 
+    from kalos.campaigns.setup import with_campaign_setup
     from kalos.portal.campaign_settings import put_setting
-    from kalos.portal.setup_settings import with_campaign_setup
 
     store = CampaignStore(tmp_path)
     cid = store.create_campaign(tenant="t", name="c", created_by="x")["id"]

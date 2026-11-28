@@ -23,6 +23,10 @@ from typing import Any
 from kalos.providers.cascade import ValidationFailed
 
 _NUMBER = re.compile(r"(?<![A-Za-z0-9_.])[-+]?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?")
+NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+# Record ids (`run:<hex>`, `sheet:<sha256>`, any long hex token) hold digits that
+# are not numbers: "run:2f30d1c7..." must not let a revision add "30".
+_HEX_ID_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{16,}\b")
 _IDENT = re.compile(r"(?<![\w./-])[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+(?![\w/-])")
 _RUN_ID = re.compile(r"(?<![0-9a-fA-F])[0-9a-f]{32}(?![0-9a-fA-F])")
 _FENCE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)
@@ -94,12 +98,19 @@ def run_ids_in(text: str) -> set[str]:
     return set(_RUN_ID.findall(text or ""))
 
 
+def raw_number_tokens(text: str) -> set[str]:
+    """Unsigned numeric literals in `text`, ignoring digits inside long hex record ids."""
+    return set(NUMBER_RE.findall(_HEX_ID_RE.sub(" ", text or "")))
+
+
 __all__ = [
+    "NUMBER_RE",
     "check_columns",
     "check_numbers",
     "identifiers_in",
     "number_keys",
     "numbers_from",
     "parse_json_object",
+    "raw_number_tokens",
     "run_ids_in",
 ]

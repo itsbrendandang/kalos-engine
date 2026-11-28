@@ -33,7 +33,6 @@ from kalos.portal.uploads import (
     ParsedUpload,
     UploadRejected,
     parse_upload,
-    scrubbed_failure,
 )
 
 log = logging.getLogger("kalos.portal")
@@ -222,63 +221,6 @@ def _provenance(run: dict, result: dict) -> dict:
     )
 
 
-_ANY = object()
-
-
-def publish_upload_analysis(
-    store: Any, result: dict, filename: str, *, tenant: str, campaign_id: str | None,
-    df: pd.DataFrame | None = None, base_rows: list[dict[str, Any]] | None = None,
-    expected_generation: Any = _ANY, on_commit: Callable[[Any, str], None] | None = None,
-    fallback_unstamped: bool = True,
-) -> str | None:
-    """Seed the campaign with the upload and publish `result` in the same
-    transaction (docs/CAMPAIGN_LOOP.md, "Seeding"). Returns the new generation,
-    or None if only the unstamped fallback was published.
-
-    `expected_generation` (jobs): the seed is a compare-and-swap on it and
-    raises `CampaignConflict` when the campaign changed meanwhile. `on_commit`
-    runs inside the transaction with `(conn, new_generation)`; raising there
-    rolls the whole write back.
-
-    Errors: an explicit `campaign_id` that vanished, was archived, or changed
-    raises its `CampaignError` (404/409). With `fallback_unstamped` (the sync
-    routes), any OTHER seeding failure is logged and the analysis is still
-    published unstamped, so the campaign reports itself out of sync instead of
-    the two silently describing different run sheets. Jobs pass False: a job
-    either commits atomically or writes nothing.
-    """
-    from kalos.portal.campaign import CampaignError
-
-    # The label the campaign and /api/latest store for this upload. Under
-    # anonymize the filename is never stored (the run record has no filename
-    # either), only a label derived from the input hash.
-    filename = stored_dataset_label(result, filename)
-    seed_kwargs: dict[str, Any] = {}
-    if expected_generation is not _ANY:
-        seed_kwargs["expected_generation"] = expected_generation
-    if on_commit is not None:
-        seed_kwargs["on_commit"] = on_commit
-    if base_rows is not None:
-        seed_kwargs["base_rows"] = base_rows
-    try:
-        return store.seed(
-            df, result["target"], result["proposal_features"], tenant=tenant,
-            campaign_id=campaign_id, analysis=result, dataset=filename, **seed_kwargs,
-        )
-    except CampaignError as exc:
-        if campaign_id is not None or not fallback_unstamped:
-            raise
-        log.error("failed to seed the campaign from an uploaded run sheet: %s", scrubbed_failure(exc))
-        _publish_unstamped(store, result, filename, tenant=tenant)
-    except Exception as exc:  # noqa: BLE001 - seeding must never fail a sync upload
-        if not fallback_unstamped:
-            raise
-        # Exception type + location only (#87): the message can quote cell values.
-        log.error("failed to seed the campaign from an uploaded run sheet: %s", scrubbed_failure(exc))
-        _publish_unstamped(store, result, filename, tenant=tenant, campaign_id=campaign_id)
-    return None
-
-
 def stored_dataset_label(result: dict, filename: str) -> str:
     """The `dataset` label an analysis is stored under. The raw filename, except
     when the result's run record says `anonymize`: then a label built from the
@@ -288,14 +230,3 @@ def stored_dataset_label(result: dict, filename: str) -> str:
         digest = str(run.get("input_sha256") or "")[:12]
         return f"anonymized upload {digest}" if digest else "anonymized upload"
     return filename
-
-
-def _publish_unstamped(
-    store: Any, result: dict, filename: str, *, tenant: str, campaign_id: str | None = None,
-) -> None:
-    try:
-        store.save_analysis(
-            result, filename, tenant=tenant, campaign_id=campaign_id, campaign_generation=None,
-        )
-    except Exception as exc:  # noqa: BLE001 - publishing is best-effort too
-        log.error("failed to publish the analysis of an uploaded run sheet: %s", scrubbed_failure(exc))

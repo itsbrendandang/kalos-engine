@@ -1,7 +1,6 @@
 """Isolated round-review roles with deterministic verdicts and tenant-local replay."""
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -19,7 +18,14 @@ from kalos.assist.chat import (
     split_sentences,
 )
 from kalos.assist.index import Hit
-from kalos.assist.llm import AnthropicChat, ChatModel, OllamaChat, OpenAICompatChat
+from kalos.assist.llm import (
+    AnthropicChat,
+    ChatModel,
+    ModelUnavailable,
+    OllamaChat,
+    OpenAICompatChat,
+    cascade_for,
+)
 from kalos.assist.paths import tenant_dir
 
 MAX_CACHED_REPLIES = 128
@@ -68,12 +74,31 @@ def _call(path: Path, role: Role, model: ChatModel, prompt: str) -> str:
     ).encode()).hexdigest()
     path.mkdir(parents=True, exist_ok=True)
     with (path / "cache.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            import fcntl  # deferred: POSIX-only lock; keeps module importable everywhere
+        except ImportError:
+            fcntl = None  # type: ignore[assignment]
+        if fcntl is not None:
+            fcntl.flock(lock, fcntl.LOCK_EX)
         target = path / f"{key}.json"
         if target.exists():
             reply: str = json.loads(target.read_text())["reply"]
             return reply
-        reply = model.complete(role.instructions, prompt)
+        cascade = cascade_for(model)
+        if cascade is None:
+            raise ModelUnavailable("no model is configured")
+
+        def _fallback() -> str:
+            raise ModelUnavailable("the model could not be reached")
+
+        outcome = cascade.run(
+            task="answer",
+            system=role.instructions,
+            prompt=prompt,
+            validate=lambda text: text,
+            fallback=_fallback,
+        )
+        reply = outcome.value
         cached = sorted(path.glob("*.json"), key=lambda file: (file.stat().st_mtime_ns, file.name))
         for old in cached[:max(0, len(cached) - MAX_CACHED_REPLIES + 1)]:
             old.unlink()

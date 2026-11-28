@@ -1,7 +1,7 @@
 """Run with ``python -m kalos.providers.check`` to check local model setup."""
 from __future__ import annotations
 
-from kalos.assist.llm import model_info
+from kalos.providers.info import model_info
 from kalos.providers.ollama_provider import ollama_url
 from kalos.providers.openai_compatible_provider import openai_url
 

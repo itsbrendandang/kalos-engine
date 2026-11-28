@@ -52,12 +52,11 @@ from kalos.providers.cascade import (
     ValidationFailed,
     single_model_cascade,
 )
-from kalos.providers.grounding import identifiers_in, run_ids_in
+from kalos.providers.grounding import identifiers_in, number_keys, run_ids_in
 
 MAX_QUESTION_CHARS = 2000
 MAX_QUOTE_CHARS = 300
 _LABEL = re.compile(r"\[(S\d{1,2}|G)\]")
-_NUMBER = re.compile(r"(?<![A-Za-z0-9_.])[-+]?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?")
 # "Recipe 3", "run 2", "round 1", "step 4", "#5", or "2." opening a list item:
 # a position in a list, not a value. Only 1-10, and only in these spots.
 _POSITION = re.compile(
@@ -157,14 +156,7 @@ def split_sentences(text: str) -> list[str]:
 def _numbers(text: str) -> set[str]:
     """Every number in `text`, normalised (2e9 and 2000000000 are the same;
     a decimal comma reads as a point)."""
-    out = set()
-    for raw in _NUMBER.findall(text):
-        s = raw.replace(",", ".")
-        try:
-            out.add(repr(float(s)))
-        except ValueError:
-            out.add(s)
-    return out
+    return number_keys(text)
 
 
 def _value_numbers(sentence: str) -> set[str]:

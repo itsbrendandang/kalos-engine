@@ -57,6 +57,7 @@ from kalos.portal.campaign import (
 from kalos.portal.migrate import JOB_ID_PATTERN, JOB_STATES
 from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.uploads import MAX_UPLOAD_BYTES
+from kalos.storage.job_queries import REANALYZE_MODE, job_kind_from_params
 
 if TYPE_CHECKING:
     from kalos.portal.campaign import CampaignStore
@@ -318,20 +319,11 @@ def _one(conn: sqlite3.Connection, tenant: str, job_id: str) -> dict[str, Any] |
     return found[0] if found else None
 
 
-# The job's mode lives in `params` (the table's `kind` column only allows 'analysis' and
-# the schema is not changed for it). Rows without a mode are upload analyses.
-REANALYZE_MODE = "reanalyze"
 JOB_KINDS_PUBLIC = ("analysis", REANALYZE_MODE)
 
 
 def _mode_of(params_text: Any) -> str:
-    try:
-        data = json.loads(params_text or "{}")
-    except (TypeError, ValueError):
-        return "analysis"
-    if isinstance(data, dict) and data.get("mode") == REANALYZE_MODE:
-        return REANALYZE_MODE
-    return "analysis"
+    return job_kind_from_params(params_text)
 
 
 def job_kind(row: dict[str, Any]) -> str:

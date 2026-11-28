@@ -181,11 +181,11 @@ def _active_jobs(
         (tenant, *ids),
     ).fetchall()
     out: dict[str, dict[str, Any]] = {}
-    from kalos.portal.jobs import job_kind  # local: jobs imports the campaign store
+    from kalos.storage.job_queries import job_kind_from_params
 
     for cid, jid, params, state, progress, stage in rows:  # newest last, so it wins
         # `kind` as the jobs API reports it: 'reanalyze' or 'analysis' (params.mode).
-        out[cid] = {"id": jid, "kind": job_kind({"params": params}), "state": state,
+        out[cid] = {"id": jid, "kind": job_kind_from_params(params), "state": state,
                     "progress": progress,
                     "stage": stage}
     return out

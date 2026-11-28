@@ -108,6 +108,12 @@ def audit_retention_days() -> int | None:
     return env_int(AUDIT_RETENTION_VAR, 1, minimum=1, maximum=AUDIT_RETENTION_MAX_DAYS)
 
 
+def llm_provider_setting() -> str:
+    """`KALOS_LLM_PROVIDER` for `kalos.normalize`; unknown values raise `ConfigError`."""
+    value = env_enum("KALOS_LLM_PROVIDER", ("anthropic", "ollama", "none", "openai"), "anthropic")
+    return "none" if value == "openai" else value
+
+
 def check_env_settings() -> None:
     """Validate every enum-valued and bounded `KALOS_*` setting read at startup.
 
@@ -115,13 +121,11 @@ def check_env_settings() -> None:
     `ConfigError` is one line and names the variable. Each read here is the same
     one the running engine performs, so a value accepted here is accepted there.
     """
-    from kalos.normalize.config import provider_setting  # deferred: keep config light
-
     deployment_env()
     validation_mode_setting()
     strict_cv_candidates_setting()
     audit_retention_days()
-    provider_setting()
+    llm_provider_setting()
 
 
 def is_production() -> bool:

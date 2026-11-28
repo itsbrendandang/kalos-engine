@@ -17,10 +17,16 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from kalos.envconfig import env_enum
-from kalos.paid import PaidCallsOff, no_paid_calls, refuse_paid
+from kalos.paid import PaidCallsOff, refuse_paid
+from kalos.providers.info import (
+    _ANTHROPIC_MODEL_ENV,
+    _DEFAULT_ANTHROPIC_MODEL,
+    AssistProvider,
+    assist_provider,
+    model_info,
+)
 
 if TYPE_CHECKING:
     from kalos.providers.cascade import Cascade
@@ -40,11 +46,6 @@ from kalos.providers.openai_compatible_provider import (
 from kalos.providers.openai_compatible_provider import (
     is_loopback_url as openai_is_loopback_url,
 )
-
-AssistProvider = Literal["ollama", "openai", "anthropic", "none"]
-_PROVIDERS: tuple[AssistProvider, ...] = ("ollama", "openai", "anthropic", "none")
-_ANTHROPIC_MODEL_ENV = "KALOS_ASSIST_ANTHROPIC_MODEL"
-_DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
 
 
 class ModelUnavailable(RuntimeError):
@@ -66,13 +67,6 @@ class ChatModel(Protocol):
     def complete(self, system: str, prompt: str) -> str:
         """One reply to `prompt` under `system`. Raises `ModelUnavailable`."""
         ...
-
-
-def assist_provider() -> AssistProvider:
-    """The provider the assistant uses right now. A bad value raises ConfigError."""
-    desktop = (os.environ.get("KALOS_DESKTOP") or "").strip().lower() in {"1", "true", "yes", "on"}
-    default: AssistProvider = "ollama" if desktop else "none"
-    return env_enum("KALOS_LLM_PROVIDER", _PROVIDERS, default)  # type: ignore[return-value]
 
 
 @dataclass
@@ -148,26 +142,6 @@ class AnthropicChat:
         if not text:
             raise ModelUnavailable("the Anthropic API gave no answer text")
         return text
-
-
-def model_info(*, probe: bool = False) -> dict[str, object]:
-    """`{provider, model, local}` for the status route; never a credential."""
-    provider = assist_provider()
-    if provider == "ollama":
-        from kalos.providers.cascade import models_info
-
-        return {"provider": "ollama", "model": ollama_model(), "local": is_loopback_url(ollama_url()),
-                **models_info(), **(OllamaProvider().probe() if probe else {})}
-    if provider == "openai":
-        return {"provider": "openai", "model": openai_model(), "local": openai_is_loopback_url(openai_url()),
-                **(OpenAICompatibleProvider().probe() if probe else {})}
-    if provider == "anthropic":
-        from kalos.normalize import credentials_available
-
-        model = os.environ.get(_ANTHROPIC_MODEL_ENV) or _DEFAULT_ANTHROPIC_MODEL
-        return {"provider": "anthropic", "model": model, "local": False,
-                "available": credentials_available() and not no_paid_calls()}
-    return {"provider": "none", "model": None, "local": True}
 
 
 def cascade_for(model: ChatModel | None) -> Cascade | None:

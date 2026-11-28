@@ -37,25 +37,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from kalos.assist.llm import ChatModel
+from kalos.assist.llm import ChatModel, ModelUnavailable, cascade_for
 from kalos.assist.paths import tenant_dir
 from kalos.assist.words import banned_in, unsupported_claims
 from kalos.portal.campaign import CampaignStore
+from kalos.providers.cascade import ValidationFailed
+from kalos.providers.grounding import NUMBER_RE, raw_number_tokens
 
 Template = Literal["batch_recipe", "media_prep", "custom"]
 TEMPLATES: tuple[Template, ...] = ("batch_recipe", "media_prep", "custom")
 
 DRAFT_ID_RE = re.compile(r"sop_[0-9a-f]{32}")
 PLACEHOLDER_RE = re.compile(r"\[\[TO FILL: ([a-z][a-z0-9_]*)\]\]")
-NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
-# Record ids (`run:<hex>`, `sheet:<sha256>`, any long hex token) hold digits that
-# are not numbers: "run:2f30d1c7..." must not let a revision add "30".
-_HEX_ID_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{16,}\b")
 
 
 def _numbers(text: str) -> set[str]:
     """The numbers in `text`, ignoring the digits inside record ids."""
-    return set(NUMBER_RE.findall(_HEX_ID_RE.sub(" ", text)))
+    return raw_number_tokens(text)
 HEADER_PREFIX = "> Draft prepared with Kalos from campaign records on "
 HEADER_SUFFIX = ". Not reviewed. Not an approved procedure."
 MAX_FILL_CHARS = 500
@@ -806,11 +804,35 @@ def revise(
         "Instruction from the lab:\n" + instruction.strip() + "\n\n"
         "The draft:\n\n" + previous.markdown
     )
-    revised = _strip_fence(chat_model.complete(_REVISE_SYSTEM, prompt))
-    reasons = check_revision(previous, revised)
-    if reasons:
-        raise RevisionRefused(reasons)
-    return _next(store, tenant, previous, markdown=revised, model=chat_model.model, created_by=actor)
+    cascade = cascade_for(chat_model)
+    if cascade is None:
+        raise ModelUnavailable("no model is configured")
+    last_reasons: list[str] = []
+
+    def _validate(raw: str) -> str:
+        revised = _strip_fence(raw)
+        reasons = check_revision(previous, revised)
+        if reasons:
+            last_reasons[:] = reasons
+            raise ValidationFailed("unsupported_claim", "; ".join(reasons))
+        return revised
+
+    def _fallback() -> str:
+        if last_reasons:
+            raise RevisionRefused(last_reasons)
+        raise ModelUnavailable("the model could not be reached")
+
+    outcome = cascade.run(
+        task="sop",
+        system=_REVISE_SYSTEM,
+        prompt=prompt,
+        validate=_validate,
+        fallback=_fallback,
+    )
+    return _next(
+        store, tenant, previous, markdown=outcome.value,
+        model=outcome.model or chat_model.model, created_by=actor,
+    )
 
 
 def check_fill_value(value: Any) -> str:

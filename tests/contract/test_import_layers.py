@@ -20,7 +20,7 @@ from types import ModuleType
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-ENFORCE = False
+ENFORCE = True
 
 
 def _layers() -> ModuleType:

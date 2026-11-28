@@ -567,21 +567,6 @@ def _validate_strain_against_dataset(doc: Mapping[str, Any], ctx: DatasetContext
 # --- loading ------------------------------------------------------------------- #
 
 
-def load_setup(store: Any, *, tenant: str, campaign_id: str) -> dict[str, Any] | None:
-    """The stored setting row `{value (normalized), updated_at, updated_by}` or
-    None when never set. Raises `CampaignNotFound`; raises `SetupInvalid` when the
-    stored document no longer normalizes (fail closed, never silently ignored)."""
-    from kalos.portal.campaign_settings import get_setting
-
-    row = get_setting(store, tenant=tenant, campaign_id=campaign_id, kind="setup")
-    if row is None:
-        return None
-    value = row.get("value")
-    if not isinstance(value, Mapping):
-        raise SetupInvalid("setup_unreadable", "the stored setup could not be read")
-    return {**row, "value": normalize_setup(value)}
-
-
 def analysis_setup(doc: Mapping[str, Any]) -> dict[str, Any]:
     """The `setup=` mapping `kalos.portal.analysis._analyze` takes."""
     out: dict[str, Any] = {
@@ -597,60 +582,6 @@ def analysis_setup(doc: Mapping[str, Any]) -> dict[str, Any]:
         if key in doc:
             out[key] = list(doc[key]) if key == "covariates" else doc[key]
     return out
-
-
-def setup_for_analysis(
-    store: Any, *, tenant: str, campaign_id: str | None
-) -> dict[str, Any] | None:
-    """The `_analyze(setup=...)` mapping for a campaign (`campaign_id=None` = the
-    tenant's default campaign), or None when nothing is stored (today's
-    behavior). A stored document that cannot be read becomes `{"unreadable":
-    True}`, which the analysis refuses to apply (proposals withheld) rather than
-    proposing as if no setup existed."""
-    from kalos.portal.campaign import CampaignNotFound
-
-    cid = campaign_id or store.default_campaign_id(tenant=tenant)
-    if cid is None:
-        return None
-    try:
-        row = load_setup(store, tenant=tenant, campaign_id=cid)
-    except CampaignNotFound:
-        return None
-    except SetupInvalid:
-        log.warning("stored campaign setup is unreadable; proposals will be withheld")
-        return {"unreadable": True, "hash": None}
-    if row is None:
-        return None
-    out = analysis_setup(row["value"])
-    if out.get("strain_column") and not out.get("strain_level"):
-        # Policy `fixed` with no named level: the registry's single lead clone is
-        # the default (the analysis falls back to the clone with the most runs
-        # when the lead has none). Not part of the setup hash: the registry is not
-        # the setup.
-        from kalos.portal.clone_registry import lead_clone_label
-
-        try:
-            lead = lead_clone_label(store, tenant=tenant, campaign_id=cid)
-        except CampaignNotFound:
-            lead = None
-        if lead:
-            out["strain_lead"] = lead
-    return out
-
-
-def with_campaign_setup(
-    analyze: Any, store: Any, *, tenant: str, campaign_id: str | None
-) -> Any:
-    """`analyze` (None = `kalos.portal.analysis._analyze`) bound to the campaign's
-    setup, or `analyze` unchanged when the campaign has no stored setup."""
-    import functools
-
-    setup = setup_for_analysis(store, tenant=tenant, campaign_id=campaign_id)
-    if setup is None:
-        return analyze
-    if analyze is None:
-        from kalos.portal.analysis import _analyze as analyze
-    return functools.partial(analyze, setup=setup)
 
 
 # --- analysis-time plan -------------------------------------------------------- #
@@ -930,7 +861,7 @@ def anonymize_setup_block(block: Mapping[str, Any], alias: Any) -> dict[str, Any
 __all__ = [
     "DEFAULT_SETUP", "DEFAULT_SETUP_HASH", "DatasetContext", "SetupInvalid", "SetupPlan",
     "analysis_setup", "anonymize_setup_block", "bounds_report", "check_feasible",
-    "clean_target_unit", "dataset_context", "is_default", "load_setup", "normalize_setup",
-    "plan_setup", "setup_for_analysis", "setup_hash", "validate_against_dataset",
-    "with_campaign_setup", "withheld_notice",
+    "clean_target_unit", "dataset_context", "is_default", "normalize_setup",
+    "plan_setup", "setup_hash", "validate_against_dataset",
+    "withheld_notice",
 ]

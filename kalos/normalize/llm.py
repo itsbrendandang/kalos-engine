@@ -456,20 +456,10 @@ _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def _check_ollama_server(base_url: str, timeout: float = _OLLAMA_HEALTH_TIMEOUT) -> bool:
-    """Health-check a local/self-hosted Ollama server before sending any
-    payload. Returns `True` only on a 200 response, `False` on ANY failure
-    (connection refused, DNS, timeout, non-200) - callers must treat `False`
-    as "fall back to the deterministic plan", never as a hard error."""
-    import urllib.request
+    """Health-check a local/self-hosted Ollama server via `kalos.providers.ollama_provider`."""
+    from kalos.providers.ollama_provider import health_check
 
-    url = base_url.rstrip("/") + _OLLAMA_HEALTH_PATH
-    if not url.lower().startswith(("http://", "https://")):
-        return False  # never open file:/ftp:/custom schemes from operator config
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - scheme checked as http(s) just above
-            return bool(response.status == 200)
-    except Exception:  # noqa: BLE001 - any failure means "unreachable"
-        return False
+    return health_check(base_url, timeout=timeout)
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:
@@ -490,42 +480,13 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
 
 
 def _ollama_generate(base_url: str, model: str, prompt: str, timeout: float = _OLLAMA_GENERATE_TIMEOUT) -> str | None:
-    """POST `prompt` to Ollama's `/api/generate`, returning the model's raw
-    text response or `None` on any failure (connection error, non-200,
-    unparsable response body). `format: "json"` asks the server to
-    constrain the model to JSON output where the model/server supports it;
-    the response is still regex-extracted and schema-validated downstream
-    regardless, since that support is not universal across local models."""
-    import urllib.request
+    """POST `prompt` to Ollama's `/api/generate` via `kalos.providers.ollama_provider`."""
+    from kalos.providers.ollama_provider import generate
 
-    url = base_url.rstrip("/") + _OLLAMA_GENERATE_PATH
-    if not url.lower().startswith(("http://", "https://")):
-        return None  # never open file:/ftp:/custom schemes from operator config
-    body = json.dumps(
-        {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": _OLLAMA_TEMPERATURE},
-        }
-    ).encode("utf-8")
-    request = urllib.request.Request(  # noqa: S310 - scheme checked as http(s) just above; URL is operator config
-        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+    return generate(
+        base_url, model, prompt,
+        timeout=timeout, temperature=_OLLAMA_TEMPERATURE, json_mode=True,
     )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - explicit configured URL
-            if response.status != 200:
-                return None
-            raw = response.read().decode("utf-8", errors="replace")
-    except Exception:  # noqa: BLE001 - any failure means "no response"
-        return None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    text = data.get("response")
-    return text if isinstance(text, str) else None
 
 
 @dataclass

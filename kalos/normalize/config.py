@@ -27,8 +27,8 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from kalos.envconfig import env_enum
 from kalos.paid import no_paid_calls
+from kalos.portal.config import llm_provider_setting
 from kalos.providers.ollama_provider import DEFAULT_MODEL as _DEFAULT_OLLAMA_MODEL
 
 _MODEL_ENV_VAR = "KALOS_NORMALIZE_MODEL"
@@ -86,8 +86,7 @@ def credentials_available() -> bool:
 
 def provider_setting() -> Provider:
     """`KALOS_LLM_PROVIDER` as a `Provider`; unknown values raise `ConfigError`."""
-    value = env_enum(_PROVIDER_ENV_VAR, (*_PROVIDERS, "openai"), _DEFAULT_PROVIDER)
-    return "none" if value == "openai" else value  # type: ignore[return-value]
+    return llm_provider_setting()  # type: ignore[return-value]
 
 
 def load_config() -> NormalizeConfig:

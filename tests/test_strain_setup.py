@@ -177,7 +177,7 @@ def test_fixed_features_none_is_the_historical_call():
 
 
 def test_the_registry_lead_reaches_the_analysis_setup(env):  # noqa: F811
-    from kalos.portal.setup_settings import setup_for_analysis
+    from kalos.campaigns.setup import setup_for_analysis
 
     tc, store = env
     cid = _campaign(store, analysis=_strain_analysis())

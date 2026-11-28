@@ -342,6 +342,7 @@ class JobRunner:
         timeout_s: float | None = None,
         poll_s: float = 0.5,
         pass_wait_s: float = PASS_WAIT_S,
+        on_job_done: Callable[[Any, str, str | None, str, str], None] | None = None,
     ) -> None:
         self.store = store
         self.runner_id = uuid.uuid4().hex
@@ -349,6 +350,7 @@ class JobRunner:
         self._limit = limit
         self._timeout_s = timeout_s
         self._poll_s = poll_s
+        self._on_job_done = on_job_done
         self._children: dict[str, _Child] = {}
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -491,7 +493,22 @@ class JobRunner:
         assert outcome is not None  # every path above decides one
         state, code = outcome
         self._finish(child, state, code)
+        self._notify_done(child)
         self._drop(child)
+
+    def _notify_done(self, child: _Child) -> None:
+        if self._on_job_done is None:
+            return
+        try:
+            row = jobs.load_for_worker(self.store, child.job_id)
+            if row is None:
+                return
+            self._on_job_done(
+                self.store, child.tenant, row.get("campaign_id"),
+                jobs.job_kind(row), str(row.get("state") or ""),
+            )
+        except Exception:  # noqa: BLE001 - best-effort hook; never stalls supervision
+            log.exception("post-job hook failed for background job %s", child.job_id)
 
     def _admit(self) -> None:
         self.limit.set_waiting(set(jobs.queued_tenants(self.store)))
@@ -546,14 +563,18 @@ class JobRunner:
 _runner: JobRunner | None = None
 
 
-def start_job_runner(store: CampaignStore) -> JobRunner | None:
+def start_job_runner(
+    store: CampaignStore,
+    *,
+    on_job_done: Callable[[Any, str, str | None, str, str], None] | None = None,
+) -> JobRunner | None:
     """Start the process's runner (unless `KALOS_JOBS_ENABLED=0`). Recovers
     orphaned jobs first. Returns None when disabled."""
     global _runner
     if not jobs.job_settings().enabled:
         log.info("background jobs disabled (KALOS_JOBS_ENABLED=0)")
         return None
-    runner = JobRunner(store)
+    runner = JobRunner(store, on_job_done=on_job_done)
     runner.start()
     _runner = runner
     return runner

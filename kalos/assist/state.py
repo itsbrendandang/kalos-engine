@@ -62,17 +62,9 @@ def clear_refusal(store: Any, tenant: str, campaign_id: str | None) -> None:
 
 
 def _job_refusal(store: Any, tenant: str, campaign_id: str) -> dict[str, Any] | None:
-    try:
-        from kalos.portal import jobs
+    from kalos.storage.job_queries import latest_job_refusal
 
-        rows = jobs.list_jobs(store, tenant=tenant, campaign_id=campaign_id, limit=1)
-    except Exception:  # noqa: BLE001 - no jobs table, or no jobs: nothing to report
-        return None
-    if not rows or rows[0].get("state") != "failed" or not rows[0].get("error"):
-        return None
-    finished = rows[0].get("finished_at")
-    return {"code": rows[0]["error"].get("code"), "context": {},
-            "at": float(finished) if isinstance(finished, (int, float)) else None}
+    return latest_job_refusal(store, tenant=tenant, campaign_id=campaign_id)
 
 
 def latest_refusal(store: Any, tenant: str, campaign_id: str) -> dict[str, Any] | None:

@@ -91,6 +91,59 @@ def is_loopback_url(url: str) -> bool:
     return host in _LOOPBACK
 
 
+def health_check(base_url: str, *, timeout: float = 5.0) -> bool:
+    """Return True iff `base_url/api/tags` answers HTTP 200 without using proxies."""
+    url = base_url.strip().rstrip("/") + "/api/tags"
+    if urlparse(url).scheme not in {"http", "https"}:
+        return False
+    request = urllib.request.Request(url, method="GET")  # noqa: S310 - scheme checked above
+    try:
+        with _opener().open(request, timeout=timeout) as response:
+            return bool(response.status == 200)
+    except Exception:  # noqa: BLE001 - any failure means unreachable
+        return False
+
+
+def generate(
+    base_url: str,
+    model: str,
+    prompt: str,
+    *,
+    timeout: float = 60.0,
+    temperature: float = 0.0,
+    json_mode: bool = True,
+) -> str | None:
+    """POST `prompt` to `base_url/api/generate` without proxies; None on any failure."""
+    url = base_url.strip().rstrip("/") + "/api/generate"
+    if urlparse(url).scheme not in {"http", "https"}:
+        return None
+    payload: dict[str, object] = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": temperature},
+    }
+    if json_mode:
+        payload["format"] = "json"
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(  # noqa: S310 - scheme checked above
+        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    try:
+        with _opener().open(request, timeout=timeout) as response:
+            if response.status != 200:
+                return None
+            raw = response.read().decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 - any failure means no response
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    text = data.get("response") if isinstance(data, dict) else None
+    return text if isinstance(text, str) else None
+
+
 def selected() -> bool:
     """Whether the assistant's provider resolves to Ollama right now."""
     raw = (os.environ.get("KALOS_LLM_PROVIDER") or "").strip().lower()

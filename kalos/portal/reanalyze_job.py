@@ -79,7 +79,7 @@ def reanalyze_analysis_kwargs(store: CampaignStore, tenant: str, campaign_id: st
     previous = store.load_analysis(tenant=tenant, campaign_id=campaign_id) or {}
     previous_run = previous.get("run")
     anonymize = bool(isinstance(previous_run, dict) and previous_run.get("anonymize"))
-    from kalos.portal.setup_settings import setup_for_analysis
+    from kalos.campaigns.setup import setup_for_analysis
 
     kwargs: dict[str, Any] = {
         "profile": BIOPROCESS_PROFILE, "pending": awaiting, "anonymize": anonymize,

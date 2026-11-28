@@ -66,6 +66,7 @@ LAYER_ORDER = (
 # Longest prefix wins. Today's paths first, then the REORG_PLAN 2.1 target paths.
 PLACEMENT: dict[str, str] = {
     "kalos": "compat",  # the root package __init__ (re-exports core + data)
+    "kalos._moved": "compat",  # internal move-helper for top-level compat shims
     # util
     "kalos.util": "util",
     "kalos.portal.tenancy": "util",

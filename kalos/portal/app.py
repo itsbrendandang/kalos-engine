@@ -38,9 +38,12 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from kalos.assist.hooks import after_job as _assist_after_job
 from kalos.assist.hooks import after_write as _assist_after_write
 from kalos.assist.routes import router as _assist_router
 from kalos.assist.sop_routes import router as _assist_sop_router
+from kalos.campaigns.publish import publish_upload_analysis
+from kalos.campaigns.setup import setup_for_analysis
 from kalos.portal.analysis import _analyze, _annotate
 from kalos.portal.auth import (
     READ,
@@ -86,10 +89,9 @@ from kalos.portal.limits import (
     upload_read_timeout_s,
 )
 from kalos.portal.migrate import legacy_latest_filename
-from kalos.portal.pipeline import compute_upload_analysis, publish_upload_analysis
+from kalos.portal.pipeline import compute_upload_analysis
 from kalos.portal.scale_routes import router as _scale_router
 from kalos.portal.setup_api import router as _setup_router
-from kalos.portal.setup_settings import setup_for_analysis
 from kalos.portal.tenancy import validate_tenant_id
 from kalos.portal.uploads import (
     _ERR_FIT,
@@ -254,7 +256,12 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             _archive_audit_log_once(store)
             audit_task = asyncio.ensure_future(_audit_archive_loop(store))
         try:
-            runner = start_job_runner(store)
+            runner = start_job_runner(
+                store,
+                on_job_done=lambda st, t, cid, kind, state: _assist_after_job(
+                    st, t, cid, kind=kind, state=state
+                ),
+            )
         except RunnerLocked:
             # Refused on purpose: a second scheduler on this state dir would double-run
             # jobs. Boot fails loudly, because job submissions would otherwise be accepted

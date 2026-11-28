@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AllowInfNan, BaseModel, ConfigDict, Field, StringConstraints
 from pydantic import Strict as _Strict
 
+from kalos.campaigns.setup import load_setup
 from kalos.portal.auth import READ, WRITE, Principal, require_scope
 from kalos.portal.campaign import (
     CampaignArchived,
@@ -46,7 +47,6 @@ from kalos.portal.setup_settings import (
     SetupInvalid,
     bounds_report,
     dataset_context,
-    load_setup,
     normalize_setup,
     setup_hash,
     validate_against_dataset,

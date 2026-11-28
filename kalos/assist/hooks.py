@@ -43,4 +43,20 @@ def after_write(store: Any, tenant: str, campaign_id: str | None, response: Any,
         log.exception("assist: after-write hook failed")
 
 
-__all__ = ["after_write"]
+def after_job(store: Any, tenant: str, campaign_id: str | None, *, kind: str, state: str) -> None:
+    """Refresh the assistant index and clear stale refusal notes after a background job."""
+    try:
+        from kalos.assist.index import refresh_quietly
+        from kalos.assist.state import clear_refusal
+
+        if state == "succeeded":
+            if kind == "analysis":
+                clear_refusal(store, tenant, campaign_id)
+            refresh_quietly(store, tenant, campaign_id)
+        elif state == "failed":
+            refresh_quietly(store, tenant, campaign_id)
+    except Exception:  # noqa: BLE001 - never fails job supervision
+        log.exception("assist: after-job hook failed")
+
+
+__all__ = ["after_job", "after_write"]
