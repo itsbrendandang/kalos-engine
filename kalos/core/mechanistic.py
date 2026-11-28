@@ -1,4 +1,4 @@
-"""Hybrid mechanistic + ML bridge (interface only; to be fleshed out).
+"""Hybrid mechanistic + ML bridge.
 
 A mechanistic model (typically an ODE system, e.g. Monod growth + product
 formation) predicts the response from process settings using domain knowledge.
@@ -33,16 +33,14 @@ Example (Monod fed-batch as the GP prior mean):
     hybrid = HybridSurrogate(LEVELS["mild"]).fit(X, y, bounds=bounds)
     mean, std = hybrid.predict(X_new)
 
-Scope today: fit + predict (mean/std). Handing a hybrid straight to
-`kalos.core.optimize.propose` is NOT supported yet - `propose` needs a BoTorch
-model, and the residual GP alone ignores the mechanistic mean. Next step is to
-wrap the sum as a BoTorch `Model`. Torch stays lazily imported (`Surrogate`
-is only touched inside `fit`), keeping `kalos.core.mechanistic` cheap to import.
+Torch stays lazily imported (`Surrogate` is only touched inside `fit`, and
+BoTorch `Model` wrapping is constructed lazily inside `to_botorch_model`),
+keeping `kalos.core.mechanistic` 100% torch-free at import time.
 """
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -127,6 +125,79 @@ class _NoMechanism:
         return np.zeros(len(np.atleast_2d(X)))
 
 
+def _build_hybrid_botorch_model(residual_model: Any, mech_fn: Callable[[np.ndarray], np.ndarray]):
+    """Construct a BoTorch `Model` wrapping `residual_model` + detached `mech_fn` mean offset.
+
+    Imported lazily so `kalos.core.mechanistic` remains torch-free at import time.
+    """
+    import torch
+    from botorch.models.model import Model
+    from botorch.posteriors.gpytorch import GPyTorchPosterior
+    from gpytorch.distributions import MultivariateNormal
+
+    class _HybridBoTorchModel(Model):
+        """BoTorch `Model` adding the detached mechanistic mean to a residual GP posterior."""
+
+        def __init__(self, res_model: Any, mech_eval: Callable[[np.ndarray], np.ndarray]) -> None:
+            super().__init__()
+            self._residual_model = res_model
+            self._mech_eval = mech_eval
+
+        @property
+        def num_outputs(self) -> int:
+            return int(self._residual_model.num_outputs)
+
+        @property
+        def batch_shape(self) -> torch.Size:
+            return self._residual_model.batch_shape
+
+        @property
+        def train_inputs(self):
+            return self._residual_model.train_inputs
+
+        @property
+        def train_targets(self):
+            return self._residual_model.train_targets
+
+        def subset_output(self, idcs: list[int]) -> Model:
+            if idcs == [0]:
+                return self
+            raise NotImplementedError("HybridBoTorchModel is single-output")
+
+        def posterior(
+            self,
+            X: torch.Tensor,
+            output_indices: list[int] | None = None,
+            observation_noise: bool | torch.Tensor = False,
+            posterior_transform: Any = None,
+            **kwargs: Any,
+        ) -> Any:
+            if output_indices is not None and output_indices != [0]:
+                raise NotImplementedError("HybridBoTorchModel is single-output")
+            res_post = self._residual_model.posterior(
+                X,
+                observation_noise=observation_noise,
+                posterior_transform=None,
+                **kwargs,
+            )
+            with torch.no_grad():
+                X_np = X.detach().cpu().numpy()
+                flat = X_np.reshape(-1, X_np.shape[-1])
+                mech_flat = self._mech_eval(flat)
+                mech_t = torch.as_tensor(mech_flat, dtype=X.dtype, device=X.device).reshape(X.shape[:-1])
+
+            mvn = res_post.distribution
+            # Adding detached mech_t preserves autograd gradients through mvn.mean
+            # and mvn.lazy_covariance_matrix so optimize_acqf climbs the residual GP.
+            shifted_mvn = MultivariateNormal(mvn.mean + mech_t, mvn.lazy_covariance_matrix)
+            posterior: Any = GPyTorchPosterior(shifted_mvn)
+            if posterior_transform is not None:
+                return posterior_transform(posterior=posterior, X=X)
+            return posterior
+
+    return _HybridBoTorchModel(residual_model, mech_fn)
+
+
 class HybridSurrogate:
     """prediction(X) = mechanistic(X) + GP_residual(X).
 
@@ -143,6 +214,11 @@ class HybridSurrogate:
             mechanistic = _CallableModel(mechanistic)
         self.mechanistic = mechanistic
         self.residual: Surrogate | None = None  # fitted GP on the residual
+        self._X: Any = None
+        self._y: np.ndarray | None = None
+        self._cat_dims: list[int] | None = None
+        self._bounds: np.ndarray | None = None
+        self._botorch_model: Any = None
 
     def _mech(self, X) -> np.ndarray:
         Xa = np.atleast_2d(np.asarray(X, float))
@@ -161,14 +237,50 @@ class HybridSurrogate:
         Xa = np.atleast_2d(np.asarray(X, float))
         ya = np.asarray(y, float).reshape(-1)
         self.residual = Surrogate().fit(Xa, ya - self._mech(Xa), bounds=bounds, **kwargs)
+        self._X = self.residual._X
+        self._y = ya
+        self._cat_dims = self.residual._cat_dims
+        self._bounds = np.asarray(bounds, float).copy()
+        self._botorch_model = None
         return self
 
-    def predict(self, X) -> tuple[np.ndarray, np.ndarray]:
+    def posterior(self, X, *, observation_noise: bool = False) -> tuple[np.ndarray, np.ndarray]:
         """(mean, std) in the target's original units."""
         if self.residual is None:
             raise RuntimeError("fit() first")
-        mu, sd = self.residual.posterior(X)
+        mu, sd = self.residual.posterior(X, observation_noise=observation_noise)
         return self._mech(X) + np.asarray(mu, float).reshape(-1), np.asarray(sd, float).reshape(-1)
+
+    def predict(self, X) -> tuple[np.ndarray, np.ndarray]:
+        """(mean, std) in the target's original units."""
+        return self.posterior(X)
+
+    def to_botorch_model(self):
+        """Return a BoTorch `Model` combining the mechanistic mean with the residual GP."""
+        if self.residual is None or self.residual.model is None:
+            raise RuntimeError("fit() first")
+        if self._botorch_model is None:
+            self._botorch_model = _build_hybrid_botorch_model(self.residual.model, self._mech)
+        return self._botorch_model
+
+    @property
+    def model(self):
+        """Lazily constructed BoTorch `Model` (None before `fit()`)."""
+        if self.residual is None or self.residual.model is None:
+            return None
+        return self.to_botorch_model()
+
+    @property
+    def best_f(self) -> float:
+        if self._y is None:
+            raise RuntimeError("fit() first")
+        return float(self._y.max())
+
+    @property
+    def fit_diagnostics(self) -> dict:
+        if self.residual is None:
+            return {}
+        return self.residual.fit_diagnostics
 
 
 def monod_example(t_end: float = 24.0) -> ODEModel:

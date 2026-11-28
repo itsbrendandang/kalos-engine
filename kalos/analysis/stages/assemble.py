@@ -96,10 +96,18 @@ def assemble_result(
     if not prep.cat_dims:
         proposal_optimizer = "continuous"
     else:
-        n_combos = 1
-        for k in prep.cat_cardinalities or []:
-            n_combos *= int(k)
-        proposal_optimizer = "mixed_exact" if n_combos <= MAX_MIXED_COMBOS else "mixed_alternating"
+        free_cards = [
+            int(k)
+            for j, k in zip(prep.cat_dims, prep.cat_cardinalities or [])
+            if j not in prep.strain.held
+        ]
+        if not free_cards:
+            proposal_optimizer = "continuous"
+        else:
+            n_combos = 1
+            for k in free_cards:
+                n_combos *= k
+            proposal_optimizer = "mixed_exact" if n_combos <= MAX_MIXED_COMBOS else "mixed_alternating"
 
     result: dict[str, Any] = {
         "n": len(prep.y), "d": len(kept_features), "target": str(prep.target),

@@ -83,6 +83,9 @@ def validation_mode_setting() -> str:
 
 
 STRICT_CV_CANDIDATES_VAR = "KALOS_CV_STRICT_CANDIDATES"
+FEAS_ONEHOT_CAT_VAR = "KALOS_FEAS_ONEHOT_CAT"
+SPACE_FILLING_SMALL_N_VAR = "KALOS_SPACE_FILLING_SMALL_N"
+CV_WORKERS_VAR = "KALOS_CV_WORKERS"
 _STRICT_ON = ("1", "true", "yes", "on")
 _STRICT_OFF = ("0", "false", "no", "off")
 
@@ -92,6 +95,25 @@ def strict_cv_candidates_setting() -> bool:
     Off restores the old rule where any cross-validated candidate grouping could
     set the reliability score. Unknown values raise `ConfigError`."""
     return env_enum(STRICT_CV_CANDIDATES_VAR, _STRICT_ON + _STRICT_OFF, "1") in _STRICT_ON
+
+
+def feas_onehot_cat_setting() -> bool:
+    """`KALOS_FEAS_ONEHOT_CAT`: off (default) or on (`1`/`true`/`yes`/`on`).
+    On makes `FeasibilityClassifier` one-hot encode categorical columns instead
+    of treating integer level codes as ordinal. Unknown values raise `ConfigError`."""
+    return env_enum(FEAS_ONEHOT_CAT_VAR, _STRICT_ON + _STRICT_OFF, "0") in _STRICT_ON
+
+
+def space_filling_small_n_setting() -> bool:
+    """`KALOS_SPACE_FILLING_SMALL_N`: off (default) or on (`1`/`true`/`yes`/`on`).
+    On replaces multi-start qLogNEI with deterministic Sobol+maximin DoE when
+    the model is not yet reliable and distinct recipes < 2*d."""
+    return env_enum(SPACE_FILLING_SMALL_N_VAR, _STRICT_ON + _STRICT_OFF, "0") in _STRICT_ON
+
+
+def cv_workers_setting() -> int:
+    """`KALOS_CV_WORKERS`: worker count for grouped CV (1..8, default 1)."""
+    return env_int(CV_WORKERS_VAR, 1, minimum=1, maximum=8)
 
 
 def audit_retention_days() -> int | None:
@@ -124,6 +146,9 @@ def check_env_settings() -> None:
     deployment_env()
     validation_mode_setting()
     strict_cv_candidates_setting()
+    feas_onehot_cat_setting()
+    space_filling_small_n_setting()
+    cv_workers_setting()
     audit_retention_days()
     llm_provider_setting()
 

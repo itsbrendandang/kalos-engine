@@ -48,7 +48,8 @@ from __future__ import annotations
 
 import itertools
 import logging
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import numpy as np
 import torch
@@ -64,6 +65,15 @@ from botorch.optim import (
 from botorch.utils.sampling import draw_sobol_samples
 
 from .feasibility import FeasibilityClassifier
+from .space_filling import (
+    NEAR_DUPLICATE_TOL,
+    ProposalBatch,
+    _fewer_notice,
+    _linear_ok,
+    _resolve_cardinalities,
+    _validate_linear_constraints,
+    proposal_separation,
+)
 from .surrogate import DEVICE, DTYPE, Surrogate, sanitize_bounds
 
 logger = logging.getLogger(__name__)
@@ -73,25 +83,6 @@ logger = logging.getLogger(__name__)
 # we switch to the alternating optimizer, which does not enumerate. 64 keeps the
 # exact path (the better optimizer) for realistic small categorical spaces.
 MAX_MIXED_COMBOS = 64
-
-NEAR_DUPLICATE_TOL = 0.05
-# Two proposals in one batch are NEAR-DUPLICATES when they use the same level of
-# every categorical factor AND every continuous factor differs by less than 5%
-# of that factor's design range (Chebyshev distance in the range-normalised
-# space; see `proposal_separation`).
-#
-# Why 5%: a lab sets each factor of a recipe with a set-point error of roughly
-# 1-2.5% of a typical screening range (a pH meter's +-0.05 on a 5-7 box is
-# 2.5%; pipettes and balances are 1-2%). Two INTENDED recipes closer than twice
-# that error (~5%) in every factor can therefore come out as the same physical
-# experiment, run twice, whose outcomes differ only by assay noise - a wasted
-# slot in a batch of five. It is a policy constant, not a fitted one: it is
-# large enough to catch the corner-collapse and "recipes 1 and 2 nearly
-# identical" cases seen in QA, and small enough (at least 21 distinct settings
-# per factor) never to bind on a continuous design. Chebyshev (max over
-# factors) rather than Euclidean, so the rule reads per factor ("at least one
-# setting differs by >= 5% of its range") and does not depend on how many
-# factors the sheet has.
 
 POOL_EVAL_CHUNK = 512
 # Candidate-pool points scored per acquisition call when filling a slot left by
@@ -104,27 +95,13 @@ MAX_ENUMERATED_DISCRETE = 4096
 
 
 class _FeasibilityGate(torch.nn.Module):
-    """Differentiable log P(feasible), rebuilt from a fitted
-    `Pipeline(StandardScaler(), LogisticRegression())`.
+    """Differentiable log P(feasible), rebuilt from a fitted `FeasibilityClassifier`.
 
-    `StandardScaler` + `LogisticRegression` compose to an affine map followed by
-    a sigmoid: `p = sigmoid(((x - mean) / scale) @ coef + intercept)`. Rebuilding
-    that identity as a torch module (float64, CPU - matching `DTYPE`/`DEVICE`,
-    the surrogate's own precision and device) keeps the whole gated acquisition
-    score differentiable end to end, which `optimize_acqf`'s gradient-based
-    multi-start L-BFGS requires; calling back into the sklearn/numpy pipeline
-    from inside `forward()` would break autograd at that boundary and leave the
-    optimizer with no gradient to climb.
-
-    CATEGORICAL DIMS, STATED EXPLICITLY: the classifier this gate reproduces was
-    fit on the same integer level codes the GP sees for categorical columns
-    (`kalos.portal.analysis._analyze` fits `FeasibilityClassifier` on the same
-    `X` the surrogate uses). A logistic regression treats an integer code as an
-    ORDINAL number, not an unordered label, so "level 2 is between level 1 and
-    level 3" is an assumption the model makes that the data does not actually
-    support. This is a known, deliberate approximation carried over unchanged
-    from that fit - one-hot encoding the categorical dims for the classifier is
-    a possible refinement, not implemented here.
+    Supports both the legacy continuous-only `Pipeline(StandardScaler(),
+    LogisticRegression())` affine map (`p = sigmoid(((x - mean) / scale) @ coef +
+    intercept)`) and the mixed continuous + one-hot categorical form (when
+    `KALOS_FEAS_ONEHOT_CAT` is enabled), differentiating cleanly with respect
+    to continuous coordinates while adding exact per-category logit weights.
     """
 
     def __init__(
@@ -133,6 +110,10 @@ class _FeasibilityGate(torch.nn.Module):
         scale: np.ndarray,
         coef: np.ndarray,
         intercept: float,
+        *,
+        cont_dims: Sequence[int] | None = None,
+        cat_dims: Sequence[int] | None = None,
+        cat_weights: Sequence[np.ndarray] | None = None,
     ) -> None:
         super().__init__()
         self.register_buffer("_mean", torch.as_tensor(mean, dtype=DTYPE, device=DEVICE))
@@ -141,9 +122,40 @@ class _FeasibilityGate(torch.nn.Module):
         self.register_buffer(
             "_intercept", torch.as_tensor(float(intercept), dtype=DTYPE, device=DEVICE)
         )
+        self._cont_dims: tuple[int, ...] | None = (
+            tuple(int(i) for i in cont_dims) if cont_dims is not None else None
+        )
+        self._cat_dims: tuple[int, ...] = tuple(int(i) for i in (cat_dims or ()))
+        if self._cont_dims is not None and self._cont_dims:
+            self.register_buffer(
+                "_cont_idx",
+                torch.as_tensor(self._cont_dims, dtype=torch.long, device=DEVICE),
+            )
+        else:
+            self._cont_idx = None
+        weights = list(cat_weights or ())
+        if len(weights) != len(self._cat_dims):
+            raise ValueError("cat_weights must match cat_dims length")
+        self._n_cats = len(self._cat_dims)
+        for i, w in enumerate(weights):
+            self.register_buffer(
+                f"_cat_w_{i}", torch.as_tensor(np.asarray(w, dtype=float), dtype=DTYPE, device=DEVICE)
+            )
+
+    @classmethod
+    def from_spec(cls, spec: Mapping[str, Any]) -> _FeasibilityGate:
+        return cls(
+            spec["mean"],
+            spec["scale"],
+            spec["cont_coef"],
+            float(spec["intercept"]),
+            cont_dims=spec["cont_dims"],
+            cat_dims=spec["cat_dims"],
+            cat_weights=spec["cat_weights"],
+        )
 
     def log_p_feasible(self, X: torch.Tensor) -> torch.Tensor:
-        """`log sigmoid(w . (x - mu) / s + b)`, elementwise over `X`'s leading dims.
+        """`log sigmoid(logit(X))`, elementwise over `X`'s leading dims.
 
         `X` is `... x d`; the affine map contracts the trailing (feature) dim, so
         the result has `X`'s shape minus that trailing dimension - e.g. a
@@ -151,7 +163,23 @@ class _FeasibilityGate(torch.nn.Module):
         `batch_shape x q`, one log-probability per candidate POINT (not yet
         reduced over `q` - see `_FeasibilityGatedLogNEI` for that reduction).
         """
-        z = ((X - self._mean) / self._scale) @ self._coef + self._intercept
+        if not self._cat_dims and self._cont_dims is None:
+            z = ((X - self._mean) / self._scale) @ self._coef + self._intercept
+            return torch.nn.functional.logsigmoid(z)
+
+        if self._cont_idx is not None:
+            X_cont = torch.index_select(X, -1, self._cont_idx)
+            z = ((X_cont - self._mean) / self._scale) @ self._coef + self._intercept
+        else:
+            z = torch.full(X.shape[:-1], float(self._intercept.item()), dtype=DTYPE, device=X.device)
+
+        for i, dim_c in enumerate(self._cat_dims):
+            w_c = getattr(self, f"_cat_w_{i}")
+            codes = torch.round(X[..., dim_c]).to(dtype=torch.long)
+            valid = (codes >= 0) & (codes < w_c.shape[0])
+            safe_codes = codes.clamp(0, max(w_c.shape[0] - 1, 0))
+            contrib = w_c[safe_codes]
+            z = z + torch.where(valid, contrib, torch.zeros_like(contrib))
         return torch.nn.functional.logsigmoid(z)
 
 
@@ -215,36 +243,6 @@ class _FeasibilityGatedLogNEI(AcquisitionFunction):
         return log_ei + log_pf
 
 
-def proposal_separation(
-    a: np.ndarray,
-    b: np.ndarray,
-    lower: np.ndarray,
-    upper: np.ndarray,
-    cat_dims: list[int] | None = None,
-) -> float:
-    """Distance between two proposals in the range-normalised design space.
-
-    Each continuous coordinate is scaled by its design range (`upper - lower`),
-    and the distance is the largest per-factor difference (Chebyshev), so 0.02
-    means "no factor differs by more than 2% of its range". Categorical
-    coordinates (integer level codes) are compared EXACTLY: any differing level
-    makes the two recipes maximally different (distance 1.0, the full range),
-    because there is no "nearby" level of an unordered factor.
-    """
-    a = np.asarray(a, float)
-    b = np.asarray(b, float)
-    cats = set(cat_dims or [])
-    for j in cats:
-        if int(round(a[j])) != int(round(b[j])):
-            return 1.0
-    cont = [j for j in range(a.shape[0]) if j not in cats]
-    if not cont:
-        return 0.0
-    width = np.asarray(upper, float)[cont] - np.asarray(lower, float)[cont]
-    width = np.where(width > 0, width, 1.0)
-    return float(np.max(np.abs(a[cont] - b[cont]) / width))
-
-
 def _is_distinct(
     x: np.ndarray,
     accepted: list[np.ndarray],
@@ -254,116 +252,6 @@ def _is_distinct(
     tol: float,
 ) -> bool:
     return all(proposal_separation(x, a, lower, upper, cat_dims) >= tol for a in accepted)
-
-
-# Slack for float round-off in the linear-constraint check (from PR #78).
-_LIN_TOL = 1e-6
-
-
-def _validate_linear_constraints(constraints, lower: np.ndarray, upper: np.ndarray):
-    """Normalise and sanity-check `(indices, coefficients, rhs)` triples, and raise a
-    clear ValueError if they cannot all hold inside the box (checked by LP)."""
-    if not constraints:
-        return []
-    d = len(lower)
-    out = []
-    for k, c in enumerate(constraints):
-        try:
-            idx, coef, rhs = c
-        except (TypeError, ValueError):
-            raise ValueError(f"linear constraint {k} must be (indices, coefficients, rhs)") from None
-        try:
-            idx = [int(i) if float(i).is_integer() else -1 for i in idx]
-            coef = [float(x) for x in coef]
-            rhs = float(rhs)
-        except (TypeError, ValueError):
-            raise ValueError(f"linear constraint {k} must be (indices, coefficients, rhs) of numbers") from None
-        if not idx:
-            raise ValueError(f"linear constraint {k} has no indices")
-        if len(idx) != len(coef):
-            raise ValueError(f"linear constraint {k}: {len(idx)} indices but {len(coef)} coefficients")
-        if any(i < 0 or i >= d for i in idx):
-            raise ValueError(f"linear constraint {k}: indices must be in [0, {d - 1}] (negative indices are not allowed)")
-        if len(set(idx)) != len(idx):
-            raise ValueError(f"linear constraint {k}: repeated index")
-        if not np.isfinite(coef).all() or not np.isfinite(float(rhs)):
-            raise ValueError(f"linear constraint {k}: coefficients and rhs must be finite")
-        if not any(coef):
-            raise ValueError(f"linear constraint {k}: all coefficients are zero")
-        out.append((idx, coef, float(rhs)))
-    from scipy.optimize import linprog
-
-    a = np.zeros((len(out), d))
-    for r, (idx, coef, _) in enumerate(out):
-        a[r, idx] = coef
-    b = np.array([rhs for _, _, rhs in out])
-    # sum(coef*x) >= rhs   <=>   -sum(coef*x) <= -rhs
-    res = linprog(np.zeros(d), A_ub=-a, b_ub=-b, bounds=list(zip(lower, upper)), method="highs")
-    if res.status == 2:
-        raise ValueError("linear constraints are infeasible within the bounds: no recipe can satisfy them")
-    return out
-
-
-def _linear_ok(X: np.ndarray, lin) -> np.ndarray:
-    """Boolean mask over the rows of `X`: True where every constraint in `lin` holds
-    (to `_LIN_TOL`). A NaN row is False. With no constraints every row is True."""
-    ok = np.ones(X.shape[0], dtype=bool)
-    for idx, coef, rhs in lin:
-        lhs = X[:, idx] @ np.asarray(coef)
-        ok &= lhs >= rhs - _LIN_TOL * max(1.0, abs(rhs))
-    return ok
-
-
-@dataclass(frozen=True)
-class ProposalBatch:
-    """A proposed batch plus an honest account of how distinct it is.
-
-    `X` has `returned <= requested` rows; every pair of rows is at least
-    `min_separation` apart (`proposal_separation`). `near_duplicates_replaced`
-    counts rows of the jointly-optimized batch that collapsed onto another row
-    and were replaced by sequential, pending-aware selection (with linear
-    constraints, rows that break one are replaced the same way). `notice` is None
-    when the full batch was returned, else a machine- and human-readable dict
-    explaining why fewer rows came back.
-    """
-
-    X: np.ndarray
-    requested: int
-    near_duplicates_replaced: int
-    min_separation: float
-    notice: dict | None
-
-    @property
-    def returned(self) -> int:
-        return int(self.X.shape[0])
-
-    def diversity_report(self) -> dict:
-        return {
-            "requested": int(self.requested),
-            "returned": self.returned,
-            "near_duplicates_replaced": int(self.near_duplicates_replaced),
-            "min_separation": float(self.min_separation),
-            "metric": (
-                "max over continuous factors of |difference| / factor range; "
-                "any differing categorical level counts as fully distinct"
-            ),
-        }
-
-
-def _fewer_notice(requested: int, returned: int, tol: float) -> dict:
-    return {
-        "code": "fewer_distinct_candidates",
-        "requested": int(requested),
-        "returned": int(returned),
-        "min_separation": float(tol),
-        "message": (
-            f"Only {returned} of the {requested} requested proposals are distinct. "
-            "The design space has no further candidate that differs from every "
-            "proposal already in the batch, and from every run already in flight, "
-            f"by at least {tol:.0%} of a factor's range or by a categorical level, "
-            "so the batch is returned short rather than repeating a recipe."
-        ),
-    }
 
 
 def propose(
@@ -551,6 +439,7 @@ def propose_batch(
             "(a floor with no model, or a model with no floor, is not a constraint)"
         )
     lower, upper = sanitize_bounds(bounds)
+    raw_lower, raw_upper = lower.copy(), upper.copy()
     fixed = {int(k): float(v) for k, v in (fixed_features or {}).items()}
     for j, v in fixed.items():
         if not 0 <= j < len(lower):
@@ -586,7 +475,7 @@ def propose_batch(
             torch.as_tensor(upper, dtype=DTYPE, device=DEVICE),
         ]
     )
-    X_pending = _sanitize_pending(pending, lower, upper, cat_dims)
+    X_pending = _sanitize_pending(pending, raw_lower, raw_upper, cat_dims)
     if cat_dims:
         # One level count per categorical dim, for the joint optimizer and the
         # repair pool alike (derived from the box when the caller gave none).
@@ -642,8 +531,12 @@ def propose_batch(
             constraints=constraints,
         )
         if feasibility_classifier is not None and feasibility_classifier.fitted:
-            mean, scale, coef, intercept = feasibility_classifier.torch_gate_params()
-            acq = _FeasibilityGatedLogNEI(acq, _FeasibilityGate(mean, scale, coef, intercept))
+            if getattr(feasibility_classifier, "cat_dims", ()):
+                gate = _FeasibilityGate.from_spec(feasibility_classifier.torch_gate_spec())
+            else:
+                mean, scale, coef, intercept = feasibility_classifier.torch_gate_params()
+                gate = _FeasibilityGate(mean, scale, coef, intercept)
+            acq = _FeasibilityGatedLogNEI(acq, gate)
         return acq
 
     def _finish(candidates: torch.Tensor) -> np.ndarray:
@@ -821,32 +714,6 @@ def propose_batch(
         if _linear_ok(batch.X, lin).all():
             return batch
     raise RuntimeError("could not find proposals satisfying the linear constraints")
-
-
-def _resolve_cardinalities(
-    cat_dims: list[int],
-    cat_cardinalities: list[int] | None,
-    lower: np.ndarray,
-    upper: np.ndarray,
-) -> list[int]:
-    """One level count per categorical dim, for building candidate pools.
-
-    Uses `cat_cardinalities` where given (codes `0..k-1`, the convention
-    `_optimize_mixed` and the portal use). A caller that passes `cat_dims`
-    without (or with too few) cardinalities used to crash (botorch's mixed
-    optimizer was handed the dims as continuous, and the categorical-only
-    repair built an empty product grid); the missing counts are now derived
-    from the box, `floor(upper) + 1` levels, i.e. codes `0..floor(upper)`
-    (codes below `lower` are clipped back into the box by `_finish`).
-    """
-    given = [max(int(k), 1) for k in (cat_cardinalities or [])]
-    out: list[int] = []
-    for i, j in enumerate(cat_dims):
-        if i < len(given):
-            out.append(given[i])
-        else:
-            out.append(max(int(np.floor(upper[j])) + 1, 1))
-    return out
 
 
 def _sanitize_pending(

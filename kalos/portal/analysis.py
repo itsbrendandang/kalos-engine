@@ -140,10 +140,7 @@ def _analyze(
     )
     if setup is not None:
         kwargs["setup"] = setup
-    if preflight_only:
-        return _analyze_body(df, target, **kwargs)
-    with _seeded_analysis(ANALYZE_SEED):
-        return _analyze_body(df, target, **kwargs)
+    return _analyze_body(df, target, **kwargs)
 
 
 def _analyze_body(
@@ -160,7 +157,12 @@ def _analyze_body(
     user_target_unit: str | None = None,
     setup: Mapping[str, Any] | None = None,
 ) -> dict:
-    """Orchestrate the five analysis stages in fixed RNG-preserving order."""
+    """Orchestrate the five analysis stages in fixed RNG-preserving order.
+
+    Only the RNG-consuming ML stages (trust, drivers, propose, explain,
+    post-fit diagnostics) hold `_RNG_LOCK` via `_seeded_analysis`; data
+    preparation and final assembly run lock-free.
+    """
     _progress = progress if progress is not None else (lambda _stage, _fraction: None)
     prep = prepare_analysis(
         df, target,
@@ -169,22 +171,23 @@ def _analyze_body(
     )
     if prep is None:
         return {}
-    trust = evaluate_trust(
-        prep, roles=roles, constraint=constraint, progress=_progress,
-        gate_min_n_infeasible=GATE_MIN_N_INFEASIBLE,
-    )
-    drivers = compute_drivers(prep, trust)
-    prop = run_proposals(
-        prep, trust, drivers,
-        pending=pending, progress=_progress, proposal_fit_restarts=PROPOSAL_FIT_RESTARTS,
-    )
-    explanation = explain_surrogate(
-        prep, trust, prop, drivers, gp_shape_fn=gp_shape_report,
-    )
-    post_fit = compute_post_fit_diagnostics(
-        prep, trust, prop, explanation,
-        anonymize=anonymize, user_target_unit=user_target_unit, setup=setup,
-    )
+    with _seeded_analysis(ANALYZE_SEED):
+        trust = evaluate_trust(
+            prep, roles=roles, constraint=constraint, progress=_progress,
+            gate_min_n_infeasible=GATE_MIN_N_INFEASIBLE,
+        )
+        drivers = compute_drivers(prep, trust)
+        prop = run_proposals(
+            prep, trust, drivers,
+            pending=pending, progress=_progress, proposal_fit_restarts=PROPOSAL_FIT_RESTARTS,
+        )
+        explanation = explain_surrogate(
+            prep, trust, prop, drivers, gp_shape_fn=gp_shape_report,
+        )
+        post_fit = compute_post_fit_diagnostics(
+            prep, trust, prop, explanation,
+            anonymize=anonymize, user_target_unit=user_target_unit, setup=setup,
+        )
     return assemble_result(
         prep, trust, drivers, prop, explanation, post_fit,
         roles=roles, profile=profile, anonymize=anonymize,

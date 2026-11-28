@@ -151,26 +151,58 @@ class GPShapeReport:
         }
 
 
-def ard_lengthscales(surrogate: Any, d: int) -> np.ndarray | None:
+def ard_lengthscales(
+    surrogate: Any,
+    d: int,
+    *,
+    sweep_columns: Sequence[int] | None = None,
+) -> np.ndarray | None:
     """The fitted per-dimension ARD lengthscales, or None if the kernel has none.
 
-    Walks the fitted module tree for the first submodule exposing `lengthscale`.
-    Returns None when the kernel turned out to be isotropic (a single shared
-    lengthscale), because a scalar cannot rank features and inventing a ranking
-    from it would be worse than saying nothing. Also returns None on a mixed
-    (categorical) GP whose continuous kernel covers only a subset of dimensions,
-    since the lengthscale vector would not align with the feature list.
+    Walks the fitted module tree for the first continuous ARD submodule exposing
+    `lengthscale` matching `d` (and `sweep_columns` when supplied, skipping
+    categorical and mismatched sub-kernels in a `MixedSingleTaskGP`). Returns
+    None when the kernel turned out to be isotropic (a single shared
+    lengthscale for `d > 1`), or has non-finite/non-positive lengthscales,
+    because a scalar cannot rank features and inventing a ranking from it would
+    be worse than saying nothing.
     """
+    if d <= 0:
+        return None
     model = getattr(surrogate, "model", None)
     if model is None:
         return None
+    cols = [int(c) for c in sweep_columns] if sweep_columns is not None else None
+    if cols is not None and len(cols) != d:
+        return None
+
     for _name, module in model.named_modules():
+        if "categorical" in type(module).__name__.lower():
+            continue
         raw = getattr(module, "lengthscale", None)
         if raw is None:
             continue
         values = np.asarray(raw.detach().cpu().numpy(), dtype=float).reshape(-1)
-        if values.size != d:
-            return None  # isotropic, or misaligned with the feature list
+        active = getattr(module, "active_dims", None)
+        if active is not None:
+            active_list = (
+                [int(x) for x in active.detach().cpu().tolist()]
+                if hasattr(active, "detach")
+                else [int(x) for x in active]
+            )
+            if cols is not None:
+                if len(active_list) != d or set(active_list) != set(cols):
+                    continue
+                if values.size != d:
+                    continue
+                if active_list != cols:
+                    idx_map = {col: idx for idx, col in enumerate(active_list)}
+                    values = np.asarray([values[idx_map[c]] for c in cols], dtype=float)
+            else:
+                if len(active_list) != d or values.size != d:
+                    continue
+        elif values.size != d:
+            continue
         if not np.isfinite(values).all() or (values <= 0).any():
             return None
         return values
@@ -320,7 +352,7 @@ def gp_shape_report(
             "score was supplied to condition these shapes on)",
         )
 
-    lengthscales = ard_lengthscales(surrogate, d)
+    lengthscales = ard_lengthscales(surrogate, d, sweep_columns=cols)
     if lengthscales is None:
         return GPShapeReport(
             False,

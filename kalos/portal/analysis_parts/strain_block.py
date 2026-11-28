@@ -91,7 +91,7 @@ def choose_fixed_level(
         return None, None, None
     req = plan.requested_level
     if req is not None:
-        if req in levels:
+        if req in levels and int(n_runs.get(req, 0)) > 0:
             return req, plan.requested_level_source, None
         if plan.requested_level_source != "registry_lead":
             return None, None, _refusal(
@@ -101,7 +101,8 @@ def choose_fixed_level(
                 "proposals are withheld",
                 "choose a clone that has runs (strain_level), or run the new clone first",
             )
-    best = sorted(levels, key=lambda lv: (-int(n_runs.get(lv, 0)), lv))[0]
+    pool = [lv for lv in levels if int(n_runs.get(lv, 0)) > 0] or list(levels)
+    best = sorted(pool, key=lambda lv: (-int(n_runs.get(lv, 0)), lv))[0]
     return best, "most_runs", None
 
 

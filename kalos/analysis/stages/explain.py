@@ -153,7 +153,7 @@ def explain_surrogate(
         else:
             embedding = _emb
 
-    _corr = _correlation_spearman(prep.X, prep.y, prep.cont_feats)
+    _corr = _correlation_spearman(prep.X, prep.y, prep.cont_feats, groups=trust.recipe_key)
     correlation: dict[str, Any] | None = None
     if _corr is not None:
         if "reason" in _corr:

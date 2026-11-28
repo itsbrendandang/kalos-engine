@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -112,6 +113,8 @@ class FitPlan:
     # ">=" form); `setup` is the report block (what was applied, from where).
     constraints: list[tuple[list[int], list[float], float]] = field(default_factory=list)
     setup: dict[str, Any] = field(default_factory=dict)
+    replicate_aware: bool = False
+    assay_noise_var: float | None = None
 
     def feasible(self, x_cont: np.ndarray) -> np.ndarray:
         """Row mask over continuous points: inside the sampling box and every
@@ -370,6 +373,26 @@ def build_plan(
     direction = "at_least" if goal == "maximize" else "at_most"
     s_lower, s_upper, constraints, setup_report = _setup_region(
         analysis.get("setup"), cont, lower, upper)
+    noise_block = analysis.get("noise")
+    replicate_aware = bool(isinstance(noise_block, dict) and noise_block.get("replicate_aware"))
+    assay_noise_var: float | None = None
+    if replicate_aware and isinstance(noise_block, dict):
+        for key in ("assay_noise_var", "noise_var"):
+            val = _finite(noise_block.get(key))
+            if val is not None and val > 0:
+                assay_noise_var = val
+                break
+        if assay_noise_var is None:
+            from kalos.core.replicates import noise_report
+            from kalos.core.splits import row_hash_groups
+
+            nr_var = noise_report(X, y, groups=row_hash_groups(pd.DataFrame(X)))["noise_var"]
+            if math.isfinite(nr_var) and nr_var > 0:
+                assay_noise_var = float(nr_var)
+            else:
+                sd_val = _finite(noise_block.get("noise_sd"))
+                if sd_val is not None and sd_val > 0:
+                    assay_noise_var = sd_val * sd_val
     plan = FitPlan(
         X=X, y=y, lower=s_lower, upper=s_upper, design_lower=lower, design_upper=upper,
         cont_names=cont, cat_names=[str(c) for c in cats],
@@ -381,6 +404,7 @@ def build_plan(
         direction=direction, goal=goal, goal_source=goal_source,
         threshold=float(threshold), probability=float(probability), target=target,
         best_index=-1, context={}, constraints=constraints, setup=setup_report,
+        replicate_aware=replicate_aware, assay_noise_var=assay_noise_var,
     )
     # The anchor is the best measured recipe INSIDE the setup region.
     inside = plan.feasible(X[:, : len(cont)])
@@ -533,7 +557,7 @@ def _probability(mean: np.ndarray, sd: np.ndarray, threshold: float, direction: 
     return norm.cdf(z) if direction == "at_least" else norm.cdf(-z)
 
 
-def fit_and_score(plan: FitPlan) -> dict[str, Any]:
+def fit_and_score(plan: FitPlan, cache_dir: Path | None = None) -> dict[str, Any]:
     """The slot-bound part: refit the GP, score the Sobol sample, build the box.
     Raises `NotComputed` for a failed fit or no defensible region."""
     from scipy.stats import qmc
@@ -554,18 +578,57 @@ def fit_and_score(plan: FitPlan) -> dict[str, Any]:
         np.concatenate([plan.upper, np.array([max(len(lv) - 1, 1) for lv in plan.cat_levels], float)]),
     ])
     cat_dims = list(range(n_cont, d)) or None
-    restarts = proposal_restarts(len(plan.y), d, PROPOSAL_FIT_RESTARTS)
-    try:
-        with _seeded_analysis(ANALYZE_SEED):
-            model = Surrogate().fit(
-                plan.X, plan.y, bounds=bounds, cat_dims=cat_dims,
-                restarts=restarts, restart_seed=ANALYZE_SEED,
+
+    X_fit, y_fit = plan.X, plan.y
+    noise_arg: np.ndarray | None = None
+    noise_mode = "inferred"
+    if plan.replicate_aware:
+        import pandas as pd
+
+        from kalos.core.replicates import aggregate_replicates, noise_report
+        from kalos.core.splits import row_hash_groups
+
+        groups = row_hash_groups(pd.DataFrame(plan.X))
+        sigma2 = plan.assay_noise_var
+        if sigma2 is None or not math.isfinite(sigma2) or sigma2 <= 0:
+            nr_var = noise_report(plan.X, plan.y, groups=groups)["noise_var"]
+            if math.isfinite(nr_var) and nr_var > 0:
+                sigma2 = float(nr_var)
+        if sigma2 is not None and math.isfinite(sigma2) and sigma2 > 0:
+            Xf, yf, _yvar_g, n_reps_g = aggregate_replicates(plan.X, plan.y, groups=groups)
+            X_fit, y_fit = Xf, yf
+            noise_arg = float(sigma2) / np.maximum(n_reps_g, 1).astype(float)
+            noise_mode = "fixed_assay_noise_floor"
+
+    restarts = proposal_restarts(len(y_fit), d, PROPOSAL_FIT_RESTARTS)
+    model: Surrogate | None = None
+    cache = None
+    if cache_dir is not None:
+        from kalos.core.model_cache import SurrogateCache
+
+        cache = SurrogateCache(Path(cache_dir))
+        model = cache.get(
+            X_fit, y_fit, bounds=bounds, cat_dims=cat_dims, noise=noise_arg,
+            restarts=restarts, restart_seed=ANALYZE_SEED, check_conditioning=True,
+        )
+    if model is None:
+        try:
+            with _seeded_analysis(ANALYZE_SEED):
+                model = Surrogate().fit(
+                    X_fit, y_fit, bounds=bounds, noise=noise_arg, cat_dims=cat_dims,
+                    check_conditioning=True,
+                    restarts=restarts, restart_seed=ANALYZE_SEED,
+                )
+        except (FitError, ValueError) as exc:
+            raise NotComputed(
+                "model_fit_failed", "the model could not be refit on the campaign's rows",
+                "re-analyze the campaign; if that also fails, the data are ill-conditioned",
+            ) from exc
+        if cache is not None:
+            cache.put(
+                model, X_fit, y_fit, bounds=bounds, cat_dims=cat_dims, noise=noise_arg,
+                restarts=restarts, restart_seed=ANALYZE_SEED, check_conditioning=True,
             )
-    except (FitError, ValueError) as exc:
-        raise NotComputed(
-            "model_fit_failed", "the model could not be refit on the campaign's rows",
-            "re-analyze the campaign; if that also fails, the data are ill-conditioned",
-        ) from exc
 
     anchor_x = plan.X[plan.best_index]
     anchor_u = (anchor_x[:n_cont] - plan.lower) / (plan.upper - plan.lower)
@@ -688,8 +751,8 @@ def fit_and_score(plan: FitPlan) -> dict[str, Any]:
         "model": {
             "kind": "gp_posterior",
             "posterior": "latent (excludes assay noise)",
-            "noise": "inferred",
-            "refit_rows": int(len(plan.y)),
+            "noise": noise_mode,
+            "refit_rows": int(len(y_fit)),
             "fit_restarts": int(restarts),
             "seed": ANALYZE_SEED,
             "note": (

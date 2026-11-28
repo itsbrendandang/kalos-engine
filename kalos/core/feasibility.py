@@ -15,6 +15,9 @@ Surrogate`) is unchanged and is composed with this module by the caller (see
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
@@ -53,9 +56,59 @@ class FeasibilityClassifier:
     train a real classifier.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        cat_dims: Sequence[int] | None = None,
+        cat_cardinalities: Sequence[int] | None = None,
+    ) -> None:
+        cats = tuple(int(c) for c in (cat_dims or ()))
+        if cats:
+            if cat_cardinalities is None:
+                raise ValueError("cat_cardinalities must be provided when cat_dims is set")
+            cards = tuple(int(k) for k in cat_cardinalities)
+            if len(cards) != len(cats):
+                raise ValueError("cat_cardinalities must match cat_dims length")
+            if len(set(cats)) != len(cats) or any(c < 0 for c in cats):
+                raise ValueError("cat_dims must be distinct non-negative column indices")
+            if any(k < 1 for k in cards):
+                raise ValueError("cat_cardinalities entries must be >= 1")
+        else:
+            cards = ()
+        self._cat_dims: tuple[int, ...] = cats
+        self._cat_cardinalities: tuple[int, ...] = cards
+        self._cont_dims: tuple[int, ...] = ()
         self._pipeline: Pipeline | None = None
+        self._scaler: StandardScaler | None = None
+        self._clf: LogisticRegression | None = None
         self._fallback: bool = True
+
+    @property
+    def cat_dims(self) -> tuple[int, ...]:
+        return self._cat_dims
+
+    @property
+    def cat_cardinalities(self) -> tuple[int, ...]:
+        return self._cat_cardinalities
+
+    def _encode_mixed(self, Xa: np.ndarray, *, fit_scaler: bool) -> np.ndarray:
+        n = Xa.shape[0]
+        parts: list[np.ndarray] = []
+        if self._cont_dims:
+            X_cont = Xa[:, self._cont_dims]
+            if fit_scaler:
+                self._scaler = StandardScaler().fit(X_cont)
+            assert self._scaler is not None
+            parts.append(self._scaler.transform(X_cont))
+        elif fit_scaler:
+            self._scaler = None
+        for dim_c, card in zip(self._cat_dims, self._cat_cardinalities):
+            codes = np.rint(Xa[:, dim_c]).astype(int)
+            oh = np.zeros((n, card), dtype=float)
+            valid = (codes >= 0) & (codes < card)
+            if valid.any():
+                oh[np.flatnonzero(valid), codes[valid]] = 1.0
+            parts.append(oh)
+        return np.hstack(parts) if parts else np.empty((n, 0), dtype=float)
 
     def fit(self, X: np.ndarray, y_binary: np.ndarray) -> FeasibilityClassifier:
         """Fit on binary labels, or fall back to the no-gate state (see class docstring)."""
@@ -67,13 +120,29 @@ class FeasibilityClassifier:
         if n_classes < 2 or minority_count < 3:
             self._fallback = True
             self._pipeline = None
+            self._scaler = None
+            self._clf = None
             return self
         self._fallback = False
-        self._pipeline = Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", LogisticRegression(class_weight="balanced", max_iter=1000)),
-        ])
-        self._pipeline.fit(Xa, ya)
+        if not self._cat_dims:
+            self._scaler = None
+            self._clf = None
+            self._cont_dims = tuple(range(Xa.shape[1]))
+            self._pipeline = Pipeline([
+                ("scaler", StandardScaler()),
+                ("clf", LogisticRegression(class_weight="balanced", max_iter=1000)),
+            ])
+            self._pipeline.fit(Xa, ya)
+            return self
+
+        cat_set = set(self._cat_dims)
+        if any(c >= Xa.shape[1] for c in cat_set):
+            raise ValueError("cat_dims contains an index outside X's columns")
+        self._cont_dims = tuple(j for j in range(Xa.shape[1]) if j not in cat_set)
+        self._pipeline = None
+        X_enc = self._encode_mixed(Xa, fit_scaler=True)
+        self._clf = LogisticRegression(class_weight="balanced", max_iter=1000)
+        self._clf.fit(X_enc, ya)
         return self
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
@@ -84,10 +153,19 @@ class FeasibilityClassifier:
         """
         Xa = np.asarray(X, dtype=float)
         n = Xa.shape[0]
-        if self._fallback or self._pipeline is None:
+        if self._fallback:
             return np.ones(n, dtype=float)
-        proba = self._pipeline.predict_proba(Xa)
-        classes = self._pipeline.named_steps["clf"].classes_
+        if not self._cat_dims:
+            if self._pipeline is None:
+                return np.ones(n, dtype=float)
+            proba = self._pipeline.predict_proba(Xa)
+            classes = self._pipeline.named_steps["clf"].classes_
+        else:
+            if self._clf is None:
+                return np.ones(n, dtype=float)
+            X_enc = self._encode_mixed(Xa, fit_scaler=False)
+            proba = self._clf.predict_proba(X_enc)
+            classes = self._clf.classes_
         pos_idx = int(np.where(classes == 1)[0][0])
         return np.asarray(proba[:, pos_idx], dtype=float).reshape(-1)
 
@@ -101,7 +179,7 @@ class FeasibilityClassifier:
         on it - see `kalos.portal.analysis`'s GATE POLICY) never has to reach
         into the private `_fallback` flag to ask the question.
         """
-        return not self._fallback and self._pipeline is not None
+        return not self._fallback and (self._pipeline is not None or self._clf is not None)
 
     def torch_gate_params(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
         """Return `(scaler_mean, scaler_scale, lr_coef, lr_intercept)`, the four
@@ -124,7 +202,7 @@ class FeasibilityClassifier:
         POLICY does before ever calling this.
         """
         assert self.fitted and self._pipeline is not None, (
-            "torch_gate_params() requires a fitted classifier; check `.fitted` first"
+            "torch_gate_params() requires a fitted continuous-only classifier; check `.fitted` first"
         )
         scaler = self._pipeline.named_steps["scaler"]
         clf = self._pipeline.named_steps["clf"]
@@ -133,6 +211,53 @@ class FeasibilityClassifier:
         coef = np.asarray(clf.coef_, dtype=float).reshape(-1)
         intercept = float(np.asarray(clf.intercept_, dtype=float).reshape(-1)[0])
         return mean, scale, coef, intercept
+
+    def torch_gate_spec(self) -> dict[str, Any]:
+        """Return all parameters needed to rebuild the fitted classifier (legacy
+        continuous-only or mixed continuous+one-hot categorical) as a differentiable
+        torch gate.
+        """
+        assert self.fitted, (
+            "torch_gate_spec() requires a fitted classifier; check `.fitted` first"
+        )
+        if not self._cat_dims:
+            mean, scale, coef, intercept = self.torch_gate_params()
+            return {
+                "cont_dims": list(range(len(mean))),
+                "mean": mean,
+                "scale": scale,
+                "cont_coef": coef,
+                "cat_dims": [],
+                "cat_cardinalities": [],
+                "cat_weights": [],
+                "intercept": intercept,
+            }
+        assert self._clf is not None
+        n_cont = len(self._cont_dims)
+        full_coef = np.asarray(self._clf.coef_, dtype=float).reshape(-1)
+        cont_coef = full_coef[:n_cont].copy()
+        cat_weights: list[np.ndarray] = []
+        offset = n_cont
+        for card in self._cat_cardinalities:
+            cat_weights.append(full_coef[offset : offset + card].copy())
+            offset += card
+        if self._scaler is not None:
+            mean = np.asarray(self._scaler.mean_, dtype=float).reshape(-1)
+            scale = np.asarray(self._scaler.scale_, dtype=float).reshape(-1)
+        else:
+            mean = np.empty(0, dtype=float)
+            scale = np.empty(0, dtype=float)
+        intercept = float(np.asarray(self._clf.intercept_, dtype=float).reshape(-1)[0])
+        return {
+            "cont_dims": list(self._cont_dims),
+            "mean": mean,
+            "scale": scale,
+            "cont_coef": cont_coef,
+            "cat_dims": list(self._cat_dims),
+            "cat_cardinalities": list(self._cat_cardinalities),
+            "cat_weights": cat_weights,
+            "intercept": intercept,
+        }
 
 
 def _classifier_ece(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> float:
@@ -185,6 +310,8 @@ def feasibility_cv_report(
     threshold: float = 0.0,
     n_splits: int = 5,
     seed: int = 0,
+    cat_dims: Sequence[int] | None = None,
+    cat_cardinalities: Sequence[int] | None = None,
 ) -> dict:
     """Cross-validated feasibility-classifier metrics, for the promotion gate.
 
@@ -278,7 +405,9 @@ def feasibility_cv_report(
         if len(np.unique(y_test)) < 2:
             # AUC is undefined for a single-class test fold; skip its contribution.
             continue
-        clf = FeasibilityClassifier().fit(Xa[train_idx], labels[train_idx])
+        clf = FeasibilityClassifier(
+            cat_dims=cat_dims, cat_cardinalities=cat_cardinalities
+        ).fit(Xa[train_idx], labels[train_idx])
         p = clf.predict_proba(Xa[test_idx])
         oof_true.append(y_test)
         oof_pred.append(p)
@@ -312,6 +441,8 @@ def feasibility_cv_auc(
     threshold: float = 0.0,
     n_splits: int = 5,
     seed: int = 0,
+    cat_dims: Sequence[int] | None = None,
+    cat_cardinalities: Sequence[int] | None = None,
 ) -> float:
     """Cross-validated AUC of the feasibility classifier, for the promotion gate.
 
@@ -322,7 +453,14 @@ def feasibility_cv_auc(
     than duplicating the CV loop, so the two can never drift apart.
     """
     return feasibility_cv_report(
-        X, y, groups=groups, threshold=threshold, n_splits=n_splits, seed=seed
+        X,
+        y,
+        groups=groups,
+        threshold=threshold,
+        n_splits=n_splits,
+        seed=seed,
+        cat_dims=cat_dims,
+        cat_cardinalities=cat_cardinalities,
     )["auc"]
 
 

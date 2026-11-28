@@ -174,10 +174,11 @@ def _alternative_scale_block(
         X, y_log, groups=groups, n_splits=5, bounds=bounds, cat_dims=cat_dims, n_repeats=1,
     )
     rho_log = rep_log["spearman"]
+    lo_l, hi_l = rep_log["ci95"]
     ci95_log = (
         None
-        if rho_log != rho_log
-        else [round(rep_log["ci95"][0], 3), round(rep_log["ci95"][1], 3)]
+        if rho_log != rho_log or lo_l != lo_l or hi_l != hi_l
+        else [round(float(lo_l), 3), round(float(hi_l), 3)]
     )
     calibration_log = interval_calibration(rep_log["oof_actual"], rep_log["oof_pred"], rep_log["oof_std"])
     return {

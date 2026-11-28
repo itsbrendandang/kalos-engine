@@ -24,6 +24,7 @@ from kalos.portal.analysis_parts.intervals import proposal_predictive_std
 from kalos.portal.analysis_parts.policy import ANALYZE_SEED
 from kalos.portal.analysis_parts.proposals import _encode_pending
 from kalos.portal.analysis_parts.setup_apply import _propose_with_setup, withheld_batch
+from kalos.portal.config import space_filling_small_n_setting
 
 
 @dataclass
@@ -112,10 +113,49 @@ def run_proposals(
         absent_zero=prep.absent_zero & set(map(str, prep.cont_feats)),
     )
     n_pending = 0 if X_pending is None else int(X_pending.shape[0])
+    n_distinct_recipes = len(set(np.asarray(trust.recipe_key).tolist()))
+    use_space_filling = (
+        space_filling_small_n_setting()
+        and trust.verdict.get("state") != "reliable"
+        and n_distinct_recipes < 2 * X.shape[1]
+    )
     if prep.setup_plan is not None and prep.setup_plan.refused:
         proposal = withheld_batch(prep.setup_plan, q=5, d=X.shape[1])
     elif prep.strain.refusal is not None:
         proposal = prep.strain.withheld_batch(q=5, d=X.shape[1])
+    elif use_space_filling:
+        from kalos.core.space_filling import propose_space_filling
+
+        sf_bounds = prep.setup_plan.bounds if prep.setup_plan is not None else bounds
+        sf_constraints = (
+            prep.setup_plan.linear_constraints
+            if prep.setup_plan is not None and prep.setup_plan.linear_constraints
+            else None
+        )
+        try:
+            proposal = propose_space_filling(
+                sf_bounds,
+                q=5,
+                X_train=X,
+                cat_dims=cat_dims,
+                cat_cardinalities=cat_cardinalities,
+                fixed_features=prep.strain.propose_kwargs().get("fixed_features"),
+                inequality_constraints=sf_constraints,
+                pending=X_pending,
+                seed=ANALYZE_SEED,
+            )
+        except (RuntimeError, ValueError):
+            if prep.setup_plan is not None and sf_constraints:
+                prep.setup_plan._refuse(
+                    "constraints_unsatisfiable",
+                    "the optimizer could not find recipes that satisfy every linear constraint "
+                    "inside the search range; proposals are withheld rather than dropping a constraint",
+                    "loosen the linear constraints or widen the bounds",
+                )
+                prep.setup_plan.linear_constraints = []
+                proposal = withheld_batch(prep.setup_plan, q=5, d=X.shape[1])
+            else:
+                raise
     else:
         proposal = _propose_with_setup(propose_batch, prep.setup_plan, dict(
             **prep.strain.propose_kwargs(),

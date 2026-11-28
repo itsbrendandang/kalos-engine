@@ -42,6 +42,7 @@ from kalos.portal.analysis_parts.policy import (
 )
 from kalos.portal.analysis_parts.trust_gate import clears_floor as trust_clears_floor
 from kalos.portal.cells import cell_labels, to_numbers
+from kalos.portal.config import cv_workers_setting, feas_onehot_cat_setting
 from kalos.portal.verdict import model_verdict, refusal_for
 
 
@@ -198,9 +199,11 @@ def evaluate_trust(
         if len(set(merged_gcol.tolist())) >= MIN_GROUPS_FOR_CV:
             groups = merged_gcol.tolist()
 
+    cv_workers = cv_workers_setting()
     progress("fitting", 0.15)
     rep = grouped_cv_report(
-        X, y, groups=groups, n_splits=5, bounds=bounds, cat_dims=cat_dims, n_repeats=CV_N_REPEATS,
+        X, y, groups=groups, n_splits=5, bounds=bounds, cat_dims=cat_dims,
+        n_repeats=CV_N_REPEATS, n_workers=cv_workers,
     )
     primary_basis = (
         ("declared_column" if roles is not None and roles.groups else "group_column") if gcol
@@ -216,7 +219,8 @@ def evaluate_trust(
             clusters=rep_clusters,
         ),
         lambda g: grouped_cv_report(
-            X, y, groups=g, n_splits=5, bounds=bounds, cat_dims=cat_dims, n_repeats=CV_N_REPEATS,
+            X, y, groups=g, n_splits=5, bounds=bounds, cat_dims=cat_dims,
+            n_repeats=CV_N_REPEATS, n_workers=cv_workers,
         ),
         n_exact_recipes=len(set(np.asarray(recipe_key).tolist())),
         n_clusters=len(set(rep_clusters.tolist())),
@@ -293,8 +297,13 @@ def evaluate_trust(
         )
     )
 
-    feas = feasibility_cv_report(X, y, groups=groups)
-    feas_clf = FeasibilityClassifier().fit(X, feasible_labels(y))
+    _feas_cat_kw: dict[str, Any] = (
+        {"cat_dims": cat_dims, "cat_cardinalities": prep.cat_cardinalities}
+        if feas_onehot_cat_setting() and cat_dims and prep.cat_cardinalities
+        else {}
+    )
+    feas = feasibility_cv_report(X, y, groups=groups, **_feas_cat_kw)
+    feas_clf = FeasibilityClassifier(**_feas_cat_kw).fit(X, feasible_labels(y))
     n_infeasible = int((feasible_labels(y) == 0).sum())
     feas_auc = feas["auc"]
     _gate_auc_floor = GatesConfig().min_feasibility_auc

@@ -362,14 +362,25 @@ def leak_free_cv(
     entries: list[tuple[str, str | None, Any, dict[str, Any] | None, dict[str, Any]]] = []
     prim_entry = candidate_report(primary_basis, primary_column, primary_groups, primary_rep)
     entries.append((primary_basis, primary_column, primary_groups, primary_rep, prim_entry))
+    seen: list[tuple[str, Any, dict[str, Any] | None]] = [(primary_basis, primary_groups, primary_rep)]
     warnings: list[dict[str, Any]] = []
     for c in candidates:
         g = c["groups"]
-        if same_partition(g, primary_groups):
-            e = candidate_report(c["basis"], c["column"], g, primary_rep, n_levels=c["n_levels"],
+        matched = next(
+            ((pb, pr) for pb, pg, pr in seen if same_partition(g, pg)),
+            None,
+        )
+        if matched is not None:
+            prev_basis, prev_rep = matched
+            e = candidate_report(c["basis"], c["column"], g, prev_rep, n_levels=c["n_levels"],
                                  merged=c["merged_with_replicates"])
-            e["same_partition_as"] = primary_basis
-            entries.append((c["basis"], c["column"], g, primary_rep, e))
+            e["same_partition_as"] = prev_basis
+            if strict and prev_basis != primary_basis and prev_rep is not None and e["evaluable"]:
+                gap = _coverage_gap(prev_rep, len(g))
+                if gap is not None:
+                    e.update(evaluable=False, reason=gap)
+                    warnings.append(_not_checkable(c["column"], gap))
+            entries.append((c["basis"], c["column"], g, prev_rep, e))
             continue
         if _n_groups(g) < MIN_GROUPS_FOR_CV:
             e = candidate_report(c["basis"], c["column"], g, None, n_levels=c["n_levels"],
@@ -399,6 +410,7 @@ def leak_free_cv(
             warnings.append(_not_checkable(c["column"], gap))
             continue
         r = run_cv(g)
+        seen.append((c["basis"], g, r))
         e = candidate_report(c["basis"], c["column"], g, r, n_levels=c["n_levels"],
                              merged=c["merged_with_replicates"])
         if strict and e["evaluable"]:

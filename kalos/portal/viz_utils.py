@@ -16,6 +16,7 @@ import logging
 import numpy as np
 from scipy.stats import spearmanr
 
+from kalos.core.replicates import GroupKeys, aggregate_replicates
 from kalos.portal.analysis_parts.slices import reference_point
 
 logger = logging.getLogger(__name__)
@@ -63,8 +64,8 @@ def _embedding_pca(
                 if c in cat_dims_map:
                     levels = cat_dims_map[c]
                     cat_col = X[:, len(cont_feats) + kept_cats.index(c)]
-                    for lvl in levels:
-                        encoding_parts.append((cat_col == lvl).astype(float))
+                    for code, _lvl in enumerate(levels):
+                        encoding_parts.append((np.rint(cat_col) == code).astype(float))
 
         if not encoding_parts:
             return {"reason": "no features to encode for PCA"}
@@ -109,72 +110,50 @@ def _correlation_spearman(
     X: np.ndarray,
     y: np.ndarray,
     cont_feats: list,
+    groups: GroupKeys | None = None,
 ) -> dict | None:
     """Compute descriptive Spearman correlations on recipe means.
 
     Continuous features + target only; nominal categories are excluded.
     Returns a square matrix with null for undefined cells.
 
-    Recipe means are computed by averaging rows that share the same
-    row-hash group key (from row_hash_groups in analysis.py).
+    When `groups` is given, rows sharing a group key are averaged via
+    `aggregate_replicates` before computing pairwise Spearman correlations.
     """
     if len(cont_feats) < 1:
         return {"reason": "no continuous features for correlation"}
 
     try:
         X_cont = X[:, : len(cont_feats)]
-        # Compute recipe means via groupby
-        # Use the deterministic row-hash groups key from the analysis
-        # For correlation, we average across all rows (simple mean)
-        recipe_means = []
-        for j in range(len(cont_feats)):
-            recipe_means.append(X_cont[:, j].mean())
-        recipe_means.append(y.mean())
+        y_arr = np.asarray(y, dtype=float).reshape(-1)
+        n_rows = int(X.shape[0])
+        if groups is not None:
+            Xr, yr, _rv, _rn = aggregate_replicates(X_cont, y_arr, groups=groups)
+            n_units = int(Xr.shape[0])
+            features_with_target = np.column_stack([Xr, yr.reshape(-1, 1)])
+        else:
+            n_units = n_rows
+            features_with_target = np.column_stack([X_cont, y_arr.reshape(-1, 1)])
 
         labels = [str(c) for c in cont_feats] + ["target_mean"]
-
-        # Pairwise Spearman on the recipe means (single point per recipe)
-        # For a single observation, we compute Spearman on the continuous features + target
-        # This is a descriptive matrix of feature correlations
         n_labels = len(labels)
-        matrix: list[list] = []
+        matrix: list[list[float | None]] = [[None] * n_labels for _ in range(n_labels)]
         for i in range(n_labels):
-            row: list[float | None] = []
-            for j in range(n_labels):
-                if i == j:
-                    row.append(1.0)
-                elif j < i:
-                    # Symmetric — should have been computed already
-                    row.append(matrix[j][i])
-                else:
-                    # Compute correlation between feature i and feature j
-                    # Use the raw values (not recipe means) for descriptive correlation
-                    row.append(None)  # placeholder, fill below
-            matrix.append(row)
-
-        # Actually compute pairwise — use all rows for descriptive feature+target correlations
-        features_with_target = np.column_stack([X_cont, y.reshape(-1, 1)])
-        for i in range(n_labels):
+            matrix[i][i] = 1.0
             for j in range(i + 1, n_labels):
-                ci, cj = i, j
-                valid = np.isfinite(features_with_target[:, ci]) & np.isfinite(features_with_target[:, cj])
+                valid = np.isfinite(features_with_target[:, i]) & np.isfinite(features_with_target[:, j])
                 if valid.sum() < 3:
-                    matrix[i][j] = None
-                    matrix[j][i] = None
+                    val: float | None = None
                 else:
-                    rho, _ = spearmanr(features_with_target[valid, ci], features_with_target[valid, cj])
-                    if not np.isfinite(rho):
-                        matrix[i][j] = None
-                        matrix[j][i] = None
-                    else:
-                        val = round(float(rho), 3)
-                        matrix[i][j] = val
-                        matrix[j][i] = val
+                    rho, _ = spearmanr(features_with_target[valid, i], features_with_target[valid, j])
+                    val = round(float(rho), 3) if np.isfinite(rho) else None
+                matrix[i][j] = val
+                matrix[j][i] = val
 
         return {
             "unit": "recipe",
-            "n_units": int(X.shape[0]),
-            "n_rows": int(X.shape[0]),
+            "n_units": n_units,
+            "n_rows": n_rows,
             "labels": labels,
             "matrix": matrix,
         }
@@ -242,20 +221,14 @@ def _response_surface_gp(
             X_fit, y_fit, cont_feats, kept_cats, cat_dims_map, replicate_aware, incumbent
         )
 
-        # Evaluate surface
-        z = np.zeros((21, 21))
-        std = np.zeros((21, 21))
-
-        for i, yv in enumerate(y_vals):
-            for j, xv in enumerate(x_vals):
-                # Build the point: sweep cols replaced, others at incumbent
-                point = incumbent_recipe.copy()
-                point[x_idx] = xv
-                point[y_idx] = yv
-
-                mean, sd = s.posterior(point.reshape(1, -1))
-                z[i, j] = float(mean[0])
-                std[i, j] = float(sd[0])
+        # Evaluate surface in a single batched posterior call (row-major: i over y_vals, j over x_vals)
+        grid = np.tile(incumbent_recipe, (21 * 21, 1))
+        xv_grid, yv_grid = np.meshgrid(x_vals, y_vals)
+        grid[:, x_idx] = xv_grid.ravel()
+        grid[:, y_idx] = yv_grid.ravel()
+        mean_all, sd_all = s.posterior(grid)
+        z = np.asarray(mean_all, dtype=float).reshape(21, 21)
+        std = np.asarray(sd_all, dtype=float).reshape(21, 21)
 
         # Also collect observed runs at the swept points
         runs = [[round(float(X_fit[k, x_idx]), 4), round(float(X_fit[k, y_idx]), 4), round(float(y_fit[k]), 4)] for k in range(n)]

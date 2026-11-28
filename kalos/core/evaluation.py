@@ -29,12 +29,37 @@ def grouped_folds(groups: Sequence, n_splits: int = 5) -> Iterator[tuple[np.ndar
     yield from make_splits(np.zeros((n, 1)), np.zeros(n), groups, n_splits=n_splits)
 
 
+def _str_groups(groups: Sequence | np.ndarray) -> np.ndarray:
+    """Coerce group labels to strings cleanly (pandas 3.x `.astype(str)` keeps NaN/None as float)."""
+    seq = list(groups)
+    if not seq:
+        return np.asarray([], dtype=str)
+    return np.asarray(["" if pd.isna(v) else str(v) for v in seq], dtype=str)
+
+
+def _sortable_groups(groups: Sequence | np.ndarray) -> np.ndarray:
+    """Preserve homogeneous group arrays (and their sort order), coercing mixed/NaN groups to str."""
+    arr = np.asarray(groups)
+    if len(arr) == 0:
+        return arr
+    if arr.dtype != object and arr.dtype.kind not in {"U", "S"}:
+        return arr
+    try:
+        np.unique(arr)
+        return arr
+    except TypeError:
+        return _str_groups(groups)
+
+
 def _effective_repeats(groups, n_splits: int, n_repeats: int) -> int:
     # Mirror make_splits' own "not enough groups" reduction so this degeneracy
     # check agrees with what make_splits will actually do, rather than carrying
     # a second copy of its threshold that could drift out of sync.
     g_str = np.asarray(pd.Series(groups).astype(str).values) if len(groups) else groups
-    n_groups_total = len(np.unique(g_str)) if len(g_str) else 0
+    try:
+        n_groups_total = len(np.unique(g_str)) if len(g_str) else 0
+    except TypeError:
+        n_groups_total = len(np.unique(_str_groups(groups))) if len(groups) else 0
     effective_splits = min(int(n_splits), n_groups_total) if n_groups_total else int(n_splits)
     degenerate = n_groups_total > 0 and effective_splits >= n_groups_total
     return 1 if degenerate else max(1, int(n_repeats))
@@ -66,6 +91,7 @@ def cv_partitions(
 def _oof(
     X, y, groups, n_splits, bounds, cat_dims=None, shuffle: bool = False, random_state: int = 42,
     index_out: list[int] | None = None, fold_out: list[int] | None = None,
+    n_workers: int = 1,
 ):
     """Pooled out-of-fold predictions under one fixed normalization box.
     Returns (pred, std, actual, group, n_folds).
@@ -95,22 +121,35 @@ def _oof(
     y = np.asarray(y, float).reshape(-1)
     if groups is None:
         groups = row_hash_groups(X)
-    groups = np.asarray(groups)
+    groups = _sortable_groups(groups)
     # One normalization box for every fold AND for production. Fitting each fold
     # to its own training-data envelope (the old default) measures a different
     # input transform than the shipped model, so the CV number would not describe
     # what actually ships.
     if bounds is None and len(X):
         bounds = np.vstack([X.min(axis=0), X.max(axis=0)])
+    splits = make_splits(X, y, groups, n_splits=n_splits, shuffle=shuffle, random_state=random_state)
+    valid_splits = [(tr, te) for tr, te in splits if len(tr) >= 4 and len(te) >= 1]
     pred, sd, actual, grp, n_folds = [], [], [], [], 0
-    for tr, te in make_splits(X, y, groups, n_splits=n_splits, shuffle=shuffle, random_state=random_state):
-        if len(tr) < 4 or len(te) < 1:
-            continue
-        n_folds += 1
+
+    def _fit_fold(split: tuple[np.ndarray, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+        tr, te = split
         s = Surrogate().fit(X[tr], y[tr], bounds=bounds, cat_dims=cat_dims)
         mean, std = s.posterior(X[te], observation_noise=True)
-        pred.extend(np.asarray(mean).ravel().tolist())
-        sd.extend(np.asarray(std).ravel().tolist())
+        return np.asarray(mean).ravel(), np.asarray(std).ravel()
+
+    if int(n_workers) > 1 and len(valid_splits) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(int(n_workers), len(splits))) as pool:
+            fold_outputs = list(pool.map(_fit_fold, valid_splits))
+    else:
+        fold_outputs = [_fit_fold(split) for split in valid_splits]
+
+    for (_tr, te), (mean_arr, std_arr) in zip(valid_splits, fold_outputs):
+        n_folds += 1
+        pred.extend(mean_arr.tolist())
+        sd.extend(std_arr.tolist())
         actual.extend(y[te].tolist())
         grp.extend(groups[te].tolist())
         if index_out is not None:
@@ -143,7 +182,7 @@ def grouped_cv_spearman(X, y, groups=None, n_splits: int = 5, bounds=None) -> fl
 
 def grouped_cv_report(
     X, y, groups=None, n_splits: int = 5, bounds=None, n_boot: int = 1000, random_state: int = 0,
-    cat_dims=None, n_repeats: int = 1,
+    cat_dims=None, n_repeats: int = 1, n_workers: int = 1,
 ) -> dict:
     """The honest CV number: pooled OOF Spearman plus a group-level bootstrap 95%
     CI, the count of held-out points and groups, and the fold count. The CI is
@@ -221,7 +260,8 @@ def grouped_cv_report(
             # gets, so the point estimate and OOF arrays are unchanged.
             fold_r: list[int] = []
             pred, sd, actual, grp, n_folds = _oof(
-                X_arr, y, groups, n_splits, bounds, cat_dims=cat_dims, index_out=index0, fold_out=fold_r,
+                X_arr, y, groups, n_splits, bounds, cat_dims=cat_dims, index_out=index0,
+                fold_out=fold_r, n_workers=n_workers,
             )
             n_folds0 = n_folds
         else:
@@ -229,7 +269,7 @@ def grouped_cv_report(
             fold_r = []
             pred, sd, actual, grp, _n_folds = _oof(
                 X_arr, y, groups, n_splits, bounds, cat_dims=cat_dims,
-                shuffle=True, random_state=seed_r, fold_out=fold_r,
+                shuffle=True, random_state=seed_r, fold_out=fold_r, n_workers=n_workers,
             )
         preds.append(pred)
         sds.append(sd)
@@ -485,9 +525,8 @@ def logo_report(X, y, groups, *, bounds=None, cat_dims=None) -> dict:
     cap this motivates on the analysis path.
     """
     X_arr = np.asarray(X, float)
-    g_arr = np.asarray(groups)
-    g_str = np.asarray(pd.Series(g_arr).astype(str).values) if len(g_arr) else g_arr
-    n_groups = len(np.unique(g_str)) if len(g_str) else 0
+    g_arr = _sortable_groups(groups)
+    n_groups = len(np.unique(g_arr)) if len(g_arr) else 0
     if n_groups < 2:
         return {"spearman": float("nan"), "n_groups": n_groups, "n_oof": 0}
     pred, _sd, actual, _grp, _n_folds = _oof(X_arr, y, g_arr, n_groups, bounds, cat_dims=cat_dims)
@@ -669,13 +708,13 @@ def group_mean_margin(
     can differ from the headline CV Spearman over every row.
     """
     y_arr = np.asarray(y, float).reshape(-1)
-    g_arr = np.asarray(pd.Series(groups).astype(str).values)
+    g_arr = _sortable_groups(groups)
     idx = np.asarray(oof_index, int)
     pred = np.asarray(oof_pred, float).reshape(-1)
     base = {"difference": None, "ci95": None, "surrogate_spearman": None,
             "group_mean_spearman": None, "n_paired": 0, "n_groups_paired": 0,
             "passed": None, "evaluable": False}
-    if idx.shape != pred.shape or (len(idx) and idx.max() >= len(y_arr)):
+    if idx.shape != pred.shape or (len(idx) and (idx.min() < 0 or idx.max() >= len(y_arr))):
         return {**base, "reason": "OOF index and predictions do not match the data"}
     gm = _loo_group_mean(y_arr, g_arr)[idx]
     act = y_arr[idx]
